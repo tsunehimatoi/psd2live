@@ -25,6 +25,8 @@ class ModifierAlgorithmResource(bytes: ByteArray) {
     init { require(size <= 64 * 1024 * 1024) }
     val digest: String by lazy { HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(data)) }
     fun read(): ByteArray = data.copyOf()
+    /** Read one byte without exposing or copying the backing resource. */
+    fun unsignedByte(index: Int): Int = data[index].toInt() and 0xff
     override fun equals(other: Any?) = other is ModifierAlgorithmResource && size == other.size && digest == other.digest
     override fun hashCode() = digest.hashCode()
 }

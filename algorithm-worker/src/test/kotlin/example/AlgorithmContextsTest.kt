@@ -28,4 +28,23 @@ class AlgorithmContextsTest {
             Files.walk(directory).use { it.sorted(Comparator.reverseOrder()).forEach(Files::deleteIfExists) }
         }
     }
+    @Test fun typedSourceInputsRetainPixelsTargetsAndCoordinatesThroughResourceTransport() {
+        val directory = Files.createTempDirectory("algorithm-source-context-")
+        try {
+            val layer = ModifierSourceLayer("layer", "FACE", "NONE", left = 12f, top = 20f,
+                width = 1, height = 1, rgba = "pixels", bounds = ModifierSourceBounds(12f, 20f, 13f, 21f),
+                centroidX = 12.5f, centroidY = 20.5f, opaquePixels = 1)
+            val sources = ModifierSourceInputs(listOf(layer), mapOf("pixels" to ModifierAlgorithmResource(byteArrayOf(1, 2, 3, -1))),
+                mapOf("mesh" to "layer"), ModifierSourceTransform(tx = -10f, ty = -20f))
+            val wire = AlgorithmContexts.encode(sources.context()) { AlgorithmObjects.write(directory, it) }
+            val restored = ModifierSourceInputs.from(AlgorithmContexts.decode(wire, directory))
+            assertEquals(layer, restored.layerForTarget("mesh"))
+            assertEquals(2f to 0f, restored.toModel.map(12f, 20f))
+            assertEquals(255, restored.raster(layer).alpha(0, 0))
+            assertEquals(sources.raster(layer).digest, restored.raster(layer).digest)
+        } finally {
+            Files.list(directory).use { entries -> entries.forEach(Files::delete) }
+            Files.delete(directory)
+        }
+    }
 }

@@ -54,7 +54,7 @@ Use the existing `modifier_plan`, `modifier_add`, and `modifier_update` operatio
 
 ## Authoring and protocol
 
-The JVM contract lives in the independent `:algorithm-api` module used by the application. It depends only on the neutral `:format-model` module and JSON serialization, not the application, Umamo, Compose, projects or history. `./gradlew :algorithm-api:build` produces the version `1.3.1` API and sources JARs.
+The JVM contract lives in the independent `:algorithm-api` module used by the application. It depends only on the neutral `:format-model` module and JSON serialization, not the application, Umamo, Compose, projects or history. `./gradlew :algorithm-api:build` produces the version `1.4.0` API and sources JARs.
 
 `ModifierAlgorithmPlugin.evaluate(input, instance, checkpoint)` receives the upstream `RigIR`, an immutable `RigModifierInstance` and a cancellation checkpoint, and returns a candidate `RigIR`. Do not mutate input arrays; invoke the checkpoint in long loops and let failures propagate. Generate identities with `instance.outputId(localName)`, which preserves recorded aliases. The host owns output validation, dependencies, overrides, CAS and history. Targets, pinned package references, manifests, version ranges and dependency declarations are public in the same module. Existing JSON fields, serialized type names and object ID encoding are unchanged.
 
@@ -235,3 +235,13 @@ The change envelope contains exactly `schema`, `before`, `after`, `objects`, and
 `fields` names singleton or relation replacements using `ModifierModelChanges` property names. Listed fields take explicit before/after values, including null. `AlgorithmChanges` is the JVM codec helper. The host checks schema, keys, counts, resource integrity, declared write scope and old-object preconditions, followed by existing complete reference and output validation. Manifest write vocabulary retains names such as `textures` and `glue`.
 
 The physics package has passed actual worker installation, repeated evaluation, store reopening, uninstall and reinstall equivalence checks. Other languages retain the existing command protocol; the new change payload has not yet been implemented and verified in all six languages. Inputs still use existing object projection and the host retains full contribution comparison. Read-only input views, resource edits, read-set caching and geometry composition remain pending; bulk migration is not yet ready.
+
+### Captured source art (JVM API 1.4)
+
+`ModifierSourceInputs` describes pre-generation artwork through `source_layers/1`, without generated templates or host callbacks. `ModifierSourceLayer` contains stable source identity, semantic tag/side/role, source-canvas origin, dimensions, observed bounds, centroid, opaque-pixel count and an RGBA resource name. `targets` maps stable model target IDs to source IDs. Pixels are straight RGBA8, row-major from the top left, without padding. Source coordinates, observed bounds and centroids use canvas pixels with Y pointing down.
+
+`to_model` is a serializable source-canvas to model-canvas affine transform (`xx, xy, tx, yx, yy, ty`). Mirroring is supported and singular transforms are rejected. This is not a parent-deformer transform. `raster(layer)` returns a cached read-only view; `alpha(x,y)` returns zero outside bounds and `rgba()` returns a defensive copy. Resources have content digests and use existing `author_context_v1` transport. Construction validates unique source IDs, target references, finite coordinates, dimensions and RGBA lengths. Each raster is limited to 64 MiB, within aggregate context limits.
+
+`context()`/`from()` encode and decode the snapshot. Host `RigSourceCapture` captures existing art and classification only. Eye-outline fitting now reads this contract in the independent binding module. Its host adapter retains the existing coordinate callback; standalone consumers can use `to_model` without product types. Motion design is unchanged. This does not complete eye modifier geometry generation, composition or packaging.
+
+This snapshot currently covers raster observations, not separate mask resources, parent-space geometry views, upstream capability snapshots or read-set tracking. Those remain framework work. Existing input mask semantics are retained; this interface does not yet independently describe the entire source-art pipeline.
