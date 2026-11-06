@@ -210,6 +210,12 @@ tasks.test {
 
 // Keep Cubism out of classpath resources unless explicitly opted in.
 tasks.processResources {
+    for (area in listOf("eye", "brow")) {
+        dependsOn(":algorithms:binding:plugin" + area.replaceFirstChar { it.uppercase() } + "SeeThrough")
+        from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-$area")) {
+            into("algorithm-plugins/see-through-$area")
+        }
+    }
     dependsOn(":algorithms:binding:pluginPackage")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin")) {
         into("algorithm-plugins/binding")

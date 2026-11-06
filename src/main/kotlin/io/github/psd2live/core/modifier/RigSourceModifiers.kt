@@ -46,34 +46,29 @@ internal class RigModifierSource(
     private val transitions = HashMap<Pair<String, ModifierTarget>, Pair<RigModifierChains.Projection, RigModifierChains.Projection>>()
     private val chainProjections = java.util.IdentityHashMap<PuppetModel, MutableMap<List<RigModifierChains.Owned>, RigModifierChains.Projection>>()
 
-    fun seeThrough(rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit): RigIR {
-        checkpoint()
-        val model = PuppetIr.toPuppet(rig)
+    private val seeThroughCandidates by lazy {
         val layers = analysis.layers.associateBy { it.source.id.raw }
-        val targets = instance.targets.mapTo(HashSet()) { it.id }
-        val eyes = instance.type == "eye.see-through"
-        val owners = activeBefore(instance).filter { RigLegacyBindings.find(it.type)?.seeThrough == true }
-        val earlierCopies = model.drawables.mapNotNull { mesh ->
-            mesh.id.raw.takeIf { id -> owners.any { it.localOutputName(id)?.startsWith("see-through:") == true } }
-        }.toSet()
-        val candidates = SeeThroughLayers.candidates(model, config.alphaThreshold) { mesh ->
-            if (mesh.raw in earlierCopies) null else layers[layersByMesh[mesh.raw]]
-        }.filter { it.eyes == eyes && it.original in targets }
-        val opacity = (RigLegacyBindings.values(instance)["opacity"] ?: 50f) / 100f
-        val result = SeeThroughLayers.apply(model, candidates,
-            SeeThroughLayers.Settings(!eyes, eyes, opacity, config.drawOrderStep,
-                config.runtimeTarget.supports(org.umamo.runtime.model.RuntimeFeature.ReversedMask)),
-            idFor = { DrawableId(instance.outputId("see-through:${it.raw}")) }, earlierCopies = earlierCopies)
-        require(result.notes.none { it.reason == SeeThroughLayers.DropReason.ID_TAKEN ||
-            it.reason == SeeThroughLayers.DropReason.BANGS_CLIPPED }) {
-            "${instance.id}: see-through output conflicts with existing meshes or masks"
-        }
-        checkpoint()
-        if (result.copies.isEmpty()) return rig
-        return rig.withPuppet(result.model.copy(drawables = result.model.drawables.map {
-            if (it.id.raw in result.copies) it.copy(isSelectable = true) else it
-        }))
+        // Coverage depends only on source pixels and semantics. Expand against the live model in the plugin.
+        val sourceMeshes = layersByMesh.keys.map { Drawable(DrawableId(it), it, null, BlendMode.Normal, emptyList(), null, null) }
+        SeeThroughLayers.candidates(materialBase.copy(drawables = sourceMeshes), config.alphaThreshold) { layers[layersByMesh[it.raw]] }
     }
+
+    fun seeThroughContext(instance: RigModifierInstance): ModifierAlgorithmContext = ModifierAlgorithmContext(buildJsonObject {
+        put("schema", "see-through/1")
+        put("eyes", instance.type == "eye.see-through")
+        put("name_pattern", io.github.psd2live.i18n.tr("model.drawable.seeThrough", "{meshName}"))
+        put("draw_order_step", config.drawOrderStep)
+        put("inverted_masks", config.runtimeTarget.supports(RuntimeFeature.ReversedMask))
+        putJsonArray("candidates") { seeThroughCandidates.forEach { candidate -> add(buildJsonObject {
+            put("original", candidate.original); put("eyes", candidate.eyes)
+            put("bangs", JsonArray(candidate.bangs.map(::JsonPrimitive)))
+        }) } }
+        put("earlier_owners", Json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(RigModifierInstance.serializer()),
+            activeBefore(instance).filter { RigLegacyBindings.find(it.type)?.seeThrough == true }))
+    })
+
+    fun seeThrough(rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit): RigIR =
+        io.github.psd2live.algorithms.binding.SeeThroughAlgorithm().evaluate(rig, instance, seeThroughContext(instance), checkpoint)
 
     private val expressionParameterDefinitions by lazy {
         val layers = analysis.layers.mapNotNull { layer ->

@@ -66,6 +66,29 @@ class PackagedPhysicsPluginTool {
         verifyPackage("expression.toggles", definition, JsonObject(emptyMap()), "binding")
     }
 
+    @Test fun seeThroughArchivesEvaluateBothFeatureCopiesAndInvertedWindows() {
+        requireTools()
+        for (area in listOf("eye", "brow")) {
+            val plugin = io.github.psd2live.algorithms.binding.SeeThroughAlgorithm()
+            val context = ModifierAlgorithmContext(buildJsonObject {
+                put("schema", "see-through/1"); put("eyes", area == "eye")
+                put("name_pattern", "{meshName} (through bangs)"); put("draw_order_step", 10); put("inverted_masks", true)
+                put("earlier_owners", JsonArray(emptyList()))
+                putJsonArray("candidates") { addJsonObject {
+                    put("original", "body"); put("eyes", area == "eye"); put("bangs", JsonArray(listOf(JsonPrimitive("bang"))))
+                } }
+            })
+            val type = "$area.see-through"
+            val definition = RigModifierDefinition(type, 1, requires = setOf("rig.scaffold"),
+                composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter"),
+                evaluate = plugin::evaluate, plugin = plugin, authorContext = { context })
+            val base = testInput()
+            val input = base.copy(meshes = base.meshes + base.meshes.single().copy(id = "bang", drawOrder = 600f),
+                rootChildren = listOf(ChildRef.MeshRef("body"), ChildRef.MeshRef("bang")))
+            verifyPackage(type, definition, JsonObject(emptyMap()), "binding", "plugin-$area", input)
+        }
+    }
+
     private fun evaluate(definition: RigModifierDefinition, input: RigIR, instance: RigModifierInstance): RigIR {
         val plugin = definition.plugin
         return if (plugin is ContextualModifierAlgorithmPlugin) plugin.evaluate(input, instance, definition.authorContext(instance)) {}
@@ -77,16 +100,16 @@ class PackagedPhysicsPluginTool {
         meshes = listOf(Mesh("body", "Body", null, geometry = MeshGeometry(
             Floats.values(0f, 0f, 10f, 0f, 0f, 30f), Floats.values(0f, 0f, 1f, 0f, 0f, 1f), Ints.values(0, 1, 2)), offsets = null)))
 
-    private fun verifyPackage(type: String, definition: RigModifierDefinition, config: JsonObject, directory: String = type) {
+    private fun verifyPackage(type: String, definition: RigModifierDefinition, config: JsonObject, directory: String = type, packageDirectory: String = "plugin", input: RigIR = testInput()) {
         requireTools()
         val root = Files.createTempDirectory("packaged-algorithm-")
         val preferences = Preferences.userRoot().node("plugin-package-test/${UUID.randomUUID()}")
         val store = ModifierPluginStore(root.resolve("installed"), preferences)
         try {
-            val built = Path.of("algorithms/$directory/build/plugin").toAbsolutePath()
+            val built = Path.of("algorithms/$directory/build/$packageDirectory").toAbsolutePath()
             val source = Files.createDirectory(root.resolve("package"))
             java.util.jar.JarFile(built.resolve("algorithm.jar").toFile()).use { jar ->
-                assertFalse(jar.entries().asSequence().any { entry -> (type !in setOf("swing", "simulation", "expression.toggles") && entry.name.startsWith("org/umamo/")) ||
+                assertFalse(jar.entries().asSequence().any { entry -> (type !in setOf("swing", "simulation", "expression.toggles", "eye.see-through", "brow.see-through") && entry.name.startsWith("org/umamo/")) ||
                     listOf("application", "ui", "project", "history").any { entry.name.startsWith("io/github/psd2live/$it/") } })
             }
             Files.copy(built.resolve("algorithm.jar"), source.resolve("algorithm.jar"))
@@ -95,7 +118,6 @@ class PackagedPhysicsPluginTool {
             val entry = store.install(source.toString())
             val instance = RigModifierInstance("instance1", type, 1, listOf(ModifierTarget("mesh", "body")),
                 config = config, outputAliases = mapOf(type to "retained-output"), plugin = entry.reference)
-            val input = testInput()
             if (type == "swing") {
                 val model = io.github.psd2live.targets.cubism.PuppetIr.toPuppet(input)
                 val wrapped = io.github.psd2live.core.SwingWrapping.wrap(model, io.github.psd2live.core.RigSwingEdit.fromJson(config))
@@ -103,6 +125,11 @@ class PackagedPhysicsPluginTool {
                 assertEquals(io.github.psd2live.targets.cubism.PuppetIr.toIr(replayed), io.github.psd2live.targets.cubism.PuppetIr.toIr(wrapped.model))
             }
             val expected = evaluate(definition, input, instance)
+            if (type.endsWith(".see-through")) {
+                assertEquals(input.meshes.size + 1, expected.meshes.size)
+                assertTrue(expected.meshes.any { it.id.startsWith("modifier:") })
+                if (type == "eye.see-through") assertTrue(expected.meshes.single { it.id == "bang" }.invertMask)
+            }
             if (type == "simulation") {
                 assertEquals(1, expected.physics.groups.size)
                 assertTrue(expected.parameters.any { it.id == instance.outputId("simulation:mode") })
@@ -122,7 +149,7 @@ class PackagedPhysicsPluginTool {
             repeat(2) {
                 assertEquals(expected, evaluate(registry.definition(instance), input, instance))
             }
-            if (type == "expression.toggles") {
+            if (type == "expression.toggles" || type.endsWith(".see-through")) {
                 val canonical = instance.copy(type = entry.manifest.algorithms.single().type)
                 assertEquals(expected, evaluate(registry.definition(canonical), input, canonical))
             }

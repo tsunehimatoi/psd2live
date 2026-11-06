@@ -123,8 +123,16 @@ internal object RigLegacyBindings {
         }, composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter") +
             if (spec.expressionToggles || spec.chainKinds.isNotEmpty()) setOf("physics") else emptySet(),
         evaluate = evaluate,
-        plugin = if (spec.expressionToggles) io.github.psd2live.algorithms.binding.ExpressionAlgorithm() else ModifierAlgorithmPlugin(evaluate),
-        authorContext = { if (spec.expressionToggles) requireNotNull(source).expressionContext(it) else ModifierAlgorithmContext.Empty },
+        plugin = when {
+            spec.expressionToggles -> io.github.psd2live.algorithms.binding.ExpressionAlgorithm()
+            spec.seeThrough -> io.github.psd2live.algorithms.binding.SeeThroughAlgorithm()
+            else -> ModifierAlgorithmPlugin(evaluate)
+        },
+        authorContext = { when {
+            spec.expressionToggles -> requireNotNull(source).expressionContext(it)
+            spec.seeThrough -> requireNotNull(source).seeThroughContext(it)
+            else -> ModifierAlgorithmContext.Empty
+        } },
         )
     }
 }
