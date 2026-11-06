@@ -359,17 +359,11 @@ internal class RigModifierSource(
         active
     }
 
-    private val canonicalRecords = java.util.IdentityHashMap<PuppetModel, RigIR>()
+    private val bindingComparison = io.github.psd2live.algorithms.binding.BindingComparison()
 
     /** Preserve authored geometry byte-for-byte when a native transition only changes clipping (or nothing). */
-    fun onlyMasksChange(before: PuppetModel, after: PuppetModel, target: ModifierTarget, branch: Set<DeformerId>): Boolean {
-        fun record(model: PuppetModel) = canonicalRecords.getOrPut(model) { PuppetIr.toIr(model) }
-        val a = record(before); val b = record(after)
-        val old = a.meshes.single { it.id == target.id }; val next = b.meshes.single { it.id == target.id }
-        if (old.copy(maskedBy = next.maskedBy, invertMask = next.invertMask) != next) return false
-        val oldDeformers = a.deformers.associateBy { it.id }; val nextDeformers = b.deformers.associateBy { it.id }
-        return branch.all { oldDeformers[it.raw] == nextDeformers[it.raw] }
-    }
+    fun onlyMasksChange(before: PuppetModel, after: PuppetModel, target: ModifierTarget, branch: Set<DeformerId>): Boolean =
+        bindingComparison.onlyMasksChange(before, after, DrawableId(target.id), branch)
 
     private val deformerOrigins = HashMap<Pair<String, String>, Map<DeformerId, DeformerId>>()
 
