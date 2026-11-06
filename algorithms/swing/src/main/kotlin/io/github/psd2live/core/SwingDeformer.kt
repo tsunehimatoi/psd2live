@@ -27,7 +27,7 @@ import kotlin.math.sqrt
  * at a slant or from somewhere other than the lattice edge.
  * Turned, its pinned edge is no longer a lattice edge; what lies behind it stays put.
  */
-internal object SwingDeformer {
+object SwingDeformer {
     data class Shape(
         val kind: SwingKind,
         /** Resolved; never [SwingFulcrum.AUTO]. */

@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "io.github.psd2live.algorithms"
-version = "1.0.0"
+version = "1.0.1"
 kotlin { jvmToolchain(21) }
 java { withSourcesJar() }
 
@@ -41,7 +41,7 @@ tasks.register("pluginPackage") {
         jar.copyTo(payload, overwrite = true)
         val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
         directory.resolve("plugin.json").writeText("""
-            {"protocol":1,"id":"builtin.6d6f74696f6e.v1","version":"1.0.0","name":"Motion clip",
+            {"protocol":1,"id":"builtin.6d6f74696f6e.v1","version":"1.0.1","name":"Motion clip",
              "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
              "algorithms":[{"type":"builtin.6d6f74696f6e.v1/clip","aliases":["motion"],"version":1,"name":"Motion clip","category":"motion",
                "targets":["mesh","deformer"],"reads":["parameter","motion","relations"],"writes":["motion","relations"],

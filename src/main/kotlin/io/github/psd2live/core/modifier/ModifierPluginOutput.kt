@@ -69,7 +69,8 @@ internal object ModifierPluginOutput {
         val changes = RigModifierEvaluator.contributions(rig, output)
         require(changes.all { it.kind in algorithm.writes || "*" in algorithm.writes }) { "Plugin wrote undeclared object kinds" }
         require(changes.filter { it.change == ModifierChange.ADDED && it.kind !in setOf("relations", "hierarchy") }.all {
-            instance.localOutputName(it.id) != null || it.kind == "parameter" && algorithm.parameters.any { p -> p.id == it.id }
+            instance.localOutputName(it.id) != null || it.kind == "parameter" && algorithm.parameters.any { p -> p.id == it.id } ||
+                algorithm.derivedOutputs.any { rule -> rule.matches(instance, it.kind, it.id) }
         }) { "Plugin outputs must use instance-owned deterministic IDs or declared shared parameters" }
         return output
     }

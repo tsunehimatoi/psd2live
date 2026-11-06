@@ -180,35 +180,8 @@ object PhysicsGenerator {
 	 * take the hair inputs. A rigid pendulum hanging straight down ignores vertical travel, so up/down swings
 	 * feed head and body pitch in as sideways travel, and the resulting angle drives the up/down forms.
 	 */
-	internal fun swingRules(swings: List<RigSwingEdit>, available: Set<String>): List<RigPhysicsEdit> = swings.flatMap { swing ->
-		if (swing.parameterIds.any { it !in available }) return@flatMap emptyList()
-		swing.motions.mapNotNull { motion ->
-			val physics = motion.physics ?: return@mapNotNull null
-			val inputs = when (motion.kind) {
-				SwingKind.LATERAL -> headAndBodyInputs(null)
-				SwingKind.VERTICAL -> listOf(
-					PhysicsInput("ParamAngleY", 60f, PhysicsSourceType.X),
-					PhysicsInput("ParamBodyAngleY", 40f, PhysicsSourceType.X),
-					PhysicsInput("ParamAngleZ", 20f, PhysicsSourceType.ANGLE),
-				)
-			}.filter { it.parameter in available && it.parameter !in swing.parameterIds }
-			if (inputs.isEmpty()) return@mapNotNull null
-			val id = swingPhysicsId(swing, motion.kind)
-			val segment = PhysicsSegment(physics.length / motion.segments, physics.mobility, physics.delay, physics.acceleration)
-			RigPhysicsEdit(
-				id = id,
-				name = if (swing.motions.size == 1) swing.name else "${swing.name} ${id.substringAfterLast('_')}",
-				inputs = inputs,
-				outputs = motion.parameterIds.mapIndexed { k, parameter -> PhysicsOutput(parameter, k + 1, physics.outputScale) },
-				segments = List(motion.segments) { segment },
-				normalization = PhysicsNormalization(angleMin = -30f, angleMax = 30f),
-			)
-		}
-	}
-
-	/** `PhysicsSwing_<id>` for a swing in one direction; with both, suffixed `_X` (left/right) or `_Y` (up/down). */
-	internal fun swingPhysicsId(swing: RigSwingEdit, kind: SwingKind = swing.motions.first().kind): String =
-		"PhysicsSwing_${swing.id}" + if (swing.motions.size == 1) "" else if (kind == SwingKind.LATERAL) "_X" else "_Y"
+    internal fun swingRules(swings: List<RigSwingEdit>, available: Set<String>): List<RigPhysicsEdit> = SwingPhysicsRules.rules(swings, available)
+    internal fun swingPhysicsId(swing: RigSwingEdit, kind: SwingKind = swing.motions.first().kind): String = SwingPhysicsRules.id(swing, kind)
 
 	/** The swing a generated group belongs to, if it is a swing pendulum. */
 	fun swingOf(groupId: String, swings: List<RigSwingEdit>): RigSwingEdit? =

@@ -72,7 +72,7 @@ data class SwingShape(
         }
     }
 
-    internal fun deformer(kind: SwingKind, fulcrum: SwingFulcrum, segments: Int, placement: SwingDeformer.Placement = SwingDeformer.Placement()) =
+    fun deformer(kind: SwingKind, fulcrum: SwingFulcrum, segments: Int, placement: SwingDeformer.Placement = SwingDeformer.Placement()) =
         SwingDeformer.Shape(kind, fulcrum, flip, magnitude, lift, softness, zoom, segments, parallel, placement)
 
     internal fun write(o: JsonObjectBuilder) {
@@ -145,7 +145,7 @@ data class RigSwingEdit(
 
     val hasPhysics: Boolean get() = motions.any { it.physics != null }
 
-    internal val placement: SwingDeformer.Placement get() = SwingDeformer.Placement(tilt, offsetAlong, offsetAcross)
+    val placement: SwingDeformer.Placement get() = SwingDeformer.Placement(tilt, offsetAlong, offsetAcross)
 
     /** The shape of motion [motion] passed through [change]. */
     fun withShape(motion: Int, change: (SwingShape) -> SwingShape) =
@@ -235,7 +235,9 @@ object SwingPresets {
  * Replays swings onto a built rig. A swing that no longer fits (target deleted, blend parameter, sparse
  * grid) is skipped and reported by [issues] instead of failing the whole rebuild.
  */
-internal object SwingGenerator {
+object SwingGenerator {
+    fun asciiStem(text: String): String = text.filter { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' }.take(24).ifEmpty { "Swing" }
+
     fun apply(model: PuppetModel, swings: List<RigSwingEdit>): PuppetModel =
         swings.fold(model) { current, swing -> applyOne(current, swing).first }
 
@@ -265,7 +267,7 @@ internal object SwingGenerator {
 
     /** The swing's name, followed by what sets this parameter apart from its others (direction, segment). */
     fun parameterName(swing: RigSwingEdit, raw: String): String {
-        val stem = "ParamSwing${SwingAuthoring.asciiStem(swing.id)}"
+        val stem = "ParamSwing${asciiStem(swing.id)}"
         val suffix = if (raw.startsWith(stem)) raw.removePrefix(stem).trim('_').replace('_', ' ') else ""
         return if (swing.parameterIds.size == 1 || suffix.isEmpty()) swing.name else "${swing.name} $suffix"
     }
@@ -317,7 +319,9 @@ internal object SwingGenerator {
                 for (k in combo.indices) { if (++combo[k] < axes[k].keys.size) break; combo[k] = 0 }
             }
             val gridAxes = base.axes + axes.map { KeyformAxis(it.parameter.id, it.keys.toFloatArray()) }
-            current = current.withReplacedGeometryGrid(KeyformOwner.Deformer(warp.id), KeyformGrid(gridAxes, cells))
+            current = current.copy(deformers = current.deformers.map { deformer ->
+                if (deformer.id == warp.id && deformer is Deformer.Warp) deformer.copy(geometryGrid = KeyformGrid(gridAxes, cells)) else deformer
+            })
         }
         for (p in parameters) {
             val authored = current.parameters.single { it.id == p.id }.keys ?: continue
@@ -344,7 +348,7 @@ internal object SwingGenerator {
 }
 
 /** A Warp's rest lattice, its parent's world mapping and the local-to-proportional scale of that space. */
-internal class SwingSpace(
+class SwingSpace(
     val model: PuppetModel,
     val warp: Deformer.Warp,
     /** The pose to measure in; generation uses the defaults, the canvas handles the pose on screen. */

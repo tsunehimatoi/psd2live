@@ -222,52 +222,12 @@ internal object SwingAuthoring {
     }
 
     /** Cubism IDs stay ASCII even when the art is named in another script. */
-    fun asciiStem(text: String): String = text.filter { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' }.take(24).ifEmpty { "Swing" }
+    fun asciiStem(text: String): String = SwingGenerator.asciiStem(text)
 
     data class Wrapped(val model: PuppetModel, val commands: List<JsonObject>, val targets: List<String>)
 
-    /** [model] with [edit]'s mesh targets wrapped, the wrap commands, and the targets as Warps. */
-    fun wrap(model: PuppetModel, edit: RigSwingEdit): Wrapped {
-        val deformerTargets = mutableListOf<String>()
-        val meshes = mutableListOf<Drawable>()
-        for (target in edit.targets) {
-            when (val deformer = model.deformers.firstOrNull { it.id.raw == target }) {
-                is Deformer.Warp -> deformerTargets += target
-                is Deformer.Rotation -> error("Swing needs a Warp or a mesh, not rotation $target")
-                null -> meshes += requireNotNull(model.drawables.firstOrNull { it.id.raw == target }) { "Swing target not found: $target" }
-            }
-        }
-        var current = model
-        val commands = mutableListOf<JsonObject>()
-        val created = mutableListOf<String>()
-        for ((_, group) in meshes.groupBy { it.parentDeformerId }) {
-            val points = group.flatMap { d ->
-                val mesh = requireNotNull(d.mesh) { "Mesh ${d.id.raw} has no geometry" }
-                listOf(mesh.positions) + d.geometryGrid?.cells.orEmpty().map { cell ->
-                    FloatArray(mesh.positions.size) { mesh.positions[it] + cell.form.positionDeltas[it] }
-                }
-            }
-            val bounds = RigGeometryTools.bounds(points.reduce { a, b -> a + b })
-            val tall = bounds[3] >= bounds[2]
-            var id = "Warp_Swing_${edit.id}"
-            var n = 2
-            while (current.deformers.any { it.id.raw == id }) id = "Warp_Swing_${edit.id}_${n++}"
-            val command = buildJsonObject {
-                put("op", "canvas_create_warp"); put("id", id); put("name", edit.name)
-                put("rows", if (tall) 6 else 3); put("columns", if (tall) 3 else 6)
-                put("add_to", "parent_of_selected")
-                putJsonArray("meshes") { group.forEach { add(it.id.raw) } }
-                // Explicit bounds keep the lattice tight on the art, so its top edge is the art's top.
-                putJsonObject("bounds") {
-                    put("x", bounds[0] - bounds[2] * 0.05f); put("y", bounds[1] - bounds[3] * 0.05f)
-                    put("w", bounds[2] * 1.1f); put("h", bounds[3] * 1.1f)
-                }
-            }
-            current = RigAuthoringJournal.apply(current, command)
-            commands += command
-            created += id
-        }
-        return Wrapped(current, commands, (deformerTargets + created).distinct())
+    fun wrap(model: PuppetModel, edit: RigSwingEdit): Wrapped = SwingWrapping.wrap(model, edit).let {
+        Wrapped(it.model, it.commands, it.targets)
     }
 
     private fun collapse(grid: KeyformGrid<WarpLatticeForm>, p: Parameter): KeyformGrid<WarpLatticeForm> {

@@ -43,7 +43,35 @@ data class ModifierPluginAlgorithm(
     val parameters: List<ModifierPluginParameter> = emptyList(),
     /** Stable document types retained by a bundled algorithm after moving into a package. */
     val aliases: Set<String> = emptySet(),
+    /** Deterministic legacy names derived from an instance-owned output token. */
+    val derivedOutputs: List<ModifierPluginDerivedOutput> = emptyList(),
 )
+
+@Serializable
+data class ModifierPluginDerivedOutput(
+    val kind: String,
+    val localName: String,
+    val prefix: String,
+    val suffixes: Set<String> = setOf(""),
+    /** Also allow canonical numbered siblings _2 through _10000. */
+    val numbered: Boolean = false,
+) {
+    init {
+        require(localName.isNotBlank() && prefix.length <= 128 && suffixes.size in 1..32)
+        require((listOf(localName, prefix) + suffixes).all { it.length <= 256 && it.none(Char::isISOControl) })
+    }
+
+    fun matches(instance: RigModifierInstance, outputKind: String, id: String): Boolean {
+        if (kind != outputKind) return false
+        val base = prefix + instance.outputId(localName)
+        if (!id.startsWith(base)) return false
+        val suffix = id.removePrefix(base)
+        if (suffix in suffixes) return true
+        if (!numbered || !suffix.startsWith("_")) return false
+        val index = suffix.drop(1).toIntOrNull() ?: return false
+        return index in 2..10000 && suffix == "_$index"
+    }
+}
 
 @Serializable
 data class ModifierPluginManifest(
