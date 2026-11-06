@@ -557,9 +557,16 @@ internal class RigModifierSource(
         // The source mouth is open; removing its binding retains the artwork pose at 1.
         io.github.psd2live.algorithms.binding.BindingProjection.retain(input, kept, mapOf(StandardParameters.MOUTH_OPEN to 1f))
 
+    private val sourceScaffolds = HashMap<RigModifierInstance, PuppetModel>()
     private fun scaffold(instance: RigModifierInstance, checkpoint: () -> Unit): PuppetModel {
         checkpoint()
-        val result = template(emptyList(), instance.config).model
+        val result = sourceScaffolds.getOrPut(instance) {
+            val pinned = instance.plugin?.takeIf { it.id.startsWith("builtin.") }
+                ?.let { ModifierPluginVersion.parse(it.version, legacy = true) }
+            if (pinned == null || pinned >= ModifierPluginVersion.parse("1.0.41"))
+                io.github.psd2live.algorithms.binding.ScaffoldAlgorithm().buildSource(scaffoldContext(instance), checkpoint)
+            else template(emptyList(), instance.config).model
+        }
         checkpoint()
         return result
     }
@@ -588,7 +595,7 @@ internal class RigModifierSource(
             "${instance.id}: shared scaffold $id requires its complete target scope"
         }
         return preceding ?: RigModifierInstance(id, RigSourceModifiers.SCAFFOLD, requireNotNull(applied).version, targets,
-            config = applied.config, outputAliases = applied.outputAliases)
+            config = applied.config, outputAliases = applied.outputAliases, plugin = applied.plugin)
     }
 
     companion object {
@@ -616,6 +623,7 @@ internal object RigSourceModifiers {
             }, composableKinds = setOf("mesh", "part", "deformer", "hierarchy"),
             evaluate = { rig, instance, checkpoint -> scaffold(rig, instance, requireNotNull(source), checkpoint) },
             plugin = io.github.psd2live.algorithms.binding.ScaffoldAlgorithm(),
+            changeWrites = setOf("mesh", "part", "deformer", "hierarchy"),
             authorContext = { requireNotNull(source).scaffoldContext(it) })
     } + RigLegacyBindings.specs.map { RigLegacyBindings.definition(it, source) }
 

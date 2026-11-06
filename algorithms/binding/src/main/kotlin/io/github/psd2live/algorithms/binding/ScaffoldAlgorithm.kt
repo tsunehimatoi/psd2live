@@ -5,21 +5,41 @@ import io.github.psd2live.format.compile.RigIrBinary
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.targets.cubism.PuppetIr
 import kotlinx.serialization.json.*
-import org.umamo.edit.withParametersSyncedFromTree
 import org.umamo.runtime.model.*
 
 /** Source-frame hierarchy algorithm executable in process or in an external worker. */
-class ScaffoldAlgorithm : ContextualModifierAlgorithmPlugin {
-    override fun evaluate(input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext, checkpoint: () -> Unit): RigIR {
+class ScaffoldAlgorithm : ChangingModifierAlgorithmPlugin {
+    override fun changes(input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext, checkpoint: () -> Unit): ModifierModelChanges {
         checkpoint()
         require(instance.version in 1..2) { "Unsupported scaffold algorithm version" }
+        val template = buildSource(context, checkpoint)
+        val materials = PuppetIr.toPuppet(RigIrBinary.decode(context.resources.getValue("materials").read())).drawables.associateBy { it.id }
+        val canonical = context.values.getValue("canonical_targets").jsonObject
+        val projections = HashMap<String, PuppetModel>()
+        val source = object : ScaffoldBinding.Source {
+            override fun scaffoldFor(instance: RigModifierInstance, target: ModifierTarget, checkpoint: () -> Unit): PuppetModel {
+                checkpoint()
+                return projections.getOrPut(target.id) {
+                    val id = canonical.getValue(target.id).jsonPrimitive.content
+                    if (id == target.id) template else ModelIdRemap(drawables = mapOf(DrawableId(id) to DrawableId(target.id))).model(template)
+                }
+            }
+            override fun originalMaterial(actual: Drawable, desired: Drawable) =
+                ScaffoldBinding.isOriginalMaterial(actual, desired, materials[actual.id])
+        }
+        return ScaffoldBinding.applyChanges(input, instance.copy(type = "rig.scaffold"), source, checkpoint)
+    }
+
+    /** Builds canonical source structure for execution and downstream ownership queries. */
+    fun buildSource(context: ModifierAlgorithmContext, checkpoint: () -> Unit = {}): PuppetModel {
+        checkpoint()
         val schema = context.values["schema"]?.jsonPrimitive?.content
         require(schema in setOf("scaffold/1", "scaffold/2", "scaffold/3", "scaffold/4", "scaffold/5")) { "Missing scaffold author inputs" }
         val captured = if (schema == "scaffold/5") {
             require("template" !in context.resources) { "Source scaffold does not accept a generated template" }
             PuppetModel(emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), null)
         } else PuppetIr.toPuppet(RigIrBinary.decode(context.resources.getValue("template").read()))
-        val template = if (schema != "scaffold/1") {
+        return if (schema != "scaffold/1") {
             require(captured.parts.isEmpty() && captured.rootChildren.isEmpty() && captured.rootPartId == null) {
                 "Source organization must be computed by the scaffold plugin"
             }
@@ -39,24 +59,6 @@ class ScaffoldAlgorithm : ContextualModifierAlgorithmPlugin {
             captured.copy(parts = organization.parts, rootChildren = organization.rootChildren,
                 deformers = frames + (branches?.deformers ?: captured.deformers), drawables = drawables)
         } else captured
-        val materials = PuppetIr.toPuppet(RigIrBinary.decode(context.resources.getValue("materials").read())).drawables.associateBy { it.id }
-        val canonical = context.values.getValue("canonical_targets").jsonObject
-        val projections = HashMap<String, PuppetModel>()
-        val source = object : ScaffoldBinding.Source {
-            override fun scaffoldFor(instance: RigModifierInstance, target: ModifierTarget, checkpoint: () -> Unit): PuppetModel {
-                checkpoint()
-                return projections.getOrPut(target.id) {
-                    val id = canonical.getValue(target.id).jsonPrimitive.content
-                    if (id == target.id) template else ModelIdRemap(drawables = mapOf(DrawableId(id) to DrawableId(target.id))).model(template)
-                }
-            }
-            override fun originalMaterial(actual: Drawable, desired: Drawable) =
-                ScaffoldBinding.isOriginalMaterial(actual, desired, materials[actual.id])
-        }
-        val result = ScaffoldBinding.apply(PuppetIr.toPuppet(input), instance.copy(type = "rig.scaffold"), source, checkpoint)
-        return PuppetIr.toIr(result.withParametersSyncedFromTree()).copy(
-            textures = input.textures, physics = input.physics, clips = input.clips, parameterRoles = input.parameterRoles,
-            restPose = input.restPose, advanced = input.advanced, hitAreas = input.hitAreas)
     }
 
     companion object {

@@ -1228,6 +1228,10 @@ class WorkspaceLegacyBindingTest {
         assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
         val applied = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).appliedCapabilities.first()
         assertEquals(stack.instances.first().outputAliases, applied.outputAliases)
+        val remaining = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.first {
+            it.config["scaffold"]?.jsonPrimitive?.content == applied.id
+        }
+        assertEquals(assertNotNull(applied.plugin), RigModifierSource.of(f.now.model).provider(remaining).plugin)
     }
 
     @Test fun anOwnedParameterRangeIsDormantWithItsProviderAndMaterializesOnApply(): Unit = runBlocking<Unit> {

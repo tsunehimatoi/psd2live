@@ -1,7 +1,9 @@
 package io.github.psd2live.algorithms.binding
 
 import io.github.psd2live.core.modifier.ModifierTarget
+import io.github.psd2live.core.modifier.ModifierModelChanges
 import io.github.psd2live.core.modifier.RigModifierInstance
+import io.github.psd2live.format.model.RigIR
 import org.umamo.edit.withOrgChildMoved
 import org.umamo.runtime.model.*
 
@@ -39,7 +41,18 @@ object ScaffoldBinding {
     fun partId(instance: RigModifierInstance, mesh: String, canonical: String, shared: Boolean = instance.type == "rig.scaffold" && instance.version >= 2) =
         instance.outputAliases["shared/part:$canonical"] ?: instance.outputId(if (shared) "shared/part:$canonical" else "$mesh/part:$canonical")
 
-    fun apply(input: PuppetModel, instance: RigModifierInstance, source: Source, checkpoint: () -> Unit): PuppetModel {
+    fun apply(input: PuppetModel, instance: RigModifierInstance, source: Source, checkpoint: () -> Unit): PuppetModel =
+        bind(input, instance, source, checkpoint, null)
+
+    fun applyChanges(input: RigIR, instance: RigModifierInstance, source: Source, checkpoint: () -> Unit): ModifierModelChanges =
+        ScaffoldChanges.build(input, instance, checkpoint) { model, writes ->
+            bind(model, instance, source, checkpoint, writes)
+        }
+
+    private fun bind(
+        input: PuppetModel, instance: RigModifierInstance, source: Source, checkpoint: () -> Unit,
+        writes: ScaffoldChanges.Writes?,
+    ): PuppetModel {
         var current = input
         if (instance.version >= 2) {
             val parents = instance.targets.map { target -> current.drawables.single { it.id.raw == target.id }.parentDeformerId }.distinct()
@@ -119,7 +132,17 @@ object ScaffoldBinding {
                 }).withDerivedRenderRoot()
                 if (actual.parentDeformerId != destination) BindingFrames.carriedToParent(current, rebound, meshId, checkpoint) else rebound
             }
-            if (orgParent != null) current = current.withOrgChildMoved(OrgChild.Drawable(meshId), remap.part(orgParent), null)
+            writes?.meshes?.add(meshId)
+            if (orgParent != null) {
+                val child = OrgChild.Drawable(meshId)
+                if (writes != null) {
+                    // Moving the target detaches every existing membership before attaching to the new part.
+                    for (part in current.parts) {
+                        if (part.id !in emittedParts && child in part.children) writes.updatedParts += part.id
+                    }
+                }
+                current = current.withOrgChildMoved(child, remap.part(orgParent), null)
+            }
         }
         if (sharedTemplate != null) {
             val mesh = instance.targets.first().id
@@ -136,11 +159,15 @@ object ScaffoldBinding {
                 deformers = current.deformers.filter { it.id !in emittedDeformers } +
                     current.deformers.filter { it.id in emittedDeformers }.sortedBy { deformerOrder.getValue(it.id) },
                 parts = current.parts.map { part -> desiredParts[part.id]?.let {
-                    part.copy(children = ordered(part.children, it.children))
+                    val children = ordered(part.children, it.children)
+                    if (children != part.children && part.id !in emittedParts) writes?.updatedParts?.add(part.id)
+                    part.copy(children = children)
                 } ?: part },
                 rootChildren = ordered(current.rootChildren, sharedTemplate.rootChildren.map(remap::child)),
             )
         }
+        writes?.addedParts?.addAll(emittedParts)
+        writes?.addedDeformers?.addAll(emittedDeformers)
         checkpoint()
         return current.withDerivedRenderRoot()
     }
