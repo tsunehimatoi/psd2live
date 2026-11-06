@@ -64,6 +64,46 @@ class WorkspaceModifierCommandsTest {
         assertEquals("new-body", RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.single().id)
     }
 
+    @Test fun explicitSimulationRebakeRunsTheBakerAndClearingDiscardsTheStoredBake(): Unit = runBlocking {
+        val f = fixture()
+        val source = RigSimEdit("template", "Cloth", SimKind.CLOTH, listOf(f.target.id),
+            inputs = listOf(PhysicsInput("ParamInput")), autoBake = false)
+        val count = f.now.model.rig.puppet.drawables.single().mesh!!.vertexCount
+        val axis = SimBakedAxis("Mode", floatArrayOf(-1f, 0f, 1f), mapOf(f.target.id to listOf(
+            FloatArray(count * 2) { -1f }, FloatArray(count * 2), FloatArray(count * 2) { 1f })))
+        val bake = SimBakeResult(SimBake.fingerprint(f.now.model.rig.puppet, source), mapOf(f.target.id to count),
+            emptyList(), listOf(SimBakedMode(axis, 1f, 1f)))
+        val weights = JsonArray(emptyList())
+        f.edit("modifier_add", add(f, "simulation", JsonObject(source.copy(bake = bake).toJson() + ("automatic_weights" to weights)), "cloth"))
+        val before = f.now
+        var enteredBaker = false
+        val work = object : WorkspaceSimulationWork {
+            override fun <T> run(id: String, action: ((Float) -> Unit, () -> Boolean) -> T): T = action({ progress ->
+                if (progress > 0f) {
+                    enteredBaker = true
+                    throw java.util.concurrent.CancellationException("Stop explicit bake")
+                }
+            }, { false })
+        }
+        assertFailsWith<java.util.concurrent.CancellationException> {
+            WorkspaceDocumentCommands(f.runtime, simulationWork = work).execute(before.projectId, before.state, "Rebake cloth",
+                listOf(WorkspaceDocumentOperation("simulation_bake", id("cloth"))), MutationAuthor.USER)
+        }
+        assertTrue(enteredBaker)
+        assertEquals(before, f.now)
+
+        f.edit("simulation_clear_bake", id("cloth"))
+        val cleared = stack(f).instances.single()
+        assertFalse(cleared.enabled)
+        assertNull(cleared.inputFingerprint)
+        assertFalse("bake" in cleared.config)
+        assertEquals(weights, cleared.config["automatic_weights"])
+        assertNull(SimulationCatalog.entries(f.now.document.rigEdits).single().bake)
+        val rebuilt = f.builder.build(f.now.document)
+        assertEquals(RigIrCompiler.compile(f.now.model), RigIrCompiler.compile(rebuilt))
+        assertFalse(rebuilt.rig.puppet.parameters.any { it.id.raw == cleared.outputId("simulation:Mode") })
+    }
+
     @Test fun reopeningSwingAuditionEditsTheExistingModifier(): Unit = runBlocking {
         val f = fixture(withWarp = true)
         val source = RigSwingEdit.single("swing-owner", "Swing", SwingKind.LATERAL, listOf("warp"), listOf("SwingMode"))

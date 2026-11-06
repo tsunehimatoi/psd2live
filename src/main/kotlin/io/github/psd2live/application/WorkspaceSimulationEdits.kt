@@ -80,10 +80,9 @@ internal object WorkspaceSimulationEdits {
         val source = RigSimEdit.fromJson(owner.config)
         val next = when (operation.operation) {
             "simulation_delete" -> stack.remove(owner.id)
-            "simulation_clear_bake" -> stack.update(owner.id) { it.copy(enabled = false,
-                config = JsonObject(it.config + source.copy(bake = null).toJson()), inputFingerprint = null) }
+            "simulation_clear_bake" -> stack.update(owner.id) { it.withoutBake() }
             "simulation_bake" -> stack.update(owner.id) { it.copy(enabled = true,
-                config = JsonObject(it.config + source.copy(enabled = true, autoBake = true, bake = null).toJson()), inputFingerprint = null) }
+                config = JsonObject(it.config - setOf("bake", "enabled", "auto_bake")), inputFingerprint = null) }
             "simulation_put" -> {
                 val requested = RigSimEdit.fromJson(JsonObject(source.toJson() + operation.request)).copy(id = source.id)
                 stack.update(owner.id) { it.copy(enabled = requested.enabled,
@@ -213,14 +212,16 @@ internal object WorkspaceSimulationEdits {
             val owner = SimulationCatalog.owner(edits, id)
             if (owner == null) SimAuthoring.withBake(edits, id, bake) else {
                 require(bake == null) { "Rebake a preset simulation through simulation_bake" }
-                val stack = RigModifierStack.fromJson(requireNotNull(edits.modifierStack)).update(owner.id) {
-                    it.copy(enabled = false, config = JsonObject(it.config + RigSimEdit.fromJson(it.config).copy(bake = null).toJson()), inputFingerprint = null)
-                }
+                val stack = RigModifierStack.fromJson(requireNotNull(edits.modifierStack)).update(owner.id) { it.withoutBake() }
                 edits.copy(modifierStack = stack.toJson())
             }
         }
         return document.copy(rigEdits = overlay, settings = physicsSettings(document.settings, bakes.values.any { it != null }))
     }
+
+    private fun RigModifierInstance.withoutBake() =
+        copy(enabled = false, config = JsonObject(config - "bake"), inputFingerprint = null)
+
     private fun physicsSettings(settings: JsonObject, baked: Boolean) = if (!baked) settings else JsonObject(settings + ("generatePhysics" to JsonPrimitive(true)))
     private fun JsonObject.text(key: String) = requireNotNull(this[key]?.jsonPrimitive?.contentOrNull) { "$key is required" }
 }
