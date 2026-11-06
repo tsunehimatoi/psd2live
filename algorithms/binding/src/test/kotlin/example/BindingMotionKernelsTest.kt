@@ -5,6 +5,26 @@ import org.umamo.runtime.model.ParameterId
 import kotlin.test.*
 
 class BindingMotionKernelsTest {
+    @Test fun multipleCoordinatesShareEliminationAndPreserveInputs() {
+        val matrix = arrayOf(doubleArrayOf(0.0, 2.0, 1.0), doubleArrayOf(1.0, -2.0, -3.0), doubleArrayOf(2.0, 3.0, 1.0))
+        val columns = arrayOf(doubleArrayOf(1.0, -5.0, 4.0), doubleArrayOf(5.0, -11.0, -1.0))
+        val originalMatrix = matrix.map { it.copyOf() }
+        val originalColumns = columns.map { it.copyOf() }
+        var checkpoints = 0
+        val solved = ThinPlateSpline.solveColumns(matrix, columns) { checkpoints++ }
+        assertEquals(matrix.size + 1, checkpoints)
+        val expected = arrayOf(doubleArrayOf(2.0, -1.0, 3.0), doubleArrayOf(-4.0, 2.0, 1.0))
+        expected.indices.forEach { column -> expected[column].indices.forEach { row ->
+            assertEquals(expected[column][row], solved[column][row], 1e-12)
+        } }
+        matrix.indices.forEach { assertContentEquals(originalMatrix[it], matrix[it]) }
+        columns.indices.forEach { assertContentEquals(originalColumns[it], columns[it]) }
+        val singular = ThinPlateSpline.solveColumns(arrayOf(doubleArrayOf(1.0, 0.0), doubleArrayOf(0.0, 0.0)),
+            arrayOf(doubleArrayOf(2.0, 0.0), doubleArrayOf(3.0, 0.0)))
+        assertContentEquals(doubleArrayOf(2.0, 0.0), singular[0])
+        assertContentEquals(doubleArrayOf(3.0, 0.0), singular[1])
+    }
+
     @Test fun headAndChestKeepNeutralPoseAndRigidAttachments() {
         val turn = HeadTurn(50f, 50f, 40f, 45f)
         val neutral = turn.delta(45f, 40f, HeadShell.SKIN, 0f, 0f)

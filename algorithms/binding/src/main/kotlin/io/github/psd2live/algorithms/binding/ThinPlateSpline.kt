@@ -24,8 +24,12 @@ class ThinPlateSpline(private val from: List<Pair<Float, Float>>, to: List<Pair<
 			a[i][n] = 1.0; a[i][n + 1] = from[i].first.toDouble(); a[i][n + 2] = from[i].second.toDouble()
 			a[n][i] = 1.0; a[n + 1][i] = from[i].first.toDouble(); a[n + 2][i] = from[i].second.toDouble()
 		}
-		wx = solve(a, DoubleArray(size) { if (it < n) to[it].first.toDouble() else 0.0 }, checkpoint)
-		wy = solve(a, DoubleArray(size) { if (it < n) to[it].second.toDouble() else 0.0 }, checkpoint)
+		val weights = solveColumns(a, arrayOf(
+			DoubleArray(size) { if (it < n) to[it].first.toDouble() else 0.0 },
+			DoubleArray(size) { if (it < n) to[it].second.toDouble() else 0.0 },
+		), checkpoint)
+		wx = weights[0]
+		wy = weights[1]
 	}
 
 	/** Where the spline carries ([x], [y]). */
@@ -49,26 +53,34 @@ class ThinPlateSpline(private val from: List<Pair<Float, Float>>, to: List<Pair<
 
 	companion object {
 		/** [a]x = [b] by Gaussian elimination with partial pivoting; a singular system gives the least-change answer zero. */
-		fun solve(a: Array<DoubleArray>, b: DoubleArray, checkpoint: () -> Unit = {}): DoubleArray {
-			val n = b.size
+		fun solve(a: Array<DoubleArray>, b: DoubleArray, checkpoint: () -> Unit = {}): DoubleArray =
+			solveColumns(a, arrayOf(b), checkpoint)[0]
+
+		/** Solve independent right-hand-side columns with one elimination, without changing caller arrays. */
+		fun solveColumns(a: Array<DoubleArray>, columns: Array<DoubleArray>, checkpoint: () -> Unit = {}): Array<DoubleArray> {
+			checkpoint()
+			val n = a.size
+			require(a.all { it.size == n } && columns.all { it.size == n }) { "Expected a square matrix and matching right-hand sides" }
 			val m = Array(n) { a[it].copyOf() }
-			val v = b.copyOf()
+			val values = Array(columns.size) { columns[it].copyOf() }
 			for (col in 0 until n) {
                 checkpoint()
 				var pivot = col
 				for (row in col + 1 until n) if (kotlin.math.abs(m[row][col]) > kotlin.math.abs(m[pivot][col])) pivot = row
 				if (kotlin.math.abs(m[pivot][col]) < 1e-12) continue
 				val t = m[col]; m[col] = m[pivot]; m[pivot] = t
-				val tv = v[col]; v[col] = v[pivot]; v[pivot] = tv
+				for (v in values) { val tv = v[col]; v[col] = v[pivot]; v[pivot] = tv }
 				for (row in 0 until n) {
 					if (row == col) continue
 					val f = m[row][col] / m[col][col]
 					if (f == 0.0) continue
 					for (k in col until n) m[row][k] -= f * m[col][k]
-					v[row] -= f * v[col]
+					for (v in values) v[row] -= f * v[col]
 				}
 			}
-			return DoubleArray(n) { if (kotlin.math.abs(m[it][it]) < 1e-12) 0.0 else v[it] / m[it][it] }
+			return Array(values.size) { column ->
+				DoubleArray(n) { if (kotlin.math.abs(m[it][it]) < 1e-12) 0.0 else values[column][it] / m[it][it] }
+			}
 		}
 	}
 }
