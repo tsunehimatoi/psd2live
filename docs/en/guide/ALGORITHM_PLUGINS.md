@@ -54,7 +54,7 @@ Use the existing `modifier_plan`, `modifier_add`, and `modifier_update` operatio
 
 ## Authoring and protocol
 
-The JVM contract lives in the independent `:algorithm-api` module used by the application. It depends only on the neutral `:format-model` module and JSON serialization, not the application, Umamo, Compose, projects or history. `./gradlew :algorithm-api:build` produces the version `1.4.0` API and sources JARs.
+The JVM contract lives in the independent `:algorithm-api` module used by the application. It depends only on the neutral `:format-model` module and JSON serialization, not the application, Umamo, Compose, projects or history. `./gradlew :algorithm-api:build` produces the version `1.5.0` API and sources JARs.
 
 `ModifierAlgorithmPlugin.evaluate(input, instance, checkpoint)` receives the upstream `RigIR`, an immutable `RigModifierInstance` and a cancellation checkpoint, and returns a candidate `RigIR`. Do not mutate input arrays; invoke the checkpoint in long loops and let failures propagate. Generate identities with `instance.outputId(localName)`, which preserves recorded aliases. The host owns output validation, dependencies, overrides, CAS and history. Targets, pinned package references, manifests, version ranges and dependency declarations are public in the same module. Existing JSON fields, serialized type names and object ID encoding are unchanged.
 
@@ -245,3 +245,13 @@ The physics package has passed actual worker installation, repeated evaluation, 
 `context()`/`from()` encode and decode the snapshot. Host `RigSourceCapture` captures existing art and classification only. Eye-outline fitting now reads this contract in the independent binding module. Its host adapter retains the existing coordinate callback; standalone consumers can use `to_model` without product types. Motion design is unchanged. This does not complete eye modifier geometry generation, composition or packaging.
 
 This snapshot currently covers raster observations, not separate mask resources, parent-space geometry views, upstream capability snapshots or read-set tracking. Those remain framework work. Existing input mask semantics are retained; this interface does not yet independently describe the entire source-art pipeline.
+
+### Evaluation through observed reads (JVM API 1.5)
+
+`ReadingModifierAlgorithmPlugin` receives `ModifierEvaluationInput` rather than direct access to the complete `RigIR`. `parameter(id)`, `mesh(id)`, `deformer(id)`, `part(id)`, `physics(id)` and `motion(id)` record object observations. Missing objects are observed too, so a later addition invalidates that read. Collection and singleton getters record complete field values and ordering; `context` currently tracks the complete author context.
+
+`parentsOfMesh(id)` returns the immediate parent followed by its ancestors, preserving each object's declared local coordinates. It observes the mesh and every ancestor, rejecting cycles, missing parents and duplicate identities. It does not implicitly combine coordinates from different spaces; binding coordinate algorithms still perform frame transport.
+
+`reads()` returns a snapshot of the invocation's observations. The host caches instance configuration, plugin implementation identity, author context, reads and structured changes. Following upstream edits, reuse requires unchanged reads and satisfied write preconditions; changed write preconditions trigger reevaluation. Reuse still passes write-scope, override, contribution-conflict and transaction handling. Failed or cancelled candidates do not replace the successful snapshot. The physics plugin reads its referenced parameters and physics configuration rather than all geometry.
+
+This cache currently applies to in-process implementations on the same author baseline, evaluation context and plugin catalog revision. External workers retain existing conservative caching and do not transport read sets. Explicit upstream capability snapshots, parent-space coordinate services and cross-process read tracking remain pending; this is not complete framework acceptance.

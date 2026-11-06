@@ -367,4 +367,34 @@ class RigModifierStackTest {
         assertEquals(123, allowed.evaluate(authored, stack).rig.parts.first().drawOrder)
         assertNotEquals(123, authored.parts.first().drawOrder)
     }
+    @Test fun directReadCacheReusesOnlyUnchangedObservedInputsAfterUpstreamEdits() {
+        var calls = 0
+        val algorithm = object : ReadingModifierAlgorithmPlugin {
+            override fun changes(input: ModifierEvaluationInput, instance: RigModifierInstance, checkpoint: () -> Unit): ModifierModelChanges {
+                calls++
+                val part = requireNotNull(input.part("other"))
+                return ModifierModelChanges(parts = ModifierObjectChanges(updated =
+                    listOf(ModifierObjectUpdate(part, part.copy(drawOrder = part.drawOrder + 1)))))
+            }
+        }
+        val upstream = RigModifierDefinition("upstream", 1, composableKinds = setOf("part"), evaluate = { rig, instance, _ ->
+            rig.copy(parts = rig.parts.map { if (it.id == instance.targets.single().id)
+                it.copy(drawOrder = instance.config.getValue("order").jsonPrimitive.content.toInt()) else it })
+        })
+        val direct = RigModifierDefinition("direct", 1, evaluate = algorithm::evaluate, plugin = algorithm,
+            composableKinds = setOf("part"), changeWrites = setOf("part"))
+        val engine = RigModifierEvaluator(RigModifierRegistry(listOf(upstream, direct)))
+        val cache = RigModifierEvaluationCache()
+        fun stack(order: Int, targetId: String = "body") = RigModifierStack(listOf(
+            entry("a", "upstream", targets = listOf(ModifierTarget("part", targetId))).copy(config = buildJsonObject { put("order", order) }),
+            entry("b", "direct", targets = listOf(other))))
+        engine.evaluate(authored, stack(10), cache)
+        val reused = engine.evaluate(authored, stack(20), cache)
+        assertEquals(1, calls)
+        assertEquals(20, reused.rig.parts.first().drawOrder)
+        val changed = engine.evaluate(authored, stack(30, "other"), cache)
+        assertEquals(2, calls)
+        assertEquals(31, changed.rig.parts.last().drawOrder)
+        assertEquals(changed, engine.evaluate(authored, stack(30, "other")))
+    }
 }

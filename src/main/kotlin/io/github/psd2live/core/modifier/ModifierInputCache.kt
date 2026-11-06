@@ -68,5 +68,7 @@ internal object ModifierInputCache {
             )
         }
     }
+    data class ReadEntry(val instance: RigModifierInstance, val plugin: ModifierAlgorithmPlugin,
+                         val context: ModifierAlgorithmContext, val reads: ModifierReadSet, val changes: ModifierModelChanges)
     data class Entry(val instance: RigModifierInstance, val input: Any, val patch: Patch)
 }

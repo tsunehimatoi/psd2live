@@ -93,7 +93,8 @@ internal class RigModifierEvaluationCache {
     data class Snapshot(val context: Any, val authored: RigIR, val stack: RigModifierStack,
                         val entries: List<ModifierEvaluation>, val outputs: List<RigIR>, val plugins: Long = ModifierPluginStore.shared.revision.value,
                         val algorithms: Map<String, ModifierInputCache.Entry> = emptyMap(),
-                        val authorContexts: Map<String, ModifierAlgorithmContext> = emptyMap())
+                        val authorContexts: Map<String, ModifierAlgorithmContext> = emptyMap(),
+                        val readAlgorithms: Map<String, ModifierInputCache.ReadEntry> = emptyMap())
     @Volatile var snapshot: Snapshot? = null
 }
 
@@ -131,6 +132,7 @@ internal class RigModifierEvaluator(
         }?.size ?: 0
         val outputs = ArrayList<RigIR>()
         val algorithmCache = saved?.algorithms.orEmpty().filterKeys { id -> stack.instances.any { it.id == id } }.toMutableMap()
+        val readCache = saved?.readAlgorithms.orEmpty().filterKeys { id -> stack.instances.any { it.id == id } }.toMutableMap()
         var unavailableUpstream: String? = null
         for ((index, instance) in stack.instances.withIndex()) {
             checkpoint()
@@ -203,7 +205,8 @@ internal class RigModifierEvaluator(
             io.github.psd2live.core.RigBuildProfile.count("modifier cache misses")
             val before = current
             val authorContext = authorContexts.getValue(instance.id)
-            val inputKey = definition.cacheReads?.let { ModifierInputCache.input(before, it) to authorContext }
+            val inputKey = if (definition.plugin is ReadingModifierAlgorithmPlugin) null else
+                definition.cacheReads?.let { ModifierInputCache.input(before, it) to authorContext }
             val cached = algorithmCache[instance.id]?.takeIf { it.instance == instance && it.input == inputKey }
             val generated = if (cached != null) {
                 io.github.psd2live.core.RigBuildProfile.count("modifier dependency cache hits")
@@ -211,6 +214,27 @@ internal class RigModifierEvaluator(
             } else io.github.psd2live.core.RigBuildProfile.stage("modifier evaluate: ${instance.type}") {
                 val plugin = definition.plugin
                 when (plugin) {
+                    is ReadingModifierAlgorithmPlugin -> {
+                        val cachedRead = readCache[instance.id]?.takeIf {
+                            it.instance == instance && it.plugin === plugin && it.context == authorContext && it.reads.matches(before, authorContext)
+                        }
+                        val reused = cachedRead?.let {
+                            it.changes.requireWrites(requireNotNull(definition.changeWrites) { "${instance.type}: missing change write contract" })
+                            // Writes have their own preconditions even when a plugin did not read that object.
+                            try { it.changes.apply(before, checkpoint) } catch (_: IllegalArgumentException) { null }
+                        }
+                        if (reused != null) {
+                            io.github.psd2live.core.RigBuildProfile.count("modifier read cache hits")
+                            reused
+                        } else {
+                            val view = ModifierEvaluationInput(before, authorContext)
+                            val changes = plugin.changes(view, instance, checkpoint)
+                            changes.requireWrites(requireNotNull(definition.changeWrites) { "${instance.type}: missing change write contract" })
+                            changes.apply(before, checkpoint).also {
+                                readCache[instance.id] = ModifierInputCache.ReadEntry(instance, plugin, authorContext, view.reads(), changes)
+                            }
+                        }
+                    }
                     is ChangingModifierAlgorithmPlugin -> plugin.changes(before, instance, authorContext, checkpoint).also {
                         it.requireWrites(requireNotNull(definition.changeWrites) { "${instance.type}: missing change write contract" })
                     }.apply(before, checkpoint)
@@ -254,7 +278,7 @@ internal class RigModifierEvaluator(
         }
         checkpoint()
         require(pluginRevision == ModifierPluginStore.shared.revision.value) { "Algorithm plugins changed during evaluation; retry the edit" }
-        cache?.snapshot = RigModifierEvaluationCache.Snapshot(context, authored, stack, entries, outputs, pluginRevision, algorithmCache, authorContexts)
+        cache?.snapshot = RigModifierEvaluationCache.Snapshot(context, authored, stack, entries, outputs, pluginRevision, algorithmCache, authorContexts, readCache)
         return RigModifierResult(current, entries)
     }
 

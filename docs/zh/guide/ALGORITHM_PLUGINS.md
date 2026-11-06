@@ -54,7 +54,7 @@ GUI 与 MCP 使用相同管理服务。`plugin_list` 返回包身份、启用状
 
 ## 编写插件
 
-JVM 契约已拆为独立的 `:algorithm-api` 模块，应用和插件共用同一份声明。它只依赖中立 `:format-model` 与 JSON 序列化库，不依赖应用、Umamo、Compose、工程或历史。`./gradlew :algorithm-api:build` 生成版本为 `1.4.0` 的 API JAR 与源码 JAR。
+JVM 契约已拆为独立的 `:algorithm-api` 模块，应用和插件共用同一份声明。它只依赖中立 `:format-model` 与 JSON 序列化库，不依赖应用、Umamo、Compose、工程或历史。`./gradlew :algorithm-api:build` 生成版本为 `1.5.0` 的 API JAR 与源码 JAR。
 
 `ModifierAlgorithmPlugin.evaluate(input, instance, checkpoint)` 接收上游 `RigIR`、不可变 `RigModifierInstance` 和取消检查函数，返回候选 `RigIR`。实现不能原地修改输入数组；长循环需调用 `checkpoint`，异常原样交回宿主。对象身份使用 `instance.outputId(localName)`，兼容已有别名；宿主仍负责输出验证、依赖、覆盖、CAS 和历史提交。API 同时公开目标引用、固定包引用、清单、版本范围与依赖声明；原 JSON 字段、序列化类型名称和对象 ID 编码保持不变。
 
@@ -256,3 +256,13 @@ API 1.2.0 增加可选的 `ContextualModifierAlgorithmPlugin`，接收独立的 
 `context()`／`from()` 编解码此快照。宿主 `RigSourceCapture` 只捕获已有素材与分类结果。眼部轮廓拟合现已在独立绑定模块中直接读取此契约；宿主适配保留原有坐标变换调用，独立消费者可使用 `to_model`，不需要产品类型。这里只替换输入边界和拟合实现的位置，不改变运动设计，也不代表眼部修改器的几何生成、组合与打包已经完成。
 
 目前该快照是栅格观察输入，不包含独立遮罩资源、父空间几何视图、上游能力快照或读取集合跟踪；这些仍属于框架后续工作。源掩码的处理保持调用前素材原有语义，不宣称此接口已能独立表达全部素材链路。
+
+### 按读取对象求值（JVM API 1.5）
+
+`ReadingModifierAlgorithmPlugin` 的入口接收 `ModifierEvaluationInput`，不能直接取得整个 `RigIR`。`parameter(id)`、`mesh(id)`、`deformer(id)`、`part(id)`、`physics(id)`、`motion(id)` 记录所读对象；找不到对象也记录一次观察，后续该对象出现会使缓存失效。读取集合或其他整体字段时记录该字段的完整值及顺序，`context` 当前按完整上下文跟踪。
+
+`parentsOfMesh(id)` 返回从直接父级向外的变形器链，保留各自声明的局部坐标；它读取目标和所有祖先，拒绝循环、缺失父级和重复身份。这里不自动把不同空间的点混在一起，实际坐标运输继续使用绑定模块的坐标算法。
+
+`reads()` 给出该次调用的独立读取快照。宿主对新入口缓存实例配置、插件实现身份、作者上下文、读取集合及结构化变更。上游修改后，只在所读值仍一致、输出写入前置条件仍满足时复用；若前置条件变化，重新计算。复用仍经过写入范围检查、覆盖、贡献冲突和事务流程。失败或取消的候选不替换成功快照。物理插件目前只读取实际引用的参数和物理配置，不读取所有几何。
+
+此缓存目前用于进程内新入口，且只在同一作者基线、相同求值上下文和相同插件目录修订内复用。外部工作进程仍使用保守的现有缓存，未传输读取集合。上游“能力”的显式快照、父空间坐标服务和跨进程读取跟踪仍待完成；不能将此阶段视为完整框架验收。

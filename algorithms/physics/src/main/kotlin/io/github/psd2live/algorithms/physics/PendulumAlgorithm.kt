@@ -2,25 +2,24 @@ package io.github.psd2live.algorithms.physics
 
 import io.github.psd2live.core.RigPhysicsEdit
 import io.github.psd2live.core.PhysicsSourceType
-import io.github.psd2live.core.modifier.ChangingModifierAlgorithmPlugin
-import io.github.psd2live.core.modifier.ModifierAlgorithmContext
+import io.github.psd2live.core.modifier.ReadingModifierAlgorithmPlugin
+import io.github.psd2live.core.modifier.ModifierEvaluationInput
 import io.github.psd2live.core.modifier.ModifierModelChanges
 import io.github.psd2live.core.modifier.ModifierObjectChanges
 import io.github.psd2live.core.modifier.RigModifierInstance
 import io.github.psd2live.format.model.*
 
 /** Complete physics-group implementation; no application services or mutable workspace access. */
-class PendulumAlgorithm : ChangingModifierAlgorithmPlugin {
-    override fun changes(input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext,
+class PendulumAlgorithm : ReadingModifierAlgorithmPlugin {
+    override fun changes(input: ModifierEvaluationInput, instance: RigModifierInstance,
                          checkpoint: () -> Unit): ModifierModelChanges {
         checkpoint()
         val edit = RigPhysicsEdit.fromJson(instance.config).copy(id = instance.outputId("physics"))
-        val available = input.parameters.mapTo(HashSet()) { it.id }
-        require(edit.inputs.isNotEmpty() && edit.outputs.isNotEmpty() && edit.parameters.all { it in available }) {
+        require(edit.inputs.isNotEmpty() && edit.outputs.isNotEmpty() && edit.parameters.all { input.parameter(it) != null }) {
             "${instance.id}: physics inputs and outputs must reference existing parameters"
         }
         val groups = listOf(PhysicsGroups.fromSetting(edit))
-        PhysicsGroups.validateAppend(input, groups)
+        PhysicsGroups.validateAppend(input.physics, groups)
         return ModifierModelChanges(physicsGroups = ModifierObjectChanges(added = groups))
     }
 }
@@ -36,10 +35,12 @@ object PhysicsGroups {
 
     private fun source(type: PhysicsSourceType) = if (type == PhysicsSourceType.ANGLE) PhysicsSource.ANGLE else PhysicsSource.X
 
-    fun validateAppend(input: RigIR, groups: List<PhysicsGroup>) {
-        val ids = input.physics.groups.mapTo(HashSet()) { it.id }
+    fun validateAppend(input: RigIR, groups: List<PhysicsGroup>) = validateAppend(input.physics, groups)
+
+    fun validateAppend(input: Physics, groups: List<PhysicsGroup>) {
+        val ids = input.groups.mapTo(HashSet()) { it.id }
         require(groups.map { it.id }.distinct().size == groups.size && groups.none { it.id in ids }) { "Physics group ID collision" }
-        val claimed = input.physics.groups.flatMapTo(HashSet()) { group -> group.outputs.map { it.parameter } }
+        val claimed = input.groups.flatMapTo(HashSet()) { group -> group.outputs.map { it.parameter } }
         for (group in groups) for (output in group.outputs) require(claimed.add(output.parameter)) {
             "Multiple physics groups drive ${output.parameter}"
         }

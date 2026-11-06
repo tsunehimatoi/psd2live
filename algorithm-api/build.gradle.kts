@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "io.github.psd2live"
-version = "1.4.0"
+version = "1.5.0"
 
 kotlin { jvmToolchain(21) }
 java { withSourcesJar() }
