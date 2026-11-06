@@ -16,7 +16,7 @@ import kotlin.math.abs
 import kotlin.test.*
 
 class WorkspaceLegacyBindingTest {
-    private class Fixture(val document: WorkspaceDocument) {
+    private class Fixture(val document: WorkspaceDocument, val scaffoldVersion: Int = 2) {
         val builder = WorkspacePreviewBuilder()
         val runtime = WorkspaceRuntime<RigPreviewModel>({ builder.build(it) }, rebuildFrom = { doc, previous -> builder.build(doc, previous) })
         val commands = WorkspaceDocumentCommands(runtime)
@@ -28,6 +28,7 @@ class WorkspaceLegacyBindingTest {
         fun addition(type: String, id: String, targets: List<ModifierTarget> = now.model.rig.puppet.drawables.map { ModifierTarget("mesh", it.id.raw) },
                      config: JsonObject = if (type == RigSourceModifiers.SCAFFOLD) JsonObject(emptyMap()) else buildJsonObject { put("scaffold", "structure") }) = buildJsonObject {
             put("type", type); put("id", id); put("config", config)
+            if (type == RigSourceModifiers.SCAFFOLD) put("version", scaffoldVersion)
             put("targets", JsonArray(targets.map { buildJsonObject { put("kind", it.kind); put("id", it.id) } }))
         }
         suspend fun group(types: List<String>) = edit("modifier_add_group", buildJsonObject {
@@ -261,7 +262,7 @@ class WorkspaceLegacyBindingTest {
     }
 
     @Test fun twoObjectsSharingOneSourceLayerStillHaveIndependentBindingInstances(): Unit = runBlocking<Unit> {
-        val f = Fixture(document()); f.install()
+        val f = Fixture(document(), scaffoldVersion = 1); f.install()
         val original = mesh(f, "face").id.raw
         f.edit("object_paste", buildJsonObject {
             putJsonArray("sources") { add("mesh:$original") }
@@ -505,7 +506,7 @@ class WorkspaceLegacyBindingTest {
         val originalDocument = document(eyeDetails = true)
         val source = originalDocument.source as WorkspaceSourceArt
         val ids = setOf("face", "iris", "lash", "close", "white", "brow", "lid", "lid-shadow", "highlight")
-        val f = Fixture(originalDocument.copy(source = source.copy(layers = source.layers.filter { it.id.raw in ids }))); f.install()
+        val f = Fixture(originalDocument.copy(source = source.copy(layers = source.layers.filter { it.id.raw in ids })), scaffoldVersion = 1); f.install()
         f.group(listOf("face/legacy", "eye/fitted", "brow/fitted"))
         val targets = f.now.model.rig.puppet.drawables.map { ModifierTarget("mesh", it.id.raw) }
         val iris = mesh(f, "iris").id.raw
@@ -765,7 +766,7 @@ class WorkspaceLegacyBindingTest {
     }
 
     @Test fun separateClothingInstancesOwnOnlyTheirTargetsAndTheirOwnPhysics(): Unit = runBlocking<Unit> {
-        val f = Fixture(document(outfitDetails = true)); f.install()
+        val f = Fixture(document(outfitDetails = true), scaffoldVersion = 1); f.install()
         f.group(listOf("body/legacy", "face/legacy"))
         val ribbon = ModifierTarget("mesh", mesh(f, "ribbon").id.raw)
         val pendant = ModifierTarget("mesh", mesh(f, "pendant").id.raw)
@@ -890,13 +891,15 @@ class WorkspaceLegacyBindingTest {
 
     @Test fun depthTurnMatchesNativeAcrossHeadAndBodyPoses(): Unit = runBlocking<Unit> {
         val f = Fixture(document(sideLock = true)); f.install()
-        f.group(listOf("body/legacy", "face/legacy", "eye/fitted", "brow/fitted", "mouth/fitted", "hair/legacy"))
+        f.group(listOf("body/legacy", "face/fitted", "eye/fitted", "brow/fitted", "mouth/fitted", "hair/legacy"))
         val values = mapOf("turn" to 60f, "depth" to 125f)
-        f.edit("modifier_add", f.addition("face.depth-turn", "depth", config = buildJsonObject {
-            put("scaffold", "structure")
-            putJsonObject("dependencies") { put("face/legacy", "face") }
-            put("values", JsonObject(values.mapValues { JsonPrimitive(it.value) }))
-        }))
+        f.edit("modifier_update", buildJsonObject {
+            put("id", "face"); put("type", "face/fitted")
+            putJsonObject("config") {
+                put("scaffold", "structure")
+                put("values", JsonObject(values.mapValues { JsonPrimitive(it.value) }))
+            }
+        })
         val base = fittedRecipe(mapOf("eye" to BaseChoice("eye/fitted", 2), "brow" to BaseChoice("brow/fitted"), "mouth" to BaseChoice("mouth/fitted")))
         val recipe = base.copy(modules = base.modules + ("face.depth-turn" to ModuleChoice(true, values = values)))
         compare(native(f.document, recipe), f.now.model, listOf(emptyMap(),
@@ -905,7 +908,7 @@ class WorkspaceLegacyBindingTest {
                 StandardParameters.ANGLE_Z to 12f, StandardParameters.BODY_X to 5f)))
         assertTrue(FormChannel.DRAW_ORDER in mesh(f, "front").channelGrids.gridsByChannel)
         val expected = RigIrCompiler.compile(f.now.model)
-        f.edit("modifier_apply", buildJsonObject { put("id", "depth") })
+        f.edit("modifier_apply", buildJsonObject { put("id", "hair") })
         assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
     }
 

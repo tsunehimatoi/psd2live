@@ -52,7 +52,7 @@ class WorkspaceModifierSchemasTest {
             }
         }
         assertEquals(setOf("swing", "simulation", "physics", "motion", "rig.scaffold", "body/legacy", "face/legacy",
-            "eye/legacy", "brow/legacy", "mouth/legacy", "hair/legacy", "eye/fitted", "brow/fitted", "mouth/fitted", "eye.smile", "eye.squash", "eye.wide", "eye.lid-fade", "eye.highlight", "eye.aftershock", "brow.shape", "brow.spring", "eye.emotion", "mouth.vowel", "eye.gaze-lid", "brow.blink", "brow.lid-coupling", "mouth.cheek-lid", "mouth.capture", "mouth.tongue", "mouth.jaw", "mouth.interior-depth", "mouth.spring", "mouth.outline", "expression.cheek", "expression.gloom", "expression.toggles", "face.skin-clip", "face.neck", "face.depth-turn", "eye.see-through", "brow.see-through", "hair/chains", "body.bust", "body.arms", "outfit.skirt", "outfit.ribbons", "outfit.creature"), WorkspaceModifierSchemas.types.toSet())
+            "eye/legacy", "brow/legacy", "mouth/legacy", "hair/legacy", "face/fitted", "eye/fitted", "brow/fitted", "mouth/fitted", "eye.smile", "eye.squash", "eye.wide", "eye.lid-fade", "eye.highlight", "eye.aftershock", "brow.shape", "brow.spring", "eye.emotion", "mouth.vowel", "eye.gaze-lid", "brow.blink", "brow.lid-coupling", "mouth.cheek-lid", "mouth.capture", "mouth.tongue", "mouth.jaw", "mouth.interior-depth", "mouth.spring", "mouth.outline", "expression.cheek", "expression.gloom", "expression.toggles", "face.skin-clip", "face.neck", "face.depth-turn", "eye.see-through", "brow.see-through", "hair/chains", "body.bust", "body.arms", "outfit.skirt", "outfit.ribbons", "outfit.creature"), WorkspaceModifierSchemas.types.toSet())
     }
 
     @Test fun modifierJobsAndDiscriminatedSchemasParticipateInTheOrdinaryAtomicBatchContract() {
@@ -75,8 +75,11 @@ class WorkspaceModifierSchemasTest {
                     put("group", "recommended"); put("entries", JsonArray(listOf(JsonObject(addition("motion") - "state"))))
                 }
                 validateOperationSchema(group, members.getValue("modifier_add_group"))
-                val catalog = buildJsonObject { putJsonArray("types") { RigModifierAlgorithms.registry.definitions.forEach { entry ->
+                val catalog = buildJsonObject {
+                    put("baselines", JsonArray(emptyList())); put("presets", JsonArray(emptyList())); put("groups", JsonArray(emptyList()))
+                    putJsonArray("types") { RigModifierAlgorithms.registry.definitions.forEach { entry ->
                     addJsonObject { put("type", entry.type); put("version", entry.version)
+                        put("provides", JsonArray(entry.provides.map(::JsonPrimitive)));
                         put("requires", JsonArray(entry.requires.map(::JsonPrimitive))); put("exclusive_family", JsonNull) }
                 } } }
                 validateOperationSchema(catalog, operations.registry.definition("modifier_catalog").resultSchema, "result")

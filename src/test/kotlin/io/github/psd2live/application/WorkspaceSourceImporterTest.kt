@@ -35,8 +35,9 @@ class WorkspaceSourceImporterTest {
                 assertTrue(stack.instances.isEmpty())
                 assertTrue(installed.model.rig.puppet.deformers.isEmpty())
             } else {
-                assertTrue(stack.instances.all { it.presetGroup == "fitted" })
-                assertEquals(listOf("rig.scaffold") + WorkspaceModifierPlan.groups.getValue("fitted"), stack.instances.map { it.type })
+                assertTrue(stack.instances.all { it.presetGroup == "modern" })
+                assertTrue(stack.instances.any { it.type == "face/fitted" })
+                assertTrue(stack.instances.none { it.type == "face/legacy" || it.type == "face.depth-turn" })
                 assertTrue(installed.model.rig.puppet.deformers.isNotEmpty())
             }
             val rebuilt = builder.build(installed.document)
@@ -58,7 +59,7 @@ class WorkspaceSourceImporterTest {
             val stack = io.github.psd2live.core.modifier.RigModifierStack.fromJson(installed.document.rigEdits.modifierStack!!)
             assertEquals(1, runtime.history().selections.size)
             assertTrue(stack.instances.isNotEmpty())
-            assertTrue(stack.instances.all { it.presetGroup == mode.name.lowercase() })
+            assertTrue(stack.instances.all { it.presetGroup == if (installed.model.config.recipe.modern) "modern" else "legacy" })
             assertTrue(installed.document.rigEdits.simEdits.isEmpty())
             if (mode == WorkspaceInitialModifiers.FULL) assertTrue(stack.instances.any { it.type == "simulation" })
             if (mode == WorkspaceInitialModifiers.MINIMAL) assertTrue(stack.instances.none { it.type == "motion" || it.type == "simulation" })

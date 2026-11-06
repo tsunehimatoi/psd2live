@@ -407,7 +407,7 @@ class WorkspaceModifierCommandsTest {
         })
         validateOperationSchema(plan, WorkspaceModifierSchemas.plan, "result")
         val entries = plan.getValue("entries").jsonArray
-        assertEquals(listOf("rig.scaffold", "body/legacy", "face/legacy", "hair/legacy", "physics"),
+        assertEquals(listOf("rig.scaffold", "body/legacy", "face/fitted", "hair/legacy", "physics"),
             entries.map { it.jsonObject.getValue("type").jsonPrimitive.content })
         assertEquals(start, f.now)
         val result = f.edit("modifier_add_group", buildJsonObject {
@@ -489,14 +489,14 @@ class WorkspaceModifierCommandsTest {
         for ((type, expected) in listOf(
             "mouth.tongue" to listOf("rig.scaffold", "mouth/fitted", "mouth.capture", "mouth.tongue"),
             "mouth.spring" to listOf("rig.scaffold", "mouth/fitted", "mouth.jaw", "mouth.spring"),
-            "mouth.interior-depth" to listOf("rig.scaffold", "mouth/fitted", "face/legacy", "mouth.interior-depth"),
+            "mouth.interior-depth" to listOf("rig.scaffold", "mouth/fitted", "face/fitted", "mouth.interior-depth"),
             "expression.cheek" to listOf("rig.scaffold", "expression.cheek"),
             "face.skin-clip" to listOf("rig.scaffold", "face.skin-clip"),
-            "face.neck" to listOf("rig.scaffold", "face/legacy", "face.neck"),
-            "face.depth-turn" to listOf("rig.scaffold", "face/legacy", "face.depth-turn"),
-            "hair/chains" to listOf("rig.scaffold", "body/legacy", "face/legacy", "hair/chains"),
-            "body.bust" to listOf("rig.scaffold", "body/legacy", "face/legacy", "body.bust"),
-            "outfit.ribbons" to listOf("rig.scaffold", "body/legacy", "face/legacy", "outfit.ribbons"))) {
+            "face.neck" to listOf("rig.scaffold", "face/fitted", "face.neck"),
+            "face/fitted" to listOf("rig.scaffold", "face/fitted"),
+            "hair/chains" to listOf("rig.scaffold", "body/legacy", "face/fitted", "hair/chains"),
+            "body.bust" to listOf("rig.scaffold", "body/legacy", "face/fitted", "body.bust"),
+            "outfit.ribbons" to listOf("rig.scaffold", "body/legacy", "face/fitted", "outfit.ribbons"))) {
             val request = buildJsonObject { put("type", type)
                 putJsonArray("targets") { addJsonObject { put("kind", f.target.kind); put("id", f.target.id) } }
             }
