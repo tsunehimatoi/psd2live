@@ -7,6 +7,45 @@ import io.github.psd2live.targets.cubism.PuppetIr
 import kotlin.test.*
 
 class ExpressionGeometryCacheTest {
+    @Test fun browSourceFitIsSharedAcrossMotionAndHandleChangesButInvalidatesWithPixels() {
+        val document = Characters.browed()
+        val recipe = RigRecipe(true, bases = RigModules.areas.associate {
+            it.id to BaseChoice(if (it.id == "brow") RigModules.BROW_FITTED.id else it.legacy.id)
+        }, modules = RigModules.modules.associate { it.id to ModuleChoice(false) })
+        val config = document.rawConfig().copy(recipe = recipe)
+        val analysis = CharacterAnalyzer.analyze(document.source, config)
+        val cache = PreviewMeshCache()
+        val before = RigBuilder.rigContext(analysis, config, cache).fittedBrows(config)
+        assertEquals(2, before.size)
+        val misses = cache.stages.misses("source fitting: brows")
+        assertEquals(2L, misses)
+        val changed = config.copy(recipe = recipe.copy(modules = recipe.modules +
+            (RigModules.BROW_SHAPE.id to ModuleChoice(true, values = mapOf("strength" to 160f)))))
+        val after = RigBuilder.rigContext(analysis, changed, cache).fittedBrows(changed)
+        assertEquals(misses, cache.stages.misses("source fitting: brows"))
+        before.forEach { (side, rig) -> assertSame(rig.fit, after.getValue(side).fit) }
+        val moved = changed.copy(recipe = changed.recipe.copy(moves = mapOf("brow.L" to mapOf("arch" to FeatureMove(0f, -3f)))))
+        val corrected = RigBuilder.rigContext(analysis, moved, cache).fittedBrows(moved)
+        assertEquals(misses, cache.stages.misses("source fitting: brows"))
+        assertNotEquals(after.getValue(Side.LEFT).fit, corrected.getValue(Side.LEFT).fit)
+        val modified = analysis.copy(layers = analysis.layers.map { layer ->
+            if (layer.semantic.tag != SemanticTag.EYEBROW || layer.semantic.side != Side.LEFT) layer else {
+                val raster = layer.source.raster
+                val pixels = raster.rgba.copyOf()
+                for (y in 0 until raster.height step 2) for (x in 0 until raster.width) pixels[(y * raster.width + x) * 4 + 3] = 0
+                layer.copy(source = object : org.umamo.format.art.SourceLayer by layer.source {
+                    override val raster = org.umamo.format.art.LayerRaster(raster.width, raster.height, pixels)
+                })
+            }
+        })
+        val edited = RigBuilder.rigContext(modified, config, cache).fittedBrows(config)
+        assertTrue(cache.stages.misses("source fitting: brows") > misses)
+        assertNotEquals(before.getValue(Side.LEFT).fit, edited.getValue(Side.LEFT).fit)
+        val atlas = AtlasLayout.pack(analysis.layers, moved)
+        assertEquals(PuppetIr.toIr(RigBuilder.build(analysis, atlas, moved).puppet),
+            PuppetIr.toIr(RigBuilder.build(analysis, atlas, moved, cache).puppet))
+    }
+
     @Test fun sourceParameterDeclarationsDoNotBuildMeshes() {
         val document = Characters.head(physics = false)
         val recipe = RigRecipe(true, modules = RigModules.modules.associate { it.id to ModuleChoice(it == RigModules.EXPRESSION_TOGGLES) })

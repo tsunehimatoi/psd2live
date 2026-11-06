@@ -533,7 +533,9 @@ object RigBuilder {
 				val level = eyes?.fitting?.level ?: sourceEyes(space).level
 				brows.groupBy { it.semantic.side }.mapNotNull { (side, layers) ->
 					val layer = layers.maxBy { it.opaquePixels }
-					val fit = io.github.psd2live.core.fit.fitBrow(layer, level, faceRig.centerX, toRig)
+					val fit = sourceFit("brows", listOf(layer, level, faceRig.centerX, space)) {
+						io.github.psd2live.core.fit.fitBrow(layer, level, faceRig.centerX, toRig)
+					}
 						?.moved(rigMoves(config, if (side == Side.LEFT) "brow.L" else "brow.R", toRig)) ?: return@mapNotNull null
 					// The brow travels about half the height of the eye below it; without a fitted eye, a quarter of its length.
 					val travel = eyes?.rigs?.get(side)?.let { it.opening * it.fit.width * lift } ?: (fit.length * 0.25f * lift / 0.45f)
