@@ -1,5 +1,6 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.algorithms.binding.ScaffoldArms
 import io.github.psd2live.algorithms.binding.ScaffoldBody
 import io.github.psd2live.algorithms.binding.ScaffoldHead
 import io.github.psd2live.algorithms.binding.ScaffoldParts
@@ -1209,9 +1210,12 @@ object RigBuilder {
     internal fun buildNeutralScaffold(inputAnalysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig,
                                      meshCache: PreviewMeshCache?, onBindingInput: ((() -> PuppetModel) -> Unit)? = null): BuiltRig {
         require(!config.deferRig && config.rigPendingLayerIds.isEmpty())
+        require(!config.recipe.modern && !config.mouthOutlineEnabled) {
+            "Neutral scaffold requires the legacy source recipe without generated outlines"
+        }
         val context = rigContext(inputAnalysis, config, meshCache, neutralScaffold = true)
         val ids = splitStableDrawableIds(inputAnalysis, config)
-        return buildWithContext(inputAnalysis, atlas, config, meshCache, context, ids, onBindingInput)
+        return buildWithContext(inputAnalysis, atlas, config, meshCache, context, ids, onBindingInput, neutralScaffold = true)
     }
 
 	/** Pending means only that semantic generation waits; these meshes belong to the same replayable base rig. */
@@ -1361,6 +1365,7 @@ object RigBuilder {
 		context: RigContext,
 		stableDrawableIds: Map<String, DrawableId>,
         onBindingInput: ((() -> PuppetModel) -> Unit)? = null,
+        neutralScaffold: Boolean = false,
 	): BuiltRig {
         val generatedLips = generatedMouthLips(inputAnalysis)
 		val analysis = context.analysis
@@ -1483,6 +1488,7 @@ object RigBuilder {
 				config = config,
 				meshConfig = meshConfig,
 				meshCache = meshCache,
+				neutralScaffold = neutralScaffold,
 			)
 			builtDeformPaths.addAll(parts.mouthPaths)
 			val override = config.layerOverrides[layer.source.id.raw]
@@ -2280,10 +2286,11 @@ object RigBuilder {
 		config: PipelineConfig,
 		meshConfig: PipelineConfig,
 		meshCache: PreviewMeshCache?,
+        neutralScaffold: Boolean = false,
 	): LayerMeshParts {
 		val build = {
 			RigBuildProfile.stage("mesh: layer mesh + keyforms (built)") {
-				buildDrawableMesh(layer, rigLayer, context, parentId, parentFrame, headSpace, config, meshCache)
+				buildDrawableMesh(layer, rigLayer, context, parentId, parentFrame, headSpace, config, meshCache, neutralScaffold)
 			}
 		}
 		val stages = stagesOf(meshCache) ?: return build()
@@ -2303,7 +2310,7 @@ object RigBuilder {
 			matchingEyeWhiteBounds(rigLayer, context.eyeWhiteLayers),
 			MeshResolution.unitScale(config, context.analysis.source), meshConfigFor(rigLayer, meshConfig), config.meshOverrides[layer.source.id.raw],
 			io.github.psd2live.i18n.I18n.currentLanguage.tag)
-		return stages.get(RigStageCache.MESH, 1024, key, build)
+		return stages.get(RigStageCache.MESH, 1024, key to neutralScaffold, build)
 	}
 
     private fun meshConfigFor(layer: ClassifiedLayer, config: PipelineConfig): PipelineConfig {
@@ -2407,6 +2414,7 @@ object RigBuilder {
 		headSpace: HeadCoordinateSpace?,
 		config: PipelineConfig,
 		meshCache: PreviewMeshCache?,
+        neutralScaffold: Boolean = false,
 	): LayerMeshParts {
 		val originalMeshData = buildGridMesh(
 			layer,
@@ -2446,7 +2454,7 @@ object RigBuilder {
 				mouthPaths,
 				context.fittedEyes(config),
 				context.fittedBrows(config),
-				context.fittedMouth(config),
+				context.fittedMouth(config), neutralScaffold,
 			)
 		}
 		return LayerMeshParts(
@@ -2959,9 +2967,24 @@ object RigBuilder {
 		}
 
 		if (config.rigEdits.skeleton?.enabled != true) {
-			val armSwing = io.github.psd2live.core.recipe.RigModules.let { it.builds(it.BODY_ARMS, config, io.github.psd2live.core.recipe.RecipeSubject.of(analysis)) }
-			deformers += armHangWarps(analysis, stance, rigLayerById, deformers, pairedParentByLayerId, pairFrames, bodyPartId, armSwing) { layer ->
-				defaultParentAndFrame(layer, faceRig, analysis.anchors, character, head, faceFrame, frontHair, backHair, false, stance.legsFrame, bodyFrame)
+			fun parent(layer: ClassifiedLayer) = defaultParentAndFrame(layer, faceRig, analysis.anchors, character, head, faceFrame,
+				frontHair, backHair, false, stance.legsFrame, bodyFrame)
+			if (neutralScaffold) {
+				val layers = analysis.layers.filter { it.semantic.tag == SemanticTag.HANDWEAR && it.semantic.side != Side.NONE && it.opaquePixels > 0 }
+					.map { layer ->
+						val (id, frame) = pairedParentByLayerId[layer.source.id.raw] ?: parent(layer)
+						ScaffoldArms.Layer(layer.source.id.raw, layer.source.name, layer.semantic.side,
+							rigLayerById.getValue(layer.source.id.raw).bounds, ScaffoldArms.Parent(id, frame))
+					}
+				val available = buildDeformerWorlds(deformers, { 0f }, { 0f }).keys
+				for (arm in ScaffoldArms.build(layers, available, bodyPartId, { tr("model.deformer.armHang", it) })) {
+					deformers += arm.warp
+					pairFrames[arm.warp.id.raw] = arm.bounds
+					for (id in arm.layerIds) pairedParentByLayerId[id] = arm.warp.id to arm.bounds
+				}
+			} else {
+				val armSwing = io.github.psd2live.core.recipe.RigModules.let { it.builds(it.BODY_ARMS, config, io.github.psd2live.core.recipe.RecipeSubject.of(analysis)) }
+				deformers += armHangWarps(analysis, stance, rigLayerById, deformers, pairedParentByLayerId, pairFrames, bodyPartId, armSwing, ::parent)
 			}
 		}
 
@@ -3445,6 +3468,7 @@ object RigBuilder {
 		eyes: io.github.psd2live.core.fit.FittedEyes? = null,
 		brows: Map<Side, io.github.psd2live.core.fit.BrowRig> = emptyMap(),
 		mouth: io.github.psd2live.core.fit.FittedMouth? = null,
+        neutralOnly: Boolean = false,
 	): KeyformGrid<MeshDeltaForm> {
 		val tag = layer.semantic.tag
 		mouth?.rig?.takeIf { mouth.covers(layer) }?.let { rig ->
@@ -3460,7 +3484,7 @@ object RigBuilder {
 				?: eyes?.rigs?.get(layer.semantic.side)?.let { eye ->
 					io.github.psd2live.core.fit.EyeModules.lidGrid(io.github.psd2live.core.fit.EyeModules.meshOf(tag, layer.semantic.role)!!,
 						layer.semantic.side, data.rigPositions, parentFrame, eye, eyes.options, layer.source.id.raw)
-				} ?: eyeClosureGrid(layer, data, parentFrame, faceRig, eyeWhiteBounds, config.rigTuning)
+				} ?: eyeClosureGrid(layer, data, parentFrame, faceRig, eyeWhiteBounds, config.rigTuning, neutralOnly)
 			SemanticTag.EYE_CLOSE -> eyes?.rigs?.get(layer.semantic.side)?.let { eye ->
 				io.github.psd2live.core.fit.EyeModules.closedLineGrid(layer.semantic.side, data.rigPositions, parentFrame, eye, eyes.options)
 			} ?: zeroMeshGrid(data.mesh.positions.size)
@@ -3470,13 +3494,13 @@ object RigBuilder {
 				io.github.psd2live.core.fit.EyeModules.irisGrid(layer.semantic.side, data.rigPositions, parentFrame, rigBounds(data.rigPositions), eye, eyes.options) { x, y, v ->
 					irisJellyPoint(x, y, layer.centroidX, layer.centroidY, v, config.rigTuning)
 				}
-			} ?: irisJellyGrid(layer, data, parentFrame, config.rigTuning)
+			} ?: irisJellyGrid(layer, data, parentFrame, config.rigTuning, neutralOnly)
 			SemanticTag.EYEBROW -> brows[layer.semantic.side]?.takeIf { layer.semantic.role == null }?.let { brow ->
 				val left = layer.semantic.side == Side.LEFT
 				brow.grid(data.rigPositions, parentFrame, if (left) StandardParameters.BROW_L_Y else StandardParameters.BROW_R_Y,
 					ParameterId(if (left) "ParamBrowLAngle" else "ParamBrowRAngle"))
-			} ?: eyebrowGrid(layer, data, parentFrame, config.rigTuning)
-			SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN -> mouthWholeGrid(data, parentFrame, mouthAperture ?: layer.bounds, config, mouthPaths)
+			} ?: eyebrowGrid(layer, data, parentFrame, config.rigTuning, neutralOnly)
+			SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN -> mouthWholeGrid(data, parentFrame, mouthAperture ?: layer.bounds, config, mouthPaths, neutralOnly)
 			SemanticTag.MOUTH_CLOSE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE ->
 				zeroMeshGrid(data.mesh.positions.size)
 			else -> zeroMeshGrid(data.mesh.positions.size)
@@ -3814,6 +3838,7 @@ object RigBuilder {
 		faceRig: NinePoseFaceRig,
 		eyeWhiteBounds: List<Bounds>,
 		tuning: RigTuning,
+        neutralOnly: Boolean = false,
 	): KeyformGrid<MeshDeltaForm> {
 		val parameter = if (layer.semantic.side == Side.LEFT) StandardParameters.EYE_L_OPEN else StandardParameters.EYE_R_OPEN
 		// Column sampling is defined in the source raster's canvas X axis.  Once the head has been
@@ -3821,9 +3846,10 @@ object RigBuilder {
 		val eyelashCenterline = if (layer.semantic.tag == SemanticTag.EYELASH && faceRig.initialAngleZ == 0f) {
 			eyelashCenterline(layer)
 		} else null
+		val openKeys = if (neutralOnly) floatArrayOf(1f) else floatArrayOf(0f, 1f)
 		val axes = if (layer.semantic.side == Side.NONE) {
-			listOf(axis(StandardParameters.EYE_L_OPEN, 0f, 1f), axis(StandardParameters.EYE_R_OPEN, 0f, 1f))
-		} else listOf(axis(parameter, 0f, 1f))
+			listOf(axis(StandardParameters.EYE_L_OPEN, *openKeys), axis(StandardParameters.EYE_R_OPEN, *openKeys))
+		} else listOf(axis(parameter, *openKeys))
 		return grid(axes) { values ->
 			val delta = FloatArray(data.mesh.positions.size)
 			for (vertex in data.mesh.positions.indices step 2) {
@@ -3946,9 +3972,9 @@ object RigBuilder {
 		return listOfNotNull(nearestLayer(layer, candidates)?.bounds)
 	}
 
-	private fun eyebrowGrid(layer: ClassifiedLayer, data: MeshData, frame: Bounds, tuning: RigTuning): KeyformGrid<MeshDeltaForm> {
+	private fun eyebrowGrid(layer: ClassifiedLayer, data: MeshData, frame: Bounds, tuning: RigTuning, neutralOnly: Boolean = false): KeyformGrid<MeshDeltaForm> {
 		val parameter = if (layer.semantic.side == Side.LEFT) StandardParameters.BROW_L_Y else StandardParameters.BROW_R_Y
-		return oneDimGrid(parameter, floatArrayOf(-1f, 0f, 1f)) { value ->
+		return oneDimGrid(parameter, if (neutralOnly) floatArrayOf(0f) else floatArrayOf(-1f, 0f, 1f)) { value ->
 			val delta = FloatArray(data.mesh.positions.size)
 			val dy = -value * layer.bounds.height * tuning.browLift / 100f / frame.height
 			for (index in 1 until delta.size step 2) delta[index] = dy
@@ -3956,8 +3982,8 @@ object RigBuilder {
 		}
 	}
 
-	private fun irisJellyGrid(layer: ClassifiedLayer, data: MeshData, frame: Bounds, tuning: RigTuning): KeyformGrid<MeshDeltaForm> =
-		oneDimGrid(StandardParameters.EYE_BALL_FORM, floatArrayOf(-1f, 0f, 1f)) { value ->
+	private fun irisJellyGrid(layer: ClassifiedLayer, data: MeshData, frame: Bounds, tuning: RigTuning, neutralOnly: Boolean = false): KeyformGrid<MeshDeltaForm> =
+		oneDimGrid(StandardParameters.EYE_BALL_FORM, if (neutralOnly) floatArrayOf(0f) else floatArrayOf(-1f, 0f, 1f)) { value ->
 			val delta = FloatArray(data.mesh.positions.size)
 			for (index in data.rigPositions.indices step 2) {
 				val sourceX = data.rigPositions[index]
@@ -4001,9 +4027,10 @@ object RigBuilder {
         aperture: Bounds,
         config: PipelineConfig,
         mouthPaths: List<DeformPath> = emptyList(),
+        neutralOnly: Boolean = false,
     ): KeyformGrid<MeshDeltaForm> =
 		grid(
-			mouthAxes(),
+			if (neutralOnly) listOf(axis(StandardParameters.MOUTH_FORM, 0f), axis(StandardParameters.MOUTH_OPEN, 1f)) else mouthAxes(),
 		) { values ->
 			val delta = FloatArray(data.mesh.positions.size)
 			for (index in data.rigPositions.indices step 2) {

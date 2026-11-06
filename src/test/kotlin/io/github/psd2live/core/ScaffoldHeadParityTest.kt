@@ -12,6 +12,12 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class ScaffoldHeadParityTest {
+    @Test fun mouthArtworkKeepsTheOpenDefaultProjection() {
+        val document = Characters.mouthed()
+        val config = RigModifierPipeline.ordinaryConfig(document.rawConfig()).copy(generateDeformers = true)
+        compare(CharacterAnalyzer.analyze(document.source, config), config)
+    }
+
     @Test fun browsAndHairMatchTheLegacyNeutralProjection() {
         val document = Characters.browed()
         val config = RigModifierPipeline.ordinaryConfig(document.rawConfig()).copy(
