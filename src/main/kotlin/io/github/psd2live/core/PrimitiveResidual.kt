@@ -72,15 +72,8 @@ internal object PrimitiveResidual {
 		axes.indices.associate { axes[it].parameterId to axes[it].keys[coordinate[it]] }
 
 	/** [values] (x/y per vertex) on the vertices [sources] derive from them. */
-	fun transfer(values: FloatArray, sources: List<VertexSource>): FloatArray = FloatArray(sources.size * 2) { index ->
-		val component = index % 2
-		when (val source = sources[index / 2]) {
-			is VertexSource.FromOld -> values[source.oldIndex * 2 + component]
-			is VertexSource.BarycentricOf -> values[source.oldA * 2 + component] * source.wa +
-				values[source.oldB * 2 + component] * source.wb + values[source.oldC * 2 + component] * source.wc
-			else -> error("Unsupported art primitive vertex source")
-		}
-	}
+	fun transfer(values: FloatArray, sources: List<VertexSource>): FloatArray =
+		io.github.psd2live.algorithms.binding.BindingVertices.transfer(values, sources)
 
 	/** Vertex group weights on [sources], clamped after interpolation near tolerated triangle boundaries. */
 	fun transferScalars(values: FloatArray, sources: List<VertexSource>): FloatArray = FloatArray(sources.size) { index ->

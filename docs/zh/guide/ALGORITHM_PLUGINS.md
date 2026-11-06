@@ -182,3 +182,5 @@ API 1.2.0 增加可选的 `ContextualModifierAlgorithmPlugin`，接收独立的 
 `SeeThroughBinding` 接收已捕获的覆盖候选、设置、命名函数和 ID 分配函数，独立计算眉眼副本、刘海反向遮罩、绘制顺序与透明度继承。预览刷新仅接收前后模型和副本／窗口映射，不读取工程或界面状态。应用层 `SeeThroughLayers` 保留源图像素覆盖识别及配置／本地化适配；类型与调用接口保持兼容。两类修改器均由 `SeeThroughAlgorithm` 的上下文入口求值；`schema: "see-through/1"` 包含覆盖候选 `candidates`、眼／眉类别 `eyes`、前置透发实例 `earlier_owners`、绘制间隔 `draw_order_step`、反向遮罩能力 `inverted_masks` 和含单个 `{meshName}` 的本地化名称模板 `name_pattern`。像素覆盖候选由宿主按捕获源图计算并共享；插件按当前模型顺序过滤候选与刘海，保留生成顺序。配置 `values.opacity` 保持原有 0–100 范围。`pluginEyeSeeThrough`／`pluginBrowSeeThrough` Gradle 任务生成 `algorithms/binding/build/plugin-eye`／`plugin-brow`，分别保留 `eye.see-through`／`brow.see-through` 别名，入口后缀为 `/visibility`；包可安装、恢复并由常驻工作进程执行，当前内置版本直接进程内调用。
 
 `ModelIdRemap` 是 GPL 绑定模块公开的模型引用重写工具，覆盖关键形轴、混合形限制、父级／部件、遮罩、Glue、参数树与链接、路径、顶点组及绘制树。它只应用调用方提供的映射，不分配新身份或绕过宿主冲突检查；宿主仍负责实例派生 ID 与写入权限。与映射无关的模型分区及网格保留原引用，避免破坏只读输入缓存。应用层 `RigIdRemap` 是兼容别名。
+
+绑定模块提供 `GeometryResidual`、`MeshBlendResidual` 和 `WarpBlendResidual`，分别处理关键形几何、网格混合形及变形器混合形在作者坐标系中的三方合并；`BindingVertices` 按已捕获的顶点索引／重心对应传递 x/y 值。输入是只读模型与顶点对应，循环接受取消检查，输出为几何网格／通道或混合形。它们不读取源工程、历史或界面，也不提交结果；实例覆盖归属、冲突判定和原子提交仍由宿主负责。应用中的旧名称保留为兼容别名。
