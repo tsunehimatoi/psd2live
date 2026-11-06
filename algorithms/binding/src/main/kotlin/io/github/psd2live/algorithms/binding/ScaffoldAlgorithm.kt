@@ -37,13 +37,26 @@ class ScaffoldAlgorithm : ContextualModifierAlgorithmPlugin {
 
     companion object {
         /** Capture immutable binary model resources once; no live source or application callbacks cross the boundary. */
-        fun capture(template: PuppetModel, materials: PuppetModel, canonicalTargets: Map<String, String>): ModifierAlgorithmContext =
-            ModifierAlgorithmContext(buildJsonObject {
+        fun capture(template: PuppetModel, materials: PuppetModel, canonicalTargets: Map<String, String>): ModifierAlgorithmContext {
+            val sourceIds = canonicalTargets.values.toHashSet()
+            // The executor reads source hierarchy and target rest geometry, not texture inventory,
+            // editor metadata or source appearance. Keep full part order for materialized aliases.
+            val frames = PuppetModel(template.parameters, template.parts, template.deformers,
+                template.drawables.filter { it.id.raw in sourceIds }.map {
+                    Drawable(it.id, it.id.raw, it.parentDeformerId, BlendMode.Normal, emptyList(), it.mesh, it.geometryGrid)
+                }, template.rootChildren, template.rootPartId)
+            // Ordinary material is used only for exact position/UV/topology comparisons.
+            val original = PuppetModel(emptyList(), emptyList(), emptyList(),
+                materials.drawables.filter { it.id.raw in canonicalTargets }.map {
+                    Drawable(it.id, it.id.raw, null, BlendMode.Normal, emptyList(), it.mesh, null)
+                }, emptyList(), null)
+            return ModifierAlgorithmContext(buildJsonObject {
                 put("schema", "scaffold/1")
                 put("canonical_targets", JsonObject(canonicalTargets.mapValues { JsonPrimitive(it.value) }))
             }, resources = mapOf(
-                "template" to ModifierAlgorithmResource(RigIrBinary.encode(PuppetIr.toIr(template))),
-                "materials" to ModifierAlgorithmResource(RigIrBinary.encode(PuppetIr.toIr(materials))),
+                "template" to ModifierAlgorithmResource(RigIrBinary.encode(PuppetIr.toIr(frames))),
+                "materials" to ModifierAlgorithmResource(RigIrBinary.encode(PuppetIr.toIr(original))),
             ))
+        }
     }
 }

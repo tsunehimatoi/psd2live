@@ -1,6 +1,12 @@
 package example
 
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
+import io.github.psd2live.algorithms.binding.ScaffoldAlgorithm
+import io.github.psd2live.core.modifier.ModifierAlgorithmContext
+import io.github.psd2live.core.modifier.ModifierAlgorithmResource
+import io.github.psd2live.format.compile.RigIrBinary
+import io.github.psd2live.targets.cubism.PuppetIr
+import kotlinx.serialization.json.*
 import io.github.psd2live.core.modifier.ModifierTarget
 import io.github.psd2live.core.modifier.RigModifierInstance
 import org.umamo.runtime.model.*
@@ -37,6 +43,26 @@ class ScaffoldBindingTest {
             assertFailsWith<IllegalArgumentException> { ScaffoldBinding.apply(output, instance, source) {} }
             assertFailsWith<InterruptedException> { ScaffoldBinding.apply(material, instance, source) { throw InterruptedException() } }
             assertTrue(material.deformers.isEmpty())
+        }
+        val rich = material.copy(drawables = material.drawables.map { it.copy(userData = "unused".repeat(500)) })
+        val targets = mapOf("a" to "a")
+        val slim = ScaffoldAlgorithm.capture(template, rich, targets)
+        val full = ModifierAlgorithmContext(slim.values, mapOf(
+            "template" to ModifierAlgorithmResource(RigIrBinary.encode(PuppetIr.toIr(template))),
+            "materials" to ModifierAlgorithmResource(RigIrBinary.encode(PuppetIr.toIr(rich))),
+        ))
+        assertTrue(slim.resources.values.sumOf { it.size } < full.resources.values.sumOf { it.size })
+        assertEquals(listOf("a"), RigIrBinary.decode(slim.resources.getValue("materials").read()).meshes.map { it.id })
+        val algorithm = ScaffoldAlgorithm()
+        for (version in 1..2) {
+            val instance = RigModifierInstance("structure", "rig.scaffold", version, listOf(ModifierTarget("mesh", "a")))
+            val input = PuppetIr.toIr(material)
+            assertEquals(algorithm.evaluate(input, instance, full) {}, algorithm.evaluate(input, instance, slim) {})
+            // Force the authored-coordinate transport path instead of the untouched-material shortcut.
+            val authored = PuppetIr.toIr(material.copy(drawables = material.drawables.map { drawable ->
+                drawable.copy(mesh = drawable.mesh!!.let { DrawableMesh(it.positions.map { v -> v + .1f }.toFloatArray(), it.uvs, it.indices) })
+            }))
+            assertEquals(algorithm.evaluate(authored, instance, full) {}, algorithm.evaluate(authored, instance, slim) {})
         }
     }
 }
