@@ -276,3 +276,11 @@ API 1.2.0 增加可选的 `ContextualModifierAlgorithmPlugin`，接收独立的 
 `ModifierEvaluationInput.upstream`／`providers(capability)` 将这些输入纳入读取集合和缓存失效判断。普通源素材 `values` 的 schema 不变，上游快照单独传递。外部算法须在清单声明 `contextVersion: 2` 才会收到上游输入，旧清单默认 1。上下文无上游数据时继续编码 v1；有上游数据时编码 v2，在原 `version`、`values`、`resources` 之外增加 `upstream` 资源引用，元数据上限 1 MiB。v2 接收器也读取 v1，旧包不被强制发送 v2。
 
 GUI/MCP 共用的插件描述新增 `context_version` 和 `provides`，结果 schema 同步声明这两个字段。现已验证能力别名解析、上游配置变化使缓存失效、应用前缀保持能力、包身份保存恢复及 v1/v2 上下文编解码。外部读取集合的回传、父空间坐标服务和完整新算法迁移仍未完成。
+
+### 父空间坐标服务
+
+GPL 绑定模块的 `BindingCoordinates.forMesh(input, meshId, pose)` 从 `ModifierEvaluationInput` 捕获目标网格、完整祖先链以及祖先实际引用的参数，不转换其他网格或无关变形器。`pose` 为显式参数值，未给出的值采用参数默认值；不会读取当前播放帧。父级循环、缺失父级／参数和无效坐标会失败。
+
+`toCanvas`／`fromCanvas` 的画布坐标为像素、Y 向下，服务内部处理运行时世界坐标的 Y 反向，插件不能再自行反转一次。逆变换使用现有运行时求解器，可传局部种子；结果必须重新投影到目标点的 0.05 像素以内，否则拒绝。点数组必须是有限 XY 对，输入不修改，转换边界检查取消。
+
+`BindingCoordinates.reparent` 复用 `BindingFrames.carriedToParent`，返回结构化网格变更，运输默认位置、关键形及混合形，保留原有非几何属性。它不会自动提交层级或工程编辑，也不会代替依赖验证。已通过嵌套非线性网格／旋转坐标、Y 方向、实际读取范围和重新挂接后的默认姿态／关键形位置检查。该服务是共享框架能力，不计作某个剩余修改器的完整迁移。
