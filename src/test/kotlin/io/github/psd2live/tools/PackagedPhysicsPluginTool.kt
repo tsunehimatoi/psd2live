@@ -196,7 +196,25 @@ class PackagedPhysicsPluginTool {
             val registry = RigModifierRegistry(prerequisites + listOf(definition) + ModifierPluginCatalog.definitions(store, listOf(definition)))
             assertEquals(entry.reference, registry.definition(instance).pluginReference)
             assertSame(definition, registry.definition(instance.copy(plugin = BuiltinModifierPlugins.reference(type, definition.version))))
-            repeat(2) {
+            if (type == "physics") {
+                val profile = io.github.psd2live.core.RigBuildProfile
+                val recording = profile.recording
+                profile.recording = true
+                fun count(key: String) = profile.snapshot()[key]?.second ?: 0L
+                val evaluations = count("plugin worker evaluations")
+                val hits = count("plugin read cache hits")
+                try {
+                    repeat(2) { assertEquals(expected, evaluate(registry.definition(instance), input, instance)) }
+                    assertEquals(evaluations + 1, count("plugin worker evaluations"))
+                    assertEquals(hits + 1, count("plugin read cache hits"))
+                    val unrelated = input.copy(parameters = input.parameters + Parameter("unrelated", "Unrelated", 0f, 1f, 0f))
+                    assertEquals(expected.copy(parameters = unrelated.parameters), evaluate(registry.definition(instance), unrelated, instance))
+                    assertEquals(hits + 2, count("plugin read cache hits"))
+                    val changed = input.copy(parameters = input.parameters.map { if (it.id == "input") it.copy(max = 2f) else it })
+                    assertEquals(expected.copy(parameters = changed.parameters), evaluate(registry.definition(instance), changed, instance))
+                    assertEquals(evaluations + 2, count("plugin worker evaluations"))
+                } finally { profile.recording = recording }
+            } else repeat(2) {
                 assertEquals(expected, evaluate(registry.definition(instance), input, instance))
             }
             if (type == "expression.toggles" || type.endsWith(".see-through") || type == "face.skin-clip" || type == "rig.scaffold") {

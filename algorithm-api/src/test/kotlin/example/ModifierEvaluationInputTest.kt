@@ -43,4 +43,14 @@ class ModifierEvaluationInputTest {
             ModifierEvaluationInput(rig.copy(deformers = listOf(parent.copy(parent = "child"), child))).parentsOfMesh("mesh")
         }
     }
+    @Test fun transportedReadKeysCaptureHostValuesAndRejectInvalidQueries() {
+        val keys = listOf(ModifierReadKey("parameter", "p"), ModifierReadKey("mesh", "absent"))
+        val reads = ModifierReadSet.capture(rig, ModifierAlgorithmContext.Empty, keys)
+        assertFalse(reads.matches(rig.copy(meshes = rig.meshes + mesh.copy(id = "absent"))))
+        assertTrue(reads.matches(rig.copy(parts = listOf(Part("unread", "Unseen", emptyList())))))
+        assertFailsWith<IllegalArgumentException> { ModifierReadSet.capture(rig, ModifierAlgorithmContext.Empty, keys + keys.first()) }
+        assertFailsWith<IllegalStateException> {
+            ModifierReadSet.capture(rig, ModifierAlgorithmContext.Empty, listOf(ModifierReadKey("unknown")))
+        }
+    }
 }

@@ -54,7 +54,7 @@ Use the existing `modifier_plan`, `modifier_add`, and `modifier_update` operatio
 
 ## Authoring and protocol
 
-The JVM contract lives in the independent `:algorithm-api` module used by the application. It depends only on the neutral `:format-model` module and JSON serialization, not the application, Umamo, Compose, projects or history. `./gradlew :algorithm-api:build` produces the version `1.6.0` API and sources JARs.
+The JVM contract lives in the independent `:algorithm-api` module used by the application. It depends only on the neutral `:format-model` module and JSON serialization, not the application, Umamo, Compose, projects or history. `./gradlew :algorithm-api:build` produces the version `1.7.0` API and sources JARs.
 
 `ModifierAlgorithmPlugin.evaluate(input, instance, checkpoint)` receives the upstream `RigIR`, an immutable `RigModifierInstance` and a cancellation checkpoint, and returns a candidate `RigIR`. Do not mutate input arrays; invoke the checkpoint in long loops and let failures propagate. Generate identities with `instance.outputId(localName)`, which preserves recorded aliases. The host owns output validation, dependencies, overrides, CAS and history. Targets, pinned package references, manifests, version ranges and dependency declarations are public in the same module. Existing JSON fields, serialized type names and object ID encoding are unchanged.
 
@@ -273,3 +273,13 @@ The GPL binding module provides `BindingCoordinates.forMesh(input, meshId, pose)
 `toCanvas`/`fromCanvas` use pixel coordinates with Y pointing down. The service handles the runtime world's Y negation internally; plugins must not negate it again. Inversion uses the existing runtime solver with an optional local seed and rejects results that cannot reproject within 0.05 pixels. Arrays must contain finite XY pairs, inputs remain unchanged, and cancellation is checked at conversion boundaries.
 
 `BindingCoordinates.reparent` reuses `BindingFrames.carriedToParent` and returns structured mesh changes carrying rest positions, keyforms and blend shapes while preserving non-geometric properties. It does not publish hierarchy/project edits or replace dependency validation. Targeted verification covers nested nonlinear warp/rotation frames, Y direction, observed read scope and rest/keyform canvas positions after reparenting. This shared service does not count as a completed modifier migration.
+
+### External read tracking and reuse
+
+When the host advertises `input_reads_v1`, JVM workers implementing `ReadingModifierAlgorithmPlugin` can return `reads` alongside `changes`. Each entry is `{section, id?}`: an omitted ID observes a complete field, while an ID observes one object, including absence. At most 10000 unique valid observations are accepted. Older hosts do not receive extra fields; older plugins retain object or command results.
+
+The host reconstructs observed values from the actual transmitted input projection and context, never from worker-supplied previous values. Successful results are cached per package worker and instance, with a maximum of 128 entries. Matching requires the algorithm descriptor, full instance configuration, context and observed values. Structured changes are reapplied to the current complete model; failed write preconditions trigger reevaluation. Reuse still checks output identities, references, write scope and model validity, skipping only input binary serialization and the worker call.
+
+A cache hit does not advance unsent input revisions. The next real request remains relative to the last transmitted state. Exited, disabled or uninstalled workers cannot bypass availability checks through caching; failures and cancellation discard the worker. Dedicated checks use `plugin worker evaluations` and `plugin read cache hits` counters.
+
+The actual physics package passed checks showing no additional worker calls for repeated input or added unread parameters, and reevaluation after a read parameter changes, with equivalent final models. Reopening, uninstall and reinstall remain valid. This does not establish the complete-generation performance target or read-protocol support in the other five languages.

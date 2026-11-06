@@ -28,8 +28,15 @@ object AlgorithmWorker {
                 val context = AlgorithmContexts.decode(request["context"], resources)
                 val response = if (algorithm is ChangingModifierAlgorithmPlugin &&
                     request.getValue("capabilities").jsonArray.any { it.jsonPrimitive.content == AlgorithmChanges.CAPABILITY }) {
-                    val changes = algorithm.changes(input, instance, context, checkpoint)
-                    buildJsonObject { put("changes", AlgorithmChanges.encode(changes) { AlgorithmObjects.write(resources, it) }) }
+                    val view = if (algorithm is ReadingModifierAlgorithmPlugin) ModifierEvaluationInput(input, context) else null
+                    val changes = if (view != null) (algorithm as ReadingModifierAlgorithmPlugin).changes(view, instance, checkpoint)
+                        else algorithm.changes(input, instance, context, checkpoint)
+                    buildJsonObject {
+                        put("changes", AlgorithmChanges.encode(changes) { AlgorithmObjects.write(resources, it) })
+                        if (view != null && request.getValue("capabilities").jsonArray.any { it.jsonPrimitive.content == "input_reads_v1" }) {
+                            put("reads", Json.encodeToJsonElement(view.reads().keys.sortedWith(compareBy({ it.section }, { it.id ?: "" }))))
+                        }
+                    }
                 } else {
                     val output = if (algorithm is ContextualModifierAlgorithmPlugin)
                         algorithm.evaluate(input, instance, context, checkpoint)

@@ -54,7 +54,7 @@ GUI 与 MCP 使用相同管理服务。`plugin_list` 返回包身份、启用状
 
 ## 编写插件
 
-JVM 契约已拆为独立的 `:algorithm-api` 模块，应用和插件共用同一份声明。它只依赖中立 `:format-model` 与 JSON 序列化库，不依赖应用、Umamo、Compose、工程或历史。`./gradlew :algorithm-api:build` 生成版本为 `1.6.0` 的 API JAR 与源码 JAR。
+JVM 契约已拆为独立的 `:algorithm-api` 模块，应用和插件共用同一份声明。它只依赖中立 `:format-model` 与 JSON 序列化库，不依赖应用、Umamo、Compose、工程或历史。`./gradlew :algorithm-api:build` 生成版本为 `1.7.0` 的 API JAR 与源码 JAR。
 
 `ModifierAlgorithmPlugin.evaluate(input, instance, checkpoint)` 接收上游 `RigIR`、不可变 `RigModifierInstance` 和取消检查函数，返回候选 `RigIR`。实现不能原地修改输入数组；长循环需调用 `checkpoint`，异常原样交回宿主。对象身份使用 `instance.outputId(localName)`，兼容已有别名；宿主仍负责输出验证、依赖、覆盖、CAS 和历史提交。API 同时公开目标引用、固定包引用、清单、版本范围与依赖声明；原 JSON 字段、序列化类型名称和对象 ID 编码保持不变。
 
@@ -284,3 +284,13 @@ GPL 绑定模块的 `BindingCoordinates.forMesh(input, meshId, pose)` 从 `Modif
 `toCanvas`／`fromCanvas` 的画布坐标为像素、Y 向下，服务内部处理运行时世界坐标的 Y 反向，插件不能再自行反转一次。逆变换使用现有运行时求解器，可传局部种子；结果必须重新投影到目标点的 0.05 像素以内，否则拒绝。点数组必须是有限 XY 对，输入不修改，转换边界检查取消。
 
 `BindingCoordinates.reparent` 复用 `BindingFrames.carriedToParent`，返回结构化网格变更，运输默认位置、关键形及混合形，保留原有非几何属性。它不会自动提交层级或工程编辑，也不会代替依赖验证。已通过嵌套非线性网格／旋转坐标、Y 方向、实际读取范围和重新挂接后的默认姿态／关键形位置检查。该服务是共享框架能力，不计作某个剩余修改器的完整迁移。
+
+### 外部读取跟踪与复用
+
+宿主声明 `input_reads_v1` 后，实现 `ReadingModifierAlgorithmPlugin` 的 JVM 工作进程可随 `changes` 返回 `reads`。每项为 `{section, id?}`；省略 ID 表示读取整个字段，有 ID 表示读取指定对象，包括不存在对象的观察。读取集合上限 10000，重复／无效查询被拒绝。旧宿主不收到额外字段，旧插件仍可返回 `objects` 或命令。
+
+宿主使用实际发送的输入投影和上下文重建观察值，不接受插件提供的旧值。成功结果按包工作进程和实例保存，最多 128 项；匹配算法描述、完整实例配置、上下文和读取值后，尝试将结构化变更应用于当前完整模型。写入前置条件不满足时重新求值。复用仍执行输出身份、引用、范围和模型合法性检查；只跳过输入二进制序列化与工作进程调用。
+
+缓存不会推进尚未发送的输入修订，下一次实际请求仍相对于上次发送状态生成增量。工作进程退出、停用或卸载时不能靠缓存绕过可用性检查；异常和取消会丢弃该工作进程。`plugin worker evaluations` 和 `plugin read cache hits` 计数用于专用验收。
+
+真实物理插件包已验证：重复输入和增加未读取参数不增加工作进程求值次数，修改读取参数后重新求值，最终模型一致；重开、卸载与重装流程保持有效。此结果不是完整生成的性能达标证明，也不代表其他五种语言均已接入新读取协议。

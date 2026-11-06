@@ -1,13 +1,24 @@
 package io.github.psd2live.core.modifier
 
 import io.github.psd2live.format.model.*
+import kotlinx.serialization.Serializable
 
 /** One observation, including absent objects and collection membership/order. */
+@Serializable
 data class ModifierReadKey(val section: String, val id: String? = null)
 
 /** Values observed by a successful invocation. Matching never assumes unobserved objects are unchanged. */
 class ModifierReadSet internal constructor(private val values: Map<ModifierReadKey, Any?>) {
     val keys: Set<ModifierReadKey> get() = values.keys.toSet()
+    companion object {
+        /** Reconstruct observations against the exact input sent to a worker, never worker-supplied old values. */
+        fun capture(model: RigIR, context: ModifierAlgorithmContext, keys: List<ModifierReadKey>): ModifierReadSet {
+            require(keys.size <= 10000 && keys.distinct().size == keys.size) { "Too many or duplicate read observations" }
+            require(keys.all { it.section.isNotBlank() && (it.id == null || it.id.isNotBlank()) }) { "Invalid read observation" }
+            val input = ModifierEvaluationInput(model, context)
+            return ModifierReadSet(keys.associateWith(input::lookup))
+        }
+    }
     fun matches(model: RigIR, context: ModifierAlgorithmContext = ModifierAlgorithmContext.Empty): Boolean {
         val input = ModifierEvaluationInput(model, context)
         return values.all { (key, value) -> input.lookup(key) == value }

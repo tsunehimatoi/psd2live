@@ -3,7 +3,7 @@ plugins {
     kotlin("jvm")
 }
 group = "io.github.psd2live"
-version = "1.0.2"
+version = "1.0.3"
 kotlin { jvmToolchain(21) }
 java { withSourcesJar() }
 dependencies {

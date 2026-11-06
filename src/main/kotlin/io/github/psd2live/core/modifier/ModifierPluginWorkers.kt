@@ -44,7 +44,14 @@ internal object ModifierPluginWorkers {
         }
     }
 
+    private data class ReadResult(val algorithm: ModifierPluginAlgorithm, val instance: RigModifierInstance,
+                                  val context: ModifierAlgorithmContext, val reads: ModifierReadSet,
+                                  val changes: ModifierModelChanges)
+
     private class Worker(val entry: InstalledModifierPlugin, val store: ModifierPluginStore) : AutoCloseable {
+        private val readResults = object : LinkedHashMap<String, ReadResult>(16, .75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ReadResult>?): Boolean = size > 128
+        }
         private val resources = Files.createTempDirectory("psd2live-plugin-")
         private val command = (entry.manifest.commands[ModifierPluginStore.platform] ?: entry.manifest.commands.getValue("jvm")).mapIndexed { index, value ->
             when {
@@ -90,8 +97,24 @@ internal object ModifierPluginWorkers {
 
         private fun evaluateLocked(algorithm: ModifierPluginAlgorithm, rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit, timeoutMillis: Long, context: ModifierAlgorithmContext, declaredParameters: List<io.github.psd2live.format.model.Parameter>): RigIR {
             check(!closed) { "Algorithm plugin was stopped" }
+            check(process.isAlive) { "Algorithm plugin process exited" }
             checkpoint()
             val input = ModifierInputCache.project(rig, algorithm.reads + algorithm.writes)
+            val cached = readResults[instance.id]?.takeIf {
+                it.algorithm == algorithm && it.instance == instance && it.context == context && it.reads.matches(input, context)
+            }
+            if (cached != null) {
+                cached.changes.requireWrites(algorithm.writes)
+                val output = try { cached.changes.apply(rig, checkpoint) } catch (_: IllegalArgumentException) { null }
+                if (output != null) {
+                    AlgorithmResultValidation.validate(output)
+                    val validated = ModifierPluginOutput.validate(rig, output, instance, algorithm, declaredParameters)
+                    checkpoint()
+                    RigBuildProfile.count("plugin read cache hits")
+                    return validated
+                }
+            }
+            readResults.remove(instance.id)
             val objects = RigBuildProfile.stage("plugin input serialization") { RigIrObjects.split(input) }
             val current = linkedMapOf<String, JsonElement>("frame" to blob(objects.frame))
             objects.deformers.forEachIndexed { index, bytes -> current["deformer:${input.deformers[index].id}"] = blob(bytes) }
@@ -101,7 +124,7 @@ internal object ModifierPluginWorkers {
             val request = buildJsonObject {
                 put("protocol", 1); put("id", requestId); put("method", "evaluate")
                 put("type", algorithm.type); put("version", instance.version); put("instance", instance.id)
-                put("capabilities", JsonArray((ModifierPluginOutput.operations + setOf("rig_objects", "author_context_v1", "author_context_v2", io.github.psd2live.algorithm.worker.AlgorithmChanges.CAPABILITY)).sorted().map(::JsonPrimitive)))
+                put("capabilities", JsonArray((ModifierPluginOutput.operations + setOf("rig_objects", "author_context_v1", "author_context_v2", "input_reads_v1", io.github.psd2live.algorithm.worker.AlgorithmChanges.CAPABILITY)).sorted().map(::JsonPrimitive)))
                 if (context != ModifierAlgorithmContext.Empty) put("context", io.github.psd2live.algorithm.worker.AlgorithmContexts.encode(context, ::blob))
                 put("invocation", Json.encodeToJsonElement(RigModifierInstance.serializer(), instance.copy(type = algorithm.type)))
                 put("dependencies", JsonArray(store.resolution(entry.reference).dependencies.map { reference ->
@@ -128,6 +151,7 @@ internal object ModifierPluginWorkers {
             }
             val task = executor.submit<JsonObject> {
                 val text = request.toString()
+                RigBuildProfile.count("plugin worker evaluations")
                 RigBuildProfile.count("plugin sent bytes", text.toByteArray().size.toLong())
                 writer.write(text); writer.newLine(); writer.flush()
                 val response = StringBuilder()
@@ -144,15 +168,22 @@ internal object ModifierPluginWorkers {
             catch (failure: ExecutionException) { throw failure.cause ?: failure }
             catch (failure: Exception) { task.cancel(true); throw failure }
             checkpoint()
-            require(response.keys.all { it in setOf("protocol", "id", "commands", "objects", "changes", "error") } && response["protocol"]?.jsonPrimitive?.int == 1 && response["id"]?.jsonPrimitive?.long == requestId) { "Invalid plugin response envelope" }
+            require(response.keys.all { it in setOf("protocol", "id", "commands", "objects", "changes", "reads", "error") } && response["protocol"]?.jsonPrimitive?.int == 1 && response["id"]?.jsonPrimitive?.long == requestId) { "Invalid plugin response envelope" }
             response["error"]?.let { error("${entry.manifest.name}: ${it.jsonPrimitive.content}") }
             require(listOf("commands", "objects", "changes").count { it in response } == 1) { "Plugin must return exactly one result format" }
+            require("reads" !in response || "changes" in response) { "Read observations require structured changes" }
+            var readResult: ReadResult? = null
             val output = response["changes"]?.let { value ->
                 val changes = io.github.psd2live.algorithm.worker.AlgorithmChanges.decode(value.jsonObject, resources)
                 changes.requireWrites(algorithm.writes)
+                val reads = response["reads"]?.let { encoded ->
+                    ModifierReadSet.capture(input, context, Json.decodeFromJsonElement<List<ModifierReadKey>>(encoded))
+                }
                 val merged = changes.apply(rig, checkpoint)
                 AlgorithmResultValidation.validate(merged)
-                ModifierPluginOutput.validate(rig, merged, instance, algorithm, declaredParameters)
+                ModifierPluginOutput.validate(rig, merged, instance, algorithm, declaredParameters).also {
+                    if (reads != null) readResult = ReadResult(algorithm, instance, context, reads, changes)
+                }
             } ?: response["objects"]?.let { value ->
                 val delta = value.jsonObject
                 require(delta.keys == setOf("changed", "removed", "mesh_order", "deformer_order")) { "Invalid model object result" }
@@ -168,7 +199,9 @@ internal object ModifierPluginWorkers {
                 require(commands.size <= 10000) { "Too many plugin commands" }
                 ModifierPluginOutput.apply(rig, instance, algorithm, JsonArray(commands.map(::expand)), checkpoint, declaredParameters)
             }
+            checkpoint()
             previous = current
+            readResult?.let { readResults[instance.id] = it }
             return output
         }
 
@@ -177,6 +210,7 @@ internal object ModifierPluginWorkers {
             while (true) {
                 checkpoint()
                 check(!closed) { "Algorithm plugin was stopped" }
+            check(process.isAlive) { "Algorithm plugin process exited" }
                 val remaining = deadline - System.nanoTime()
                 if (remaining <= 0) throw TimeoutException("Algorithm plugin timed out: ${entry.manifest.name}")
                 try { return task.get(minOf(remaining, TimeUnit.MILLISECONDS.toNanos(50)), TimeUnit.NANOSECONDS) }
