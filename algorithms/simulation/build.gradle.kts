@@ -4,7 +4,7 @@ import java.security.MessageDigest
 // GPL simulation adapter using Umamo; the numerical baker remains unchanged.
 plugins { `java-library`; kotlin("jvm") }
 group = "io.github.psd2live.algorithms"
-version = "1.0.10"
+version = "1.0.11"
 kotlin { jvmToolchain(21) }
 java { withSourcesJar() }
 dependencies {
@@ -41,7 +41,7 @@ tasks.register("pluginPackage") {
         jar.copyTo(payload, overwrite = true)
         val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
         directory.resolve("plugin.json").writeText("""
-            {"protocol":1,"id":"builtin.73696d756c6174696f6e.v1","version":"1.0.10","name":"Baked simulation",
+            {"protocol":1,"id":"builtin.73696d756c6174696f6e.v1","version":"1.0.11","name":"Baked simulation",
              "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
              "algorithms":[{"type":"builtin.73696d756c6174696f6e.v1/baked","aliases":["simulation"],"version":1,"name":"Baked simulation","category":"physics",
                "targets":["mesh","deformer"],"reads":["*"],"writes":["*"],"composableKinds":["mesh","hierarchy"],

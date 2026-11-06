@@ -287,7 +287,7 @@ GPL 绑定模块的 `BindingCoordinates.forMesh(input, meshId, pose)` 从 `Modif
 
 ### 外部读取跟踪与复用
 
-宿主声明 `input_reads_v1` 后，实现 `ReadingModifierAlgorithmPlugin` 的 JVM 工作进程可随 `changes` 返回 `reads`。每项为 `{section, id?}`；省略 ID 表示读取整个字段，有 ID 表示读取指定对象，包括不存在对象的观察。读取集合上限 10000，重复／无效查询被拒绝。旧宿主不收到额外字段，旧插件仍可返回 `objects` 或命令。
+宿主声明 `input_reads_v1` 后，实现 `ReadingModifierAlgorithmPlugin` 的 JVM 工作进程可随 `changes` 返回 `reads`。每项为 `{section, id?}`；省略 ID 表示读取整个字段，有 ID 表示读取指定对象，包括不存在对象的观察。读取集合上限 10000，重复／无效查询被拒绝。 API 的 `meshIds` 单独观察网格成员及顺序，不读取其几何和显示通道；跨进程使用 `input_mesh_ids_v1` 能力协商。不支持该能力的宿主仍接收变更结果，但不会收到含此读取键的缓存观察。旧宿主不收到额外字段，旧插件仍可返回 `objects` 或命令。
 
 宿主使用实际发送的输入投影和上下文重建观察值，不接受插件提供的旧值。成功结果按包工作进程和实例保存，最多 128 项；匹配算法描述、完整实例配置、上下文和读取值后，尝试将结构化变更应用于当前完整模型。写入前置条件不满足时重新求值。复用仍执行输出身份、引用、范围和模型合法性检查；只跳过输入二进制序列化与工作进程调用。
 

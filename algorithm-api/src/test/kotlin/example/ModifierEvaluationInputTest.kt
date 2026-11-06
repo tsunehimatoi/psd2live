@@ -32,6 +32,18 @@ class ModifierEvaluationInputTest {
         assertTrue(snapshot.matches(rig.copy(meshes = emptyList())))
     }
 
+    @Test fun orderedMeshIdsObserveMembershipWithoutObservingMeshContents() {
+        val model = rig.copy(meshes = listOf(mesh, mesh.copy(id = "other")))
+        val view = ModifierEvaluationInput(model)
+        assertEquals(listOf("mesh", "other"), view.meshIds)
+        val reads = ModifierReadSet.capture(model, ModifierAlgorithmContext.Empty, view.reads().keys.toList())
+        assertTrue(reads.matches(model.copy(meshes = model.meshes.map { it.copy(opacity = .25f) })))
+        assertFalse(reads.matches(model.copy(meshes = model.meshes.reversed())))
+        assertFalse(reads.matches(model.copy(meshes = model.meshes.dropLast(1))))
+        assertFalse(reads.matches(model.copy(meshes = model.meshes + mesh.copy(id = "new"))))
+        assertEquals(setOf(ModifierReadKey("meshIds")), reads.keys)
+    }
+
     @Test fun parentQueriesObserveTheCompleteChainAndRejectCyclesAndMissingParents() {
         val view = ModifierEvaluationInput(rig)
         assertEquals(listOf(child, parent), view.parentsOfMesh("mesh"))

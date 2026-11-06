@@ -125,7 +125,7 @@ internal object ModifierPluginWorkers {
             val request = buildJsonObject {
                 put("protocol", 1); put("id", requestId); put("method", "evaluate")
                 put("type", algorithm.type); put("version", instance.version); put("instance", instance.id)
-                put("capabilities", JsonArray((ModifierPluginOutput.operations + setOf("rig_objects", "author_context_v1", "author_context_v2", "input_reads_v1", io.github.psd2live.algorithm.worker.AlgorithmChanges.CAPABILITY, io.github.psd2live.algorithm.worker.AlgorithmChanges.RASTER_CAPABILITY)).sorted().map(::JsonPrimitive)))
+                put("capabilities", JsonArray((ModifierPluginOutput.operations + setOf("rig_objects", "author_context_v1", "author_context_v2", "input_reads_v1", "input_mesh_ids_v1", io.github.psd2live.algorithm.worker.AlgorithmChanges.CAPABILITY, io.github.psd2live.algorithm.worker.AlgorithmChanges.RASTER_CAPABILITY)).sorted().map(::JsonPrimitive)))
                 if (context != ModifierAlgorithmContext.Empty) put("context", io.github.psd2live.algorithm.worker.AlgorithmContexts.encode(context, ::blob))
                 put("invocation", Json.encodeToJsonElement(RigModifierInstance.serializer(), instance.copy(type = algorithm.type)))
                 put("dependencies", JsonArray(store.resolution(entry.reference).dependencies.map { reference ->

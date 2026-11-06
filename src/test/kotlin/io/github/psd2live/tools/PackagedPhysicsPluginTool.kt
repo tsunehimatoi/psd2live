@@ -43,7 +43,8 @@ class PackagedPhysicsPluginTool {
             val definition = RigModifierDefinition("rig.scaffold", revision, exclusiveFamily = "rig.scaffold",
                 composableKinds = setOf("mesh", "part", "deformer", "hierarchy"),
                 evaluate = plugin::evaluate, plugin = plugin, authorContext = { context })
-            verifyPackage("rig.scaffold", definition, JsonObject(emptyMap()), "binding", "plugin-scaffold-$revision", input)
+            verifyPackage("rig.scaffold", definition, JsonObject(emptyMap()), "binding", "plugin-scaffold-$revision", input,
+                verifyScaffoldReads = true)
         }
     }
 
@@ -168,7 +169,10 @@ class PackagedPhysicsPluginTool {
         meshes = listOf(Mesh("body", "Body", null, geometry = MeshGeometry(
             Floats.values(0f, 0f, 10f, 0f, 0f, 30f), Floats.values(0f, 0f, 1f, 0f, 0f, 1f), Ints.values(0, 1, 2)), offsets = null)))
 
-    private fun verifyPackage(type: String, definition: RigModifierDefinition, config: JsonObject, directory: String = type, packageDirectory: String = "plugin", input: RigIR = testInput()) {
+    private fun verifyPackage(
+        type: String, definition: RigModifierDefinition, config: JsonObject, directory: String = type,
+        packageDirectory: String = "plugin", input: RigIR = testInput(), verifyScaffoldReads: Boolean = false,
+    ) {
         requireTools()
         val root = Files.createTempDirectory("packaged-algorithm-")
         val preferences = Preferences.userRoot().node("plugin-package-test/${UUID.randomUUID()}")
@@ -221,7 +225,9 @@ class PackagedPhysicsPluginTool {
                 assertEquals(1, io.github.psd2live.targets.cubism.PuppetIr.toPuppet(expected).vertexGroups.size)
             }
             val prerequisites = definition.requires.map { RigModifierDefinition(it, 1, evaluate = { rig, _, _ -> rig }) }
-            val registry = RigModifierRegistry(prerequisites + listOf(definition) + ModifierPluginCatalog.definitions(store, listOf(definition)))
+            fun registryFor(packages: ModifierPluginStore) = RigModifierRegistry(
+                prerequisites + listOf(definition) + ModifierPluginCatalog.definitions(packages, listOf(definition)))
+            val registry = registryFor(store)
             assertEquals(entry.reference, registry.definition(instance).pluginReference)
             assertSame(definition, registry.definition(instance.copy(plugin = BuiltinModifierPlugins.reference(type, definition.version))))
             if (type == "physics") {
@@ -242,6 +248,8 @@ class PackagedPhysicsPluginTool {
                     assertEquals(expected.copy(parameters = changed.parameters), evaluate(registry.definition(instance), changed, instance))
                     assertEquals(evaluations + 2, count("plugin worker evaluations"))
                 } finally { profile.recording = recording }
+            } else if (verifyScaffoldReads) {
+                verifyScaffoldWorkerReads(definition, registry.definition(instance), input, instance)
             } else repeat(2) {
                 assertEquals(expected, evaluate(registry.definition(instance), input, instance))
             }
@@ -255,18 +263,67 @@ class PackagedPhysicsPluginTool {
             ModifierPluginWorkers.stop(entry.reference)
             val reopened = ModifierPluginStore(store.root, preferences)
             val restored = RigModifierStack.fromJson(RigModifierStack(instances = listOf(instance)).toJson()).instances.single()
-            val restoredRegistry = RigModifierRegistry(prerequisites + listOf(definition) + ModifierPluginCatalog.definitions(reopened, listOf(definition)))
+            val restoredRegistry = registryFor(reopened)
             assertEquals(expected, evaluate(restoredRegistry.definition(restored), input, restored))
             store.uninstall(entry.reference)
             assertFailsWith<IllegalArgumentException> { store.requireAvailable(entry.reference) }
+            if (type == "physics") {
+                // Even with the built-in physics implementation available, the saved package pin must not fall back.
+                val missingRegistry = registryFor(store)
+                assertFailsWith<IllegalArgumentException> { missingRegistry.definition(restored) }
+                assertFailsWith<IllegalArgumentException> { evaluate(registry.definition(restored), input, restored) }
+            }
             val reinstalled = store.install(source.toString())
             assertEquals(entry.reference, reinstalled.reference)
-            assertEquals(expected, ModifierPluginWorkers.evaluate(reinstalled, reinstalled.manifest.algorithms.single(), input, instance, {}, store, context = definition.authorContext(instance), declaredParameters = definition.parameters(instance)))
+            if (type == "physics") {
+                val recoveredRegistry = registryFor(store)
+                val recovered = recoveredRegistry.definition(restored)
+                assertEquals(restored.plugin, recovered.pluginReference)
+                assertEquals(expected, evaluate(recovered, input, restored))
+            } else {
+                assertEquals(expected, ModifierPluginWorkers.evaluate(reinstalled, reinstalled.manifest.algorithms.single(), input, instance, {}, store, context = definition.authorContext(instance), declaredParameters = definition.parameters(instance)))
+            }
             store.uninstall(reinstalled.reference)
         } finally {
             store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
             preferences.removeNode()
             ModifierPluginStore.deleteTree(root)
+        }
+    }
+
+    private fun verifyScaffoldWorkerReads(
+        local: RigModifierDefinition, worker: RigModifierDefinition, input: RigIR, instance: RigModifierInstance,
+    ) {
+        val profile = io.github.psd2live.core.RigBuildProfile
+        val recording = profile.recording
+        profile.recording = true
+        fun count(key: String) = profile.snapshot()[key]?.second ?: 0L
+        val evaluations = count("plugin worker evaluations")
+        val hits = count("plugin read cache hits")
+        try {
+            val unrelated = input.meshes.single().copy(id = "unrelated")
+            val original = input.copy(meshes = input.meshes + unrelated)
+            assertEquals(evaluate(local, original, instance), evaluate(worker, original, instance))
+            assertEquals(evaluations + 1, count("plugin worker evaluations"))
+
+            val geometry = requireNotNull(unrelated.geometry).copy(
+                positions = Floats.values(1f, 0f, 10f, 0f, 0f, 30f),
+                uvs = Floats.values(0.1f, 0f, 1f, 0f, 0f, 1f),
+            )
+            val replacement = unrelated.copy(geometry = geometry, opacity = 0.45f)
+            val edited = input.copy(meshes = input.meshes + replacement)
+            val reused = evaluate(worker, edited, instance)
+            assertSame(replacement, reused.meshes.single { it.id == replacement.id })
+            assertEquals(evaluate(local, edited, instance), reused)
+            assertEquals(evaluations + 1, count("plugin worker evaluations"))
+            assertEquals(hits + 1, count("plugin read cache hits"))
+
+            val added = edited.copy(meshes = edited.meshes + unrelated.copy(id = "added"))
+            assertEquals(evaluate(local, added, instance), evaluate(worker, added, instance))
+            assertEquals(evaluations + 2, count("plugin worker evaluations"))
+            assertEquals(hits + 1, count("plugin read cache hits"))
+        } finally {
+            profile.recording = recording
         }
     }
 }

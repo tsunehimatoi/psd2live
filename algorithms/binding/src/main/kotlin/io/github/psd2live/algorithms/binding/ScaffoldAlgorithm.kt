@@ -2,16 +2,16 @@ package io.github.psd2live.algorithms.binding
 
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.format.compile.RigIrBinary
-import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.targets.cubism.PuppetIr
 import kotlinx.serialization.json.*
 import org.umamo.runtime.model.*
 
 /** Source-frame hierarchy algorithm executable in process or in an external worker. */
-class ScaffoldAlgorithm : ChangingModifierAlgorithmPlugin {
-    override fun changes(input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext, checkpoint: () -> Unit): ModifierModelChanges {
+class ScaffoldAlgorithm : ReadingModifierAlgorithmPlugin {
+    override fun changes(input: ModifierEvaluationInput, instance: RigModifierInstance, checkpoint: () -> Unit): ModifierModelChanges {
         checkpoint()
         require(instance.version in 1..2) { "Unsupported scaffold algorithm version" }
+        val context = input.context
         val template = buildSource(context, checkpoint)
         val materials = PuppetIr.toPuppet(RigIrBinary.decode(context.resources.getValue("materials").read())).drawables.associateBy { it.id }
         val canonical = context.values.getValue("canonical_targets").jsonObject
@@ -27,7 +27,8 @@ class ScaffoldAlgorithm : ChangingModifierAlgorithmPlugin {
             override fun originalMaterial(actual: Drawable, desired: Drawable) =
                 ScaffoldBinding.isOriginalMaterial(actual, desired, materials[actual.id])
         }
-        return ScaffoldBinding.applyChanges(input, instance.copy(type = "rig.scaffold"), source, checkpoint)
+        val projection = ScaffoldReadInputs.capture(input, instance, checkpoint)
+        return ScaffoldBinding.applyChanges(projection, instance.copy(type = "rig.scaffold"), source, checkpoint)
     }
 
     /** Builds canonical source structure for execution and downstream ownership queries. */

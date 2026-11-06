@@ -33,7 +33,9 @@ object AlgorithmWorker {
                         else algorithm.changes(input, instance, context, checkpoint)
                     buildJsonObject {
                         put("changes", AlgorithmChanges.encode(changes, allowRasters = request.getValue("capabilities").jsonArray.any { it.jsonPrimitive.content == AlgorithmChanges.RASTER_CAPABILITY }) { AlgorithmObjects.write(resources, it) })
-                        if (view != null && request.getValue("capabilities").jsonArray.any { it.jsonPrimitive.content == "input_reads_v1" }) {
+                        val capabilities = request.getValue("capabilities").jsonArray.map { it.jsonPrimitive.content }.toSet()
+                        if (view != null && "input_reads_v1" in capabilities &&
+                            (view.reads().keys.none { it.section == "meshIds" } || "input_mesh_ids_v1" in capabilities)) {
                             put("reads", Json.encodeToJsonElement(view.reads().keys.sortedWith(compareBy({ it.section }, { it.id ?: "" }))))
                         }
                     }

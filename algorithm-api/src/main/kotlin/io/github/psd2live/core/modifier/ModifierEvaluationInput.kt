@@ -60,6 +60,7 @@ class ModifierEvaluationInput(private val model: RigIR, private val author: Modi
         return when (key.section) {
             "parameter" -> model.parameters
             "mesh" -> model.meshes
+            "meshIds" -> model.meshes.map { it.id }
             "deformer" -> model.deformers
             "part" -> model.parts
             "physics" -> model.physics
@@ -84,6 +85,8 @@ class ModifierEvaluationInput(private val model: RigIR, private val author: Modi
     }
     val parameters: List<Parameter> get() = read("parameter")
     val meshes: List<Mesh> get() = read("mesh")
+    /** Ordered membership without observing unrelated geometry or drawing channels. */
+    val meshIds: List<String> get() = read("meshIds")
     val deformers: List<Deformer> get() = read("deformer")
     val parts: List<Part> get() = read("part")
     val physics: Physics get() = read("physics")
