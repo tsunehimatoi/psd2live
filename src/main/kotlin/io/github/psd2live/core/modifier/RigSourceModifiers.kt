@@ -527,15 +527,9 @@ internal class RigModifierSource(
     }
 
     /** Only exact, unedited source geometry can bypass numerical inverse mapping. */
-    fun originalMaterial(actual: Drawable, desired: Drawable): Boolean {
-        val original = materialBase.drawables.singleOrNull { it.id == actual.id } ?: return false
-        val mesh = actual.mesh ?: return false
-        val base = original.mesh ?: return false
-        val native = desired.mesh ?: return false
-        return actual.parentDeformerId == null && actual.geometryGrid == null && actual.blendShapes.isEmpty() &&
-            mesh.positions.contentEquals(base.positions) && mesh.uvs.contentEquals(base.uvs) && mesh.indices.contentEquals(base.indices) &&
-            mesh.uvs.contentEquals(native.uvs) && mesh.indices.contentEquals(native.indices)
-    }
+    fun originalMaterial(actual: Drawable, desired: Drawable): Boolean =
+        io.github.psd2live.algorithms.binding.ScaffoldBinding.isOriginalMaterial(actual, desired,
+            materialBase.drawables.singleOrNull { it.id == actual.id })
 
     fun scaffoldFor(instance: RigModifierInstance, target: ModifierTarget, checkpoint: () -> Unit) = forTarget(scaffold(instance, checkpoint), target)
 
@@ -592,114 +586,17 @@ internal object RigSourceModifiers {
 
     /** Version 2 retains the source hierarchy; version 1 keeps persisted per-mesh identities replayable. */
     fun deformerId(instance: RigModifierInstance, mesh: String, canonical: String, shared: Boolean = instance.type == SCAFFOLD && instance.version >= 2) =
-        instance.outputAliases["shared/deformer:$canonical"] ?: instance.outputId(if (shared) "shared/deformer:$canonical" else "$mesh/deformer:$canonical")
+        io.github.psd2live.algorithms.binding.ScaffoldBinding.deformerId(instance, mesh, canonical, shared)
     fun partId(instance: RigModifierInstance, mesh: String, canonical: String, shared: Boolean = instance.type == SCAFFOLD && instance.version >= 2) =
-        instance.outputAliases["shared/part:$canonical"] ?: instance.outputId(if (shared) "shared/part:$canonical" else "$mesh/part:$canonical")
+        io.github.psd2live.algorithms.binding.ScaffoldBinding.partId(instance, mesh, canonical, shared)
 
-    private fun scaffold(rig: RigIR, instance: RigModifierInstance, source: RigModifierSource, checkpoint: () -> Unit): RigIR {
-        var current = PuppetIr.toPuppet(rig)
-        if (instance.version >= 2) {
-            val parents = instance.targets.map { target -> current.drawables.single { it.id.raw == target.id }.parentDeformerId }.distinct()
-            require(parents.size == 1) { "A shared binding hierarchy requires targets in the same authored frame" }
-        }
-        val emittedDeformers = HashSet<DeformerId>()
-        val emittedParts = HashSet<PartId>()
-        val sharedTemplate = if (instance.outputAliases.keys.any { it.startsWith("shared/deformer:") })
-            source.scaffoldFor(instance, instance.targets.first(), checkpoint) else null
-        for (target in instance.targets) {
-            checkpoint()
-            val template = source.scaffoldFor(instance, target, checkpoint)
-            val deformers = template.deformers.associateBy { it.id }
-            val partParents = template.parts.flatMap { part -> part.children.filterIsInstance<OrgChild.Part>().map { it.id to part.id } }.toMap()
-            val meshId = DrawableId(target.id)
-            val actual = current.drawables.single { it.id == meshId }
-            val upstreamParent = actual.parentDeformerId
-            val desired = requireNotNull(template.drawables.singleOrNull { it.id == meshId }) { "No binding scaffold for ${target.id}" }
-            val branch = LinkedHashSet<DeformerId>()
-            var ancestor = desired.parentDeformerId
-            while (ancestor != null) {
-                require(branch.add(ancestor)) { "Cyclic source binding scaffold" }
-                ancestor = deformers.getValue(ancestor).parent
-            }
-            require(branch.isNotEmpty()) { "The source layer has no binding hierarchy: ${target.id}" }
-            val orgParent = template.parts.singleOrNull { OrgChild.Drawable(meshId) in it.children }?.id
-            val partBranch = LinkedHashSet<PartId>()
-            for (start in branch.mapNotNull { deformers.getValue(it).partId } + listOfNotNull(orgParent)) {
-                var part: PartId? = start
-                val seen = HashSet<PartId>()
-                while (part != null) {
-                    require(seen.add(part)) { "Cyclic source part hierarchy" }
-                    partBranch += part
-                    part = partParents[part]
-                }
-            }
-            if (sharedTemplate != null) partBranch += template.parts.filter {
-                "shared/part:${it.id.raw}" in instance.outputAliases
-            }.map { it.id }
-            val remap = RigIdRemap(
-                deformers = branch.associateWith { DeformerId(deformerId(instance, target.id, it.raw)) },
-                parts = partBranch.associateWith { PartId(partId(instance, target.id, it.raw)) })
-            val clonedDeformers = template.deformers.filter { it.id in branch }.map { original ->
-                val cloned = remap.deformer(original)
-                if (original.parent != null || upstreamParent == null) cloned else {
-                    require(cloned is Deformer.Warp) { "The binding scaffold root must be a Warp" }
-                    val grid = requireNotNull(cloned.geometryGrid)
-                    require(grid.axes.isEmpty() && grid.cells.size == 1) { "The binding scaffold must be static" }
-                    val points = grid.cells.single().form.controlPoints
-                    val carried = pointsInParent(current, actual, points, upstreamParent, instance.outputId("$meshId/frame"))
-                    cloned.copy(parent = upstreamParent, geometryGrid = KeyformGrid(emptyList(),
-                        listOf(KeyformCell(IntArray(0), WarpLatticeForm(carried)))))
-                }
-            }
-            val clonedParts = template.parts.filter { it.id in partBranch }.map { original ->
-                remap.part(original.copy(children = original.children.filter { it is OrgChild.Part && it.id in partBranch }))
-            }
-            require(clonedDeformers.all { added -> current.deformers.none { it.id == added.id } ||
-                added.id in emittedDeformers && current.deformers.single { it.id == added.id } == added }) { "Binding scaffold output ID collision: ${instance.id}" }
-            require(clonedParts.all { added -> current.parts.none { it.id == added.id } || added.id in emittedParts &&
-                current.parts.single { it.id == added.id }.copy(children = emptyList()) == added.copy(children = emptyList()) }) { "Binding scaffold part ID collision: ${instance.id}" }
-            val newDeformers = clonedDeformers.filter { emittedDeformers.add(it.id) }
-            val newParts = clonedParts.filter { emittedParts.add(it.id) }
-            val sharedParts = clonedParts.associateBy { it.id }
-            val parts = current.parts.map { part -> sharedParts[part.id]?.let { next ->
-                part.copy(children = (part.children + next.children).distinct())
-            } ?: part }
-            current = current.copy(deformers = current.deformers + newDeformers, parts = parts + newParts,
-                rootChildren = (current.rootChildren + partBranch.filter { partParents[it] !in partBranch }.map { OrgChild.Part(remap.part(it)) }).distinct())
-                .withDerivedRenderRoot()
-            val destination = remap.deformer(requireNotNull(desired.parentDeformerId))
-            current = if (source.originalMaterial(actual, desired)) current.copy(drawables = current.drawables.map {
-                if (it.id == meshId) it.copy(parentDeformerId = destination, mesh = desired.mesh, geometryGrid = desired.geometryGrid) else it
-            }) else RigStructureEdits.apply(current, listOf(buildJsonObject {
-                put("action", "bind"); put("kind", "mesh"); put("id", target.id); put("parent_id", destination.raw); put("space", "canvas")
-            }))
-            if (orgParent != null) current = RigStructureEdits.apply(current, listOf(buildJsonObject {
-                put("action", "move"); put("kind", "mesh"); put("id", target.id); put("parent_id", remap.part(orgParent).raw)
-            }))
-        }
-        if (sharedTemplate != null) {
-            val mesh = instance.targets.first().id
-            val remap = RigIdRemap(parts = sharedTemplate.parts.associate {
-                it.id to PartId(partId(instance, mesh, it.id.raw))
-            })
-            val desiredParts = sharedTemplate.parts.map(remap::part).associateBy { it.id }
-            val deformerOrder = instance.targets.flatMap { target -> sharedTemplate.deformers.mapIndexed { index, value ->
-                DeformerId(deformerId(instance, target.id, value.id.raw)) to index
-            } }.toMap()
-            fun ordered(children: List<OrgChild>, desired: List<OrgChild>) =
-                children.filter { it !in desired } + desired.filter { it in children }
-            current = current.copy(
-                deformers = current.deformers.filter { it.id !in emittedDeformers } +
-                    current.deformers.filter { it.id in emittedDeformers }.sortedBy { deformerOrder.getValue(it.id) },
-                parts = current.parts.map { part -> desiredParts[part.id]?.let {
-                    part.copy(children = ordered(part.children, it.children))
-                } ?: part },
-                rootChildren = ordered(current.rootChildren, sharedTemplate.rootChildren.map(remap::child)),
-            )
-        }
-        checkpoint()
-        return rig.withPuppet(current.withDerivedRenderRoot())
-    }
+    private fun scaffold(rig: RigIR, instance: RigModifierInstance, source: RigModifierSource, checkpoint: () -> Unit): RigIR =
+        rig.withPuppet(io.github.psd2live.algorithms.binding.ScaffoldBinding.apply(PuppetIr.toPuppet(rig), instance,
+            object : io.github.psd2live.algorithms.binding.ScaffoldBinding.Source {
+                override fun scaffoldFor(instance: RigModifierInstance, target: ModifierTarget, checkpoint: () -> Unit) =
+                    source.scaffoldFor(instance, target, checkpoint)
+                override fun originalMaterial(actual: Drawable, desired: Drawable) = source.originalMaterial(actual, desired)
+            }, checkpoint))
 
     internal fun pointsInParent(model: PuppetModel, sample: Drawable, points: FloatArray, parent: DeformerId, scratch: String): FloatArray =
         io.github.psd2live.algorithms.binding.BindingFrames.pointsInParent(model, sample, points, parent, scratch)
