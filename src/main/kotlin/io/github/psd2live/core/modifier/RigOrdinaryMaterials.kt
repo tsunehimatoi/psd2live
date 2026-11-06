@@ -31,7 +31,7 @@ internal object RigOrdinaryMaterials {
             }
         }
         fun parent(path: String) = path.substringBeforeLast('/', "")
-        fun part(path: String) = PartId("source-group:" + path.encodeToByteArray().joinToString("") { "%02x".format(it.toInt() and 255) })
+        fun part(path: String) = PartId("source-group:" + java.util.HexFormat.of().formatHex(path.encodeToByteArray()))
         val groupInfo = source.groups.associateBy { it.path }
         val clipped = clipping(source, base.layerIdByDrawableId)
         val drawables = base.puppet.drawables.map { drawable ->

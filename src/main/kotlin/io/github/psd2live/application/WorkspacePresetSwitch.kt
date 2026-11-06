@@ -86,6 +86,7 @@ internal object WorkspacePresetSwitch {
             return JsonObject(remapped)
         }
         val instances = template.instances.map { entry -> entry.copy(
+            plugin = entry.plugin ?: BuiltinModifierPlugins.reference(entry.type, entry.version),
             id = ids.getValue(entry.id), presetGroup = preset.id, inputFingerprint = null, outputAliases = emptyMap(),
             targets = entry.targets.map { it.copy(id = remap(it.id)) }, config = configuration(entry.config),
             parameterProviders = entry.parameterProviders.map { (parameter, sourceProvider) -> remap(parameter) to provider(sourceProvider) }.toMap(),

@@ -58,13 +58,16 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
 
     private val lock = Any()
     @Volatile private var builtinEnabled = preferences.getBoolean("builtins", true)
+    @Volatile private var builtinOverrides = preferences.keys().filter { it.startsWith("builtin.") }
+        .associateWith { preferences.getBoolean(it, builtinEnabled) }
     private val changes = MutableStateFlow(0L)
     val revision = changes.asStateFlow()
     private val loadProblems = ArrayList<String>()
     private var installed: List<InstalledModifierPlugin> = load()
 
     fun snapshot(): List<InstalledModifierPlugin> = synchronized(lock) { installed.toList() }
-    fun resolution(reference: ModifierPluginReference): ModifierPluginResolution = synchronized(lock) { ModifierPluginDependencies.resolve(reference, installed) }
+    fun packages(): List<InstalledModifierPlugin> = synchronized(lock) { installed + BuiltinModifierPlugins.packages(this) }
+    fun resolution(reference: ModifierPluginReference): ModifierPluginResolution = synchronized(lock) { ModifierPluginDependencies.resolve(reference, packages()) }
     fun problems(): List<String> = synchronized(lock) { loadProblems.toList() }
     fun <T> withRevision(expected: Long, action: () -> T): T = synchronized(lock) {
         require(changes.value == expected) { "Algorithm plugins changed while preparing the model; retry the operation" }
@@ -75,10 +78,41 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
         require(inspectDirectory(entry.directory, entry.gitCommit).reference.copy(dependencyDigests = reference.dependencyDigests) == reference) { "Plugin contents changed after installation" }
     }
     fun builtinsEnabled() = builtinEnabled
+    fun builtinEnabled(id: String): Boolean = builtinOverrides[id] ?: builtinEnabled
+    fun setBuiltinEnabled(reference: ModifierPluginReference, enabled: Boolean) = synchronized(lock) {
+        require(BuiltinModifierPlugins.entry(reference.id)?.reference == reference) { "Bundled plugin version is unavailable" }
+        if (enabled) {
+            val resolution = ModifierPluginDependencies.resolve(reference, packages().map { if (it.reference == reference) it.copy(enabled = true) else it })
+            require(resolution.available) { resolution.issues.joinToString("; ") }
+        } else stopAffected(reference)
+        val before = preferences.get(reference.id, null)
+        try { preferences.putBoolean(reference.id, enabled); preferences.flush() }
+        catch (failure: Exception) {
+            if (before == null) preferences.remove(reference.id) else preferences.put(reference.id, before)
+            throw failure
+        }
+        builtinOverrides = builtinOverrides + (reference.id to enabled)
+        changes.value++
+    }
     fun setBuiltinsEnabled(enabled: Boolean) = synchronized(lock) {
-        try { preferences.putBoolean("builtins", enabled); preferences.flush() }
-        catch (failure: Exception) { preferences.putBoolean("builtins", builtinEnabled); throw failure }
+        if (enabled) {
+            val candidates = packages().map { if (it.reference.id.startsWith("builtin.")) it.copy(enabled = true) else it }
+            BuiltinModifierPlugins.entries.forEach { entry ->
+                val resolution = ModifierPluginDependencies.resolve(entry.reference, candidates)
+                require(resolution.available) { resolution.issues.joinToString("; ") }
+            }
+        } else installed.filter { entry -> resolution(entry.reference).dependencies.any { it.id.startsWith("builtin.") } }
+            .forEach { ModifierPluginWorkers.stop(it.reference) }
+        val previous = BuiltinModifierPlugins.entries.associate { it.reference.id to preferences.get(it.reference.id, null) }
+        try {
+            previous.keys.forEach { preferences.remove(it) }
+            preferences.putBoolean("builtins", enabled); preferences.flush()
+        } catch (failure: Exception) {
+            previous.forEach { (id, value) -> if (value == null) preferences.remove(id) else preferences.put(id, value) }
+            preferences.putBoolean("builtins", builtinEnabled); throw failure
+        }
         builtinEnabled = enabled
+        builtinOverrides = emptyMap()
         changes.value++
     }
 
@@ -98,7 +132,7 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
             require(installed.none { it.reference.id != checked.reference.id && it.manifest.algorithms.any { old -> checked.manifest.algorithms.any { it.type == old.type } } }) {
                 "Another plugin owns this algorithm type"
             }
-            val resolution = ModifierPluginDependencies.resolve(checked.reference, installed + checked)
+            val resolution = ModifierPluginDependencies.resolve(checked.reference, packages() + checked)
             require(resolution.available) { resolution.issues.joinToString("; ") }
             Files.writeString(directory.resolve(".dependencies"), codec.encodeToString(kotlinx.serialization.builtins.ListSerializer(ModifierPluginReference.serializer()), resolution.dependencies))
             val destination = root.resolve(checked.reference.digest)
@@ -121,7 +155,7 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
     fun setEnabled(reference: ModifierPluginReference, enabled: Boolean) = synchronized(lock) {
         val entry = installed.single { it.reference == reference }
         if (enabled) {
-            val resolution = ModifierPluginDependencies.resolve(reference, installed.map { if (it == entry) it.copy(enabled = true) else it })
+            val resolution = ModifierPluginDependencies.resolve(reference, packages().map { if (it.reference == reference) it.copy(enabled = true) else it })
             require(resolution.available) { resolution.issues.joinToString("; ") }
         }
         preferences.putBoolean(reference.digest, enabled); preferences.flush()
@@ -155,12 +189,12 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
 
     private fun stopAffected(reference: ModifierPluginReference) {
         installed.filter { it.reference == reference || reference in it.dependencyLock.orEmpty() ||
-            reference in ModifierPluginDependencies.resolve(it.reference, installed).dependencies
+            reference in ModifierPluginDependencies.resolve(it.reference, packages()).dependencies
         }.forEach { ModifierPluginWorkers.stop(it.reference) }
     }
 
     fun requireAvailable(reference: ModifierPluginReference) = synchronized(lock) {
-        val result = ModifierPluginDependencies.resolve(reference, installed)
+        val result = resolution(reference)
         require(result.available) { result.issues.joinToString("; ") }
     }
 
@@ -202,6 +236,7 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
         val bytes = Files.readAllBytes(directory.resolve("plugin.json"))
         require(bytes.size <= 1024 * 1024) { "Plugin manifest is too large" }
         val manifest = codec.decodeFromString(ModifierPluginManifest.serializer(), bytes.decodeToString())
+        require(manifest.id != "builtin" && !manifest.id.startsWith("builtin.")) { "Bundled plugin identities are reserved" }
         require(manifest.protocol == 1 && token.matches(manifest.id) && manifest.version.length <= 128) { "Unsupported plugin manifest" }
         ModifierPluginVersion.parse(manifest.version, legacy = true)
         for (relation in manifest.dependencies + manifest.conflicts) {

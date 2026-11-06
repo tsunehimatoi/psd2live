@@ -68,7 +68,7 @@ internal object WorkspaceModifierSchemas {
     }
 
     val types get() = RigModifierAlgorithms.registry.definitions.filter { it.pluginReference == null }.map { it.type }.distinct()
-    private fun fields(type: String, summary: Boolean = false) = linkedMapOf("type" to s.constant(type), "config" to configuration(type, summary))
+    private fun fields(type: String, summary: Boolean = false) = linkedMapOf("type" to s.constant(type), "config" to configuration(type, summary), "plugin" to pluginIdentity)
     private fun addition(type: String) = s.obj(fields(type) + mapOf("id" to s.handle(), "version" to s.integer(1), "targets" to s.array(target, 1, 4096),
         "group" to s.handle(), "index" to s.integer(0)), setOf("type", "config", "targets"))
     private val pluginIdentity = s.obj(mapOf("id" to s.handle(), "version" to s.handle(), "digest" to s.handle(), "dependencyDigests" to s.dictionary(s.handle())), setOf("id", "version", "digest"))
@@ -81,7 +81,7 @@ internal object WorkspaceModifierSchemas {
         val business = when (id) {
             "modifier_add" -> addition
             "modifier_add_group" -> s.obj(mapOf("group" to s.handle(), "entries" to s.array(addition, 1, 128)))
-            "modifier_update" -> s.union(types.map { type -> s.obj(fields(type) + ("id" to s.handle())) } + s.obj(pluginFields + ("id" to s.handle()), setOf("id", "type", "config")))
+            "modifier_update" -> s.union(types.map { type -> s.obj(fields(type) + ("id" to s.handle()), setOf("id", "type", "config")) } + s.obj(pluginFields + ("id" to s.handle()), setOf("id", "type", "config")))
             "modifier_enable" -> s.obj(mapOf("id" to s.handle(), "enabled" to s.boolean()))
             "modifier_organize" -> s.obj(mapOf("nodes" to organization))
             "modifier_move" -> s.obj(mapOf("id" to s.handle(), "index" to s.integer(0)))
@@ -116,7 +116,7 @@ internal object WorkspaceModifierSchemas {
     val stack: JsonObject get() = s.obj(s.identity + mapOf("revision" to s.handle(), "legacy" to s.boolean(),
         "entries" to s.array(s.union(types.map { type ->
             val fields = fields(type, summary = true) + observedFields + if (type == "simulation") mapOf("bake" to WorkspaceSimulationResultSchemas.bakeSummary) else emptyMap()
-            s.obj(fields, fields.keys - "group" - "bake")
+            s.obj(fields, fields.keys - "group" - "bake" - "plugin")
         } + s.obj(pluginFields + observedFields, (pluginFields.keys + observedFields.keys) - "group" - "plugin"))), "retired_ids" to s.array(s.handle()), "next_id" to s.integer(1), "organization" to organization))
     val planRequest: JsonObject get() = s.union(listOf(
         s.obj(mapOf("type" to s.choices(*WorkspaceModifierPlan.sourceTypes.toTypedArray()), "targets" to s.array(target, 1, 4096))),

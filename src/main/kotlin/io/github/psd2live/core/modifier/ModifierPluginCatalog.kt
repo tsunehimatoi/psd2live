@@ -17,8 +17,10 @@ internal object ModifierPluginCatalog {
     }
 
     fun available(instance: RigModifierInstance): Boolean = instance.plugin?.let { reference ->
-        ModifierPluginStore.shared.resolution(reference).available
-    } ?: ModifierPluginStore.shared.builtinsEnabled()
+        if (reference.id.startsWith("builtin.")) BuiltinModifierPlugins.matches(instance) && ModifierPluginStore.shared.builtinEnabled(reference.id)
+        else ModifierPluginStore.shared.resolution(reference).available
+    } ?: BuiltinModifierPlugins.reference(instance.type, instance.version)?.let { ModifierPluginStore.shared.builtinEnabled(it.id) }
+        ?: ModifierPluginStore.shared.builtinsEnabled()
 
     fun algorithm(type: String, version: Int? = null): Pair<InstalledModifierPlugin, ModifierPluginAlgorithm>? =
         ModifierPluginStore.shared.snapshot().filter { ModifierPluginStore.shared.resolution(it.reference).available }.flatMap { entry -> entry.manifest.algorithms.map { entry to it } }

@@ -60,7 +60,7 @@ internal data class RigModifierInstance(
     fun outputId(localName: String): String {
         require(localName.isNotBlank()) { "An output needs a local name" }
         outputAliases[localName]?.let { return it }
-        val encoded = localName.encodeToByteArray().joinToString("") { "%02x".format(it.toInt() and 255) }
+        val encoded = java.util.HexFormat.of().formatHex(localName.encodeToByteArray())
         return "modifier:$id:$encoded"
     }
 }
@@ -102,7 +102,7 @@ internal data class RigModifierStack(
         val chosen = id ?: "m$sequence"
         require(chosen !in reserved) { "Modifier ID is already used or retired: $chosen" }
         val entry = RigModifierInstance(chosen, type, version, targets.toList(), config = config, presetGroup = presetGroup,
-            outputAliases = outputAliases.toMap(), plugin = plugin)
+            outputAliases = outputAliases.toMap(), plugin = plugin ?: BuiltinModifierPlugins.reference(type, version))
         return copy(instances = instances + entry, nextId = Math.addExact(sequence, 1))
     }
 

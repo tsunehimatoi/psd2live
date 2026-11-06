@@ -57,7 +57,10 @@ internal fun SettingsPluginsSection() {
                 CompactCheckbox(entry.getValue("enabled").jsonPrimitive.boolean, {
                     execute(if (it) "plugin_enable" else "plugin_disable", identity)
                 }, enabled = !busy)
-                Text(entry.getValue("name").jsonPrimitive.content, style = LocalToolTypography.current.body, modifier = Modifier.weight(1f))
+                val name = if (entry.getValue("builtin").jsonPrimitive.boolean)
+                    io.github.psd2live.ui.views.modifierName(entry.getValue("algorithms").jsonArray.single().jsonObject.getValue("type").jsonPrimitive.content)
+                else entry.getValue("name").jsonPrimitive.content
+                Text(name, style = LocalToolTypography.current.body, modifier = Modifier.weight(1f))
                 Text(entry.getValue("version").jsonPrimitive.content, style = LocalToolTypography.current.caption)
                 if (!entry.getValue("builtin").jsonPrimitive.boolean) CompactButton(tr("plugins.uninstall"), {
                     execute("plugin_uninstall", identity)

@@ -16,6 +16,11 @@ internal object WorkspacePluginManagement {
                 if (id == "builtin") {
                     require(operation != "plugin_uninstall") { "Bundled plugins can be disabled but cannot be deleted" }
                     store.setBuiltinsEnabled(operation == "plugin_enable")
+                } else if (BuiltinModifierPlugins.entry(id) != null) {
+                    require(operation != "plugin_uninstall") { "Bundled plugins can be disabled but cannot be deleted" }
+                    val reference = BuiltinModifierPlugins.entry(id)!!.reference
+                    require(request.getValue("digest").jsonPrimitive.content == reference.digest) { "Bundled plugin version changed" }
+                    store.setBuiltinEnabled(reference, operation == "plugin_enable")
                 } else {
                     val reference = store.snapshot().singleOrNull { it.reference.id == id && it.reference.digest == request.getValue("digest").jsonPrimitive.content }?.reference
                         ?: error("Installed plugin was not found")
@@ -28,28 +33,28 @@ internal object WorkspacePluginManagement {
         return buildJsonObject {
             put("problems", JsonArray(store.problems().map(::JsonPrimitive)))
             putJsonArray("plugins") {
-            addJsonObject {
-                put("id", "builtin"); put("version", "bundled"); put("digest", "builtin"); put("name", "PSD2Live")
-                put("available", store.builtinsEnabled()); put("issues", JsonArray(emptyList()))
+            BuiltinModifierPlugins.entries.forEach { entry -> addJsonObject {
+                val reference = entry.reference
+                val definition = entry.definition
+                put("id", reference.id); put("version", reference.version); put("digest", reference.digest); put("name", definition.type)
+                put("available", store.builtinEnabled(reference.id)); put("issues", JsonArray(emptyList()))
                 put("dependencies", JsonArray(emptyList())); put("conflicts", JsonArray(emptyList())); put("resolved_dependencies", JsonArray(emptyList()))
-                put("enabled", store.builtinsEnabled()); put("builtin", true); put("git_commit", JsonNull)
-                putJsonArray("algorithms") { RigModifierAlgorithms.registry.definitions.filter { it.pluginReference == null }.forEach {
-                    addJsonObject {
-                        put("type", it.type); put("version", it.version); put("name", it.type)
-                        put("config_schema", WorkspaceModifierSchemas.configuration(it.type)); put("defaults", JsonObject(emptyMap()))
-                        put("requires", JsonArray(it.requires.sorted().map(::JsonPrimitive)))
-                        put("targets", JsonArray((if (it.type == "swing") listOf("mesh", "deformer") else listOf("mesh")).map(::JsonPrimitive)))
-                        put("reads", JsonArray(listOf(JsonPrimitive("*")))); put("writes", JsonArray(listOf(JsonPrimitive("*"))))
-                        put("exclusive_family", it.exclusiveFamily?.let(::JsonPrimitive) ?: JsonNull)
-                    }
+                put("enabled", store.builtinEnabled(reference.id)); put("builtin", true); put("git_commit", JsonNull)
+                putJsonArray("algorithms") { addJsonObject {
+                    put("type", definition.type); put("version", definition.version); put("name", definition.type)
+                    put("config_schema", WorkspaceModifierSchemas.configuration(definition.type)); put("defaults", JsonObject(emptyMap()))
+                    put("requires", JsonArray(definition.requires.sorted().map(::JsonPrimitive)))
+                    put("targets", JsonArray((if (definition.type == "swing") listOf("mesh", "deformer") else listOf("mesh")).map(::JsonPrimitive)))
+                    put("reads", JsonArray(listOf(JsonPrimitive("*")))); put("writes", JsonArray(listOf(JsonPrimitive("*"))))
+                    put("exclusive_family", definition.exclusiveFamily?.let(::JsonPrimitive) ?: JsonNull)
                 } }
-            }
+            } }
             store.snapshot().forEach { add(describe(it, store)) }
         } }
     }
 
     private fun describe(entry: InstalledModifierPlugin, store: ModifierPluginStore, inspecting: Boolean = false) = buildJsonObject {
-        val resolution = if (inspecting) ModifierPluginDependencies.resolve(entry.reference, store.snapshot().filterNot { it.reference == entry.reference } + entry) else store.resolution(entry.reference)
+        val resolution = if (inspecting) ModifierPluginDependencies.resolve(entry.reference, store.packages().filterNot { it.reference == entry.reference } + entry) else store.resolution(entry.reference)
         put("available", resolution.available); put("issues", JsonArray(resolution.issues.map(::JsonPrimitive)))
         put("dependencies", Json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(ModifierPluginDependency.serializer()), entry.manifest.dependencies))
         put("conflicts", Json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(ModifierPluginDependency.serializer()), entry.manifest.conflicts))
@@ -97,7 +102,7 @@ internal fun registerPluginOperations(registry: WorkspaceOperationRegistry, jobs
         registry.register(WorkspaceOperationDefinition(id,
             "Manage local algorithm plugins. Install a local directory/ZIP or an HTTPS, SSH or git:// URL containing a built package; optional ref selects a Git branch, tag or commit. " +
                 "Packages are executable local code, not sandboxed. No installation script or source build is run. Uninstall preserves document instances. " +
-                "Use id=builtin,digest=builtin to enable/disable bundled algorithms. Other changes require the digest returned by plugin_list.",
+                "Bundled algorithms have individual package identities and can be enabled/disabled using the digest returned by plugin_list; they cannot be deleted. Legacy id=builtin,digest=builtin controls all bundled entries.",
             WorkspacePluginSchemas.request(id), if (background) WorkspaceOperationKind.SESSION else WorkspaceOperationKind.QUERY,
             workspaceBound = false, jobBacked = background, destructive = id == "plugin_uninstall",
             resultSchema = if (background) requireNotNull(WorkspaceJobResultSchemas.operationOutput(id)) else WorkspacePluginSchemas.result,

@@ -8,7 +8,8 @@ internal object ModifierAddCatalog {
         val registry = RigModifierAlgorithms.registry
         val definition = registry.definitions.filter { it.type == type }.maxByOrNull { it.version }
             ?: return ModifierAddAvailability(true, 0)
-        if (definition.pluginReference == null && !ModifierPluginStore.shared.builtinsEnabled() || definition.pluginReference != null && ModifierPluginCatalog.algorithm(type) == null)
+        if (definition.pluginReference == null && !(BuiltinModifierPlugins.reference(type, definition.version)?.let { ModifierPluginStore.shared.builtinEnabled(it.id) }
+                ?: ModifierPluginStore.shared.builtinsEnabled()) || definition.pluginReference != null && ModifierPluginCatalog.algorithm(type) == null)
             return ModifierAddAvailability(true, 0)
         val selected = targets.toSet()
         val existing = stack.instances.filter { entry -> entry.targets.any(selected::contains) }
