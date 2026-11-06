@@ -19,6 +19,28 @@ import kotlin.test.assertTrue
 class MouthOutlineContourTest {
     @TempDir lateinit var temp: Path
 
+    @Test fun outlineArtworkSharesMotionInputsButInvalidatesRasterSettings() = Studio.run(temp, checks = emptySet()) {
+        val config = PipelineConfig(atlasSize = 256, generatePhysics = false, exportMoc3 = false,
+            mouthOutlineEnabled = true)
+        importPsd(Characters.mouthPsd(temp), config)
+        val input = now.model.analysis
+        val cache = PreviewMeshCache()
+        val first = MouthLipLayers.prepare(input, config, cache)
+        assertTrue(first.layers.any { it.source is MouthLipLayer })
+        kotlin.test.assertSame(first, MouthLipLayers.prepare(input, config.copy(bodyStrength = 2f), cache))
+        for (changed in listOf(config.copy(mouthThickness = 4f), config.copy(mouthColor = 0xff0000),
+            config.copy(alphaThreshold = config.alphaThreshold + 1), config.copy(mouthOutlineEnabled = false))) {
+            val cached = MouthLipLayers.prepare(input, changed, cache)
+            kotlin.test.assertNotSame(first, cached)
+            val fresh = MouthLipLayers.prepare(input, changed)
+            assertEquals(fresh.layers.map { it.bounds }, cached.layers.map { it.bounds })
+            assertEquals(fresh.layers.map { it.source.id }, cached.layers.map { it.source.id })
+            fresh.layers.zip(cached.layers).forEach { (a, b) ->
+                kotlin.test.assertContentEquals(a.source.raster.rgba, b.source.raster.rgba)
+            }
+        }
+    }
+
     @Test fun generatedOutlinesSurviveRebuildHistorySaveAndCubismReadback() = Studio.run(
         temp, checks = setOf(Studio.Check.REPLAY, Studio.Check.UNDO),
     ) {

@@ -36,9 +36,12 @@ internal class RigModifierSource(
             mouthThickness = outline?.let { RigLegacyBindings.values(it)["thickness"] } ?: 1.5f,
             mouthColor = outline?.let(RigLegacyBindings::outlineColor))
         if (outline == null) return RigBuilder.build(analysis, atlas, native, meshCache, capture)
-        val prepared = MouthLipLayers.prepare(analysis, native)
+        val prepared = MouthLipLayers.prepare(analysis, native, meshCache)
         val lips = prepared.layers.filter { it.source is MouthLipLayer }
-        return RigBuilder.build(prepared, RigModifierRasterAssets.append(atlas, lips, native), native, meshCache, capture)
+        val pack = { RigBuildProfile.stage("source artwork: outline atlas") { RigModifierRasterAssets.append(atlas, lips, native) } }
+        val packed = if (RigStageCache.enabled) meshCache.stages.get("mouth outline atlas", 16,
+            listOf(atlas, lips, native.effectiveAtlasBudget()), pack) else pack()
+        return RigBuilder.build(prepared, packed, native, meshCache, capture)
     }
 
     private data class Template(val model: PuppetModel, val chains: List<RigModifierChains.Binding>, val bindingInput: (() -> PuppetModel)? = null)
@@ -165,7 +168,7 @@ internal class RigModifierSource(
         val outlineConfig = RigModifierPipeline.ordinaryConfig(config).copy(
             meshOnly = false, deferRig = false, mouthOutlineEnabled = true, mouthThickness = thickness,
             mouthColor = RigLegacyBindings.outlineColor(instance))
-        val lipLayers = MouthLipLayers.prepare(analysis, outlineConfig).layers.mapNotNull {
+        val lipLayers = MouthLipLayers.prepare(analysis, outlineConfig, meshCache).layers.mapNotNull {
             (it.source as? MouthLipLayer)?.let { lip -> (lip.ownerId to lip.side) to it }
         }.toMap()
         val model = PuppetIr.toPuppet(rig)

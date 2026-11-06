@@ -34,7 +34,20 @@ internal class MouthLipLayer(
 }
 
 internal object MouthLipLayers {
-    fun prepare(input: PipelineAnalysis, config: PipelineConfig): PipelineAnalysis {
+    fun prepare(input: PipelineAnalysis, config: PipelineConfig, cache: PreviewMeshCache? = null): PipelineAnalysis {
+        val compute = { RigBuildProfile.stage("source artwork: mouth outlines") { prepareUncached(input, config) } }
+        if (cache == null || !RigStageCache.enabled) return compute()
+        // Outline pixels do not read motion recipes, tuning or binding strength. Keep source and
+        // authoring inputs in the key so a repaint, split, deleted layer or pending rig cannot reuse stale art.
+        val key = listOf(input, config.deletedLayerIds, config.rigPendingLayerIds, config.rigEdits,
+            config.mouthOutlineEnabled, config.meshOnly, config.deferRig, config.mouthColor, config.mouthThickness,
+            config.alphaThreshold, config.meshMaxEdgeDistance, config.meshInteriorDensity, config.meshOverrides,
+            config.meshFillAlgorithm, config.meshSuppressBoundaryDiagonals, config.meshFillParameters,
+            MeshResolution.unitScale(config, input.source), io.github.psd2live.i18n.I18n.currentLanguage)
+        return cache.stages.get("mouth outline artwork", 16, key, compute)
+    }
+
+    private fun prepareUncached(input: PipelineAnalysis, config: PipelineConfig): PipelineAnalysis {
         val originals = input.layers.filter { it.source !is MouthLipLayer && it.source.id.raw !in config.deletedLayerIds }
         if (!config.mouthOutlineEnabled || config.meshOnly || config.deferRig) return input.copy(layers = originals)
         // A mouth drawn in layers has its own lips and lines: no outline is drawn over them.
