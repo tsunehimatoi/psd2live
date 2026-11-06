@@ -4170,12 +4170,17 @@ object RigBuilder {
         val geometry = rig?.keyed(StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN) { pose ->
             val target = normalized(MouthStrokeMesh.positions(path.map { p -> rig.point(p.first, p.second, pose) }, radius, joins))
             MeshDeltaForm(FloatArray(positions.size) { target[it] - positions[it] })
-        } ?: grid(mouthAxes()) { values ->
-            val transformed = path.map { p ->
-                mouthWholePoint(p.first, p.second, aperture, values[0], values[1], config.mouthShape, true, config.mouthCurve, config.rigTuning)
-            }
-            val target = normalized(MouthStrokeMesh.positions(transformed, radius, joins))
-            MeshDeltaForm(FloatArray(positions.size) { target[it] - positions[it] })
+        } ?: run {
+            val curve = if (config.mouthShape == "custom") config.mouthCurve else MouthCurve.preset(config.mouthShape)
+            val tuning = config.rigTuning
+            io.github.psd2live.algorithms.binding.MouthOutlineMotion(
+                io.github.psd2live.core.modifier.ModifierSourceBounds(aperture.left, aperture.top, aperture.right, aperture.bottom),
+                curve.points.map { it.x to it.y },
+                io.github.psd2live.algorithms.binding.MouthOutlineMotion.Tuning(tuning.mouthClosedNarrow,
+                    tuning.mouthFormWiden, tuning.mouthSeam, tuning.mouthSmileBase, tuning.mouthSmile),
+            ).ribbonGrid(io.github.psd2live.algorithms.binding.MouthOutlineStroke(columns, side, config.mouthThickness),
+                io.github.psd2live.core.modifier.ModifierSourceBounds(frame.left, frame.top, frame.right, frame.bottom),
+                StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN)
         }
         val indices = MouthStrokeMesh.indices(path.size, joins)
         val ribbon = owner.copy(
