@@ -48,7 +48,7 @@ GUI 与 MCP 使用相同管理服务。`plugin_list` 返回包身份、启用状
 
 ## 编写插件
 
-JVM 契约已拆为独立的 `:algorithm-api` 模块，应用和插件共用同一份声明。它只依赖中立 `:format-model` 与 JSON 序列化库，不依赖应用、Umamo、Compose、工程或历史。`./gradlew :algorithm-api:build` 生成版本为 `1.1.0` 的 API JAR 与源码 JAR。
+JVM 契约已拆为独立的 `:algorithm-api` 模块，应用和插件共用同一份声明。它只依赖中立 `:format-model` 与 JSON 序列化库，不依赖应用、Umamo、Compose、工程或历史。`./gradlew :algorithm-api:build` 生成版本为 `1.2.0` 的 API JAR 与源码 JAR。
 
 `ModifierAlgorithmPlugin.evaluate(input, instance, checkpoint)` 接收上游 `RigIR`、不可变 `RigModifierInstance` 和取消检查函数，返回候选 `RigIR`。实现不能原地修改输入数组；长循环需调用 `checkpoint`，异常原样交回宿主。对象身份使用 `instance.outputId(localName)`，兼容已有别名；宿主仍负责输出验证、依赖、覆盖、CAS 和历史提交。API 同时公开目标引用、固定包引用、清单、版本范围与依赖声明；原 JSON 字段、序列化类型名称和对象 ID 编码保持不变。
 
@@ -159,3 +159,12 @@ API JAR 本身不是可安装算法包。独立编译契约不等于内置实现
 创建参数使用 `structure.edits` 中的 `action=create,kind=parameter,id,name,min,max,default,parent_id`。共享参数必须在算法 `parameters` 中预声明兼容定义；非共享新增对象使用实例所属确定性 ID。命令的详细字段沿用对应作者编辑原语，由宿主执行同一验证，不允许绕过模型编辑不变式。
 
 所有命令先在隔离候选中按顺序运行；验证输出后才返回求值结果。附属数据（权重、路径等作者内容）、纹理、画布、渲染层级也参与实际写入检查与冲突报告。一个包不能仅声明 `mesh` 却通过命令修改作者权重。进程隔离不提供安全沙箱；插件仍是用户安装的本地可执行代码。
+
+
+### 作者输入上下文
+
+API 1.2.0 增加可选的 `ContextualModifierAlgorithmPlugin`，接收独立的 `ModifierAlgorithmContext`。`values` 存结构化作者输入，`resources` 按逻辑名存不可变二进制数据；不写入用户配置，不暴露工程、历史或本机路径。原插件接口继续兼容。
+
+宿主声明 `author_context_v1` 能力。请求的可选 `context` 包含 `version: 1`、元数据资源引用 `values` 和逻辑名称到资源引用的映射 `resources`。引用使用 SHA-256 与长度校验；元数据上限 1 MiB，单项资源上限 64 MiB，最多 10000 项、总计 512 MiB。同内容载荷只落盘一次；不支持的版本和损坏资源拒绝求值。缺省上下文为空。
+
+宿主通过定义的 `authorContext` 捕获输入。前缀缓存和组件依赖缓存均比较上下文内容，资源变化会重新求值。这一接口及传输能力已实现；剩余绑定算法的图层语义、原始图像适配仍在迁移中，尚未全部通过此入口执行。

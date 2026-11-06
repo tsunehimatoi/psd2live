@@ -275,6 +275,32 @@ class ModifierPluginTest {
         assertEquals("B", result.rig.clips.single().name)
         assertEquals(evaluator.evaluate(rig, changed).rig, result.rig)
     }
+    @Test fun authorInputsInvalidateBothPrefixAndDependencyCaches() {
+        var calls = 0
+        var source = ModifierAlgorithmContext(resources = mapOf("opacity" to ModifierAlgorithmResource(byteArrayOf(1))))
+        val plugin = object : ContextualModifierAlgorithmPlugin {
+            override fun evaluate(input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext, checkpoint: () -> Unit): RigIR {
+                calls++
+                return input.copy(meshes = input.meshes.map { it.copy(opacity = context.resources.getValue("opacity").read()[0] / 10f) })
+            }
+        }
+        val definition = RigModifierDefinition("source", 1, evaluate = plugin::evaluate, plugin = plugin,
+            cacheReads = setOf("mesh"), authorContext = { source })
+        val evaluator = RigModifierEvaluator(RigModifierRegistry(listOf(definition)))
+        val rig = RigIR(Canvas(1f, 1f), emptyList(), meshes = listOf(Mesh("body", "Body", null, geometry = null, offsets = null)))
+        val stack = RigModifierStack().add("source", 1, listOf(ModifierTarget("mesh", "body")))
+        val cache = RigModifierEvaluationCache()
+        assertEquals(.1f, evaluator.evaluate(rig, stack, cache).rig.meshes.single().opacity)
+        evaluator.evaluate(rig, stack, cache)
+        assertEquals(1, calls)
+        source = ModifierAlgorithmContext(resources = mapOf("opacity" to ModifierAlgorithmResource(byteArrayOf(5))))
+        assertEquals(.5f, evaluator.evaluate(rig, stack, cache).rig.meshes.single().opacity)
+        assertEquals(2, calls)
+        source = ModifierAlgorithmContext(resources = mapOf("opacity" to ModifierAlgorithmResource(byteArrayOf(5))))
+        evaluator.evaluate(rig, stack, cache)
+        assertEquals(2, calls)
+    }
+
     @Test fun simulationFingerprintIgnoresUnrelatedMeshesButTracksCarriers() {
         val body = Mesh("body", "Body", "parent", geometry = null, offsets = null)
         val eye = Mesh("eye", "Eye", null, geometry = null, offsets = null)

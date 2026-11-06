@@ -48,7 +48,7 @@ Use the existing `modifier_plan`, `modifier_add`, and `modifier_update` operatio
 
 ## Authoring and protocol
 
-The JVM contract lives in the independent `:algorithm-api` module used by the application. It depends only on the neutral `:format-model` module and JSON serialization, not the application, Umamo, Compose, projects or history. `./gradlew :algorithm-api:build` produces the version `1.1.0` API and sources JARs.
+The JVM contract lives in the independent `:algorithm-api` module used by the application. It depends only on the neutral `:format-model` module and JSON serialization, not the application, Umamo, Compose, projects or history. `./gradlew :algorithm-api:build` produces the version `1.2.0` API and sources JARs.
 
 `ModifierAlgorithmPlugin.evaluate(input, instance, checkpoint)` receives the upstream `RigIR`, an immutable `RigModifierInstance` and a cancellation checkpoint, and returns a candidate `RigIR`. Do not mutate input arrays; invoke the checkpoint in long loops and let failures propagate. Generate identities with `instance.outputId(localName)`, which preserves recorded aliases. The host owns output validation, dependencies, overrides, CAS and history. Targets, pinned package references, manifests, version ranges and dependency declarations are public in the same module. Existing JSON fields, serialized type names and object ID encoding are unchanged.
 
@@ -148,3 +148,12 @@ Example channel edit:
 Weights use `vertex_group_put` with `target`, `name`, `kind`, and one `weights` value per vertex, or an f32le buffer reference carrying `sha256/bytes/count/format`. Supported weight kinds and detailed command fields follow the corresponding authoring primitives. Parameter creation uses `structure.edits` with `action=create,kind=parameter,id,name,min,max,default,parent_id`. Shared parameters must be declared with compatible definitions; other new objects use deterministic instance-owned IDs.
 
 Commands execute in order on an isolated candidate. Host checks include sidecar authoring data (weights/paths), textures, canvas and render hierarchy, and report conflicting writes. Declaring only `mesh` does not authorize changes to authoring weights. Workers cannot directly publish history or documents. Process separation provides fault isolation, not a security sandbox.
+
+
+### Author input context
+
+API 1.2.0 adds the optional `ContextualModifierAlgorithmPlugin`, receiving a separate `ModifierAlgorithmContext`. `values` holds structured author inputs and `resources` maps logical names to immutable binary data. Inputs are separate from editable configuration and expose no project, history or local paths. The original plugin interface remains compatible.
+
+The host advertises `author_context_v1`. The optional request `context` contains `version: 1`, a metadata resource reference `values`, and a logical-name-to-reference map `resources`. References use SHA-256 and size validation. Metadata is limited to 1 MiB; resources to 64 MiB each, 10000 entries and 512 MiB total. Identical payloads are written once. Unsupported versions and corrupt resources fail evaluation. An omitted context is empty.
+
+Host definitions capture inputs using `authorContext`. Both prefix and component-dependency caches compare context contents, invalidating results when resources change. The API and transport are implemented; layer semantics and original-image adapters for the remaining binding algorithms are still being migrated and do not yet all use this entrypoint.

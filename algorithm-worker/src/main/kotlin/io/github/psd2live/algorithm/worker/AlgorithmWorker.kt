@@ -22,9 +22,12 @@ object AlgorithmWorker {
                 val objects = AlgorithmObjects.apply(if (request.getValue("reset").jsonPrimitive.boolean) emptyMap() else previous, request)
                 val input = AlgorithmObjects.decode(objects, request.getValue("mesh_order").jsonArray,
                     request.getValue("deformer_order").jsonArray, resources)
-                val output = algorithm.evaluate(input, instance) {
+                val checkpoint = {
                     if (Thread.currentThread().isInterrupted) throw java.util.concurrent.CancellationException()
                 }
+                val output = if (algorithm is ContextualModifierAlgorithmPlugin)
+                    algorithm.evaluate(input, instance, AlgorithmContexts.decode(request["context"], resources), checkpoint)
+                else algorithm.evaluate(input, instance, checkpoint)
                 val encoded = AlgorithmObjects.encode(output) { AlgorithmObjects.write(resources, it) }
                 previous = objects
                 buildJsonObject { put("objects", AlgorithmObjects.delta(objects, encoded, output)) }

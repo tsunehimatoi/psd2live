@@ -30,6 +30,7 @@ internal class RigModifierDefinition(
     val plugin: ModifierAlgorithmPlugin = ModifierAlgorithmPlugin(evaluate),
     /** Null keeps source-aware algorithms on the conservative ordered-prefix cache. */
     val cacheReads: Set<String>? = null,
+    val authorContext: (RigModifierInstance) -> ModifierAlgorithmContext = { ModifierAlgorithmContext.Empty },
 )
 
 internal class RigModifierRegistry(definitions: List<RigModifierDefinition>) {
@@ -89,7 +90,8 @@ internal data class AppliedModifierPrefix(val authored: RigIR, val stack: RigMod
 internal class RigModifierEvaluationCache {
     data class Snapshot(val context: Any, val authored: RigIR, val stack: RigModifierStack,
                         val entries: List<ModifierEvaluation>, val outputs: List<RigIR>, val plugins: Long = ModifierPluginStore.shared.revision.value,
-                        val algorithms: Map<String, ModifierInputCache.Entry> = emptyMap())
+                        val algorithms: Map<String, ModifierInputCache.Entry> = emptyMap(),
+                        val authorContexts: Map<String, ModifierAlgorithmContext> = emptyMap())
     @Volatile var snapshot: Snapshot? = null
 }
 
@@ -117,8 +119,13 @@ internal class RigModifierEvaluator(
         val writers = HashMap<Pair<String, String>, Pair<String, RigModifierDefinition>>()
         val saved = cache?.snapshot?.takeIf { it.plugins == pluginRevision && it.context == context && it.authored == authored &&
             it.stack.appliedCapabilities == stack.appliedCapabilities }
+        val authorContexts = stack.instances.filter { it.enabled && ModifierPluginCatalog.available(it) }.associate { instance ->
+            checkpoint()
+            instance.id to registry.definition(instance).authorContext(instance)
+        }
         val reuse = saved?.stack?.instances?.zip(stack.instances)?.takeWhile { (a, b) ->
-            a == b && saved.stack.overrides[a.id].orEmpty() == stack.overrides[b.id].orEmpty()
+            a == b && saved.stack.overrides[a.id].orEmpty() == stack.overrides[b.id].orEmpty() &&
+                saved.authorContexts[a.id] == authorContexts[b.id]
         }?.size ?: 0
         val outputs = ArrayList<RigIR>()
         val algorithmCache = saved?.algorithms.orEmpty().filterKeys { id -> stack.instances.any { it.id == id } }.toMutableMap()
@@ -193,12 +200,17 @@ internal class RigModifierEvaluator(
             }
             io.github.psd2live.core.RigBuildProfile.count("modifier cache misses")
             val before = current
-            val inputKey = definition.cacheReads?.let { ModifierInputCache.input(before, it) }
+            val authorContext = authorContexts.getValue(instance.id)
+            val inputKey = definition.cacheReads?.let { ModifierInputCache.input(before, it) to authorContext }
             val cached = algorithmCache[instance.id]?.takeIf { it.instance == instance && it.input == inputKey }
             val generated = if (cached != null) {
                 io.github.psd2live.core.RigBuildProfile.count("modifier dependency cache hits")
                 cached.patch.apply(before)
-            } else io.github.psd2live.core.RigBuildProfile.stage("modifier evaluate: ${instance.type}") { definition.plugin.evaluate(before, instance, checkpoint) }
+            } else io.github.psd2live.core.RigBuildProfile.stage("modifier evaluate: ${instance.type}") {
+                val plugin = definition.plugin
+                if (plugin is ContextualModifierAlgorithmPlugin) plugin.evaluate(before, instance, authorContext, checkpoint)
+                else plugin.evaluate(before, instance, checkpoint)
+            }
             if (inputKey != null && cached == null) algorithmCache[instance.id] = ModifierInputCache.Entry(instance, inputKey, ModifierInputCache.Patch(before, generated))
             checkpoint()
             validateParameters(before, generated, instance, resolved)
@@ -235,7 +247,7 @@ internal class RigModifierEvaluator(
         }
         checkpoint()
         require(pluginRevision == ModifierPluginStore.shared.revision.value) { "Algorithm plugins changed during evaluation; retry the edit" }
-        cache?.snapshot = RigModifierEvaluationCache.Snapshot(context, authored, stack, entries, outputs, pluginRevision, algorithmCache)
+        cache?.snapshot = RigModifierEvaluationCache.Snapshot(context, authored, stack, entries, outputs, pluginRevision, algorithmCache, authorContexts)
         return RigModifierResult(current, entries)
     }
 

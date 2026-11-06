@@ -26,13 +26,13 @@ internal object ModifierPluginWorkers {
 
     fun evaluate(entry: InstalledModifierPlugin, algorithm: ModifierPluginAlgorithm, rig: RigIR,
                  instance: RigModifierInstance, checkpoint: () -> Unit, store: ModifierPluginStore = ModifierPluginStore.shared,
-                 timeoutMillis: Long = 120_000): RigIR {
+                 timeoutMillis: Long = 120_000, context: ModifierAlgorithmContext = ModifierAlgorithmContext.Empty): RigIR {
         require(timeoutMillis > 0)
         store.requireAvailable(entry.reference)
         if (!workers.containsKey(entry.reference)) store.verify(entry.reference)
         val worker = workers.computeIfAbsent(entry.reference) { Worker(entry, store) }
         try {
-            val result = worker.evaluate(algorithm, rig, instance, checkpoint, timeoutMillis)
+            val result = worker.evaluate(algorithm, rig, instance, checkpoint, timeoutMillis, context)
             store.requireAvailable(entry.reference)
             return result
         } catch (failure: QueuedFailure) {
@@ -72,7 +72,7 @@ internal object ModifierPluginWorkers {
         @Volatile private var closed = false
         private val requests = java.util.concurrent.locks.ReentrantLock(true)
 
-        fun evaluate(algorithm: ModifierPluginAlgorithm, rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit, timeoutMillis: Long): RigIR {
+        fun evaluate(algorithm: ModifierPluginAlgorithm, rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit, timeoutMillis: Long, context: ModifierAlgorithmContext): RigIR {
             // A cancelled queued request must neither wait on a JVM monitor nor kill the active request.
             try {
                 val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
@@ -83,11 +83,11 @@ internal object ModifierPluginWorkers {
                     if (requests.tryLock(minOf(remaining, TimeUnit.MILLISECONDS.toNanos(50)), TimeUnit.NANOSECONDS)) break
                 }
             } catch (failure: Throwable) { throw QueuedFailure(failure) }
-            try { return evaluateLocked(algorithm, rig, instance, checkpoint, timeoutMillis) }
+            try { return evaluateLocked(algorithm, rig, instance, checkpoint, timeoutMillis, context) }
             finally { requests.unlock() }
         }
 
-        private fun evaluateLocked(algorithm: ModifierPluginAlgorithm, rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit, timeoutMillis: Long): RigIR {
+        private fun evaluateLocked(algorithm: ModifierPluginAlgorithm, rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit, timeoutMillis: Long, context: ModifierAlgorithmContext): RigIR {
             check(!closed) { "Algorithm plugin was stopped" }
             checkpoint()
             val input = ModifierInputCache.project(rig, algorithm.reads + algorithm.writes)
@@ -99,7 +99,8 @@ internal object ModifierPluginWorkers {
             val request = buildJsonObject {
                 put("protocol", 1); put("id", requestId); put("method", "evaluate")
                 put("type", algorithm.type); put("version", instance.version); put("instance", instance.id)
-                put("capabilities", JsonArray((ModifierPluginOutput.operations + "rig_objects").sorted().map(::JsonPrimitive)))
+                put("capabilities", JsonArray((ModifierPluginOutput.operations + setOf("rig_objects", "author_context_v1")).sorted().map(::JsonPrimitive)))
+                if (context != ModifierAlgorithmContext.Empty) put("context", io.github.psd2live.algorithm.worker.AlgorithmContexts.encode(context, ::blob))
                 put("invocation", Json.encodeToJsonElement(RigModifierInstance.serializer(), instance.copy(type = algorithm.type)))
                 put("dependencies", JsonArray(store.resolution(entry.reference).dependencies.map { reference ->
                     Json.encodeToJsonElement(ModifierPluginReference.serializer(), reference)
