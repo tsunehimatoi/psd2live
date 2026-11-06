@@ -1,5 +1,7 @@
 package io.github.psd2live.core.modifier
 
+import io.github.psd2live.algorithms.binding.ScaffoldParts
+import io.github.psd2live.algorithms.binding.ScaffoldPartsContext
 import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.*
 import io.github.psd2live.format.model.RigIR
@@ -222,7 +224,14 @@ internal class RigModifierSource(
     private val scaffoldContexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
     fun scaffoldContext(instance: RigModifierInstance): ModifierAlgorithmContext = scaffoldContexts.getOrPut(instance) {
         io.github.psd2live.algorithms.binding.ScaffoldAlgorithm.capture(scaffold(instance) {}, materialBase,
-            instance.targets.associate { it.id to primaryByLayer.getValue(layersByMesh.getValue(it.id)) })
+            instance.targets.associate { it.id to primaryByLayer.getValue(layersByMesh.getValue(it.id)) },
+            if (instance.plugin?.let { it.id.startsWith("builtin.") &&
+                ModifierPluginVersion.parse(it.version, legacy = true) < ModifierPluginVersion.parse("1.0.37") } == true) null
+            else ScaffoldPartsContext.capture(analysis.layers.mapNotNull { layer ->
+                primaryByLayer[layer.source.id.raw]?.let { id ->
+                    ScaffoldParts.Material(DrawableId(id), RigBuilder.scaffoldSlot(layer, analysis.anchors), layer.source.order)
+                }
+            }, label = { io.github.psd2live.i18n.tr(it) }))
     }
 
     private fun templateKey(instances: List<RigModifierInstance>, scaffold: JsonObject): Map<String, JsonObject> {

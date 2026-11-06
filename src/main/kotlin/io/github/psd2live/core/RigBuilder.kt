@@ -1703,24 +1703,13 @@ object RigBuilder {
 		}
 		val maskedParts = if (!v2) emptyList() else maskedAll.filter { it.id in partLayerById }
 
-		fun slotFor(layer: ClassifiedLayer): ScaffoldParts.Slot = when (inferredGroup(layer, analysis.anchors)) {
-			LayerGroup.HEAD -> when {
-				layer.semantic.tag == SemanticTag.BACK_HAIR -> ScaffoldParts.Slot.BACK_HAIR
-				layer.semantic.tag in faceTags -> ScaffoldParts.Slot.FACE
-				layer.semantic.tag == SemanticTag.FRONT_HAIR -> ScaffoldParts.Slot.FRONT_HAIR
-				else -> ScaffoldParts.Slot.ACCESSORIES
-			}
-			LayerGroup.EXTRA -> ScaffoldParts.Slot.EXTRA
-			LayerGroup.UNKNOWN -> ScaffoldParts.Slot.UNKNOWN
-			else -> ScaffoldParts.Slot.BODY
-		}
 		val organization = ScaffoldParts.build(maskedDrawables.map { drawable ->
 			val layer = classifiedByDrawable.getValue(drawable.id)
-			ScaffoldParts.Material(drawable.id, slotFor(layer), layer.source.order)
+			ScaffoldParts.Material(drawable.id, scaffoldSlot(layer, analysis.anchors), layer.source.order)
 		}) { tr(it) }
 		val parts = organization.parts
 		val partSlots = LinkedHashMap<DrawableId, PartId>()
-		for (part in maskedParts) partSlots[part.id] = slotFor(classifiedByDrawable.getValue(part.id)).id
+		for (part in maskedParts) partSlots[part.id] = scaffoldSlot(classifiedByDrawable.getValue(part.id), analysis.anchors).id
 		val standardIds = (StandardParameters.all + moduleParams).map { it.id }.toSet()
 		val uniqueCustomParams = customParams.filter { it.id !in standardIds }
 		val parameterTree = parameterTree(uniqueCustomParams, moduleParams)
@@ -4444,6 +4433,18 @@ object RigBuilder {
 		LayerBlend.Multiply, LayerBlend.LinearBurn, LayerBlend.ColorBurn -> BlendMode.MultiplyPremultiplied
 		LayerBlend.Screen -> BlendMode.Screen
 		else -> BlendMode.Normal
+	}
+
+	internal fun scaffoldSlot(layer: ClassifiedLayer, anchors: RigAnchors): ScaffoldParts.Slot = when (inferredGroup(layer, anchors)) {
+		LayerGroup.HEAD -> when {
+			layer.semantic.tag == SemanticTag.BACK_HAIR -> ScaffoldParts.Slot.BACK_HAIR
+			layer.semantic.tag in faceTags -> ScaffoldParts.Slot.FACE
+			layer.semantic.tag == SemanticTag.FRONT_HAIR -> ScaffoldParts.Slot.FRONT_HAIR
+			else -> ScaffoldParts.Slot.ACCESSORIES
+		}
+		LayerGroup.EXTRA -> ScaffoldParts.Slot.EXTRA
+		LayerGroup.UNKNOWN -> ScaffoldParts.Slot.UNKNOWN
+		else -> ScaffoldParts.Slot.BODY
 	}
 
 	private fun inferredGroup(layer: ClassifiedLayer, anchors: RigAnchors): LayerGroup =

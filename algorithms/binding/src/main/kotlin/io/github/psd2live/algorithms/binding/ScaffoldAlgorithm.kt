@@ -13,8 +13,16 @@ class ScaffoldAlgorithm : ContextualModifierAlgorithmPlugin {
     override fun evaluate(input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext, checkpoint: () -> Unit): RigIR {
         checkpoint()
         require(instance.version in 1..2) { "Unsupported scaffold algorithm version" }
-        require(context.values["schema"]?.jsonPrimitive?.content == "scaffold/1") { "Missing scaffold author inputs" }
-        val template = PuppetIr.toPuppet(RigIrBinary.decode(context.resources.getValue("template").read()))
+        val schema = context.values["schema"]?.jsonPrimitive?.content
+        require(schema in setOf("scaffold/1", "scaffold/2")) { "Missing scaffold author inputs" }
+        val captured = PuppetIr.toPuppet(RigIrBinary.decode(context.resources.getValue("template").read()))
+        val template = if (schema == "scaffold/2") {
+            require(captured.parts.isEmpty() && captured.rootChildren.isEmpty() && captured.rootPartId == null) {
+                "Source organization must be computed by the scaffold plugin"
+            }
+            val organization = ScaffoldPartsContext.build(context.values.getValue("organization").jsonObject, checkpoint)
+            captured.copy(parts = organization.parts, rootChildren = organization.rootChildren)
+        } else captured
         val materials = PuppetIr.toPuppet(RigIrBinary.decode(context.resources.getValue("materials").read())).drawables.associateBy { it.id }
         val canonical = context.values.getValue("canonical_targets").jsonObject
         val projections = HashMap<String, PuppetModel>()
@@ -37,21 +45,23 @@ class ScaffoldAlgorithm : ContextualModifierAlgorithmPlugin {
 
     companion object {
         /** Capture immutable binary model resources once; no live source or application callbacks cross the boundary. */
-        fun capture(template: PuppetModel, materials: PuppetModel, canonicalTargets: Map<String, String>): ModifierAlgorithmContext {
+        fun capture(template: PuppetModel, materials: PuppetModel, canonicalTargets: Map<String, String>,
+                    organization: JsonObject? = null): ModifierAlgorithmContext {
             val sourceIds = canonicalTargets.values.toHashSet()
             // The executor reads source hierarchy and target rest geometry, not texture inventory,
             // editor metadata or source appearance. Keep full part order for materialized aliases.
-            val frames = PuppetModel(template.parameters, template.parts, template.deformers,
+            val frames = PuppetModel(template.parameters, if (organization == null) template.parts else emptyList(), template.deformers,
                 template.drawables.filter { it.id.raw in sourceIds }.map {
                     Drawable(it.id, it.id.raw, it.parentDeformerId, BlendMode.Normal, emptyList(), it.mesh, it.geometryGrid)
-                }, template.rootChildren, template.rootPartId)
+                }, if (organization == null) template.rootChildren else emptyList(), if (organization == null) template.rootPartId else null)
             // Ordinary material is used only for exact position/UV/topology comparisons.
             val original = PuppetModel(emptyList(), emptyList(), emptyList(),
                 materials.drawables.filter { it.id.raw in canonicalTargets }.map {
                     Drawable(it.id, it.id.raw, null, BlendMode.Normal, emptyList(), it.mesh, null)
                 }, emptyList(), null)
             return ModifierAlgorithmContext(buildJsonObject {
-                put("schema", "scaffold/1")
+                put("schema", if (organization == null) "scaffold/1" else "scaffold/2")
+                organization?.let { put("organization", it) }
                 put("canonical_targets", JsonObject(canonicalTargets.mapValues { JsonPrimitive(it.value) }))
             }, resources = mapOf(
                 "template" to ModifierAlgorithmResource(RigIrBinary.encode(PuppetIr.toIr(frames))),
