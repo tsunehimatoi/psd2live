@@ -10,15 +10,20 @@ import org.umamo.runtime.model.*
 
 /** Builds the fitted mouth transition from neutral upstream geometry and source measurements. */
 class MouthFittedAlgorithm : ChangingModifierAlgorithmPlugin {
-    override fun changes(input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext, checkpoint: () -> Unit): ModifierModelChanges {
+    override fun changes(input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext, checkpoint: () -> Unit) =
+        candidateChanges(input, instance, context, checkpoint, lowerShapes = true)
+
+    internal fun candidateChanges(input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext,
+                                  checkpoint: () -> Unit, lowerShapes: Boolean): ModifierModelChanges {
         require(instance.targets.all { it.kind == "mesh" }) { "Fitted mouth requires mesh targets" }
         val inputs = MouthFittedInputs.decode(context)
         val source = PuppetIr.toPuppet(input)
         val targets = instance.targets.mapTo(linkedSetOf()) { it.id }
         val tongues = linkedMapOf<String, String>()
-        val model = project(source, targets, inputs, checkpoint) { id ->
+        val posed = sourceCandidate(source, targets, inputs, checkpoint) { id ->
             instance.outputId("tongue-out:${id.raw}").also { tongues[it] = id.raw }
         }
+        val model = if (lowerShapes) lower(posed, inputs, checkpoint) else posed
         val parameters = objectChanges(source.parameters, model.parameters, input.parameters.associateBy { it.id }, { it.id.raw }) {
             PuppetIr.parametersToIr(model.copy(parameters = listOf(it))).single()
         }
@@ -38,7 +43,7 @@ class MouthFittedAlgorithm : ChangingModifierAlgorithmPlugin {
             })
     }
 
-    /** Lowering retains unchanged engine objects. Convert only the objects the transition wrote. */
+    /** Unchanged engine objects retain their identity. Convert only the objects the transition wrote. */
     private fun <E : Any, I> objectChanges(before: List<E>, after: List<E>, original: Map<String, I>, id: (E) -> String,
                                            convert: (E) -> I): ModifierObjectChanges<I> {
         val existing = before.associateBy(id)
@@ -65,6 +70,22 @@ class MouthFittedAlgorithm : ChangingModifierAlgorithmPlugin {
         checkpoint: () -> Unit = {},
         onBindingInput: ((PuppetModel) -> Unit)? = null,
         tongueId: (DrawableId) -> String = { "${it.raw}_Out" },
+    ): PuppetModel {
+        val posed = sourceCandidate(source, targets, inputs, checkpoint, tongueId)
+        onBindingInput?.invoke(posed)
+        return lower(posed, inputs, checkpoint)
+    }
+
+    private fun lower(posed: PuppetModel, inputs: MouthFittedInputs, checkpoint: () -> Unit): PuppetModel =
+        BlendShapeLowering({ turn, name -> (if (turn) inputs.turnCarrierName else inputs.shapeCarrierName)
+            .replace("{meshName}", name) }, checkpoint).lawful(posed)
+
+    private fun sourceCandidate(
+        source: PuppetModel,
+        targets: Set<String>,
+        inputs: MouthFittedInputs,
+        checkpoint: () -> Unit,
+        tongueId: (DrawableId) -> String,
     ): PuppetModel {
         val mouth = inputs.source?.rig()
         val own = inputs.layers.values.filter { covers(it, inputs, mouth) && it.opaque }
@@ -159,10 +180,7 @@ class MouthFittedAlgorithm : ChangingModifierAlgorithmPlugin {
         val parameters = source.parameters.map {
             if (it.id == mouthOpen && mouth != null && mouth.openKeys.last() > it.max) it.copy(max = mouth.openKeys.last()) else it
         }
-        val posed = withTongues(source.copy(drawables = drawables, parameters = parameters), targets, inputs, mouth, tongueId)
-        onBindingInput?.invoke(posed)
-        return BlendShapeLowering({ turn, name -> (if (turn) inputs.turnCarrierName else inputs.shapeCarrierName)
-            .replace("{meshName}", name) }, checkpoint).lawful(posed)
+        return withTongues(source.copy(drawables = drawables, parameters = parameters), targets, inputs, mouth, tongueId)
     }
 
     private fun withTongues(
@@ -333,4 +351,10 @@ class MouthFittedAlgorithm : ChangingModifierAlgorithmPlugin {
         val roles = lips + setOf("HIGHLIGHT", "SHADOW")
         val inner = setOf(MouthRig.Follow.DEEP, MouthRig.Follow.INSIDE, MouthRig.Follow.OPENING)
     }
+}
+
+/** Supplies the source binding candidate for host-side composition and lowering. */
+class MouthFittedSourceAlgorithm : ChangingModifierAlgorithmPlugin {
+    override fun changes(input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext, checkpoint: () -> Unit) =
+        MouthFittedAlgorithm().candidateChanges(input, instance, context, checkpoint, lowerShapes = false)
 }

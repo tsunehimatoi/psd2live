@@ -12,6 +12,8 @@ object ExpressionWorker {
         }
         val skinId = "builtin." + java.util.HexFormat.of().formatHex("face.skin-clip".encodeToByteArray()) + ".v1/clip"
         algorithms[skinId to 1] = SkinClipAlgorithm()
+        val mouthId = "builtin." + java.util.HexFormat.of().formatHex("mouth/fitted".encodeToByteArray()) + ".v1/source"
+        algorithms[mouthId to 1] = MouthFittedSourceAlgorithm()
         for (version in 1..2) {
             val id = "builtin." + java.util.HexFormat.of().formatHex("rig.scaffold".encodeToByteArray()) + ".v$version/structure"
             algorithms[id to version] = ScaffoldAlgorithm()

@@ -263,6 +263,7 @@ internal class RigModifierSource(
         val key = state.mapValues { (_, instance) -> buildJsonObject {
             // This is an intermediate geometry template, not a modifier-result cache. Pendulums are evaluated separately.
             put("version", instance.version); put("config", JsonObject(instance.config - "scaffold" - "base" - "physics"))
+            instance.plugin?.let { put("plugin", Json.encodeToJsonElement(ModifierPluginReference.serializer(), it)) }
         } }
         return key + ("rig.scaffold" to scaffold)
     }

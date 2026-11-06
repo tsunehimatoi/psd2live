@@ -5,6 +5,7 @@ import io.github.psd2live.algorithms.binding.MouthCurve
 import io.github.psd2live.algorithms.binding.MouthFit
 import io.github.psd2live.algorithms.binding.MouthFittedAlgorithm
 import io.github.psd2live.algorithms.binding.MouthFittedInputs
+import io.github.psd2live.algorithms.binding.MouthFittedSourceAlgorithm
 import io.github.psd2live.algorithms.binding.MouthOptions
 import io.github.psd2live.algorithms.binding.MouthRig
 import io.github.psd2live.algorithms.binding.MouthSourceContext
@@ -13,6 +14,7 @@ import io.github.psd2live.algorithms.binding.ScaffoldMeshContext
 import io.github.psd2live.core.modifier.ModifierTarget
 import io.github.psd2live.core.modifier.RigModifierInstance
 import io.github.psd2live.format.model.*
+import io.github.psd2live.targets.cubism.PuppetIr
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -63,7 +65,7 @@ class MouthFittedAlgorithmTest {
     }
 
     @Test
-    fun workerBuildsGeometryVisibilityMasksAndHeadTurnFromSource() {
+    fun sourceCandidateMatchesTheBindingInputBeforeLowering() {
         val frame = Bounds(0f, 0f, 100f, 100f)
         val geometry = MeshGeometry(Floats.of(floatArrayOf(0.2f, 0.45f, 0.5f, 0.65f, 0.8f, 0.45f)),
             Floats.of(floatArrayOf(0f, 0f, 0.5f, 1f, 1f, 0f)), Ints.of(intArrayOf(0, 1, 2)))
@@ -83,7 +85,19 @@ class MouthFittedAlgorithmTest {
             layers = linkedMapOf("open" to layer("MOUTH_OPEN"), "closed" to layer("MOUTH_CLOSE"), "teeth" to layer("TOOTH_T")),
             maskSources = listOf("open"), head = MouthFittedInputs.Head("head", 50f, 50f, 50f, 50f, 0.45f, 1f, 100f))
         val targets = listOf("open", "closed", "teeth").map { ModifierTarget("mesh", it) }
-        val result = MouthFittedAlgorithm().evaluate(input, RigModifierInstance("mouth", "mouth/fitted", 1, targets), context.encode()) {}
+        val instance = RigModifierInstance("mouth", "mouth/fitted", 1, targets)
+        val algorithm = MouthFittedAlgorithm()
+        var bindingInput = emptyList<Mesh>()
+        algorithm.project(PuppetIr.toPuppet(input), targets.mapTo(linkedSetOf()) { it.id }, context,
+            onBindingInput = { model -> bindingInput = model.drawables.map(PuppetIr::meshToIr) })
+        val changes = MouthFittedSourceAlgorithm().changes(input, instance, context.encode()) {}
+        assertEquals(setOf("parameter", "mesh"), changes.writeKinds())
+        val candidate = changes.apply(input)
+        assertEquals(bindingInput.filter { it.id != "untouched" }, candidate.meshes.filter { it.id != "untouched" })
+        assertTrue(candidate.meshes.single { it.id == "open" }.shapes.any { it.parameter == "ParamAngleX" })
+        assertEquals(meshes.last(), candidate.meshes.last())
+
+        val result = algorithm.evaluate(input, instance, context.encode()) {}
         val open = result.meshes.single { it.id == "open" }
         val closed = result.meshes.single { it.id == "closed" }
         val teeth = result.meshes.single { it.id == "teeth" }
