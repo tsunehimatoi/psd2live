@@ -57,3 +57,60 @@ New IDs use `modifier:<instance-id>:<UTF-8 hex of local name>`. The host validat
 Bundled calls avoid IPC. External workers reuse processes, content-addressed buffers, and incremental input synchronization. Author input, binding templates, and algorithms with declared dependencies have separate caches. Folder edits do not evaluate algorithms.
 
 Some bundled binding algorithms still generate templates and extract their local contribution; their full separation into local algorithms is not complete. Stack evaluation remains serial, without independent-item scheduling. The complete-generation three-second target has not been reached; plugin support and cache hits do not establish that target.
+
+## Versions and dependency graph
+
+`protocol` versions the wire contract. Package `version` uses `major.minor.patch`, optionally with prerelease/build identifiers. Algorithm `version` remains the persisted integer revision; changing implementation language does not renumber it. Build metadata does not affect precedence, while content hashes distinguish payloads. Early integer package versions compare as `N.0.0`; publish new packages with full versions.
+
+Package `dependencies` are code prerequisites; `conflicts` prevent simultaneous activation. Algorithm `requires` instead requires preceding model results on matching targets. It does not install packages or invoke another worker.
+
+```json
+{
+  "dependencies": [{"id":"geometry-core","version":{"minimum":"1.2.0","maximum":"2.0.0"}}],
+  "conflicts": [{"id":"other-cloth","version":{"exact":"1.0.0"}}]
+}
+```
+
+Minimum is inclusive; maximum is exclusive. Exact cannot be combined with bounds. Omitted `version` accepts any version. Prereleases follow numeric/text identifier precedence without an implicit prerelease exclusion.
+
+Installation chooses the highest enabled matching version and locks the transitive closure. Missing prerequisites, cycles and conflicts reject installation/activation. Dependencies are not downloaded automatically. Conflicts are symmetric even when declared by only one package. Disabling/removing prerequisites stops workers and leaves dependents installed but unavailable; restoring the original contents recovers them.
+
+The installation stores dependency locks. Persisted plugin references additionally contain `dependencyDigests` (`package@version` to content hash). Installing a newer prerequisite cannot change existing instances. Reinstalling a package against different dependencies does not silently upgrade an old project.
+
+`plugin_list` / `plugin_inspect` return `available`, `issues`, `dependencies`, `conflicts`, and `resolved_dependencies`. `enabled` describes the user switch, not actual availability. Preferences display the failure reasons. Request `dependencies` contains locked package identities, not callable plugin handles. Algorithms collaborate through model inputs and stack dependencies.
+
+## Low-level interface and ownership
+
+| Module | Responsibility |
+| --- | --- |
+| `ModifierAlgorithmPlugin` | Serializable package/algorithm/parameter/version contracts |
+| `ModifierPluginDependencies` | Numeric version ordering, ranges, graph and conflict resolution |
+| `ModifierPluginStore` | Validation, atomic installation, dependency locks and removal |
+| `ModifierPluginWorkers` | Persistent workers, cancellation, timeouts and binary transport |
+| `ModifierPluginOutput` | Candidate-only model commands and write-scope validation |
+| `RigModifierEvaluator` | Stack semantics, parameter reuse, overrides, contributions and caching |
+| Application layer | Shared GUI/MCP jobs, CAS and history publication |
+
+Requests advertise supported command names in `capabilities`.
+
+| Purpose | Commands | Typical write components |
+| --- | --- | --- |
+| Parameters, folders, links, parents | `structure` | `parameter/hierarchy/relations/mesh/deformer/part` |
+| Keyforms and channels | `set/copy/delete/parameter_keys` | `mesh/deformer/parameter/glue` |
+| Geometry, topology, deformers | `canvas_geometry/canvas_topology/canvas_create_warp/canvas_create_rotation/warp` | `mesh/deformer/hierarchy/authoring` |
+| Glue and paths | `canvas_create_glue/canvas_glue_edit/path_put/path_delete` | `glue/authoring` |
+| Vertex weights | `vertex_group_put/vertex_group_delete` | `authoring` |
+| Physics and motion | `physics/motion` | `physics/motion` |
+| Target opacity | `mesh_opacity` | `mesh` |
+
+Declare all components actually changed. Other recognized components are `textures/canvas/advanced/hit_areas/rest_pose`; `*` covers the whole model. Declaring a component does not imply a specialized write command exists: direct external texture creation is not currently provided. Less granular reads use conservative cache keys.
+
+Example channel edit:
+
+```json
+{"op":"set","target":"mesh:cloth","key":{"ParamAngleX":30},"channels":{"opacity":0.8}}
+```
+
+Weights use `vertex_group_put` with `target`, `name`, `kind`, and one `weights` value per vertex, or an f32le buffer reference carrying `sha256/bytes/count/format`. Supported weight kinds and detailed command fields follow the corresponding authoring primitives. Parameter creation uses `structure.edits` with `action=create,kind=parameter,id,name,min,max,default,parent_id`. Shared parameters must be declared with compatible definitions; other new objects use deterministic instance-owned IDs.
+
+Commands execute in order on an isolated candidate. Host checks include sidecar authoring data (weights/paths), textures, canvas and render hierarchy, and report conflicting writes. Declaring only `mesh` does not authorize changes to authoring weights. Workers cannot directly publish history or documents. Process separation provides fault isolation, not a security sandbox.
