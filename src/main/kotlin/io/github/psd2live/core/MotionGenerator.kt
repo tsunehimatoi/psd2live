@@ -1,7 +1,6 @@
 package io.github.psd2live.core
 
 import io.github.psd2live.format.model.Clip
-import io.github.psd2live.format.model.CurveSegment
 import io.github.psd2live.targets.cubism.Cubism3Json
 import io.github.psd2live.format.model.Curve as IrCurve
 
@@ -284,26 +283,7 @@ object MotionGenerator {
 	): String? = Cubism3Json.motion3(Clip("", "", "", "", duration, fps, loop, fadeIn, fadeOut, curves), availableParameterIds)
 
 	/** A generated or authored track as a compiled IR curve, its keys' interpolations as segment types. */
-	fun curve(source: MotionCurve): IrCurve {
-		val first = source.keys.first()
-		// A curve needs a segment; a lone key, or one after zero, holds from zero.
-		val keys = buildList {
-			if (first.time > MotionClips.TIME_EPSILON || source.keys.size == 1) add(first.copy(time = 0f, interpolation = MotionInterpolation.LINEAR))
-			addAll(source.keys)
-			if (size == 1) add(first.copy(time = maxOf(first.time, MotionClips.TIME_EPSILON)))
-		}
-		return IrCurve(source.parameterId, keys.first().time, keys.first().value, keys.zipWithNext { a, b ->
-			when (a.interpolation) {
-				MotionInterpolation.LINEAR -> CurveSegment.Linear(b.time, b.value)
-				MotionInterpolation.BEZIER -> {
-					val (c1, c2) = MotionClips.controlPoints(a, b)
-					CurveSegment.Bezier(c1.first, c1.second, c2.first, c2.second, b.time, b.value)
-				}
-				MotionInterpolation.STEPPED -> CurveSegment.Stepped(b.time, b.value)
-				MotionInterpolation.INVERSE_STEPPED -> CurveSegment.InverseStepped(b.time, b.value)
-			}
-		})
-	}
+	fun curve(source: MotionCurve): IrCurve = MotionData.curve(source)
 
 	/** The IR clip of generated [tracks], or null when there are none. */
 	fun tracksClip(tracks: List<MotionTrack>, loop: Boolean, duration: Float): List<IrCurve>? =
