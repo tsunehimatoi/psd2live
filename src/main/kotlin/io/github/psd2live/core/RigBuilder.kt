@@ -4223,10 +4223,15 @@ object RigBuilder {
             uvs[i + 1] = localY
         }
         // A fitted mouth carries the ribbon's path with its lips; the stroke is laid along it again at every key.
-        val geometry = rig?.keyed(StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN) { pose ->
-            val target = normalized(MouthStrokeMesh.positions(path.map { p -> rig.point(p.first, p.second, pose) }, radius, joins))
-            MeshDeltaForm(FloatArray(positions.size) { target[it] - positions[it] })
-        } ?: run {
+        val geometry = if (rig != null) {
+            val motion = io.github.psd2live.algorithms.binding.MouthOutlineFittedMotion(columns, side, config.mouthThickness,
+                io.github.psd2live.core.modifier.ModifierSourceBounds(frame.left, frame.top, frame.right, frame.bottom))
+            val samples = rig.keyed(StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN) { pose ->
+                io.github.psd2live.algorithms.binding.MouthOutlineFittedMotion.PathPose(
+                    motion.sourcePath.map { (x, y) -> rig.point(x, y, pose) })
+            }
+            motion.geometry(samples)
+        } else {
             val curve = if (config.mouthShape == "custom") config.mouthCurve else MouthCurve.preset(config.mouthShape)
             val tuning = config.rigTuning
             io.github.psd2live.algorithms.binding.MouthOutlineMotion(

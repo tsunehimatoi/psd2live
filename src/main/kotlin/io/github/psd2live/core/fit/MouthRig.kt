@@ -1316,8 +1316,8 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 	/**
 	 * A grid over the form and the openness - and with the face capture, the lips pressed or parted ([pressed]).
 	 */
-	fun keyed(mouthForm: ParameterId, mouthOpen: ParameterId, form: (Pose) -> MeshDeltaForm): KeyformGrid<MeshDeltaForm> {
-		val cells = ArrayList<KeyformCell<MeshDeltaForm>>()
+	fun <T> keyed(mouthForm: ParameterId, mouthOpen: ParameterId, form: (Pose) -> T): KeyformGrid<T> {
+		val cells = ArrayList<KeyformCell<T>>()
 		val presses = if (options.capture) PRESS_KEYS else floatArrayOf(0f)
 		for ((p, press) in presses.withIndex()) for ((o, open) in openKeys.withIndex()) for ((f, value) in FORM_KEYS.withIndex()) {
 			val pose = pressed(pose(value, open), press, open)
