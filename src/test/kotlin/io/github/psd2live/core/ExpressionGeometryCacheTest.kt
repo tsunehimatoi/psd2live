@@ -7,6 +7,28 @@ import io.github.psd2live.targets.cubism.PuppetIr
 import kotlin.test.*
 
 class ExpressionGeometryCacheTest {
+    @Test fun meshLocalModulesReuseScaffoldButGazeRebuildsIt() {
+        val document = Characters.head(physics = false)
+        val recipe = RigRecipe(true,
+            bases = RigModules.areas.associate { it.id to BaseChoice(if (it.id == "eye") RigModules.EYE_FITTED.id else it.legacy.id) },
+            modules = RigModules.modules.associate { it.id to ModuleChoice(false) })
+        val config = document.rawConfig().copy(recipe = recipe)
+        val analysis = CharacterAnalyzer.analyze(document.source, config)
+        val cache = PreviewMeshCache()
+        val before = RigBuilder.rigContext(analysis, config, cache)
+        val smile = config.copy(mouthColor = 0x123456, mouthThickness = 4f,
+            recipe = recipe.copy(modules = recipe.modules + (RigModules.EYE_SMILE.id to ModuleChoice(true))))
+        val after = RigBuilder.rigContext(analysis, smile, cache)
+        assertSame(before.deformers, after.deformers)
+        val gaze = smile.copy(recipe = smile.recipe.copy(modules = smile.recipe.modules +
+            (RigModules.EYE_GAZE_LID.id to ModuleChoice(true))))
+        val changed = RigBuilder.rigContext(analysis, gaze, cache)
+        assertNotSame(after.deformers, changed.deformers)
+        val atlas = AtlasLayout.pack(analysis.layers, config)
+        assertEquals(PuppetIr.toIr(RigBuilder.build(analysis, atlas, gaze).puppet),
+            PuppetIr.toIr(RigBuilder.build(analysis, atlas, gaze, cache).puppet))
+    }
+
     @Test fun sourceEyeMeasurementIsSharedAcrossOptionsAndInvalidatedBySourceChanges() {
         val document = Characters.head(physics = false)
         val recipe = RigRecipe(true,

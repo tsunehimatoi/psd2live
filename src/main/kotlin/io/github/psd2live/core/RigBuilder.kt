@@ -871,7 +871,20 @@ object RigBuilder {
 		analysis.layers.filter { it.semantic.side == Side.LEFT || it.semantic.side == Side.RIGHT }
 			.map { it.meta() to rigLayerById.getValue(it.source.id.raw).bounds },
 		analysis.layers.filter { it.semantic.tag == SemanticTag.TOPWEAR && it.opaquePixels > 0 }.map { it.bounds },
-		stageConfig(config), deformerSkeleton(config.rigEdits.skeleton), io.github.psd2live.i18n.I18n.currentLanguage.tag)
+		deformerConfig(config), deformerSkeleton(config.rigEdits.skeleton), io.github.psd2live.i18n.I18n.currentLanguage.tag)
+
+    /** Mesh-local expressions and lip artwork do not change the shared deformer scaffold. */
+    private fun deformerConfig(config: PipelineConfig): PipelineConfig {
+        val m = io.github.psd2live.core.recipe.RigModules
+        val modules = setOf(m.FACE_DEPTH_TURN.id, m.EYE_GAZE_LID.id, m.BODY_ARMS.id,
+            m.OUTFIT_SKIRT.id, m.OUTFIT_RIBBONS.id, m.OUTFIT_CREATURE.id)
+        return PipelineConfig(bodyStrength = config.bodyStrength, headTurnStrength = config.headTurnStrength,
+            rigTuning = config.rigTuning, meshOnly = config.meshOnly,
+            featureDisplacementEnabled = config.featureDisplacementEnabled,
+            hairSimulationFront = config.hairSimulationFront, hairSimulationBack = config.hairSimulationBack,
+            recipe = config.recipe.copy(modules = config.recipe.modules.filterKeys { it in modules }),
+            rigEdits = RigEditOverlay.Empty)
+    }
 
 	/**
 	 * What [buildDeformers] reads of the skeleton: whether it is on and, through [torsoFrame], the joints of its
