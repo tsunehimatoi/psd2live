@@ -27,14 +27,15 @@ internal class RigModifierSource(
     private val projections = java.util.IdentityHashMap<PuppetModel, MutableMap<String, PuppetModel>>()
     private fun generated(strength: Float = 1f, tuning: RigTuning = RigTuning(), headStrength: Float = 1f,
                           recipe: RigRecipe = RigRecipe.Legacy, outline: RigModifierInstance? = null,
-                          featureDisplacement: Boolean = false, frontHairSway: Boolean = true, backHairSway: Boolean = true, capture: ((() -> PuppetModel) -> Unit)? = null): BuiltRig {
+                          featureDisplacement: Boolean = false, frontHairSway: Boolean = true, backHairSway: Boolean = true, neutralScaffold: Boolean = false, capture: ((() -> PuppetModel) -> Unit)? = null): BuiltRig {
         val clean = sourceConfig()
         val native = clean.copy(bodyStrength = strength, headTurnStrength = headStrength, rigTuning = tuning, recipe = recipe,
             featureDisplacementEnabled = featureDisplacement, mouthOutlineEnabled = outline != null,
             hairSimulationFront = !frontHairSway, hairSimulationBack = !backHairSway,
             mouthThickness = outline?.let { RigLegacyBindings.values(it)["thickness"] } ?: 1.5f,
             mouthColor = outline?.let(RigLegacyBindings::outlineColor))
-        if (outline == null) return RigBuilder.build(analysis, atlas, native, meshCache, capture)
+        if (outline == null) return if (neutralScaffold) RigBuilder.buildNeutralScaffold(analysis, atlas, native, meshCache, capture)
+            else RigBuilder.build(analysis, atlas, native, meshCache, capture)
         val prepared = MouthLipLayers.prepare(analysis, native, meshCache)
         val lips = prepared.layers.filter { it.source is MouthLipLayer }
         val pack = { RigBuildProfile.stage("source artwork: outline atlas") { RigModifierRasterAssets.append(atlas, lips, native) } }
@@ -280,7 +281,7 @@ internal class RigModifierSource(
                 recipe.copy(moves = corrections.moves, eyeParts = corrections.eyeParts), outline,
                 scaffold["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
                 scaffold["frontHairSway"]?.jsonPrimitive?.boolean ?: true, scaffold["backHairSway"]?.jsonPrimitive?.boolean ?: true,
-                capture = { bindingInput = it })
+                neutralScaffold = instances.isEmpty(), capture = { bindingInput = it })
             val chains = native.generatedChains.filter { chain -> instances.any { chain.kind in RigModifierChains.kinds(it.type) } }
                 .map { RigModifierChains.Binding(it) }
             return finishTemplate(native.puppet, chains, kept, byArea.keys, bindingInput)

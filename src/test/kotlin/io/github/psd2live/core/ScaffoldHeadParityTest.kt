@@ -71,6 +71,14 @@ class ScaffoldHeadParityTest {
         val atlas = AtlasLayout.pack(analysis.layers, config)
         val generated = RigBuilder.build(analysis, atlas, config, cache).puppet
         val legacy = BindingProjection.retain(generated, emptySet(), mapOf(StandardParameters.MOUTH_OPEN to 1f))
+        val optimized = RigBuilder.buildNeutralScaffold(analysis, atlas, config, cache).puppet
+        val optimizedNeutral = BindingProjection.retain(optimized, emptySet(), mapOf(StandardParameters.MOUTH_OPEN to 1f))
+        val before = PuppetIr.toIr(legacy)
+        val after = PuppetIr.toIr(optimizedNeutral)
+        assertEquals(before.deformers, after.deformers, "Complete static deformer scaffold")
+        assertEquals(before.meshes.map { it.id }, after.meshes.map { it.id })
+        before.meshes.zip(after.meshes).forEach { (old, fresh) -> assertEquals(old, fresh, "Static mesh ${old.id}") }
+        assertEquals(before, after, "Complete static scaffold after direct head generation")
         val coreIds = setOf("DeformBodyZBreath", "DeformHeadRotation", "DeformHeadContainer", "DeformFaceNinePose",
             "DeformFaceContour", "DeformFeatureDisplacement", "DeformEyes", "DeformBrows", "DeformEars",
             "DeformHairFrontFollow", "DeformHairFrontPhysics", "DeformHairBackFollow", "DeformHairBackPhysics")

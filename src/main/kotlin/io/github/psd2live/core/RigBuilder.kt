@@ -1,5 +1,7 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.algorithms.binding.ScaffoldBody
+import io.github.psd2live.algorithms.binding.ScaffoldHead
 import io.github.psd2live.algorithms.binding.ScaffoldParts
 import io.github.psd2live.algorithms.binding.ScaffoldPairs
 
@@ -670,7 +672,7 @@ object RigBuilder {
 		} + context.fittedMouth(config)?.rig?.let { handles("mouth", mouthLayer, it.fit.handles()) }.orEmpty()
 	}
 
-	internal fun rigContext(inputAnalysis: PipelineAnalysis, config: PipelineConfig, meshCache: PreviewMeshCache? = null): RigContext {
+	internal fun rigContext(inputAnalysis: PipelineAnalysis, config: PipelineConfig, meshCache: PreviewMeshCache? = null, neutralScaffold: Boolean = false): RigContext {
 		val splitBaselineIds = config.rigEdits.splitBaselineLayerIds
 		// Version 2 records: the aggregates read the resolved set - no superseded layer, parts on their pinned meshes.
 		val resolution = PrimitiveResolution.of(config.rigEdits)
@@ -697,14 +699,14 @@ object RigBuilder {
 						if (!resolution.isPartLayer(layer.source.id.raw)) layer
 						else resolution.classify(layer, baselineConfig).let { it.copy(opaquePixels = it.opaquePixels.coerceAtLeast(1)) }
 					}) }
-				return rigContext(baselineAnalysis, baselineConfig, meshCache).withArtwork(resolvedArtwork(inputAnalysis, config, meshCache))
+				return rigContext(baselineAnalysis, baselineConfig, meshCache, neutralScaffold).withArtwork(resolvedArtwork(inputAnalysis, config, meshCache))
 			}
 		}
 		val analysis = RigBuildProfile.stage("context: mesh footprints + anchors") { meshFramedAnalysis(inputAnalysis.copy(
 			layers = resolution.aggregates(inputAnalysis.layers.filter { it.source !is MouthLipLayer }),
 		), config, meshCache, resolution) }
 		val layout = analysis.calibration ?: analysis
-		val scaffold = scaffold(analysis, config, stagesOf(meshCache))
+		val scaffold = scaffold(analysis, config, stagesOf(meshCache), neutralScaffold)
 		// The eye whites carry their layers, which a reused scaffold must not hand out from an older analysis.
 		val eyeWhiteLayers = layout.layers.map { it.riggedIn(layout.anchors, scaffold.faceRig.coordinateSpace) }
 			.filter { it.semantic.tag == SemanticTag.EYEWHITE && it.opaquePixels > 0 }
@@ -749,7 +751,7 @@ object RigBuilder {
 		val frameByDeformer: Map<String, Bounds>,
 	)
 
-	private fun scaffold(analysis: PipelineAnalysis, config: PipelineConfig, stages: RigStageCache?): Scaffold {
+	private fun scaffold(analysis: PipelineAnalysis, config: PipelineConfig, stages: RigStageCache?, neutralScaffold: Boolean): Scaffold {
 		val faceStart = System.nanoTime()
 		val character = analysis.anchors.character
 		val layout = analysis.calibration ?: analysis
@@ -779,9 +781,9 @@ object RigBuilder {
 		val bodyFrame = bodyFrame(analysis, stance, faceRig, character, head, face, frontHair, backHair, config.rigEdits.skeleton?.enabled == true)
 		if (RigBuildProfile.recording) RigBuildProfile.add("scaffold: stance + body frame", System.nanoTime() - bodyStart)
 		val deformerResult = if (deformersEnabled) stages?.get(RigStageCache.DEFORMERS, 8,
-			deformerKey(analysis, rigLayerById, stance, bodyFrame, faceRig, character, head, face, frontHair, backHair, config)) {
-			deformerStage(analysis, stance, bodyFrame, rigLayerById, faceRig, character, head, face, frontHair, backHair, config)
-		} ?: deformerStage(analysis, stance, bodyFrame, rigLayerById, faceRig, character, head, face, frontHair, backHair, config) else {
+			deformerKey(analysis, rigLayerById, stance, bodyFrame, faceRig, character, head, face, frontHair, backHair, config) to neutralScaffold) {
+			deformerStage(analysis, stance, bodyFrame, rigLayerById, faceRig, character, head, face, frontHair, backHair, config, neutralScaffold)
+		} ?: deformerStage(analysis, stance, bodyFrame, rigLayerById, faceRig, character, head, face, frontHair, backHair, config, neutralScaffold) else {
 			DeformerBuildResult(emptyList(), emptyMap(), emptyMap())
 		}
 
@@ -845,11 +847,11 @@ object RigBuilder {
 
 	private fun deformerStage(
 		analysis: PipelineAnalysis, stance: BodyStance, bodyFrame: Bounds, rigLayerById: Map<String, ClassifiedLayer>,
-		faceRig: NinePoseFaceRig, character: Bounds, head: Bounds, face: Bounds, frontHair: Bounds?, backHair: Bounds?, config: PipelineConfig,
+		faceRig: NinePoseFaceRig, character: Bounds, head: Bounds, face: Bounds, frontHair: Bounds?, backHair: Bounds?, config: PipelineConfig, neutralScaffold: Boolean,
 	): DeformerBuildResult = RigBuildProfile.stage("scaffold: deformers (built)") {
 		buildDeformers(analysis, stance, bodyFrame, rigLayerById, faceRig, character, head, face, frontHair, backHair,
 			PartId("PartHead"), PartId("PartFace"), PartId("PartHairFront"), PartId("PartHairBack"), PartId("PartHeadAccessories"),
-			PartId("PartBody"), PartId("PartExtra"), config)
+			PartId("PartBody"), PartId("PartExtra"), config, neutralScaffold)
 	}
 
 	/**
@@ -1202,6 +1204,15 @@ object RigBuilder {
 			val ids = RigBuildProfile.stage("build: split ids") { splitStableDrawableIds(inputAnalysis, config) }
 			buildWithContext(inputAnalysis, atlas, config, meshCache, context, ids, onBindingInput)
 		}
+
+    /** Transitional static scaffold path: body and head frames are calculated directly, never projected from motion grids. */
+    internal fun buildNeutralScaffold(inputAnalysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig,
+                                     meshCache: PreviewMeshCache?, onBindingInput: ((() -> PuppetModel) -> Unit)? = null): BuiltRig {
+        require(!config.deferRig && config.rigPendingLayerIds.isEmpty())
+        val context = rigContext(inputAnalysis, config, meshCache, neutralScaffold = true)
+        val ids = splitStableDrawableIds(inputAnalysis, config)
+        return buildWithContext(inputAnalysis, atlas, config, meshCache, context, ids, onBindingInput)
+    }
 
 	/** Pending means only that semantic generation waits; these meshes belong to the same replayable base rig. */
 	private fun buildWithPendingMeshes(input: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig,
@@ -2658,183 +2669,224 @@ object RigBuilder {
 		bodyPartId: PartId,
 		extraPartId: PartId,
 		config: PipelineConfig,
+		neutralScaffold: Boolean,
 	): DeformerBuildResult {
-		val bodyWarps = bodyWarps(stance, bodyFrame, bodyPartId)
-
-		val torso = torsoFrame(analysis, character, config.rigEdits.skeleton)
-		val breathGrid = warpGrid(
-			listOf(axis(StandardParameters.BODY_Z, -10f, 0f, 10f), axis(StandardParameters.BREATH, 0f, 0.5f, 1f)),
-			columns = 4,
-			rows = 6,
-		) { u, v, values ->
-			bodySecondaryWarpPoint(bodyFrame, torso, u, v, values[0], values[1], config.bodyStrength, config.rigTuning)
+		val bodyWarps = if (!neutralScaffold) bodyWarps(stance, bodyFrame, bodyPartId) else {
+			val standing = stance.legsFrame?.let { frame ->
+				ScaffoldBody.Standing(frame, stance.legs.map { leg ->
+					ScaffoldBody.Leg(ScaffoldBody.Joint(leg.hipX, leg.hipY), ScaffoldBody.Joint(leg.kneeX, leg.kneeY),
+						ScaffoldBody.Joint(leg.ankleX, leg.ankleY), leg.floorY)
+				}, stance.tuning.kneesInRest.toDouble())
+			}
+			ScaffoldBody.build(bodyFrame, standing, { tr(it) })
 		}
-		val breath = Deformer.Warp(breathWarpId, tr("model.deformer.breath"), BodyStance.leanWarpId, bodyPartId, 6, 4, true, breathGrid)
 
-		val headPivotX = faceRig.centerX
-		val headPivotY = faceRig.mouthLineY
-		val headPivotCanvas = faceRig.coordinateSpace.toCanvas(headPivotX, headPivotY)
-		val headPivotLocalX = normalizeX(headPivotCanvas.first, bodyFrame)
-		val headPivotLocalY = normalizeY(headPivotCanvas.second, bodyFrame)
-		// The head grows and shrinks with the lean and the proportions, which a warp cannot pass on to a rotation.
-		val rotationGrid = grid(listOf(axis(StandardParameters.ANGLE_Z, -30f, 0f, 30f)) + leanAxes()) { values ->
-			val scale = stance.leanScale(headPivotCanvas.second.toDouble(), values[1], values[2]).toFloat()
-			RotationPivotForm(headPivotLocalX, headPivotLocalY, values[0], scale)
-		}
-		val rotation = Deformer.Rotation(
-			headRotationId,
-			tr("model.deformer.headRotation"),
-			breathWarpId,
-			headPartId,
-			faceRig.initialAngleZ,
-			rotationGrid,
-		)
-
-		// A real head container separates skull-following content from the facial surface.  It is the
-		// sole pixel-space child of the rotation deformer; all descendants use ordinary normalized
-		// warp coordinates.  Face, front hair and back hair are siblings below this node.
-		val headGrid = warpGrid(ninePoseAxes(), columns = 4, rows = 5) { u, v, values ->
-			headContainerPoint(head, headPivotX, headPivotY, u, v, values[0], values[1], config.headTurnStrength, config.rigTuning)
-		}
-		val headContainer = Deformer.Warp(headWarpId, tr("model.deformer.headContainer"), headRotationId, headPartId, 5, 4, true, headGrid)
-
-		val faceGrid = warpGrid(
-			ninePoseAxes(),
-			columns = 8,
-			rows = 8,
-		) { u, v, values ->
-			val canvasX = faceFrame.left + u * faceFrame.width
-			val canvasY = faceFrame.top + v * faceFrame.height
-			val projected = faceRig.surfacePoint(canvasX, canvasY, values[0], values[1], config.headTurnStrength)
-			normalizeX(projected.first, head) to normalizeY(projected.second, head)
-		}
-		val face = Deformer.Warp(faceWarpId, tr("model.deformer.face"), headWarpId, facePartId, 8, 8, true, faceGrid)
-
-		// Identity at neutral, in the face's normalized space: the parent surface is inherited
-		// exactly once. Both directional bows affect every row/column, not just the center knot.
-		val displacementGrid = warpGrid(ninePoseAxes(), columns = 8, rows = 8) { u, v, values ->
-			featureDisplacementPoint(u, v, values[0], values[1], config.headTurnStrength, config.rigTuning,
-				faceFrame.width / faceFrame.height.coerceAtLeast(1e-4f))
-		}
-		val displacement = Deformer.Warp(featureDisplacementId, tr("model.deformer.featureDisplacement"),
-			faceWarpId, facePartId, 8, 8, true, displacementGrid)
-		val socketY = normalizeY(faceRig.eyeLineY, faceFrame).coerceIn(0.05f, 0.95f)
-		val contourGrid = warpGrid(
-			listOf(axis(StandardParameters.ANGLE_X, *NinePoseFaceRig.angleXKeys)), columns = 8, rows = 16,
-		) { u, v, values -> faceContourPoint(u, v, values[0], config.headTurnStrength, socketY, config.rigTuning) }
-		val contour = Deformer.Warp(faceContourId, tr("model.deformer.faceContour"),
-			faceWarpId, facePartId, 16, 8, true, contourGrid)
-		val deformers = mutableListOf<Deformer>()
-		deformers += bodyWarps
-		deformers += listOf(breath, rotation, headContainer, face, contour)
-		if (config.featureDisplacementEnabled) deformers += displacement
+		val deformers = bodyWarps.toMutableList<Deformer>()
 		val pairFrames = mutableMapOf<String, Bounds>()
 		val pairedParentByLayerId = mutableMapOf<String, Pair<DeformerId, Bounds>>()
-
-		val leftEye = faceRig.regions.firstOrNull { it.feature == FaceFeature.EYE && it.side == Side.LEFT }
-		val rightEye = faceRig.regions.firstOrNull { it.feature == FaceFeature.EYE && it.side == Side.RIGHT }
-		val eyesBounds = if (leftEye != null && rightEye != null) {
-			leftEye.bounds.union(rightEye.bounds).expanded(0.04f)
-		} else null
-		if (eyesBounds != null) {
-			val eyesParent = if (config.featureDisplacementEnabled) featureDisplacementId else faceWarpId
-			deformers += identityWarp(eyesWarpId, tr("model.deformer.eyes"), eyesParent, eyesBounds, faceFrame, facePartId, rows = 3, columns = 4)
-			pairFrames[eyesWarpId.raw] = eyesBounds
-		}
-
-		val leftBrow = faceRig.regions.firstOrNull { it.feature == FaceFeature.BROW && it.side == Side.LEFT }
-		val rightBrow = faceRig.regions.firstOrNull { it.feature == FaceFeature.BROW && it.side == Side.RIGHT }
-		val browsBounds = if (leftBrow != null && rightBrow != null) {
-			leftBrow.bounds.union(rightBrow.bounds).expanded(0.04f)
-		} else null
-		if (browsBounds != null) {
-			val browsParent = if (config.featureDisplacementEnabled) featureDisplacementId else faceWarpId
-			deformers += identityWarp(browsWarpId, tr("model.deformer.brows"), browsParent, browsBounds, faceFrame, facePartId, rows = 3, columns = 4)
-			pairFrames[browsWarpId.raw] = browsBounds
-		}
-
-		val leftEar = faceRig.regions.firstOrNull { it.feature == FaceFeature.EAR && it.side == Side.LEFT }
-		val rightEar = faceRig.regions.firstOrNull { it.feature == FaceFeature.EAR && it.side == Side.RIGHT }
-		val earsBounds = if (leftEar != null && rightEar != null) {
-			leftEar.bounds.union(rightEar.bounds).expanded(0.04f)
-		} else null
-		if (earsBounds != null) {
-			deformers += identityWarp(earsWarpId, tr("model.deformer.ears"), faceWarpId, earsBounds, faceFrame, facePartId, rows = 3, columns = 4)
-			pairFrames[earsWarpId.raw] = earsBounds
-		}
-
-		val primaryRegions = faceRig.regions.filter { it.feature != FaceFeature.IRIS }
-		for (region in primaryRegions) {
-			val (parent, parentFrame) = when (region.feature) {
-				FaceFeature.EYE -> if (eyesBounds != null) eyesWarpId to eyesBounds else {
-					(if (config.featureDisplacementEnabled) featureDisplacementId else faceWarpId) to faceFrame
+		if (neutralScaffold) {
+			val pivot = faceRig.coordinateSpace.toCanvas(faceRig.centerX, faceRig.mouthLineY)
+			val input = ScaffoldHead.Input(bodyFrame, head, faceFrame,
+				ScaffoldHead.Point(faceRig.centerX, faceRig.mouthLineY), ScaffoldHead.Point(pivot.first, pivot.second),
+				faceRig.initialAngleZ, config.featureDisplacementEnabled,
+				faceRig.regions.map { region ->
+					val side = tr("side.${region.side.name.lowercase()}")
+					val feature = tr("model.feature.${region.feature.name.lowercase()}")
+					ScaffoldHead.Region(ScaffoldHead.Feature.valueOf(region.feature.name), region.side, region.bounds,
+						if (region.side == Side.NONE) feature else tr("model.feature.name", side, feature),
+						if (region.feature == FaceFeature.IRIS) tr("model.deformer.gaze", side) else null)
+				}, frontHair?.let { ScaffoldHead.Hair(it, true) },
+				backHair?.let { ScaffoldHead.Hair(it, true) })
+			val generated = ScaffoldHead.build(input, { tr(it) })
+			deformers += generated.deformers.map { deformer ->
+				val removedParameter = when {
+					deformer.id == frontHairPhysicsWarpId && config.hairSimulationFront -> StandardParameters.HAIR_FRONT
+					deformer.id == backHairPhysicsWarpId && config.hairSimulationBack -> StandardParameters.HAIR_BACK
+					else -> null
 				}
-				FaceFeature.BROW -> if (browsBounds != null) browsWarpId to browsBounds else {
-					(if (config.featureDisplacementEnabled) featureDisplacementId else faceWarpId) to faceFrame
-				}
-				FaceFeature.EAR -> if (earsBounds != null) earsWarpId to earsBounds else {
-					faceWarpId to faceFrame
-				}
-				else -> {
-					val p = if (config.featureDisplacementEnabled && region.feature in setOf(FaceFeature.EYE, FaceFeature.BROW, FaceFeature.MOUTH))
-						featureDisplacementId else faceWarpId
-					p to faceFrame
+				if (removedParameter == null || deformer !is Deformer.Warp) deformer else {
+					// Removing the last parameter axis drops its grid before reparenting. Keep that
+					// behavior with one default cell, avoiding an extra identity-warp round trip.
+					val form = requireNotNull(deformer.geometryGrid).cells.single().form
+					deformer.copy(geometryGrid = KeyformGrid(listOf(KeyformAxis(removedParameter, floatArrayOf(0f))),
+						listOf(KeyformCell(intArrayOf(0), form))))
 				}
 			}
-			deformers += featureWarp(faceRig, region, parent, parentFrame, facePartId, config, headTurnOf(analysis, faceRig, config))
-		}
-		for (irisRegion in faceRig.regions.filter { it.feature == FaceFeature.IRIS }) {
-			val eyeRegion = faceRig.regionFor(FaceFeature.EYE, irisRegion.side) ?: continue
-			val irisShape = featureWarp(
-				faceRig,
-				irisRegion,
-				featureWarpId(eyeRegion),
-				eyeRegion.bounds,
-				facePartId,
-				config,
-			)
-			deformers += irisShape
-			deformers += gazeWarp(irisRegion, irisShape.id, facePartId, config.rigTuning, io.github.psd2live.core.recipe.RigModules.let { it.builds(it.EYE_GAZE_LID, config, io.github.psd2live.core.recipe.RecipeSubject.of(analysis)) })
-		}
-		frontHair?.let { frame ->
-			deformers += hairFollowWarp(
-				frontHairFollowWarpId,
-				tr("model.deformer.frontHairFollow"),
-				frame,
-				head,
-				frontHairPartId,
-				-config.rigTuning.frontHairTurn / 100f,
-				-config.rigTuning.frontHairTilt / 100f,
-				yawPerspective = config.rigTuning.frontHairPerspective / 100f,
-				roll = HairRoll(headPivotCanvas.first, headPivotCanvas.second, faceFrame.bottom, config.rigTuning.hairRollHold / 100f),
-			)
-			deformers += hairPhysicsWarp(
-				frontHairPhysicsWarpId,
-				tr("model.deformer.frontHairPhysics"),
-				StandardParameters.HAIR_FRONT,
-				frontHairFollowWarpId,
-				frame,
-				frontHairPartId,
-				rows = 4,
-				swayRatio = config.rigTuning.frontHairSway / 100f,
-				curlRatio = config.rigTuning.frontHairCurl / 100f,
-			)
-		}
-		backHair?.let { frame ->
-			deformers += hairFollowWarp(backHairFollowWarpId, tr("model.deformer.backHairFollow"), frame, head, backHairPartId,
-				-config.rigTuning.backHairTurn / 100f, -config.rigTuning.backHairTilt / 100f,
-				roll = HairRoll(headPivotCanvas.first, headPivotCanvas.second, faceFrame.bottom, config.rigTuning.hairRollHold / 100f))
-			deformers += hairPhysicsWarp(
-				backHairPhysicsWarpId,
-				tr("model.deformer.backHairPhysics"),
-				StandardParameters.HAIR_BACK,
-				backHairFollowWarpId,
-				frame,
-				backHairPartId,
+			for (id in listOf(eyesWarpId, browsWarpId, earsWarpId)) generated.frames[id]?.let { pairFrames[id.raw] = it }
+			RigBuildProfile.count("modifier direct neutral heads")
+		} else {
+			val torso = torsoFrame(analysis, character, config.rigEdits.skeleton)
+			val breathGrid = warpGrid(
+				listOf(axis(StandardParameters.BODY_Z, -10f, 0f, 10f), axis(StandardParameters.BREATH, 0f, 0.5f, 1f)),
+				columns = 4,
 				rows = 6,
-				swayRatio = config.rigTuning.backHairSway / 100f,
-				curlRatio = config.rigTuning.backHairCurl / 100f,
+			) { u, v, values ->
+				bodySecondaryWarpPoint(bodyFrame, torso, u, v, values[0], values[1], config.bodyStrength, config.rigTuning)
+			}
+			val breath = Deformer.Warp(breathWarpId, tr("model.deformer.breath"), BodyStance.leanWarpId, bodyPartId, 6, 4, true, breathGrid)
+
+			val headPivotX = faceRig.centerX
+			val headPivotY = faceRig.mouthLineY
+			val headPivotCanvas = faceRig.coordinateSpace.toCanvas(headPivotX, headPivotY)
+			val headPivotLocalX = normalizeX(headPivotCanvas.first, bodyFrame)
+			val headPivotLocalY = normalizeY(headPivotCanvas.second, bodyFrame)
+			// The head grows and shrinks with the lean and the proportions, which a warp cannot pass on to a rotation.
+			val rotationGrid = grid(listOf(axis(StandardParameters.ANGLE_Z, -30f, 0f, 30f)) + leanAxes()) { values ->
+				val scale = stance.leanScale(headPivotCanvas.second.toDouble(), values[1], values[2]).toFloat()
+				RotationPivotForm(headPivotLocalX, headPivotLocalY, values[0], scale)
+			}
+			val rotation = Deformer.Rotation(
+				headRotationId,
+				tr("model.deformer.headRotation"),
+				breathWarpId,
+				headPartId,
+				faceRig.initialAngleZ,
+				rotationGrid,
 			)
+
+			// A real head container separates skull-following content from the facial surface.  It is the
+			// sole pixel-space child of the rotation deformer; all descendants use ordinary normalized
+			// warp coordinates.  Face, front hair and back hair are siblings below this node.
+			val headGrid = warpGrid(ninePoseAxes(), columns = 4, rows = 5) { u, v, values ->
+				headContainerPoint(head, headPivotX, headPivotY, u, v, values[0], values[1], config.headTurnStrength, config.rigTuning)
+			}
+			val headContainer = Deformer.Warp(headWarpId, tr("model.deformer.headContainer"), headRotationId, headPartId, 5, 4, true, headGrid)
+
+			val faceGrid = warpGrid(
+				ninePoseAxes(),
+				columns = 8,
+				rows = 8,
+			) { u, v, values ->
+				val canvasX = faceFrame.left + u * faceFrame.width
+				val canvasY = faceFrame.top + v * faceFrame.height
+				val projected = faceRig.surfacePoint(canvasX, canvasY, values[0], values[1], config.headTurnStrength)
+				normalizeX(projected.first, head) to normalizeY(projected.second, head)
+			}
+			val face = Deformer.Warp(faceWarpId, tr("model.deformer.face"), headWarpId, facePartId, 8, 8, true, faceGrid)
+
+			// Identity at neutral, in the face's normalized space: the parent surface is inherited
+			// exactly once. Both directional bows affect every row/column, not just the center knot.
+			val displacementGrid = warpGrid(ninePoseAxes(), columns = 8, rows = 8) { u, v, values ->
+				featureDisplacementPoint(u, v, values[0], values[1], config.headTurnStrength, config.rigTuning,
+					faceFrame.width / faceFrame.height.coerceAtLeast(1e-4f))
+			}
+			val displacement = Deformer.Warp(featureDisplacementId, tr("model.deformer.featureDisplacement"),
+				faceWarpId, facePartId, 8, 8, true, displacementGrid)
+			val socketY = normalizeY(faceRig.eyeLineY, faceFrame).coerceIn(0.05f, 0.95f)
+			val contourGrid = warpGrid(
+				listOf(axis(StandardParameters.ANGLE_X, *NinePoseFaceRig.angleXKeys)), columns = 8, rows = 16,
+			) { u, v, values -> faceContourPoint(u, v, values[0], config.headTurnStrength, socketY, config.rigTuning) }
+			val contour = Deformer.Warp(faceContourId, tr("model.deformer.faceContour"),
+				faceWarpId, facePartId, 16, 8, true, contourGrid)
+			deformers += listOf(breath, rotation, headContainer, face, contour)
+			if (config.featureDisplacementEnabled) deformers += displacement
+
+			val leftEye = faceRig.regions.firstOrNull { it.feature == FaceFeature.EYE && it.side == Side.LEFT }
+			val rightEye = faceRig.regions.firstOrNull { it.feature == FaceFeature.EYE && it.side == Side.RIGHT }
+			val eyesBounds = if (leftEye != null && rightEye != null) {
+				leftEye.bounds.union(rightEye.bounds).expanded(0.04f)
+			} else null
+			if (eyesBounds != null) {
+				val eyesParent = if (config.featureDisplacementEnabled) featureDisplacementId else faceWarpId
+				deformers += identityWarp(eyesWarpId, tr("model.deformer.eyes"), eyesParent, eyesBounds, faceFrame, facePartId, rows = 3, columns = 4)
+				pairFrames[eyesWarpId.raw] = eyesBounds
+			}
+
+			val leftBrow = faceRig.regions.firstOrNull { it.feature == FaceFeature.BROW && it.side == Side.LEFT }
+			val rightBrow = faceRig.regions.firstOrNull { it.feature == FaceFeature.BROW && it.side == Side.RIGHT }
+			val browsBounds = if (leftBrow != null && rightBrow != null) {
+				leftBrow.bounds.union(rightBrow.bounds).expanded(0.04f)
+			} else null
+			if (browsBounds != null) {
+				val browsParent = if (config.featureDisplacementEnabled) featureDisplacementId else faceWarpId
+				deformers += identityWarp(browsWarpId, tr("model.deformer.brows"), browsParent, browsBounds, faceFrame, facePartId, rows = 3, columns = 4)
+				pairFrames[browsWarpId.raw] = browsBounds
+			}
+
+			val leftEar = faceRig.regions.firstOrNull { it.feature == FaceFeature.EAR && it.side == Side.LEFT }
+			val rightEar = faceRig.regions.firstOrNull { it.feature == FaceFeature.EAR && it.side == Side.RIGHT }
+			val earsBounds = if (leftEar != null && rightEar != null) {
+				leftEar.bounds.union(rightEar.bounds).expanded(0.04f)
+			} else null
+			if (earsBounds != null) {
+				deformers += identityWarp(earsWarpId, tr("model.deformer.ears"), faceWarpId, earsBounds, faceFrame, facePartId, rows = 3, columns = 4)
+				pairFrames[earsWarpId.raw] = earsBounds
+			}
+
+			val primaryRegions = faceRig.regions.filter { it.feature != FaceFeature.IRIS }
+			for (region in primaryRegions) {
+				val (parent, parentFrame) = when (region.feature) {
+					FaceFeature.EYE -> if (eyesBounds != null) eyesWarpId to eyesBounds else {
+						(if (config.featureDisplacementEnabled) featureDisplacementId else faceWarpId) to faceFrame
+					}
+					FaceFeature.BROW -> if (browsBounds != null) browsWarpId to browsBounds else {
+						(if (config.featureDisplacementEnabled) featureDisplacementId else faceWarpId) to faceFrame
+					}
+					FaceFeature.EAR -> if (earsBounds != null) earsWarpId to earsBounds else {
+						faceWarpId to faceFrame
+					}
+					else -> {
+						val p = if (config.featureDisplacementEnabled && region.feature in setOf(FaceFeature.EYE, FaceFeature.BROW, FaceFeature.MOUTH))
+							featureDisplacementId else faceWarpId
+						p to faceFrame
+					}
+				}
+				deformers += featureWarp(faceRig, region, parent, parentFrame, facePartId, config, headTurnOf(analysis, faceRig, config))
+			}
+			for (irisRegion in faceRig.regions.filter { it.feature == FaceFeature.IRIS }) {
+				val eyeRegion = faceRig.regionFor(FaceFeature.EYE, irisRegion.side) ?: continue
+				val irisShape = featureWarp(
+					faceRig,
+					irisRegion,
+					featureWarpId(eyeRegion),
+					eyeRegion.bounds,
+					facePartId,
+					config,
+				)
+				deformers += irisShape
+				deformers += gazeWarp(irisRegion, irisShape.id, facePartId, config.rigTuning, io.github.psd2live.core.recipe.RigModules.let { it.builds(it.EYE_GAZE_LID, config, io.github.psd2live.core.recipe.RecipeSubject.of(analysis)) })
+			}
+			frontHair?.let { frame ->
+				deformers += hairFollowWarp(
+					frontHairFollowWarpId,
+					tr("model.deformer.frontHairFollow"),
+					frame,
+					head,
+					frontHairPartId,
+					-config.rigTuning.frontHairTurn / 100f,
+					-config.rigTuning.frontHairTilt / 100f,
+					yawPerspective = config.rigTuning.frontHairPerspective / 100f,
+					roll = HairRoll(headPivotCanvas.first, headPivotCanvas.second, faceFrame.bottom, config.rigTuning.hairRollHold / 100f),
+				)
+				deformers += hairPhysicsWarp(
+					frontHairPhysicsWarpId,
+					tr("model.deformer.frontHairPhysics"),
+					StandardParameters.HAIR_FRONT,
+					frontHairFollowWarpId,
+					frame,
+					frontHairPartId,
+					rows = 4,
+					swayRatio = config.rigTuning.frontHairSway / 100f,
+					curlRatio = config.rigTuning.frontHairCurl / 100f,
+				)
+			}
+			backHair?.let { frame ->
+				deformers += hairFollowWarp(backHairFollowWarpId, tr("model.deformer.backHairFollow"), frame, head, backHairPartId,
+					-config.rigTuning.backHairTurn / 100f, -config.rigTuning.backHairTilt / 100f,
+					roll = HairRoll(headPivotCanvas.first, headPivotCanvas.second, faceFrame.bottom, config.rigTuning.hairRollHold / 100f))
+				deformers += hairPhysicsWarp(
+					backHairPhysicsWarpId,
+					tr("model.deformer.backHairPhysics"),
+					StandardParameters.HAIR_BACK,
+					backHairFollowWarpId,
+					frame,
+					backHairPartId,
+					rows = 6,
+					swayRatio = config.rigTuning.backHairSway / 100f,
+					curlRatio = config.rigTuning.backHairCurl / 100f,
+				)
+			}
+
 		}
 
 		val candidateLayers = analysis.layers.filter { layer ->
