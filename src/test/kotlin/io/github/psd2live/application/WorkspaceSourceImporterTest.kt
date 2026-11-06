@@ -29,6 +29,8 @@ class WorkspaceSourceImporterTest {
             val importer = WorkspaceSourceImporter(runtime, readPsd = { original.source })
             val result = importer.importPsd(path, null, runtime.state.value.state, initialConfig = original.rawConfig(), modifiers = mode)
             val installed = result.capture
+            assertNotNull(installed.model.modifierEvaluation, "Freezing the imported atlas must retain the evaluated prefix")
+            assertNotNull(installed.model.modifierMeshCache, "The first edit must retain the import's geometry cache")
             val stack = io.github.psd2live.core.modifier.RigModifierStack.fromJson(installed.document.rigEdits.modifierStack!!)
             assertEquals(1, runtime.history().selections.size)
             if (mode == WorkspaceInitialModifiers.EMPTY) {

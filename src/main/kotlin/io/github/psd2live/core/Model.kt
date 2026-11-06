@@ -562,6 +562,11 @@ data class RigPreviewModel(
     internal var modifierEvaluation: io.github.psd2live.core.modifier.RigModifierEvaluationCache.Snapshot? = null
     internal var modifierMeshCache: PreviewMeshCache? = null
     internal var modifierBaseSnapshot: io.github.psd2live.core.modifier.ModifierBaseSnapshot? = null
+    internal fun retainModifierCachesFrom(previous: RigPreviewModel): RigPreviewModel = apply {
+        modifierEvaluation = previous.modifierEvaluation
+        modifierMeshCache = previous.modifierMeshCache
+        modifierBaseSnapshot = previous.modifierBaseSnapshot
+    }
 	/**
 	 * The generated rig the document's edits replay onto. A model built from a stored authored rig generates it only
 	 * when something asks for it.

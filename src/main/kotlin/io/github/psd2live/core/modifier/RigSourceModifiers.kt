@@ -192,7 +192,11 @@ internal class RigModifierSource(
         val state = instances.associateBy { it.type }
         val key = templateKey(instances, scaffold)
         return templates.getOrPut(key) {
-            val sharedKey = listOf(analysis, atlas, RigModifierPipeline.ordinaryConfig(config), primaryByLayer, key, io.github.psd2live.i18n.I18n.currentLanguage)
+            // Preview bitmaps and encoded atlas pages are presentation objects recreated on rebuild.
+            // Geometry reads classified source pixels and atlas placement, not those objects' identity.
+            val sharedKey = listOf(analysis.source, analysis.layers, analysis.anchors, analysis.warnings, analysis.calibration,
+                atlas.placementByLayerId, atlas.pages.map { it.image.width to it.image.height }, atlas.footprints,
+                RigModifierPipeline.ordinaryConfig(config), primaryByLayer, key, io.github.psd2live.i18n.I18n.currentLanguage)
             val build = { buildTemplate(instances, scaffold, state) }
             if (RigStageCache.enabled) meshCache.stages.get("modifier geometry template", 64, sharedKey, build) else build()
         }

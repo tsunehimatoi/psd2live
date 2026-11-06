@@ -163,6 +163,7 @@ internal class WorkspaceSourceImporter(
         // arrangement is that layout exactly, so the model it builds is this one.
         val arrangement = AtlasLayout.frozen(built.modifierAuthorAtlas ?: built.atlas)
         val preview = built.copy(config = built.config.copy(atlasArrangement = arrangement), atlas = built.atlas.copy(arranged = true))
+            .retainModifierCachesFrom(built)
         // The preview was generated from effective settings; the document keeps the raw ones it was given.
         val prepared = document.copy(rigEdits = preview.config.rigEdits,
             settings = AtlasArrangementCodec.with(WorkspaceSettingsCodec.encode(WorkspaceSettingsPolicy.restoreRaw(preview.config, config)), arrangement))

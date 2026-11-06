@@ -257,7 +257,7 @@ internal class WorkspacePreviewBuilder {
                 if (current != null && before != null && after != null &&
                     current.analysis.source == document.source && before - "organization" == after - "organization" &&
                     config.copy(rigEdits = config.rigEdits.copy(modifierStack = before)) == current.config)
-                    return@runInterruptible current.copy(config = config)
+                    return@runInterruptible current.copy(config = config).retainModifierCachesFrom(current)
                 pipeline.reuseModifierInputs(current)
                 return@runInterruptible pipeline.buildPreview(document.source, config, progress, current?.atlas)
             }
