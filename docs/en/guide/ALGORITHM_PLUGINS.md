@@ -283,3 +283,11 @@ The host reconstructs observed values from the actual transmitted input projecti
 A cache hit does not advance unsent input revisions. The next real request remains relative to the last transmitted state. Exited, disabled or uninstalled workers cannot bypass availability checks through caching; failures and cancellation discard the worker. Dedicated checks use `plugin worker evaluations` and `plugin read cache hits` counters.
 
 The actual physics package passed checks showing no additional worker calls for repeated input or added unread parameters, and reevaluation after a read parameter changes, with equivalent final models. Reopening, uninstall and reinstall remain valid. This does not establish the complete-generation performance target or read-protocol support in the other five languages.
+
+### Host boundary for generated artwork
+
+API 1.8 provides `ModifierRasterOutput`: a captured owner mesh with its expected state, a new mesh, source-layer metadata, immutable RGBA8 pixels and editable paths belonging to the new mesh. Source metadata carries canvas placement; geometry remains in parent-local coordinates. UVs default to source-raster pixels and are mapped onto the allocated atlas page by the host. `PAGE` preserves already-bound legacy UVs only.
+
+The host validates the whole batch before packing: unchanged owners, unique output identities, matching image dimensions and byte counts, valid geometry and path references. Each resource is limited to 64 MiB and the batch to 256 MiB. Dedicated pages, source/tile records, meshes inserted before their owners, paths and editable source pixels are assembled in one isolated candidate. Existing pages are not repacked. Failure or cancellation publishes nothing; the outer CAS/history transaction still owns publication.
+
+Existing mouth-outline resource attachment now uses this boundary. This is currently a JVM host integration contract, **not an external worker result protocol**: it cannot be placed directly in `model_changes_v1`. Cross-process image output and the complete mouth-motion plugin remain pending.

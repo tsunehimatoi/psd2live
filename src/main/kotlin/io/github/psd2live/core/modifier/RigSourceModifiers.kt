@@ -204,7 +204,7 @@ internal class RigModifierSource(
                 RigModifierRasterAssets.Ribbon(owner.id, drawable, asset, paths)
             }
         }
-        return RigModifierRasterAssets.attach(rig, model, ribbons, analysis, config)
+        return RigModifierRasterAssets.attach(rig, model, ribbons, config)
     }
 
     fun body(strength: Float, tuning: RigTuning = RigTuning(), checkpoint: () -> Unit): PuppetModel {
