@@ -6,5 +6,5 @@ import io.github.psd2live.algorithms.motion.MotionAlgorithm
 internal object MotionAlgorithmPlugin {
     private val implementation = MotionAlgorithm()
     val definition = RigModifierDefinition("motion", 1, motionOutputs = { setOf(it.outputId("motion")) },
-        evaluate = implementation::evaluate, plugin = implementation)
+        evaluate = implementation::evaluate, plugin = implementation, changeWrites = setOf("motion", "relations"))
 }

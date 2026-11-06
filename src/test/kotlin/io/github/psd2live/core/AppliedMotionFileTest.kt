@@ -1,6 +1,11 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.application.WorkspaceDocumentOperation
+import io.github.psd2live.application.WorkspaceModifierEdits
+import io.github.psd2live.core.modifier.ModifierTarget
+import io.github.psd2live.core.modifier.RigModifierStack
 import io.github.psd2live.project.*
+import io.github.psd2live.targets.cubism.Cubism3Json
 import kotlinx.serialization.json.*
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
@@ -8,6 +13,45 @@ import kotlin.test.*
 
 class AppliedMotionFileTest {
     @TempDir lateinit var temp: Path
+
+    @Test fun generatedMotionKeepsItsOutputAfterApplyingAndReopening() {
+        val project = SyntheticProject(temp, 1, 12, 1)
+        val pipeline = PSD2LivePipeline()
+        val overlay = RigEditOverlay.Empty.copy(
+            parameterEdits = listOf(RigParameterEdit("Drive", "Drive", -1f, 1f, 0f, created = true)),
+            modifierStack = RigModifierStack().toJson())
+        val config = PipelineConfig(atlasSize = 64, meshSpacing = 8, rigEdits = overlay)
+        val document = project.tree.head().snapshot.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = overlay)
+        val base = pipeline.buildPreview(document.source, document.config())
+        val target = ModifierTarget("mesh", base.rig.puppet.drawables.single().id.raw)
+        val clip = MotionClip("draft", "Turn", duration = 1f,
+            curves = listOf(MotionCurve("Drive", listOf(MotionKey(0f, 0f), MotionKey(1f, .5f)))),
+            events = listOf(MotionEvent(.5f, "halfway")))
+        val stack = RigModifierStack().add("motion", 1, listOf(target), MotionClips.toJson(clip))
+        val instance = stack.instances.single()
+        val generated = document.copy(rigEdits = overlay.copy(modifierStack = stack.toJson()))
+        val preview = pipeline.buildPreview(generated.source, generated.config())
+        val expected = RigIrCompiler.compile(preview)
+        val output = expected.clips.single()
+        assertEquals(instance.outputId("motion"), output.id)
+        assertEquals(RigIrCompiler.compile(base), expected.copy(clips = emptyList()))
+
+        val applied = WorkspaceModifierEdits.apply(WorkspaceDocumentOperation("modifier_apply",
+            buildJsonObject { put("id", instance.id) }), generated, preview)
+        val revision = WorkspaceRevisions.of(applied)
+        project.tree.commit(project.tree.head().node.id, applied, revision, revision, "Apply motion", "user")
+        project.store.persistHistory(SyntheticProject.PROJECT, project.tree.state())
+        val restored = WorkspaceStore(project.store.root).loadHistory(SyntheticProject.PROJECT)!!.head().snapshot
+        assertTrue(RigModifierStack.fromJson(restored.rigEdits.modifierStack!!).instances.isEmpty())
+        assertEquals(output.id, restored.rigEdits.motionClips.single().id)
+        assertEquals(output.file, restored.rigEdits.motionClips.single().fileStem)
+        val rebuilt = RigIrCompiler.compile(PSD2LivePipeline().buildPreview(restored.source, restored.config()))
+        assertEquals(expected, rebuilt)
+        val export = assertNotNull(Cubism3Json.motion3(rebuilt.clips.single(), rebuilt.parameters.map { it.id }.toSet()))
+        val json = Json.parseToJsonElement(export).jsonObject
+        assertEquals("Drive", json.getValue("Curves").jsonArray.single().jsonObject.getValue("Id").jsonPrimitive.content)
+        assertEquals("halfway", json.getValue("UserData").jsonArray.single().jsonObject.getValue("Value").jsonPrimitive.content)
+    }
 
     @Test fun oldRevisionIdentityPreservesFieldLikeTextInClipNamesAndEvents() {
         val clip = MotionClip("old", "Name, fileStem=null)", events = listOf(MotionEvent(0f, "Value, fileStem=null)")))

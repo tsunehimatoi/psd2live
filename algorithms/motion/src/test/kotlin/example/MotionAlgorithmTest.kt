@@ -38,4 +38,34 @@ class MotionAlgorithmTest {
         }
         assertTrue(input.clips.isEmpty())
     }
+
+    @Test fun sparseOutputObservesReferencedParametersAndChecksCollisions() {
+        val existingRole = ParameterRole("EyeBlink", listOf("angle"))
+        val base = input.copy(parameterRoles = listOf(existingRole))
+        val view = ModifierEvaluationInput(base)
+        val plugin = MotionAlgorithm()
+        val changes = plugin.changes(view, instance()) {}
+        assertEquals(setOf("motion", "relations"), changes.writeKinds())
+        assertEquals(listOf(ModifierObjectContribution("motion", "retained-clip", ModifierChangeAction.ADD)), changes.contributions())
+        assertEquals(setOf(ModifierReadKey("parameter", "angle"), ModifierReadKey("motion"),
+            ModifierReadKey("parameterRoles")), view.reads().keys)
+
+        val unrelated = base.copy(parameters = base.parameters + Parameter("other", "Other", 0f, 1f, 0f))
+        assertTrue(view.reads().matches(unrelated))
+        assertSame(unrelated.parameters, changes.apply(unrelated).parameters)
+        assertFalse(view.reads().matches(base.copy(parameters = emptyList())))
+        val output = changes.apply(base)
+        assertEquals(listOf(ParameterRole("LipSync", listOf("angle")), existingRole), output.parameterRoles)
+
+        val filenameCollision = base.copy(clips = listOf(output.clips.single().let {
+            it.copy(id = "unrelated", file = it.file.uppercase())
+        }))
+        assertFalse(view.reads().matches(filenameCollision))
+        assertFailsWith<IllegalArgumentException> { plugin.evaluate(filenameCollision, instance()) {} }
+        val roleCollision = unrelated.copy(parameterRoles = listOf(ParameterRole("LipSync", listOf("other"))))
+        assertFalse(view.reads().matches(roleCollision))
+        assertFailsWith<IllegalArgumentException> { plugin.evaluate(roleCollision, instance()) {} }
+        assertEquals(setOf("motion"), plugin.changes(ModifierEvaluationInput(base),
+            instance(source.copy(parameterRoles = emptyMap()))) {}.writeKinds())
+    }
 }
