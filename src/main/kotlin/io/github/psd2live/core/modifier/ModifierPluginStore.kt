@@ -295,6 +295,8 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
         }
         require(entryKeys.distinct().size == entryKeys.size) { "Duplicate plugin algorithm alias" }
         manifest.algorithms.forEach {
+            require(it.contextVersion in 1..2) { "Unsupported algorithm context version" }
+            require(it.provides.size <= 128 && it.provides.all { name -> name.isNotBlank() && name.length <= 256 && name.none(Char::isISOControl) }) { "Invalid provided capabilities" }
             require(it.aliases.all { alias -> manifest.id == "builtin." + java.util.HexFormat.of().formatHex(alias.encodeToByteArray()) + ".v${it.version}" }) { "Only a matching bundled package may declare a legacy type" }
             require(!manifest.id.startsWith("builtin.") || it.aliases.size == 1) { "Bundled archives require a stable algorithm alias" }
             require(it.type.startsWith("${manifest.id}/") && it.version > 0 && it.name.isNotBlank()) { "Algorithm type must belong to its plugin namespace" }

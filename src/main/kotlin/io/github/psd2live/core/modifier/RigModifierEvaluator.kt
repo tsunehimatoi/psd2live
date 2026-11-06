@@ -32,6 +32,7 @@ internal data class RigModifierDefinition(
     val cacheReads: Set<String>? = null,
     /** Required for direct-output plugins; checked before any change is applied. */
     val changeWrites: Set<String>? = null,
+    val upstreamInputs: Boolean = false,
     val authorContext: (RigModifierInstance) -> ModifierAlgorithmContext = { ModifierAlgorithmContext.Empty },
 )
 
@@ -41,14 +42,14 @@ internal class RigModifierRegistry(definitions: List<RigModifierDefinition>) {
     init {
         require(entries.size == definitions.size) { "Duplicate modifier algorithm version" }
         require(definitions.all { it.type.isNotBlank() && it.version > 0 }) { "Invalid modifier definition" }
-        val known = definitions.mapTo(HashSet()) { it.type }
+        val known = definitions.flatMapTo(HashSet()) { it.provides + it.type }
         require(definitions.filter { it.pluginReference == null }.all { it.requires.all(known::contains) }) { "Unknown modifier dependency" }
         val visiting = HashSet<String>()
         val visited = HashSet<String>()
         fun visit(type: String) {
             if (type in visited) return
             require(visiting.add(type)) { "Cyclic modifier dependency: $type" }
-            definitions.filter { it.type == type }.flatMap { it.requires }.distinct().filter { it in known }.forEach(::visit)
+            definitions.filter { it.type == type || type in it.provides }.flatMap { it.requires }.distinct().filter { it in known }.forEach(::visit)
             visiting.remove(type)
             visited.add(type)
         }
@@ -161,7 +162,7 @@ internal class RigModifierEvaluator(
                         writers[it.kind to it.id] = instance.id to definition
                     }
                     available += ModifierCapability(instance.type, instance.version, instance.targets, instance.id,
-                        definition.appliedConfig(instance), instance.outputAliases)
+                        definition.appliedConfig(instance), instance.outputAliases, instance.plugin)
                 }
                 continue
             }
@@ -204,7 +205,18 @@ internal class RigModifierEvaluator(
             }
             io.github.psd2live.core.RigBuildProfile.count("modifier cache misses")
             val before = current
-            val authorContext = authorContexts.getValue(instance.id)
+            val capturedContext = authorContexts.getValue(instance.id)
+            val authorContext = if (definition.upstreamInputs || definition.plugin is ReadingModifierAlgorithmPlugin) {
+                val providers = definition.providers(instance)
+                val capabilities = definition.requires.sorted().flatMap { required ->
+                    available.filter { registry.provides(it.type, required) &&
+                        it.targets.any { target -> target in instance.targets } &&
+                        (providers[required] == null || it.id == providers[required]) }.map {
+                        ModifierUpstreamCapability(required, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+                    }
+                }
+                capturedContext.withUpstream(capabilities)
+            } else capturedContext
             val inputKey = if (definition.plugin is ReadingModifierAlgorithmPlugin) null else
                 definition.cacheReads?.let { ModifierInputCache.input(before, it) to authorContext }
             val cached = algorithmCache[instance.id]?.takeIf { it.instance == instance && it.input == inputKey }
@@ -273,7 +285,7 @@ internal class RigModifierEvaluator(
             }
             entries += ModifierEvaluation(instance, ModifierStatus.ACTIVE, contributions = contributions,
                 ownedKeyforms = ownedKeyforms(before, generated), overrideIssues = overridden.issues)
-            available += ModifierCapability(instance.type, instance.version, instance.targets, instance.id, definition.appliedConfig(instance), instance.outputAliases)
+            available += ModifierCapability(instance.type, instance.version, instance.targets, instance.id, definition.appliedConfig(instance), instance.outputAliases, instance.plugin)
             outputs += current
         }
         checkpoint()
@@ -333,7 +345,7 @@ internal class RigModifierEvaluator(
         val consumed = stack.instances.take(end).mapTo(HashSet()) { it.id }
         val capabilities = prefix.entries.filter { it.status == ModifierStatus.ACTIVE }.map {
             ModifierCapability(it.instance.type, it.instance.version, it.instance.targets, it.instance.id,
-                registry.definition(it.instance).appliedConfig(it.instance), it.instance.outputAliases)
+                registry.definition(it.instance).appliedConfig(it.instance), it.instance.outputAliases, it.instance.plugin)
         }
         val baked = prefix.entries.filter { it.status == ModifierStatus.ACTIVE }.mapTo(HashSet()) { it.instance.id }
         val remaining = stack.copy(instances = stack.instances.drop(end), overrides = stack.overrides - baked,

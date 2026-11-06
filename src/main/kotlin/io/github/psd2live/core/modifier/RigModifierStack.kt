@@ -10,7 +10,10 @@ internal data class ModifierCapability(val type: String, val version: Int, val t
     val config: JsonObject = JsonObject(emptyMap()),
     @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
     @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
-    val outputAliases: Map<String, String> = emptyMap())
+    val outputAliases: Map<String, String> = emptyMap(),
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val plugin: ModifierPluginReference? = null)
 
 /**
  * Immutable stack state. Retired IDs and overrides survive removal: adding a new instance must never adopt an old

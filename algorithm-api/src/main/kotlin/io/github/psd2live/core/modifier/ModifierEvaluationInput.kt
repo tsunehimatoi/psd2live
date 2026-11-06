@@ -66,6 +66,7 @@ class ModifierEvaluationInput(private val model: RigIR, private val author: Modi
             "authoring" -> model.authoring
             "advanced" -> model.advanced
             "hitArea" -> model.hitAreas
+            "upstream" -> author.upstream
             "context" -> author
             else -> error("Unknown input section: ${key.section}")
         }
@@ -90,6 +91,8 @@ class ModifierEvaluationInput(private val model: RigIR, private val author: Modi
     val advanced: AdvancedIR get() = read("advanced")
     val hitAreas: List<HitAreaIR> get() = read("hitArea")
     val context: ModifierAlgorithmContext get() = read("context")
+    val upstream: List<ModifierUpstreamCapability> get() = read("upstream")
+    fun providers(capability: String): List<ModifierUpstreamCapability> = upstream.filter { it.capability == capability }
     fun parameter(id: String): Parameter? = read("parameter", id)
     fun mesh(id: String): Mesh? = read("mesh", id)
     fun deformer(id: String): Deformer? = read("deformer", id)

@@ -47,4 +47,25 @@ class AlgorithmContextsTest {
             Files.delete(directory)
         }
     }
+    @Test fun upstreamCapabilitiesUseVersionTwoAndRetainExactPackageIdentity() {
+        val directory = Files.createTempDirectory("algorithm-upstream-context-")
+        try {
+            val reference = ModifierPluginReference("example.base", "2.3.4", "package-content", mapOf("math" to "locked-content"))
+            val provider = ModifierUpstreamCapability("face.frame", "face/fitted", 2, listOf(ModifierTarget("mesh", "face")),
+                "provider", buildJsonObject { put("strength", 1) }, mapOf("root" to "stable-root"), reference)
+            val context = ModifierAlgorithmContext(upstream = listOf(provider))
+            val wire = AlgorithmContexts.encode(context) { AlgorithmObjects.write(directory, it) }
+            assertEquals(2, wire.getValue("version").jsonPrimitive.int)
+            assertEquals(context, AlgorithmContexts.decode(wire, directory))
+            val legacy = AlgorithmContexts.encode(ModifierAlgorithmContext.Empty) { AlgorithmObjects.write(directory, it) }
+            assertEquals(1, legacy.getValue("version").jsonPrimitive.int)
+            assertFalse("upstream" in legacy)
+            assertFailsWith<IllegalArgumentException> {
+                AlgorithmContexts.decode(JsonObject(wire - "upstream"), directory)
+            }
+        } finally {
+            Files.list(directory).use { entries -> entries.forEach(Files::delete) }
+            Files.delete(directory)
+        }
+    }
 }

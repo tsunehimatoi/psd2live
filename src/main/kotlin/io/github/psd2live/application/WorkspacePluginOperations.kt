@@ -42,8 +42,10 @@ internal object WorkspacePluginManagement {
                 put("enabled", store.builtinEnabled(reference.id)); put("builtin", true); put("git_commit", JsonNull)
                 putJsonArray("algorithms") { addJsonObject {
                     put("type", definition.type); put("version", definition.version); put("name", definition.type)
+                    put("context_version", if (definition.upstreamInputs || definition.plugin is io.github.psd2live.core.modifier.ReadingModifierAlgorithmPlugin) 2 else 1)
                     put("config_schema", WorkspaceModifierSchemas.configuration(definition.type)); put("defaults", JsonObject(emptyMap()))
                     put("requires", JsonArray(definition.requires.sorted().map(::JsonPrimitive)))
+                    put("provides", JsonArray(definition.provides.sorted().map(::JsonPrimitive)))
                     put("targets", JsonArray((if (definition.type == "swing") listOf("mesh", "deformer") else listOf("mesh")).map(::JsonPrimitive)))
                     put("reads", JsonArray(listOf(JsonPrimitive("*")))); put("writes", JsonArray(listOf(JsonPrimitive("*"))))
                     put("exclusive_family", definition.exclusiveFamily?.let(::JsonPrimitive) ?: JsonNull)
@@ -64,8 +66,10 @@ internal object WorkspacePluginManagement {
         put("git_commit", entry.gitCommit?.let(::JsonPrimitive) ?: JsonNull)
         putJsonArray("algorithms") { entry.manifest.algorithms.forEach { addJsonObject {
             put("type", it.type); put("version", it.version); put("name", it.name)
+            put("context_version", it.contextVersion)
             put("config_schema", it.configSchema); put("defaults", it.defaults)
             put("requires", JsonArray(it.requires.sorted().map(::JsonPrimitive)))
+            put("provides", JsonArray(it.provides.sorted().map(::JsonPrimitive)))
             put("targets", JsonArray(it.targets.sorted().map(::JsonPrimitive)))
             put("reads", JsonArray(it.reads.sorted().map(::JsonPrimitive))); put("writes", JsonArray(it.writes.sorted().map(::JsonPrimitive)))
             put("exclusive_family", it.exclusiveFamily?.let(::JsonPrimitive) ?: JsonNull)
@@ -77,9 +81,9 @@ internal object WorkspacePluginSchemas {
     private val s = WorkspaceResultSchema
     val jobs = setOf("plugin_inspect", "plugin_install", "plugin_enable", "plugin_disable", "plugin_uninstall")
     private val algorithm = s.obj(mapOf(
-        "type" to s.handle(), "version" to s.integer(1), "name" to s.handle(),
+        "type" to s.handle(), "version" to s.integer(1), "name" to s.handle(), "context_version" to s.integer(1),
         "config_schema" to s.dictionary(JsonObject(emptyMap())), "defaults" to s.dictionary(JsonObject(emptyMap())),
-        "requires" to s.array(s.handle()), "targets" to s.array(s.handle()), "reads" to s.array(s.handle()), "writes" to s.array(s.handle()),
+        "provides" to s.array(s.handle()), "requires" to s.array(s.handle()), "targets" to s.array(s.handle()), "reads" to s.array(s.handle()), "writes" to s.array(s.handle()),
         "exclusive_family" to s.nullable(s.handle())))
     private val range = s.obj(mapOf("exact" to s.nullable(s.handle()), "minimum" to s.nullable(s.handle()), "maximum" to s.nullable(s.handle())), emptySet())
     private val relation = s.obj(mapOf("id" to s.handle(), "version" to range), setOf("id"))

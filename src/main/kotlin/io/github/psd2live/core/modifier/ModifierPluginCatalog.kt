@@ -13,7 +13,7 @@ internal object ModifierPluginCatalog {
                     // Reject only consumers of this exact package. An unused incompatible historical
                     // version must not prevent unrelated projects from constructing their registry.
                     require(adapter.requires == algorithm.requires && adapter.exclusiveFamily == algorithm.exclusiveFamily &&
-                        adapter.composableKinds == algorithm.composableKinds) {
+                        adapter.composableKinds == algorithm.composableKinds && adapter.provides == algorithm.provides) {
                         "Bundled source adapter contract mismatch: $type (${entry.reference.id}@${entry.reference.version})"
                     }
                     return instance.copy(type = adapter.type)
@@ -31,8 +31,14 @@ internal object ModifierPluginCatalog {
                     providers = { adapter.providers(native(it)) },
                     resolveParameter = { instance, before, declared -> adapter.resolveParameter(native(instance), before, declared) },
                     references = { before, after, instance -> adapter.references(before, after, native(instance)) },
-                    cacheReads = algorithm.reads + algorithm.writes)
-            } else RigModifierDefinition(type, algorithm.version, requires = algorithm.requires,
+                    cacheReads = algorithm.reads + algorithm.writes, upstreamInputs = algorithm.contextVersion >= 2)
+            } else {
+                val worker = object : ContextualModifierAlgorithmPlugin {
+                    override fun evaluate(input: io.github.psd2live.format.model.RigIR, instance: RigModifierInstance,
+                                          context: ModifierAlgorithmContext, checkpoint: () -> Unit): io.github.psd2live.format.model.RigIR =
+                        ModifierPluginWorkers.evaluate(entry, algorithm, input, instance, checkpoint, store, context = context)
+                }
+                RigModifierDefinition(type, algorithm.version, requires = algorithm.requires, provides = algorithm.provides,
                 references = { before, after, _ -> ModifierPluginOutput.sidecars(before, after) },
                 parameters = { algorithm.parameters.map { it.definition() } },
                 exclusiveFamily = algorithm.exclusiveFamily, composableKinds = algorithm.composableKinds,
@@ -40,7 +46,8 @@ internal object ModifierPluginCatalog {
                     require(instance.targets.all { it.kind in algorithm.targets }) { "Unsupported plugin target" }
                     ModifierPluginSchema.validate(instance.config, algorithm.configSchema)
                 }, evaluate = { rig, instance, checkpoint -> ModifierPluginWorkers.evaluate(entry, algorithm, rig, instance, checkpoint, store) },
-                pluginReference = entry.reference, cacheReads = algorithm.reads + algorithm.writes)
+                pluginReference = entry.reference, plugin = worker, cacheReads = algorithm.reads + algorithm.writes, upstreamInputs = algorithm.contextVersion >= 2)
+            }
         } }
     }
 

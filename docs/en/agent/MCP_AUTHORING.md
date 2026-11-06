@@ -732,3 +732,5 @@ For `modifier_plan`, `type: "simulation"` accepts `preset: "clothing" | "front_h
 ### Algorithm plugin management
 
 `plugin_list`, `plugin_inspect`, `plugin_install`, `plugin_enable`, `plugin_disable`, and `plugin_uninstall` do not require an open project. All except listing return process jobs. See [Algorithm plugins](../guide/ALGORITHM_PLUGINS.md) for sources, version pinning, and request formats.
+
+Each algorithm description includes `context_version` for its supported context version and `provides` for capability aliases; `requires` still describes execution prerequisites.

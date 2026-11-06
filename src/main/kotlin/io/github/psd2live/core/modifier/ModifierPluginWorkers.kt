@@ -96,11 +96,12 @@ internal object ModifierPluginWorkers {
             val current = linkedMapOf<String, JsonElement>("frame" to blob(objects.frame))
             objects.deformers.forEachIndexed { index, bytes -> current["deformer:${input.deformers[index].id}"] = blob(bytes) }
             objects.meshes.forEachIndexed { index, bytes -> current["mesh:${input.meshes[index].id}"] = blob(bytes) }
+            require(context.upstream.isEmpty() || algorithm.contextVersion >= 2) { "Plugin does not support upstream capability inputs" }
             val requestId = ++sequence
             val request = buildJsonObject {
                 put("protocol", 1); put("id", requestId); put("method", "evaluate")
                 put("type", algorithm.type); put("version", instance.version); put("instance", instance.id)
-                put("capabilities", JsonArray((ModifierPluginOutput.operations + setOf("rig_objects", "author_context_v1", io.github.psd2live.algorithm.worker.AlgorithmChanges.CAPABILITY)).sorted().map(::JsonPrimitive)))
+                put("capabilities", JsonArray((ModifierPluginOutput.operations + setOf("rig_objects", "author_context_v1", "author_context_v2", io.github.psd2live.algorithm.worker.AlgorithmChanges.CAPABILITY)).sorted().map(::JsonPrimitive)))
                 if (context != ModifierAlgorithmContext.Empty) put("context", io.github.psd2live.algorithm.worker.AlgorithmContexts.encode(context, ::blob))
                 put("invocation", Json.encodeToJsonElement(RigModifierInstance.serializer(), instance.copy(type = algorithm.type)))
                 put("dependencies", JsonArray(store.resolution(entry.reference).dependencies.map { reference ->

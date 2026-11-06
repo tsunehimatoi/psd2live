@@ -45,6 +45,9 @@ data class ModifierPluginAlgorithm(
     val aliases: Set<String> = emptySet(),
     /** Deterministic legacy names derived from an instance-owned output token. */
     val derivedOutputs: List<ModifierPluginDerivedOutput> = emptyList(),
+    /** 2 opts into explicit upstream capability snapshots; existing packages retain context version 1. */
+    val contextVersion: Int = 1,
+    val provides: Set<String> = emptySet(),
 )
 
 @Serializable

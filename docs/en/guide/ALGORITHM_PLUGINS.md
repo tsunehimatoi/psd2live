@@ -54,7 +54,7 @@ Use the existing `modifier_plan`, `modifier_add`, and `modifier_update` operatio
 
 ## Authoring and protocol
 
-The JVM contract lives in the independent `:algorithm-api` module used by the application. It depends only on the neutral `:format-model` module and JSON serialization, not the application, Umamo, Compose, projects or history. `./gradlew :algorithm-api:build` produces the version `1.5.0` API and sources JARs.
+The JVM contract lives in the independent `:algorithm-api` module used by the application. It depends only on the neutral `:format-model` module and JSON serialization, not the application, Umamo, Compose, projects or history. `./gradlew :algorithm-api:build` produces the version `1.6.0` API and sources JARs.
 
 `ModifierAlgorithmPlugin.evaluate(input, instance, checkpoint)` receives the upstream `RigIR`, an immutable `RigModifierInstance` and a cancellation checkpoint, and returns a candidate `RigIR`. Do not mutate input arrays; invoke the checkpoint in long loops and let failures propagate. Generate identities with `instance.outputId(localName)`, which preserves recorded aliases. The host owns output validation, dependencies, overrides, CAS and history. Targets, pinned package references, manifests, version ranges and dependency declarations are public in the same module. Existing JSON fields, serialized type names and object ID encoding are unchanged.
 
@@ -255,3 +255,13 @@ This snapshot currently covers raster observations, not separate mask resources,
 `reads()` returns a snapshot of the invocation's observations. The host caches instance configuration, plugin implementation identity, author context, reads and structured changes. Following upstream edits, reuse requires unchanged reads and satisfied write preconditions; changed write preconditions trigger reevaluation. Reuse still passes write-scope, override, contribution-conflict and transaction handling. Failed or cancelled candidates do not replace the successful snapshot. The physics plugin reads its referenced parameters and physics configuration rather than all geometry.
 
 This cache currently applies to in-process implementations on the same author baseline, evaluation context and plugin catalog revision. External workers retain existing conservative caching and do not transport read sets. Explicit upstream capability snapshots, parent-space coordinate services and cross-process read tracking remain pending; this is not complete framework acceptance.
+
+### Explicit upstream capabilities (JVM API 1.6)
+
+Algorithm manifests declare capability aliases in `provides`. `requires` can reference algorithm types or capability aliases; cycle validation covers both. Package semantic-version requirements remain in manifest `dependencies`/`conflicts`, distinct from instance execution prerequisites.
+
+`ModifierAlgorithmContext.upstream` contains host-resolved preceding capabilities. Each `ModifierUpstreamCapability` records the requested capability, actual algorithm type and version, provider instance ID, targets, materialized configuration, output aliases and, when known, the exact package reference with version, digest and dependency content locks. The host selects preceding or materialized providers matching consumer targets and explicit provider selection. Missing package provenance in legacy records remains null rather than guessing an installed version. Applying a prefix preserves this identity so materialized content can continue satisfying dependencies.
+
+`ModifierEvaluationInput.upstream`/`providers(capability)` participate in read tracking and cache invalidation. Source `values` schemas stay unchanged; capabilities are transported separately. External algorithms opt in with manifest `contextVersion: 2`; older manifests default to 1. Contexts without upstream data retain v1 encoding. Nonempty upstream contexts use v2, adding an `upstream` resource reference alongside `version`, `values` and `resources`, limited to 1 MiB of metadata. V2 receivers also accept v1; old packages are not forcibly sent v2 contexts.
+
+Shared GUI/MCP plugin descriptions expose `context_version` and `provides`, with corresponding strict result-schema fields. Verified cases include capability alias resolution, upstream-configuration cache invalidation, prefix application, persisted package provenance and v1/v2 context codecs. External read-set transport, parent-space coordinate services and remaining complete algorithm migrations are still pending.

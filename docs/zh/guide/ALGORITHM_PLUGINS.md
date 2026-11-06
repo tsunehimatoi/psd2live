@@ -54,7 +54,7 @@ GUI 与 MCP 使用相同管理服务。`plugin_list` 返回包身份、启用状
 
 ## 编写插件
 
-JVM 契约已拆为独立的 `:algorithm-api` 模块，应用和插件共用同一份声明。它只依赖中立 `:format-model` 与 JSON 序列化库，不依赖应用、Umamo、Compose、工程或历史。`./gradlew :algorithm-api:build` 生成版本为 `1.5.0` 的 API JAR 与源码 JAR。
+JVM 契约已拆为独立的 `:algorithm-api` 模块，应用和插件共用同一份声明。它只依赖中立 `:format-model` 与 JSON 序列化库，不依赖应用、Umamo、Compose、工程或历史。`./gradlew :algorithm-api:build` 生成版本为 `1.6.0` 的 API JAR 与源码 JAR。
 
 `ModifierAlgorithmPlugin.evaluate(input, instance, checkpoint)` 接收上游 `RigIR`、不可变 `RigModifierInstance` 和取消检查函数，返回候选 `RigIR`。实现不能原地修改输入数组；长循环需调用 `checkpoint`，异常原样交回宿主。对象身份使用 `instance.outputId(localName)`，兼容已有别名；宿主仍负责输出验证、依赖、覆盖、CAS 和历史提交。API 同时公开目标引用、固定包引用、清单、版本范围与依赖声明；原 JSON 字段、序列化类型名称和对象 ID 编码保持不变。
 
@@ -266,3 +266,13 @@ API 1.2.0 增加可选的 `ContextualModifierAlgorithmPlugin`，接收独立的 
 `reads()` 给出该次调用的独立读取快照。宿主对新入口缓存实例配置、插件实现身份、作者上下文、读取集合及结构化变更。上游修改后，只在所读值仍一致、输出写入前置条件仍满足时复用；若前置条件变化，重新计算。复用仍经过写入范围检查、覆盖、贡献冲突和事务流程。失败或取消的候选不替换成功快照。物理插件目前只读取实际引用的参数和物理配置，不读取所有几何。
 
 此缓存目前用于进程内新入口，且只在同一作者基线、相同求值上下文和相同插件目录修订内复用。外部工作进程仍使用保守的现有缓存，未传输读取集合。上游“能力”的显式快照、父空间坐标服务和跨进程读取跟踪仍待完成；不能将此阶段视为完整框架验收。
+
+### 显式上游能力（JVM API 1.6）
+
+算法清单的 `provides` 声明其提供的能力别名，`requires` 可以引用算法类型或能力别名，循环检查覆盖两者。包的语义版本依赖仍由清单 `dependencies`／`conflicts` 处理，不与实例的执行前置关系混淆。
+
+`ModifierAlgorithmContext.upstream` 保存宿主解析后的前置能力。每项 `ModifierUpstreamCapability` 包含请求能力名、实际算法类型和算法版本、前置实例 ID、目标引用、固化配置、输出别名，以及已知时的完整包引用（版本、内容摘要和依赖内容锁）。宿主只选择满足消费者目标和显式 provider 选择的前序／已固化提供者。旧记录缺少包引用时保持 null，不猜测当前安装版本。应用前缀会保留这些身份信息，固化内容继续满足下游依赖。
+
+`ModifierEvaluationInput.upstream`／`providers(capability)` 将这些输入纳入读取集合和缓存失效判断。普通源素材 `values` 的 schema 不变，上游快照单独传递。外部算法须在清单声明 `contextVersion: 2` 才会收到上游输入，旧清单默认 1。上下文无上游数据时继续编码 v1；有上游数据时编码 v2，在原 `version`、`values`、`resources` 之外增加 `upstream` 资源引用，元数据上限 1 MiB。v2 接收器也读取 v1，旧包不被强制发送 v2。
+
+GUI/MCP 共用的插件描述新增 `context_version` 和 `provides`，结果 schema 同步声明这两个字段。现已验证能力别名解析、上游配置变化使缓存失效、应用前缀保持能力、包身份保存恢复及 v1/v2 上下文编解码。外部读取集合的回传、父空间坐标服务和完整新算法迁移仍未完成。

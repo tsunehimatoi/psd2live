@@ -397,4 +397,45 @@ class RigModifierStackTest {
         assertEquals(31, changed.rig.parts.last().drawOrder)
         assertEquals(changed, engine.evaluate(authored, stack(30, "other")))
     }
+    @Test fun resolvedCapabilitiesInvalidateReadsAndSurviveApplyingTheirProvider() {
+        val observed = mutableListOf<ModifierUpstreamCapability>()
+        val provider = RigModifierDefinition("provider", 3, provides = setOf("shape"), appliedConfig = { it.config },
+            evaluate = { rig, _, _ -> rig })
+        val algorithm = object : ReadingModifierAlgorithmPlugin {
+            override fun changes(input: ModifierEvaluationInput, instance: RigModifierInstance, checkpoint: () -> Unit): ModifierModelChanges {
+                val dependency = input.providers("shape").single()
+                observed += dependency
+                val body = requireNotNull(input.part("body"))
+                return ModifierModelChanges(parts = ModifierObjectChanges(updated = listOf(ModifierObjectUpdate(body,
+                    body.copy(drawOrder = dependency.config.getValue("order").jsonPrimitive.content.toInt())))))
+            }
+        }
+        val consumer = RigModifierDefinition("consumer", 1, requires = setOf("shape"), providers = { mapOf("shape" to "source") },
+            evaluate = algorithm::evaluate, plugin = algorithm, changeWrites = setOf("part"))
+        val engine = RigModifierEvaluator(RigModifierRegistry(listOf(provider, consumer)))
+        fun stack(order: Int) = RigModifierStack(listOf(
+            RigModifierInstance("source", "provider", 3, listOf(target), config = buildJsonObject { put("order", order) },
+                outputAliases = mapOf("root" to "preserved-root")), entry("consumer1", "consumer")))
+        val cache = RigModifierEvaluationCache()
+        engine.evaluate(authored, stack(10), cache)
+        val changed = engine.evaluate(authored, stack(20), cache)
+        assertEquals(2, observed.size)
+        assertEquals(20, changed.rig.parts.first().drawOrder)
+        assertEquals("shape", observed.last().capability)
+        assertEquals("provider", observed.last().type)
+        assertEquals(3, observed.last().version)
+        assertEquals("preserved-root", observed.last().outputAliases["root"])
+        val applied = engine.applyThrough(authored, stack(20), "source")
+        assertEquals(changed.rig, applied.result.rig)
+        assertEquals(observed[1], observed.last())
+        val pinned = ModifierPluginReference("example.provider", "1.2.3", "content")
+        val persisted = applied.stack.copy(appliedCapabilities = applied.stack.appliedCapabilities.map { it.copy(plugin = pinned) })
+        assertEquals(pinned, RigModifierStack.fromJson(persisted.toJson()).appliedCapabilities.single().plugin)
+    }
+    @Test fun capabilityAliasesParticipateInDependencyCycleValidation() {
+        val a = RigModifierDefinition("a", 1, provides = setOf("cap-a"), requires = setOf("cap-b"), evaluate = { rig, _, _ -> rig })
+        val b = RigModifierDefinition("b", 1, provides = setOf("cap-b"), requires = setOf("cap-a"), evaluate = { rig, _, _ -> rig })
+        assertFailsWith<IllegalArgumentException> { RigModifierRegistry(listOf(a, b)) }
+        RigModifierRegistry(listOf(a, b.copy(requires = emptySet())))
+    }
 }

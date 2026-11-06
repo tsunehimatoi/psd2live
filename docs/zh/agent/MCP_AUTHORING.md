@@ -728,3 +728,5 @@ View 从模型数据渲染 PNG，不依赖桌面截图。`canvas_rect` 给出画
 ### 算法插件管理
 
 `plugin_list`、`plugin_inspect`、`plugin_install`、`plugin_enable`、`plugin_disable`、`plugin_uninstall` 不要求已打开工程。除列表外返回后台任务。安装来源、版本固定和请求格式见[算法插件](../guide/ALGORITHM_PLUGINS.md)。
+
+插件描述中每项算法的 `context_version` 表示支持的上下文版本，`provides` 列出提供的能力别名；`requires` 仍表示执行前置项。
