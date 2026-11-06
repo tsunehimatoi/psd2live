@@ -392,9 +392,9 @@ internal class RigModifierSource(
         })
         val context = skinClipContext(instance, includeEarlier = false)
         val complete = instance.copy(targets = input.meshes.map { ModifierTarget("mesh", it.id) })
-        val result = io.github.psd2live.algorithms.binding.SkinClipAlgorithm().evaluate(input, complete,
+        val changes = io.github.psd2live.algorithms.binding.SkinClipAlgorithm().changes(input, complete,
             context) {}
-        val masks = result.meshes.filterIndexed { index, mesh -> mesh != input.meshes[index] }
+        val masks = changes.meshes.updated.map { it.after }
             .associate { it.id to (it.maskedBy.map(::DrawableId) to it.invertMask) }
         fun apply(model: PuppetModel) = model.copy(drawables = model.drawables.map { mesh ->
             val next = masks[mesh.id.raw] ?: return@map mesh

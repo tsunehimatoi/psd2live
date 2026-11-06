@@ -126,6 +126,7 @@ internal object RigLegacyBindings {
         }, composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter") +
             if (spec.expressionToggles || spec.chainKinds.isNotEmpty()) setOf("physics") else emptySet(),
         evaluate = evaluate,
+        changeWrites = if (spec.skinClip) setOf("mesh") else null,
         plugin = when {
             spec.expressionToggles -> io.github.psd2live.algorithms.binding.ExpressionAlgorithm()
             spec.seeThrough -> io.github.psd2live.algorithms.binding.SeeThroughAlgorithm()

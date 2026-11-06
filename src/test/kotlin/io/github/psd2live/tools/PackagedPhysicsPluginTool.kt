@@ -318,6 +318,23 @@ class PackagedPhysicsPluginTool {
                     assertEquals(expected.copy(parameters = changed.parameters), evaluate(registry.definition(instance), changed, instance))
                     assertEquals(evaluations + 2, count("plugin worker evaluations"))
                 } finally { profile.recording = recording }
+            } else if (type == "face.skin-clip") {
+                val profile = io.github.psd2live.core.RigBuildProfile
+                val recording = profile.recording
+                profile.recording = true
+                fun count(key: String) = profile.snapshot()[key]?.second ?: 0L
+                val evaluations = count("plugin worker evaluations")
+                val hits = count("plugin read cache hits")
+                try {
+                    val worker = registry.definition(instance)
+                    assertEquals(expected, evaluate(worker, input, instance))
+                    val editedFace = input.meshes.single { it.id == "face" }.copy(opacity = .5f)
+                    val unrelated = input.copy(meshes = input.meshes.map { if (it.id == editedFace.id) editedFace else it })
+                    assertEquals(expected.copy(meshes = expected.meshes.map { if (it.id == editedFace.id) editedFace else it }),
+                        evaluate(worker, unrelated, instance))
+                    assertEquals(evaluations + 1, count("plugin worker evaluations"))
+                    assertEquals(hits + 1, count("plugin read cache hits"))
+                } finally { profile.recording = recording }
             } else if (verifyScaffoldReads) {
                 verifyScaffoldWorkerReads(definition, registry.definition(instance), input, instance)
             } else repeat(2) {
