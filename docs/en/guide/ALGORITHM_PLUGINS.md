@@ -10,6 +10,8 @@ These entries still compile and ship with the application, rather than independe
 
 ## Install and remove
 
+The physics-group implementation now lives in `:algorithms:physics`. `PendulumAlgorithm` implements the public evaluation interface; configuration parsing, group conversion and output conflict checks run in that module. It depends only on `algorithm-api` and builds an independent JAR. The application registration delegates to it, while ordinary physics export and other generators reuse the same conversion. It is still linked and shipped with the application: this JAR alone is not accepted by the plugin installer, and independent package loading and historical version restoration remain unfinished.
+
 Use Preferences → Algorithm plugins to select a ZIP or enter an absolute directory or an HTTPS, SSH or git:// Git URL. Git sources accept an optional branch, tag or full commit hash and record the resolved commit. The repository root must contain a built package. The installer does not fetch submodules, run setup scripts, or compile source.
 
 Packages include their platform executable and runtime dependencies. JVM workers use the application's Java runtime. Python/.NET packages must not depend on a separately installed development environment. Plugins execute local code; process isolation is not a security sandbox.

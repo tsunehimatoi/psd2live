@@ -3,12 +3,7 @@ package io.github.psd2live.core
 import io.github.psd2live.format.model.PhysicsSource
 import io.github.psd2live.targets.cubism.Cubism3Json
 import io.github.psd2live.format.model.PhysicsGroup as IrPhysicsGroup
-import io.github.psd2live.format.model.PhysicsInput as IrPhysicsInput
-import io.github.psd2live.format.model.PhysicsNormalization as IrPhysicsNormalization
-import io.github.psd2live.format.model.PhysicsOutput as IrPhysicsOutput
-import io.github.psd2live.format.model.PhysicsSegment as IrPhysicsSegment
 
-import kotlinx.serialization.json.JsonPrimitive
 
 /** physics3.json, written the way Cubism Editor exports it and read the way the Cubism runtime does. */
 object Physics3Json {
@@ -19,13 +14,7 @@ object Physics3Json {
 	fun write(settings: List<RigPhysicsEdit>, fps: Int): String? = Cubism3Json.physics3(settings.map(::group), fps)
 
 	/** A pendulum setting as its neutral IR group. */
-	fun group(setting: RigPhysicsEdit): IrPhysicsGroup = IrPhysicsGroup(setting.id, setting.name,
-		setting.inputs.map { IrPhysicsInput(it.parameter, it.weight, source(it.type), it.reflect) },
-		setting.outputs.map { IrPhysicsOutput(it.parameter, it.vertex, it.scale, it.weight, source(it.type), it.reflect) },
-		setting.segments.map { IrPhysicsSegment(it.length, it.mobility, it.delay, it.acceleration) },
-		setting.normalization.let { IrPhysicsNormalization(it.positionMin, it.positionDefault, it.positionMax, it.angleMin, it.angleDefault, it.angleMax) })
-
-	private fun source(type: PhysicsSourceType) = if (type == PhysicsSourceType.ANGLE) PhysicsSource.ANGLE else PhysicsSource.X
+	fun group(setting: RigPhysicsEdit): IrPhysicsGroup = io.github.psd2live.algorithms.physics.PhysicsGroups.fromSetting(setting)
 
     /** Exact inverse for materializing generated groups as ordinary editable physics. */
     fun setting(group: IrPhysicsGroup): RigPhysicsEdit {

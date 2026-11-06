@@ -6,6 +6,16 @@ import kotlinx.serialization.json.*
 internal object BuiltinModifierPlugins {
     data class Entry(val reference: ModifierPluginReference, val definition: RigModifierDefinition)
 
+    private val physicsCode = listOf(
+        io.github.psd2live.algorithms.physics.PendulumAlgorithm::class.java,
+        io.github.psd2live.algorithms.physics.PhysicsGroups::class.java,
+        io.github.psd2live.core.RigPhysicsEdit::class.java,
+        io.github.psd2live.core.PhysicsInput::class.java, io.github.psd2live.core.PhysicsOutput::class.java,
+        io.github.psd2live.core.PhysicsSegment::class.java, io.github.psd2live.core.PhysicsNormalization::class.java,
+        io.github.psd2live.core.PhysicsSourceType::class.java,
+        Class.forName("io.github.psd2live.core.RigPhysicsKt"),
+    ).flatMap { listOf(it) + it.declaredClasses.sortedBy { nested -> nested.name } }
+
     fun definitions(source: RigModifierSource?): List<RigModifierDefinition> = listOf(
         SwingAlgorithmPlugin.definition, SimulationAlgorithmPlugin.definition,
         PhysicsAlgorithmPlugin.definition, MotionAlgorithmPlugin.definition,
@@ -14,9 +24,9 @@ internal object BuiltinModifierPlugins {
     private val implementations by lazy {
         listOf(SwingAlgorithmPlugin::class.java, SimulationAlgorithmPlugin::class.java,
             PhysicsAlgorithmPlugin::class.java, MotionAlgorithmPlugin::class.java,
-            RigSourceModifiers::class.java, RigLegacyBindings::class.java, RigSourceBinding::class.java)
+            RigSourceModifiers::class.java, RigLegacyBindings::class.java, RigSourceBinding::class.java).plus(physicsCode)
             .associateWith { implementation ->
-                implementation.getResourceAsStream("${implementation.simpleName}.class")!!.use { ModifierPluginStore.hash(it.readAllBytes()) }
+                implementation.getResourceAsStream("/${implementation.name.replace('.', '/')}.class")!!.use { ModifierPluginStore.hash(it.readAllBytes()) }
             }
     }
 
@@ -29,7 +39,9 @@ internal object BuiltinModifierPlugins {
                 "motion" -> MotionAlgorithmPlugin::class.java
                 else -> RigSourceModifiers::class.java
             }
-            val code = if (implementation == RigSourceModifiers::class.java)
+            val code = if (implementation == PhysicsAlgorithmPlugin::class.java)
+                (listOf(implementation) + physicsCode).map { implementations.getValue(it) }
+            else if (implementation == RigSourceModifiers::class.java)
                 listOf(implementation, RigLegacyBindings::class.java, RigSourceBinding::class.java).map { implementations.getValue(it) }
             else listOf(implementations.getValue(implementation))
             val id = "builtin." + java.util.HexFormat.of().formatHex(definition.type.encodeToByteArray()) + ".v${definition.version}"

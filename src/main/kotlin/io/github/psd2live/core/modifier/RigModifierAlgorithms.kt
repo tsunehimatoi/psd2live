@@ -86,15 +86,8 @@ internal object RigModifierAlgorithms {
         }.toMap()
     }
 
-    internal fun addPhysics(rig: RigIR, groups: List<PhysicsGroup>): RigIR {
-        val ids = rig.physics.groups.mapTo(HashSet()) { it.id }
-        require(groups.map { it.id }.distinct().size == groups.size && groups.none { it.id in ids }) { "Physics group ID collision" }
-        val claimed = rig.physics.groups.flatMapTo(HashSet()) { group -> group.outputs.map { it.parameter } }
-        for (group in groups) for (output in group.outputs) require(claimed.add(output.parameter)) {
-            "Multiple physics groups drive ${output.parameter}"
-        }
-        return rig.copy(physics = rig.physics.copy(groups = rig.physics.groups + groups))
-    }
+    internal fun addPhysics(rig: RigIR, groups: List<PhysicsGroup>): RigIR =
+        io.github.psd2live.algorithms.physics.PhysicsGroups.append(rig, groups)
 
 }
 
