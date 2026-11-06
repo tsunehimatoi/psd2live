@@ -1,5 +1,7 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.algorithms.binding.ScaffoldPairs
+
 import io.github.psd2live.core.fit.handles
 import io.github.psd2live.core.fit.moved
 import org.umamo.runtime.eval.scalarAt
@@ -41,8 +43,6 @@ import org.umamo.runtime.model.DeformPathPoint
 import org.umamo.runtime.model.WarpLatticeForm
 import org.umamo.runtime.model.withDerivedRenderRoot
 import org.umamo.render.eval.buildDeformerWorlds
-import java.text.Normalizer
-import java.util.Locale
 import java.util.UUID
 import kotlin.math.PI
 import kotlin.math.abs
@@ -2870,61 +2870,29 @@ object RigBuilder {
 			)
 		}
 
-		val usedDeformerIds = deformers.map { it.id.raw }.toMutableSet()
 		val candidateLayers = analysis.layers.filter { layer ->
 			layer.opaquePixels > 0 &&
 				(layer.semantic.side == Side.LEFT || layer.semantic.side == Side.RIGHT) &&
 				!(config.rigEdits.skeleton?.enabled == true && layer.semantic.tag in SkeletonAutoBuilder.limbTags) &&
 				!isHandledByFaceRegion(layer, faceRig)
-		}
-		val grouped = candidateLayers.groupBy { layer ->
-			val (defaultParentId, _) = defaultParentAndFrame(layer, faceRig, analysis.anchors, character, head, faceFrame, frontHair, backHair,
+		}.map { layer ->
+			val (parent, frame) = defaultParentAndFrame(layer, faceRig, analysis.anchors, character, head, faceFrame, frontHair, backHair,
 				config.rigEdits.skeleton?.enabled == true, stance.legsFrame, bodyFrame)
-			val baseName = pairBaseName(layer.source.name)
-			defaultParentId to baseName.lowercase(Locale.ROOT).trim()
-		}
-		for ((key, pairLayers) in grouped) {
-			val hasLeft = pairLayers.any { it.semantic.side == Side.LEFT }
-			val hasRight = pairLayers.any { it.semantic.side == Side.RIGHT }
-			if (!hasLeft || !hasRight) continue
-
-			val (defaultParentId, defaultParentFrame) =
-				defaultParentAndFrame(pairLayers.first(), faceRig, analysis.anchors, character, head, faceFrame, frontHair, backHair,
-					config.rigEdits.skeleton?.enabled == true, stance.legsFrame, bodyFrame)
-			val cleanBaseName = pairBaseName(pairLayers.first().source.name)
-			val pairId = uniquePairDeformerId(cleanBaseName, pairLayers.first().semantic.tag, usedDeformerIds)
-			val pairName = tr("model.deformer.pair", cleanBaseName)
-
-			val unionBounds = pairLayers.map { rigLayerById.getValue(it.source.id.raw).bounds }.reduce(Bounds::union)
-			val padX = maxOf(unionBounds.width * 0.04f, 4f)
-			val padY = maxOf(unionBounds.height * 0.04f, 4f)
-			val pairBounds = Bounds(unionBounds.left - padX, unionBounds.top - padY, unionBounds.right + padX, unionBounds.bottom + padY)
-
-			val firstLayer = pairLayers.first()
-			val partId = when {
-				firstLayer.semantic.tag == SemanticTag.FRONT_HAIR -> frontHairPartId
-				firstLayer.semantic.tag == SemanticTag.BACK_HAIR -> backHairPartId
-				firstLayer.semantic.tag in faceTags -> facePartId
-				inferredGroup(firstLayer, analysis.anchors) == LayerGroup.HEAD -> headAccessoryPartId
-				inferredGroup(firstLayer, analysis.anchors) == LayerGroup.EXTRA -> extraPartId
+			val part = when {
+				layer.semantic.tag == SemanticTag.FRONT_HAIR -> frontHairPartId
+				layer.semantic.tag == SemanticTag.BACK_HAIR -> backHairPartId
+				layer.semantic.tag in faceTags -> facePartId
+				inferredGroup(layer, analysis.anchors) == LayerGroup.HEAD -> headAccessoryPartId
+				inferredGroup(layer, analysis.anchors) == LayerGroup.EXTRA -> extraPartId
 				else -> bodyPartId
 			}
-
-			val pairWarp = identityWarp(
-				id = pairId,
-				name = pairName,
-				parent = defaultParentId,
-				frame = pairBounds,
-				parentFrame = defaultParentFrame,
-				partId = partId,
-				rows = 3,
-				columns = 3,
-			)
-			deformers += pairWarp
-			pairFrames[pairId.raw] = pairBounds
-			for (layer in pairLayers) {
-				pairedParentByLayerId[layer.source.id.raw] = pairId to pairBounds
-			}
+			ScaffoldPairs.Layer(layer.source.id.raw, layer.source.name, layer.semantic.tag.name, layer.semantic.side,
+				rigLayerById.getValue(layer.source.id.raw).bounds, parent, frame, part)
+		}
+		for (pair in ScaffoldPairs.build(candidateLayers, deformers.mapTo(HashSet()) { it.id.raw }, { tr("model.deformer.pair", it) })) {
+			deformers += pair.warp
+			pairFrames[pair.warp.id.raw] = pair.bounds
+			for (layerId in pair.layerIds) pairedParentByLayerId[layerId] = pair.warp.id to pair.bounds
 		}
 
 		// Each hair layer hangs in a chain of its own under the hair's follow and sway.
@@ -3078,50 +3046,7 @@ object RigBuilder {
 		partId: PartId,
 		rows: Int = 3,
 		columns: Int = 3,
-	): Deformer.Warp {
-		val inParent = mapBounds(frame, parentFrame)
-		val geometry = warpGrid(emptyList(), columns = columns, rows = rows) { u, v, _ ->
-			(inParent.left + u * inParent.width) to (inParent.top + v * inParent.height)
-		}
-		return Deformer.Warp(id, name, parent, partId, rows, columns, true, geometry)
-	}
-
-	private val sideSuffixRegex = Regex("(?:[-_.\\s]+)(l|r|left|right|左|右)$", RegexOption.IGNORE_CASE)
-	private val sidePrefixRegex = Regex("^(左|右)(?:[-_.\\s]+)?", RegexOption.IGNORE_CASE)
-
-	internal fun pairBaseName(name: String): String {
-		var s = Normalizer.normalize(name, Normalizer.Form.NFKC).trim()
-		sideSuffixRegex.find(s)?.let {
-			s = s.removeRange(it.range).trim()
-		} ?: sidePrefixRegex.find(s)?.let {
-			s = s.removeRange(it.range).trim()
-		}
-		return if (s.isNotBlank()) s else name.trim()
-	}
-
-	private fun uniquePairDeformerId(
-		baseName: String,
-		tag: SemanticTag,
-		usedIds: MutableSet<String>,
-	): DeformerId {
-		val words = baseName.split(Regex("[^a-zA-Z0-9]+")).filter { it.isNotBlank() }
-		val pascal = words.joinToString("") { it.replaceFirstChar(Char::uppercaseChar) }
-		val baseId = when {
-			pascal.isNotBlank() -> "DeformPair_$pascal"
-			tag != SemanticTag.UNKNOWN -> {
-				val tagWords = tag.name.lowercase(Locale.ROOT).split('_').joinToString("") { it.replaceFirstChar(Char::uppercaseChar) }
-				"DeformPair_$tagWords"
-			}
-			else -> "DeformPair_Part"
-		}
-		var id = baseId
-		var counter = 2
-		while (!usedIds.add(id)) {
-			id = "${baseId}_$counter"
-			counter++
-		}
-		return DeformerId(id)
-	}
+	): Deformer.Warp = ScaffoldPairs.identityWarp(id, name, parent, frame, parentFrame, partId, rows, columns)
 
 	private fun isHandledByFaceRegion(layer: ClassifiedLayer, faceRig: NinePoseFaceRig): Boolean = when (layer.semantic.tag) {
 		SemanticTag.IRIDES -> faceRig.regionFor(FaceFeature.IRIS, layer.semantic.side) != null

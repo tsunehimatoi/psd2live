@@ -1,5 +1,7 @@
 package io.github.psd2live.algorithms.binding
 
+import io.github.psd2live.core.modifier.ModifierSourceInputs
+import io.github.psd2live.core.modifier.ModifierSourceTransform
 import java.awt.BasicStroke
 import java.awt.Color
 import java.awt.RenderingHints
@@ -12,16 +14,31 @@ object MouthOutlineRaster {
     data class Result(val left: Int, val top: Int, val width: Int, val height: Int,
                       val rgba: ByteArray, val opaquePixels: Int)
 
+    /** The raster contour comes from source tracing, separately from the posed ribbon mesh. */
+    fun fromSource(
+        source: ModifierSourceInputs.Raster,
+        tracedPositions: FloatArray,
+        tracedTriangles: IntArray,
+        alignedToCanvas: ModifierSourceTransform,
+        alphaThreshold: Int,
+        thickness: Float,
+        color: Int? = null,
+        checkpoint: () -> Unit = {},
+    ): List<Result> {
+        checkpoint()
+        val columns = MouthContour.uniformColumns(tracedPositions, tracedTriangles)
+        if (columns.size < 2) return emptyList()
+        val rgb = color ?: perimeterColor(source.width, source.height, source.rgba(), alphaThreshold, checkpoint)
+        return (0..1).map { side -> render(columns, side, rgb, thickness, alignedToCanvas::map, checkpoint) }
+    }
+
     fun render(columns: List<MouthColumn>, side: Int, rgb: Int, mouthThickness: Float,
                toCanvas: (Float, Float) -> Pair<Float, Float>, checkpoint: () -> Unit = {}): Result {
         checkpoint()
-        require(columns.size >= 2 && side in 0..1 && mouthThickness.isFinite()) { "Invalid outline contour" }
-        val path = MouthContour.crossedPath(columns, side)
-        val overlap = MouthContour.overlapCount(columns.size)
-        val joins = listOf(overlap, overlap + columns.lastIndex)
-        val radius = mouthThickness.coerceIn(0.5f, 8f) * 0.5f
-        val strokePositions = MouthStrokeMesh.positions(path, radius, joins)
-        val indices = MouthStrokeMesh.indices(path.size, joins)
+        val stroke = MouthOutlineStroke(columns, side, mouthThickness)
+        val radius = stroke.radius
+        val strokePositions = stroke.positions()
+        val indices = stroke.indices()
 
         val canvasPositions = FloatArray(strokePositions.size)
         var minX = Float.POSITIVE_INFINITY
