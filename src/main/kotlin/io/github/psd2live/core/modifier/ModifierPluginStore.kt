@@ -65,14 +65,32 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
     val revision = changes.asStateFlow()
     private val loadProblems = ArrayList<String>()
     private var installed: List<InstalledModifierPlugin> = load()
+    private data class CatalogSnapshot(val revision: Long, val packages: List<InstalledModifierPlugin>,
+                                       val resolutions: MutableMap<ModifierPluginReference, ModifierPluginResolution> = LinkedHashMap())
+    private var catalogSnapshot: CatalogSnapshot? = null
 
     fun snapshot(): List<InstalledModifierPlugin> = synchronized(lock) { installed.toList() }
-    fun packages(): List<InstalledModifierPlugin> = synchronized(lock) {
-        (BuiltinModifierPlugins.packages(this) + installed.map { entry ->
+    private fun catalog(): CatalogSnapshot {
+        catalogSnapshot?.takeIf { it.revision == changes.value }?.let { return it }
+        val packages = (BuiltinModifierPlugins.packages(this) + installed.map { entry ->
             if (entry.reference.id.startsWith("builtin.")) entry.copy(enabled = entry.enabled && builtinEnabled(entry.reference.id)) else entry
         }).distinctBy { it.reference }
+        return CatalogSnapshot(changes.value, packages).also { catalogSnapshot = it }
     }
-    fun resolution(reference: ModifierPluginReference): ModifierPluginResolution = synchronized(lock) { ModifierPluginDependencies.resolve(reference, packages()) }
+    fun packages(): List<InstalledModifierPlugin> = synchronized(lock) { catalog().packages }
+    fun resolution(reference: ModifierPluginReference): ModifierPluginResolution = synchronized(lock) {
+        val snapshot = catalog()
+        snapshot.resolutions[reference]?.let {
+            io.github.psd2live.core.RigBuildProfile.count("plugin dependency cache hits")
+            return@synchronized it
+        }
+        val result = ModifierPluginDependencies.resolve(reference, snapshot.packages)
+        // Queries may include missing historical references; bound these as well as installed packages.
+        if (snapshot.resolutions.size >= 256) snapshot.resolutions.remove(snapshot.resolutions.keys.first())
+        snapshot.resolutions[reference] = result
+        io.github.psd2live.core.RigBuildProfile.count("plugin dependency resolutions")
+        result
+    }
     fun problems(): List<String> = synchronized(lock) { loadProblems.toList() }
     fun <T> withRevision(expected: Long, action: () -> T): T = synchronized(lock) {
         require(changes.value == expected) { "Algorithm plugins changed while preparing the model; retry the operation" }
