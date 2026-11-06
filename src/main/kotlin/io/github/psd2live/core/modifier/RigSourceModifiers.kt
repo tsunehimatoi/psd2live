@@ -76,9 +76,31 @@ internal class RigModifierSource(
     }
 
     private val expressionTemplate by lazy {
-        generated(recipe = RigRecipe(true, modules = RigModules.modules.associate {
-            it.id to ModuleChoice(it == RigModules.EXPRESSION_TOGGLES)
-        })).puppet
+        val layers = analysis.layers.mapNotNull { layer ->
+            val override = config.layerOverrides[layer.source.id.raw]
+            val type = override?.type ?: layer.semantic.type
+            val parameter = (override?.parameter ?: layer.semantic.parameter).trim()
+            if (type == LayerType.PRESET || parameter.isBlank()) null else layer.source.id.raw to
+                io.github.psd2live.algorithms.binding.ExpressionChannels.Layer(parameter,
+                    if (type == LayerType.SWITCH) override?.switchId ?: layer.semantic.switchId else null)
+        }.toMap()
+        val catalog = io.github.psd2live.algorithms.binding.ExpressionChannels.catalog(layers.values.toList(), staggered = true)
+        // Standard-name collisions retain the legacy range and ordering resolution until that path is migrated.
+        if (catalog.parameters.any { custom -> StandardParameters.all.any { it.id == custom.id } }) {
+            generated(recipe = RigRecipe(true, modules = RigModules.modules.associate {
+                it.id to ModuleChoice(it == RigModules.EXPRESSION_TOGGLES)
+            })).puppet
+        } else {
+            val opacity = analysis.layers.associate { it.source.id.raw to it.source.opacity.coerceIn(0f, 1f) }
+            materialBase.copy(parameters = catalog.parameters,
+                parameterTree = catalog.parameters.map { ParameterNode.Param(it.id) },
+                drawables = materialBase.drawables.map { mesh ->
+                    val layer = layersByMesh[mesh.id.raw]
+                    val expression = layers[layer] ?: return@map mesh
+                    val grid = requireNotNull(io.github.psd2live.algorithms.binding.ExpressionChannels.opacity(expression, catalog.switchKeys))
+                    mesh.copy(opacity = opacity.getValue(requireNotNull(layer)), channelGrids = ChannelGrids(mapOf(FormChannel.OPACITY to grid)))
+                })
+        }
     }
 
     private val expressionLayers by lazy {

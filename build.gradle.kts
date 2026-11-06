@@ -68,6 +68,7 @@ dependencies {
 	implementation(project(":algorithms:motion"))
 	implementation(project(":algorithms:swing"))
 	implementation(project(":algorithms:simulation"))
+	implementation(project(":algorithms:binding"))
 	implementation(platform("io.ktor:ktor-bom:3.5.1"))
 	// Engine ported from Umamo (format, runtime, interop, render, edit); it brings its own libraries.
 	implementation(project(":umamo"))

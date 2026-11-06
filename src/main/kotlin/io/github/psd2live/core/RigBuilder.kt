@@ -1368,65 +1368,18 @@ object RigBuilder {
 		val layerIdByDrawable = linkedMapOf<String, String>()
         val lipOwnerById = mutableMapOf<DrawableId, DrawableId>()
 		val classifiedByDrawable = mutableMapOf<DrawableId, ClassifiedLayer>()
-		// Discover custom toggle and switch parameters from overrides and layers
-		val customParams = mutableListOf<Parameter>()
-		val switchParamKeys = mutableMapOf<String, FloatArray>()
-
-		// 1. Toggles
-		val toggleParamNames = analysis.layers.mapNotNull { layer ->
-			val override = config.layerOverrides[layer.source.id.raw]
-			val type = override?.type ?: layer.semantic.type
-			val param = (override?.parameter ?: layer.semantic.parameter).trim()
-			if (type == LayerType.TOGGLE && param.isNotBlank()) param else null
-		}.distinct().sorted()
-
-		for (paramName in toggleParamNames) {
-			customParams += Parameter(
-				id = ParameterId(paramName),
-				name = paramName,
-				min = 0f,
-				max = 1f,
-				default = 0f,
-			)
-		}
-
-		// 2. Switches
-		val switchLayers = analysis.layers.filter { layer ->
-			val override = config.layerOverrides[layer.source.id.raw]
-			val type = override?.type ?: layer.semantic.type
-			val param = (override?.parameter ?: layer.semantic.parameter).trim()
-			type == LayerType.SWITCH && param.isNotBlank()
-		}
-		val switchLayersByParam = switchLayers.groupBy { layer ->
-			val override = config.layerOverrides[layer.source.id.raw]
-			(override?.parameter ?: layer.semantic.parameter).trim()
-		}
-
-		for ((paramName, layers) in switchLayersByParam) {
-			val ids = layers.map { layer ->
-				val override = config.layerOverrides[layer.source.id.raw]
-				override?.switchId ?: layer.semantic.switchId
-			}.distinct().sorted()
-
-			val minId = ids.minOrNull() ?: 0
-			val maxId = ids.maxOrNull() ?: 0
-			val whole = if (minId == maxId) {
-				floatArrayOf(minId.toFloat(), (minId + 1).toFloat())
-			} else {
-				(minId..maxId).map { it.toFloat() }.toFloatArray()
-			}
-			// Choreographed (`expression.toggles`): a key halfway between two variants, where both show.
-			val staggered = io.github.psd2live.core.recipe.RigModules.let { it.builds(it.EXPRESSION_TOGGLES, config, io.github.psd2live.core.recipe.RecipeSubject.of(analysis)) }
-			val keys = if (!staggered) whole else (0 until whole.size * 2 - 1).map { whole.first() + it * 0.5f }.toFloatArray()
-			switchParamKeys[paramName] = keys
-			customParams += Parameter(
-				id = ParameterId(paramName),
-				name = paramName,
-				min = keys.first(),
-				max = keys.last(),
-				default = keys.first(),
-			)
-		}
+        val expressionLayers = analysis.layers.mapNotNull { layer ->
+            val override = config.layerOverrides[layer.source.id.raw]
+            val type = override?.type ?: layer.semantic.type
+            val parameter = (override?.parameter ?: layer.semantic.parameter).trim()
+            if (type == LayerType.PRESET || parameter.isBlank()) null else
+                io.github.psd2live.algorithms.binding.ExpressionChannels.Layer(parameter,
+                    if (type == LayerType.SWITCH) override?.switchId ?: layer.semantic.switchId else null)
+        }
+        val expressions = io.github.psd2live.algorithms.binding.ExpressionChannels.catalog(expressionLayers,
+            io.github.psd2live.core.recipe.RigModules.builds(io.github.psd2live.core.recipe.RigModules.EXPRESSION_TOGGLES, config, io.github.psd2live.core.recipe.RecipeSubject.of(analysis)))
+        val customParams = expressions.parameters
+        val switchParamKeys = expressions.switchKeys
 
 		val builtDeformPaths = mutableListOf<DeformPath>()
 		// Expressions change channels during assembly, not mesh geometry or lip ribbons.
@@ -4306,26 +4259,10 @@ object RigBuilder {
 		// Teeth, tongue and an open mouth fade in over the first teethFade percent of the opening.
 		val fadeIn = (tuning.teethFade / 100f).coerceAtLeast(0.01f)
 		val opacityGrid = when (type) {
-			LayerType.TOGGLE -> {
-				val paramName = (override?.parameter ?: layer.semantic.parameter).trim()
-				if (paramName.isNotBlank()) {
-					val parameter = ParameterId(paramName)
-					scalarGrid(parameter, floatArrayOf(0f, 1f)) { value -> value }
-				} else null
-			}
-			LayerType.SWITCH -> {
-				val paramName = (override?.parameter ?: layer.semantic.parameter).trim()
-				val switchId = override?.switchId ?: layer.semantic.switchId
-				val keys = switchParamKeys[paramName]
-				if (paramName.isNotBlank() && keys != null && keys.isNotEmpty()) {
-					val parameter = ParameterId(paramName)
-					// A variant shows from halfway before its key to halfway after: the incoming one is whole before the
-					// outgoing one fades. On whole keys alone this is the plain step it always was.
-					scalarGrid(parameter, keys) { key ->
-						if (abs(key - switchId) <= 0.5f) 1f else 0f
-					}
-				} else null
-			}
+            LayerType.TOGGLE, LayerType.SWITCH -> io.github.psd2live.algorithms.binding.ExpressionChannels.opacity(
+                io.github.psd2live.algorithms.binding.ExpressionChannels.Layer(
+                    (override?.parameter ?: layer.semantic.parameter).trim(),
+                    if (type == LayerType.SWITCH) override?.switchId ?: layer.semantic.switchId else null), switchParamKeys)
 			LayerType.PRESET -> {
 				when (layer.semantic.tag) {
 					SemanticTag.EYE_CLOSE -> io.github.psd2live.core.fit.EyeModules.drawingOpacity(layer.semantic.side, true, eyeSwap, eyeOpenMax)
