@@ -1,10 +1,8 @@
 package io.github.psd2live.core.modifier
 
-import io.github.psd2live.core.RigAuthoringJournal
 import io.github.psd2live.core.RigBuildProfile
 import io.github.psd2live.format.compile.RigIrObjects
 import io.github.psd2live.format.model.RigIR
-import io.github.psd2live.targets.cubism.PuppetIr
 import kotlinx.serialization.json.*
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -26,7 +24,7 @@ internal object ModifierPluginWorkers {
                  instance: RigModifierInstance, checkpoint: () -> Unit, store: ModifierPluginStore = ModifierPluginStore.shared): RigIR {
         store.requireAvailable(entry.reference)
         if (!workers.containsKey(entry.reference)) store.verify(entry.reference)
-        val worker = workers.computeIfAbsent(entry.reference) { Worker(entry) }
+        val worker = workers.computeIfAbsent(entry.reference) { Worker(entry, store) }
         try {
             val result = worker.evaluate(algorithm, rig, instance, checkpoint)
             store.requireAvailable(entry.reference)
@@ -37,7 +35,7 @@ internal object ModifierPluginWorkers {
         }
     }
 
-    private class Worker(val entry: InstalledModifierPlugin) : AutoCloseable {
+    private class Worker(val entry: InstalledModifierPlugin, val store: ModifierPluginStore) : AutoCloseable {
         private val resources = Files.createTempDirectory("psd2live-plugin-")
         private val command = (entry.manifest.commands[ModifierPluginStore.platform] ?: entry.manifest.commands.getValue("jvm")).mapIndexed { index, value ->
             when {
@@ -77,6 +75,10 @@ internal object ModifierPluginWorkers {
             val request = buildJsonObject {
                 put("protocol", 1); put("id", requestId); put("method", "evaluate")
                 put("type", instance.type); put("version", instance.version); put("instance", instance.id)
+                put("capabilities", JsonArray(ModifierPluginOutput.operations.sorted().map(::JsonPrimitive)))
+                put("dependencies", JsonArray(store.resolution(entry.reference).dependencies.map { reference ->
+                    Json.encodeToJsonElement(ModifierPluginReference.serializer(), reference)
+                }))
                 put("config", instance.config); put("resource_directory", resources.toString())
                 put("reset", requestId == 1L)
                 put("changed", JsonObject(current.filter { (key, value) -> previous[key] != value }))
@@ -118,33 +120,7 @@ internal object ModifierPluginWorkers {
             response["error"]?.let { error("${entry.manifest.name}: ${it.jsonPrimitive.content}") }
             val commands = response.getValue("commands").jsonArray
             require(commands.size <= 10000) { "Too many plugin commands" }
-            var output = rig
-            for (raw in commands) {
-                checkpoint()
-                val command = expand(raw).jsonObject
-                when (command["op"]?.jsonPrimitive?.content) {
-                    "physics", "motion" -> {
-                        val definition = if (command.getValue("op").jsonPrimitive.content == "physics") RigModifierAlgorithms.physics else RigModifierAlgorithms.motion
-                        output = definition.plugin.evaluate(output, instance.copy(config = command.getValue("config").jsonObject), checkpoint)
-                    }
-                    "mesh_opacity" -> {
-                        val id = command.getValue("id").jsonPrimitive.content
-                        require(instance.targets.any { it.kind == "mesh" && it.id == id } && "mesh" in algorithm.writes) { "Plugin write is outside declared targets" }
-                        val opacity = command.getValue("value").jsonPrimitive.float
-                        require(opacity.isFinite() && opacity in 0f..1f) { "Invalid plugin opacity" }
-                        output = output.copy(meshes = output.meshes.map { if (it.id == id) it.copy(opacity = opacity) else it })
-                    }
-                    else -> {
-                        require(command["op"]?.jsonPrimitive?.content in setOf("structure", "set", "parameter_keys", "delete", "canvas_geometry", "canvas_topology", "canvas_create_warp", "canvas_create_rotation", "canvas_create_glue", "canvas_glue_edit", "path_put", "path_delete")) { "Unsupported plugin command" }
-                        output = output.withPuppet(RigAuthoringJournal.apply(PuppetIr.toPuppet(output), command))
-                    }
-                }
-            }
-            val changes = RigModifierEvaluator.contributions(rig, output)
-            require(changes.all { it.kind in algorithm.writes || "*" in algorithm.writes }) { "Plugin wrote undeclared object kinds" }
-            require(changes.filter { it.change == ModifierChange.ADDED && it.kind !in setOf("relations", "hierarchy") }.all {
-                instance.localOutputName(it.id) != null || it.kind == "parameter" && algorithm.parameters.any { p -> p.id == it.id }
-            }) { "Plugin outputs must use instance-owned deterministic IDs or declared shared parameters" }
+            val output = ModifierPluginOutput.apply(rig, instance, algorithm, JsonArray(commands.map(::expand)), checkpoint)
             previous = current
             return output
         }

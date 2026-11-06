@@ -71,7 +71,7 @@ internal object WorkspaceModifierSchemas {
     private fun fields(type: String, summary: Boolean = false) = linkedMapOf("type" to s.constant(type), "config" to configuration(type, summary))
     private fun addition(type: String) = s.obj(fields(type) + mapOf("id" to s.handle(), "version" to s.integer(1), "targets" to s.array(target, 1, 4096),
         "group" to s.handle(), "index" to s.integer(0)), setOf("type", "config", "targets"))
-    private val pluginIdentity = s.obj(mapOf("id" to s.handle(), "version" to s.handle(), "digest" to s.handle()))
+    private val pluginIdentity = s.obj(mapOf("id" to s.handle(), "version" to s.handle(), "digest" to s.handle(), "dependencyDigests" to s.dictionary(s.handle())), setOf("id", "version", "digest"))
     private val pluginType get() = JsonObject(s.handle() + ("pattern" to JsonPrimitive("^(?!(?:" + types.joinToString("|") { it.replace(".", "\\.") } + ")$)[a-zA-Z0-9][a-zA-Z0-9._-]*/.+$")))
     private val pluginFields get() = mapOf("type" to pluginType, "config" to s.dictionary(JsonObject(emptyMap())), "plugin" to pluginIdentity)
     private val pluginAddition get() = s.obj(pluginFields + mapOf("id" to s.handle(), "version" to s.integer(1), "targets" to s.array(target, 1, 4096), "group" to s.handle(), "index" to s.integer(0)), setOf("type", "config", "targets"))

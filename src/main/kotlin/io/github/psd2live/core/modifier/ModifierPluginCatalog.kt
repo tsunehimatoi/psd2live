@@ -5,6 +5,7 @@ internal object ModifierPluginCatalog {
     fun definitions(): List<RigModifierDefinition> = ModifierPluginStore.shared.snapshot().flatMap { entry ->
         entry.manifest.algorithms.map { algorithm ->
             RigModifierDefinition(algorithm.type, algorithm.version, requires = algorithm.requires,
+                references = { before, after, _ -> ModifierPluginOutput.sidecars(before, after) },
                 parameters = { algorithm.parameters.map { it.definition() } },
                 exclusiveFamily = algorithm.exclusiveFamily, composableKinds = algorithm.composableKinds,
                 validate = { _, instance ->
@@ -16,13 +17,13 @@ internal object ModifierPluginCatalog {
     }
 
     fun available(instance: RigModifierInstance): Boolean = instance.plugin?.let { reference ->
-        ModifierPluginStore.shared.snapshot().any { it.reference == reference && it.enabled }
+        ModifierPluginStore.shared.resolution(reference).available
     } ?: ModifierPluginStore.shared.builtinsEnabled()
 
     fun algorithm(type: String, version: Int? = null): Pair<InstalledModifierPlugin, ModifierPluginAlgorithm>? =
-        ModifierPluginStore.shared.snapshot().filter { it.enabled }.flatMap { entry -> entry.manifest.algorithms.map { entry to it } }
+        ModifierPluginStore.shared.snapshot().filter { ModifierPluginStore.shared.resolution(it.reference).available }.flatMap { entry -> entry.manifest.algorithms.map { entry to it } }
             .filter { it.second.type == type && (version == null || it.second.version == version) }
-            .maxWithOrNull(compareBy<Pair<InstalledModifierPlugin, ModifierPluginAlgorithm>> { it.second.version }.thenBy { it.first.reference.version })
+            .maxWithOrNull(compareBy<Pair<InstalledModifierPlugin, ModifierPluginAlgorithm>> { it.second.version }.thenBy { ModifierPluginVersion.parse(it.first.reference.version, legacy = true) })
 
     fun requireAvailable(stack: RigModifierStack) {
         val missing = stack.instances.filter { it.enabled && !available(it) }

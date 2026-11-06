@@ -8,7 +8,7 @@ import kotlinx.serialization.json.*
 /** Shared GUI/MCP service. Package installation is process state, not an edit of the current document. */
 internal object WorkspacePluginManagement {
     fun execute(operation: String, request: JsonObject, store: ModifierPluginStore = ModifierPluginStore.shared): JsonObject {
-        if (operation == "plugin_inspect") return buildJsonObject { put("plugins", JsonArray(listOf(describe(store.inspect(request.getValue("source").jsonPrimitive.content, request["ref"]?.jsonPrimitive?.content))))); put("problems", JsonArray(store.problems().map(::JsonPrimitive))) }
+        if (operation == "plugin_inspect") return buildJsonObject { put("plugins", JsonArray(listOf(describe(store.inspect(request.getValue("source").jsonPrimitive.content, request["ref"]?.jsonPrimitive?.content), store, inspecting = true)))); put("problems", JsonArray(store.problems().map(::JsonPrimitive))) }
         when (operation) {
             "plugin_install" -> store.install(request.getValue("source").jsonPrimitive.content, request["ref"]?.jsonPrimitive?.content)
             "plugin_enable", "plugin_disable", "plugin_uninstall" -> {
@@ -30,6 +30,8 @@ internal object WorkspacePluginManagement {
             putJsonArray("plugins") {
             addJsonObject {
                 put("id", "builtin"); put("version", "bundled"); put("digest", "builtin"); put("name", "PSD2Live")
+                put("available", store.builtinsEnabled()); put("issues", JsonArray(emptyList()))
+                put("dependencies", JsonArray(emptyList())); put("conflicts", JsonArray(emptyList())); put("resolved_dependencies", JsonArray(emptyList()))
                 put("enabled", store.builtinsEnabled()); put("builtin", true); put("git_commit", JsonNull)
                 putJsonArray("algorithms") { RigModifierAlgorithms.registry.definitions.filter { it.pluginReference == null }.forEach {
                     addJsonObject {
@@ -42,11 +44,16 @@ internal object WorkspacePluginManagement {
                     }
                 } }
             }
-            store.snapshot().forEach { add(describe(it)) }
+            store.snapshot().forEach { add(describe(it, store)) }
         } }
     }
 
-    private fun describe(entry: InstalledModifierPlugin) = buildJsonObject {
+    private fun describe(entry: InstalledModifierPlugin, store: ModifierPluginStore, inspecting: Boolean = false) = buildJsonObject {
+        val resolution = if (inspecting) ModifierPluginDependencies.resolve(entry.reference, store.snapshot().filterNot { it.reference == entry.reference } + entry) else store.resolution(entry.reference)
+        put("available", resolution.available); put("issues", JsonArray(resolution.issues.map(::JsonPrimitive)))
+        put("dependencies", Json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(ModifierPluginDependency.serializer()), entry.manifest.dependencies))
+        put("conflicts", Json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(ModifierPluginDependency.serializer()), entry.manifest.conflicts))
+        put("resolved_dependencies", Json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(ModifierPluginReference.serializer()), resolution.dependencies))
         put("id", entry.reference.id); put("version", entry.reference.version); put("digest", entry.reference.digest)
         put("name", entry.manifest.name); put("enabled", entry.enabled); put("builtin", false)
         put("git_commit", entry.gitCommit?.let(::JsonPrimitive) ?: JsonNull)
@@ -69,7 +76,11 @@ internal object WorkspacePluginSchemas {
         "config_schema" to s.dictionary(JsonObject(emptyMap())), "defaults" to s.dictionary(JsonObject(emptyMap())),
         "requires" to s.array(s.handle()), "targets" to s.array(s.handle()), "reads" to s.array(s.handle()), "writes" to s.array(s.handle()),
         "exclusive_family" to s.nullable(s.handle())))
+    private val range = s.obj(mapOf("exact" to s.nullable(s.handle()), "minimum" to s.nullable(s.handle()), "maximum" to s.nullable(s.handle())), emptySet())
+    private val relation = s.obj(mapOf("id" to s.handle(), "version" to range), setOf("id"))
+    private val reference = s.obj(mapOf("id" to s.handle(), "version" to s.handle(), "digest" to s.handle(), "dependencyDigests" to s.dictionary(s.handle())), setOf("id", "version", "digest"))
     private val plugin = s.obj(mapOf(
+        "available" to s.boolean(), "issues" to s.array(s.string()), "dependencies" to s.array(relation), "conflicts" to s.array(relation), "resolved_dependencies" to s.array(reference),
         "id" to s.handle(), "version" to s.handle(), "digest" to s.handle(), "name" to s.handle(),
         "enabled" to s.boolean(), "builtin" to s.boolean(), "git_commit" to s.nullable(s.handle()), "algorithms" to s.array(algorithm)))
     val result = s.obj(mapOf("plugins" to s.array(plugin), "problems" to s.array(s.string())))

@@ -63,6 +63,7 @@ internal fun SettingsPluginsSection() {
                     execute("plugin_uninstall", identity)
                 }, enabled = !busy)
             }
+            entry.getValue("issues").jsonArray.forEach { SettingsHint(it.jsonPrimitive.content, indent = false) }
         }
     }
 }

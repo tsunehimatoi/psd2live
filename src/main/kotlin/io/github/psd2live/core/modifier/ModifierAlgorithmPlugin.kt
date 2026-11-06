@@ -6,7 +6,15 @@ import kotlinx.serialization.json.JsonObject
 
 /** Immutable identity captured by a document, never resolved to a newer package at replay time. */
 @Serializable
-internal data class ModifierPluginReference(val id: String, val version: String, val digest: String)
+internal data class ModifierPluginReference(val id: String, val version: String, val digest: String,
+    val dependencyDigests: Map<String, String> = emptyMap())
+
+/** Bounds are inclusive at minimum and exclusive at maximum; exact cannot be combined with bounds. */
+@Serializable
+internal data class ModifierPluginVersionRange(val exact: String? = null, val minimum: String? = null, val maximum: String? = null)
+
+@Serializable
+internal data class ModifierPluginDependency(val id: String, val version: ModifierPluginVersionRange = ModifierPluginVersionRange())
 
 /** Execution is independent of packaging: bundled algorithms do not pay an IPC or serialization cost. */
 internal fun interface ModifierAlgorithmPlugin {
@@ -46,4 +54,6 @@ internal data class ModifierPluginManifest(
     /** SHA-256 of every payload file; the manifest itself is hashed as part of the package identity. */
     val files: Map<String, String>,
     val algorithms: List<ModifierPluginAlgorithm>,
+    val dependencies: List<ModifierPluginDependency> = emptyList(),
+    val conflicts: List<ModifierPluginDependency> = emptyList(),
 )

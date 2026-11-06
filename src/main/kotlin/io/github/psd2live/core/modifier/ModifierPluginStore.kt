@@ -13,7 +13,8 @@ import java.util.prefs.Preferences
 import java.util.zip.ZipInputStream
 
 internal data class InstalledModifierPlugin(val manifest: ModifierPluginManifest, val reference: ModifierPluginReference,
-    val directory: Path, val enabled: Boolean, val gitCommit: String? = null)
+    val directory: Path, val enabled: Boolean, val gitCommit: String? = null,
+    val dependencyLock: List<ModifierPluginReference>? = null)
 
 /** Installation never executes package code. Payloads are immutable, and references pin their complete contents. */
 internal class ModifierPluginStore(val root: Path, private val preferences: Preferences) {
@@ -53,6 +54,7 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
     private var installed: List<InstalledModifierPlugin> = load()
 
     fun snapshot(): List<InstalledModifierPlugin> = synchronized(lock) { installed.toList() }
+    fun resolution(reference: ModifierPluginReference): ModifierPluginResolution = synchronized(lock) { ModifierPluginDependencies.resolve(reference, installed) }
     fun problems(): List<String> = synchronized(lock) { loadProblems.toList() }
     fun <T> withRevision(expected: Long, action: () -> T): T = synchronized(lock) {
         require(changes.value == expected) { "Algorithm plugins changed while preparing the model; retry the operation" }
@@ -60,7 +62,7 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
     }
     fun verify(reference: ModifierPluginReference) = synchronized(lock) {
         val entry = installed.single { it.reference == reference && it.enabled }
-        require(inspectDirectory(entry.directory, entry.gitCommit).reference == reference) { "Plugin contents changed after installation" }
+        require(inspectDirectory(entry.directory, entry.gitCommit).reference.copy(dependencyDigests = reference.dependencyDigests) == reference) { "Plugin contents changed after installation" }
     }
     fun builtinsEnabled() = builtinEnabled
     fun setBuiltinsEnabled(enabled: Boolean) = synchronized(lock) {
@@ -79,13 +81,16 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
         synchronized(lock) {
             checkCancelled()
             checkDependencies(installed + checked)
-            installed.firstOrNull { it.reference == checked.reference }?.let { return@synchronized it }
+            installed.firstOrNull { it.reference.digest == checked.reference.digest }?.let { return@synchronized it }
             require(installed.none { it.reference.id == checked.reference.id && it.reference.version == checked.reference.version }) {
                 "This plugin version is already installed with different contents; use a new package version"
             }
             require(installed.none { it.reference.id != checked.reference.id && it.manifest.algorithms.any { old -> checked.manifest.algorithms.any { it.type == old.type } } }) {
                 "Another plugin owns this algorithm type"
             }
+            val resolution = ModifierPluginDependencies.resolve(checked.reference, installed + checked)
+            require(resolution.available) { resolution.issues.joinToString("; ") }
+            Files.writeString(directory.resolve(".dependencies"), codec.encodeToString(kotlinx.serialization.builtins.ListSerializer(ModifierPluginReference.serializer()), resolution.dependencies))
             val destination = root.resolve(checked.reference.digest)
             if (Files.exists(destination)) {
                 // A damaged installation is not active. Retain it outside the catalog until cleanup succeeds.
@@ -94,7 +99,8 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
                 runCatching { deleteTree(damaged) }
             }
             Files.move(directory, destination, ATOMIC_MOVE)
-            val result = checked.copy(directory = destination)
+            val result = checked.copy(directory = destination, dependencyLock = resolution.dependencies, reference = checked.reference.copy(
+                dependencyDigests = resolution.dependencies.associate { "${it.id}@${it.version}" to it.digest }))
             installed = installed + result
             loadProblems.removeAll { it.startsWith(checked.reference.digest + ":") }
             changes.value++
@@ -104,15 +110,19 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
 
     fun setEnabled(reference: ModifierPluginReference, enabled: Boolean) = synchronized(lock) {
         val entry = installed.single { it.reference == reference }
+        if (enabled) {
+            val resolution = ModifierPluginDependencies.resolve(reference, installed.map { if (it == entry) it.copy(enabled = true) else it })
+            require(resolution.available) { resolution.issues.joinToString("; ") }
+        }
         preferences.putBoolean(reference.digest, enabled); preferences.flush()
-        ModifierPluginWorkers.stop(reference)
+        stopAffected(reference)
         installed = installed.map { if (it == entry) it.copy(enabled = enabled) else it }
         changes.value++
     }
 
     fun uninstall(reference: ModifierPluginReference) = synchronized(lock) {
         val entry = installed.single { it.reference == reference }
-        ModifierPluginWorkers.stop(reference)
+        stopAffected(reference)
         val trash = root.resolve(".removed-${reference.digest}-${System.nanoTime()}")
         Files.move(entry.directory, trash, ATOMIC_MOVE)
         installed = installed - entry
@@ -121,8 +131,15 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
         runCatching { deleteTree(trash) }
     }
 
+    private fun stopAffected(reference: ModifierPluginReference) {
+        installed.filter { it.reference == reference || reference in it.dependencyLock.orEmpty() ||
+            reference in ModifierPluginDependencies.resolve(it.reference, installed).dependencies
+        }.forEach { ModifierPluginWorkers.stop(it.reference) }
+    }
+
     fun requireAvailable(reference: ModifierPluginReference) = synchronized(lock) {
-        require(installed.any { it.reference == reference && it.enabled }) { "Missing or disabled algorithm plugin: ${reference.id}@${reference.version}" }
+        val result = ModifierPluginDependencies.resolve(reference, installed)
+        require(result.available) { result.issues.joinToString("; ") }
     }
 
     private fun checkDependencies(packages: List<InstalledModifierPlugin>) {
@@ -143,7 +160,11 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
         if (!Files.isDirectory(root)) return emptyList()
         return Files.list(root).use { paths -> paths.filter { digest.matches(it.fileName.toString()) }.toList().mapNotNull { path ->
             try {
-                inspectDirectory(path, path.resolve(".origin").takeIf(Files::exists)?.let(Files::readString)).also {
+                inspectDirectory(path, path.resolve(".origin").takeIf(Files::exists)?.let(Files::readString)).copy(
+                    dependencyLock = path.resolve(".dependencies").takeIf(Files::exists)?.let {
+                        require(Files.size(it) <= 1024 * 1024) { "Dependency lock is too large" }
+                        codec.decodeFromString(kotlinx.serialization.builtins.ListSerializer(ModifierPluginReference.serializer()), Files.readString(it))
+                    }).let { entry -> entry.copy(reference = entry.reference.copy(dependencyDigests = entry.dependencyLock.orEmpty().associate { "${it.id}@${it.version}" to it.digest })) }.also {
                     require(it.reference.digest == path.fileName.toString()) { "Installed plugin contents changed: ${it.reference.id}" }
                 }
             } catch (failure: Exception) {
@@ -159,12 +180,19 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
         val bytes = Files.readAllBytes(directory.resolve("plugin.json"))
         require(bytes.size <= 1024 * 1024) { "Plugin manifest is too large" }
         val manifest = codec.decodeFromString(ModifierPluginManifest.serializer(), bytes.decodeToString())
-        require(manifest.protocol == 1 && token.matches(manifest.id) && token.matches(manifest.version)) { "Unsupported plugin manifest" }
+        require(manifest.protocol == 1 && token.matches(manifest.id) && manifest.version.length <= 128) { "Unsupported plugin manifest" }
+        ModifierPluginVersion.parse(manifest.version, legacy = true)
+        for (relation in manifest.dependencies + manifest.conflicts) {
+            require(token.matches(relation.id) && relation.id != manifest.id) { "Invalid plugin relationship: ${relation.id}" }
+            relation.version.validate()
+        }
+        require(manifest.dependencies.map { it.id }.distinct().size == manifest.dependencies.size) { "Duplicate package dependency" }
         require(manifest.name.isNotBlank() && manifest.algorithms.size in 1..128) { "A plugin must describe its algorithms" }
         require(manifest.algorithms.map { it.type to it.version }.distinct().size == manifest.algorithms.size) { "Duplicate plugin algorithm" }
         manifest.algorithms.forEach {
             require(it.type.startsWith("${manifest.id}/") && it.version > 0 && it.name.isNotBlank()) { "Algorithm type must belong to its plugin namespace" }
             require(it.targets.isNotEmpty() && it.targets.all { kind -> kind in setOf("mesh", "deformer", "part", "layer") }) { "Invalid algorithm targets" }
+            require((it.reads + it.writes + it.composableKinds).all { kind -> kind in ModifierPluginOutput.components }) { "Unknown plugin model component" }
             ModifierPluginSchema.check(it.configSchema)
             ModifierPluginSchema.validate(it.defaults, it.configSchema)
             require(it.parameters.map { p -> p.id }.distinct().size == it.parameters.size && it.parameters.all { p ->
@@ -186,7 +214,7 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
         }
         Files.walk(directory).use { paths -> paths.forEach { path ->
             require(!Files.isSymbolicLink(path)) { "Plugin symlinks are not supported" }
-            if (Files.isRegularFile(path)) require(directory.relativize(path).toString().replace('\\', '/') in manifest.files || path.fileName.toString() in setOf("plugin.json", ".origin")) { "Unlisted plugin payload: ${path.fileName}" }
+            if (Files.isRegularFile(path)) require(directory.relativize(path).toString().replace('\\', '/') in manifest.files || path.fileName.toString() in setOf("plugin.json", ".origin", ".dependencies")) { "Unlisted plugin payload: ${path.fileName}" }
         } }
         require(command.first() == "\$JAVA" || command.first() in manifest.files) { "Plugin executable must be packaged" }
         if (command.first() == "\$JAVA") require(command.size == 3 && command[1] == "-jar" && command[2] in manifest.files) { "JVM plugins must specify \$JAVA -jar payload.jar" }
@@ -215,6 +243,7 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
                 require(path.isAbsolute) { "Provide an absolute package path" }
                 if (Files.isDirectory(path)) copyPackage(path, packageDir) else unzip(path, packageDir)
             }
+            require(!Files.exists(packageDir.resolve(".dependencies"))) { "Dependency locks are generated by the host, not supplied by packages" }
             if (commit != null) Files.writeString(packageDir.resolve(".origin"), commit)
             checkCancelled()
             return action(packageDir, commit)
