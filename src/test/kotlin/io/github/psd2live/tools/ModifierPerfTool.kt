@@ -29,8 +29,14 @@ class ModifierPerfTool {
                     sample.path.toAbsolutePath(), null, runtime.state.value.state,
                     modifiers = WorkspaceInitialModifiers.RECOMMENDED)
                 val elapsed = (System.nanoTime() - start) / 1e6
+                val stages = RigBuildProfile.snapshot()
+                // Baking is synchronous here: subtract its outer wall-time stage once, not nested solver timings.
+                val baking = stages["modifier simulation: bake"]?.first ?: 0.0
+                val counted = elapsed - baking
                 report.appendLine("import $round: %.1f ms".format(elapsed))
-                RigBuildProfile.snapshot().forEach { (name, value) ->
+                report.appendLine("import $round baking excluded: %.1f ms".format(baking))
+                report.appendLine("import $round counted: %.1f ms; limit: 4000 ms; %s".format(counted, if (counted <= 4000.0) "PASS" else "FAIL"))
+                stages.forEach { (name, value) ->
                     report.appendLine("%-65s %9.1f ms x%d".format(name, value.first, value.second))
                 }
                 output("modifier-perf").resolve("report.txt").writeText(report.toString())

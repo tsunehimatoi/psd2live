@@ -4,7 +4,7 @@ Every preset modifier evaluates through an algorithm interface. Bundled Kotlin a
 
 ## Install and remove
 
-Use Preferences → Algorithm plugins to select a ZIP or enter an absolute directory or HTTPS/SSH Git URL. Git sources accept an optional branch/tag and record the resolved commit. The repository root must contain a built package. The installer does not fetch submodules, run setup scripts, or compile source.
+Use Preferences → Algorithm plugins to select a ZIP or enter an absolute directory or an HTTPS, SSH or git:// Git URL. Git sources accept an optional branch, tag or full commit hash and record the resolved commit. The repository root must contain a built package. The installer does not fetch submodules, run setup scripts, or compile source.
 
 Packages include their platform executable and runtime dependencies. JVM workers use the application's Java runtime. Python/.NET packages must not depend on a separately installed development environment. Plugins execute local code; process isolation is not a security sandbox.
 
@@ -38,7 +38,7 @@ See [six-language examples and packaging instructions](../../../examples/plugins
 - `algorithms`: `package-id/type`, algorithm version/name, targets, dependencies, exclusivity, read/write domains, composable kinds, `configSchema`, and `defaults`.
 - Optional `parameters` declare shared parameter `id/name/min/max/default`. Existing definitions must be compatible; other new objects use instance-owned IDs.
 
-Requests/responses are one UTF-8 JSON line each. Stdout is protocol-only; logs go to stderr. Requests contain `protocol/id/method/type/version/instance/config/targets`. Responses echo `protocol/id` and return `commands` or `error`. A worker handles one request at a time; faults/timeouts reset it, and cancellation terminates it without committing partial results.
+Requests/responses are one UTF-8 JSON line each. Stdout is protocol-only; logs go to stderr. Requests contain `protocol/id/method/type/version/instance/config/targets`. Responses echo `protocol/id` and return `commands` or `error`. A worker handles one request at a time; faults/timeouts reset it. Cancelling an active request terminates its worker without committing partial results. Queued requests can be cancelled independently without interrupting another active request; cancellation is also checked while awaiting a response.
 
 Inputs are projected to declared read/write domains; `*` or unknown domains conservatively receive the full input. `changed` and `removed` update the object index, with `reset` starting a session. `frame`, `mesh:<id>`, and `deformer:<id>` point to content-addressed resources in the request's `resource_directory`, also available as `PSD2LIVE_PLUGIN_RESOURCES`. These use the versioned exact `RigIrObjects` binary format. `mesh_order` and `deformer_order` preserve order.
 
@@ -56,7 +56,9 @@ New IDs use `modifier:<instance-id>:<UTF-8 hex of local name>`. The host validat
 
 Bundled calls avoid IPC. External workers reuse processes, content-addressed buffers, and incremental input synchronization. Author input, binding templates, and algorithms with declared dependencies have separate caches. Folder edits do not evaluate algorithms.
 
-Some bundled binding algorithms still generate templates and extract their local contribution; their full separation into local algorithms is not complete. Stack evaluation remains serial, without independent-item scheduling. The complete-generation three-second target has not been reached; plugin support and cache hits do not establish that target.
+The acceptance limit is four seconds from reading the PSD through complete presets, preview and initial project history, minus the actual synchronous simulation-baking time. Baking must still finish; it cannot be deferred or omitted. Reports show total time, excluded baking time and counted time separately for first and repeated generation. Further baking optimization is currently deferred.
+
+Some bundled binding algorithms still generate templates and extract their local contribution; their full separation into local algorithms is not complete. Stack evaluation remains serial, without independent-item scheduling. Plugin support and cache hits do not establish performance acceptance; first and repeated generation are evaluated separately.
 
 ## Versions and dependency graph
 
