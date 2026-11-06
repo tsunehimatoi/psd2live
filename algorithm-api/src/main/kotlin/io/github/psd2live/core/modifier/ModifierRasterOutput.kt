@@ -2,6 +2,8 @@ package io.github.psd2live.core.modifier
 
 import io.github.psd2live.format.model.*
 
+typealias ModifierRasterResolver = (RigIR, List<ModifierRasterOutput>, () -> Unit) -> RigIR
+
 /** Generated artwork and its editable geometry, before the host allocates atlas pages. */
 class ModifierRasterOutput(
     val owner: Mesh,

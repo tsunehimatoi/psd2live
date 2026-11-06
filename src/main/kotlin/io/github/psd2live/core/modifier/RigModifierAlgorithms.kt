@@ -29,9 +29,10 @@ internal object RigModifierAlgorithms {
     }
 
     fun evaluator(source: RigModifierSource? = null) = RigModifierEvaluator(
-        if (source == null) registry else RigModifierRegistry(BuiltinModifierPlugins.definitions(source).let { it + ModifierPluginCatalog.definitions(captured = it) }),
+        if (source == null) registry else RigModifierRegistry(BuiltinModifierPlugins.definitions(source).let { it + ModifierPluginCatalog.definitions(captured = it, resolveRasters = source::resolveRasters) }),
         sourceTargetExists = { it.kind == "layer" && source?.hasLayer(it.id) == true },
-        physicsOrder = source?.physicsOrder.orEmpty()) { rig, instance, commands ->
+        physicsOrder = source?.physicsOrder.orEmpty(),
+        resolveRasters = source?.let { it::resolveRasters } ?: RigModifierRasterAssets::resolve) { rig, instance, commands ->
         var model = PuppetIr.toPuppet(rig)
         val issues = ArrayList<GeneratedOverrideIssue>()
         val parameterOverrides = HashSet<String>()

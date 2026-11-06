@@ -90,6 +90,8 @@ data class ModifierModelChanges(
     val authoring: ModifierFieldChange<Authoring>? = null,
     val advanced: ModifierFieldChange<AdvancedIR>? = null,
     val hitAreas: ModifierFieldChange<List<HitAreaIR>>? = null,
+    /** Packed only by the host, after ordinary changes; owners refer to that intermediate candidate. */
+    val rasters: List<ModifierRasterOutput> = emptyList(),
 ) {
     fun contributions(): List<ModifierObjectContribution> = buildList {
         addAll(parameters.contributions("parameter") { it.id })
@@ -98,6 +100,7 @@ data class ModifierModelChanges(
         addAll(meshes.contributions("mesh") { it.id })
         addAll(physicsGroups.contributions("physics") { it.id })
         addAll(clips.contributions("motion") { it.id })
+        addAll(rasters.map { ModifierObjectContribution("mesh", it.mesh.id, ModifierChangeAction.ADD) })
     }
 
     /** Conservative section ownership: whole-field replacement never implies composability. */
@@ -117,6 +120,7 @@ data class ModifierModelChanges(
         if (authoring != null) add("authoring")
         if (advanced != null) add("advanced")
         if (hitAreas != null) add("hitArea")
+        if (rasters.isNotEmpty()) addAll(setOf("mesh", "part", "hierarchy", "textures", "authoring"))
     }
 
     fun requireWrites(allowed: Set<String>) {
@@ -125,8 +129,12 @@ data class ModifierModelChanges(
     }
 
     /** Candidate only. The host still validates references, write ownership and domain invariants before publishing. */
-    fun apply(input: RigIR, checkpoint: () -> Unit = {}): RigIR {
+    fun apply(input: RigIR, checkpoint: () -> Unit = {}): RigIR = applyWithResources(input, checkpoint)
+
+    fun applyWithResources(input: RigIR, checkpoint: () -> Unit = {},
+              resolveRasters: ((RigIR, List<ModifierRasterOutput>, () -> Unit) -> RigIR)? = null): RigIR {
         checkpoint()
+        require(rasters.isEmpty() || resolveRasters != null) { "Generated raster output requires a host resource resolver" }
         fun <T> field(change: ModifierFieldChange<T>?, value: T): T {
             checkpoint()
             return if (change == null) value else change.apply(value)
@@ -153,7 +161,13 @@ data class ModifierModelChanges(
             physics = if (physicsGroups.isEmpty && physicsFps == null) input.physics else input.physics.copy(
                 groups = physicsGroups.apply(input.physics.groups, { it.id }, checkpoint),
                 fps = field(physicsFps, input.physics.fps)),
-        ).also { checkpoint() }
+        ).let { candidate ->
+            checkpoint()
+            if (rasters.isEmpty()) candidate else {
+                ModifierRasterOutput.validate(candidate, rasters, checkpoint)
+                requireNotNull(resolveRasters)(candidate, rasters, checkpoint).also { checkpoint() }
+            }
+        }
     }
 }
 

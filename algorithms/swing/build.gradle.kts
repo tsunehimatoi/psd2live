@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "io.github.psd2live.algorithms"
-version = "1.0.9"
+version = "1.0.10"
 kotlin { jvmToolchain(21) }
 java { withSourcesJar() }
 
@@ -45,7 +45,7 @@ tasks.register("pluginPackage") {
         jar.copyTo(payload, overwrite = true)
         val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
         directory.resolve("plugin.json").writeText("""
-            {"protocol":1,"id":"builtin.7377696e67.v1","version":"1.0.9","name":"Swing",
+            {"protocol":1,"id":"builtin.7377696e67.v1","version":"1.0.10","name":"Swing",
              "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
              "algorithms":[{"type":"builtin.7377696e67.v1/sway","aliases":["swing"],"version":1,"name":"Swing","category":"physics",
                "targets":["mesh","deformer"],"reads":["*"],"writes":["*"],"composableKinds":["deformer","mesh","hierarchy"],

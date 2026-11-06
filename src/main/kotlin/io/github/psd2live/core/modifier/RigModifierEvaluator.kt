@@ -107,6 +107,7 @@ internal class RigModifierEvaluator(
     private val registry: RigModifierRegistry,
     private val sourceTargetExists: (ModifierTarget) -> Boolean = { false },
     private val physicsOrder: List<String> = emptyList(),
+    private val resolveRasters: ModifierRasterResolver = RigModifierRasterAssets::resolve,
     private val applyOverrides: (RigIR, RigModifierInstance, List<JsonObject>) -> ModifierOverrideResult = { rig, _, edits ->
         require(edits.isEmpty()) { "This evaluator has no override replayer" }; ModifierOverrideResult(rig)
     },
@@ -233,7 +234,7 @@ internal class RigModifierEvaluator(
                         val reused = cachedRead?.let {
                             it.changes.requireWrites(requireNotNull(definition.changeWrites) { "${instance.type}: missing change write contract" })
                             // Writes have their own preconditions even when a plugin did not read that object.
-                            try { it.changes.apply(before, checkpoint) } catch (_: IllegalArgumentException) { null }
+                            try { it.changes.applyWithResources(before, checkpoint, resolveRasters) } catch (_: IllegalArgumentException) { null }
                         }
                         if (reused != null) {
                             io.github.psd2live.core.RigBuildProfile.count("modifier read cache hits")
@@ -242,14 +243,14 @@ internal class RigModifierEvaluator(
                             val view = ModifierEvaluationInput(before, authorContext)
                             val changes = plugin.changes(view, instance, checkpoint)
                             changes.requireWrites(requireNotNull(definition.changeWrites) { "${instance.type}: missing change write contract" })
-                            changes.apply(before, checkpoint).also {
+                            changes.applyWithResources(before, checkpoint, resolveRasters).also {
                                 readCache[instance.id] = ModifierInputCache.ReadEntry(instance, plugin, authorContext, view.reads(), changes)
                             }
                         }
                     }
                     is ChangingModifierAlgorithmPlugin -> plugin.changes(before, instance, authorContext, checkpoint).also {
                         it.requireWrites(requireNotNull(definition.changeWrites) { "${instance.type}: missing change write contract" })
-                    }.apply(before, checkpoint)
+                    }.applyWithResources(before, checkpoint, resolveRasters)
                     is ContextualModifierAlgorithmPlugin -> plugin.evaluate(before, instance, authorContext, checkpoint)
                     else -> plugin.evaluate(before, instance, checkpoint)
                 }

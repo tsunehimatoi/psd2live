@@ -3,7 +3,8 @@ package io.github.psd2live.core.modifier
 /** All catalog consumers use the same installed package snapshot. */
 internal object ModifierPluginCatalog {
     fun definitions(store: ModifierPluginStore = ModifierPluginStore.shared,
-                    captured: List<RigModifierDefinition> = emptyList()): List<RigModifierDefinition> = store.snapshot().flatMap { entry ->
+                    captured: List<RigModifierDefinition> = emptyList(),
+                    resolveRasters: ModifierRasterResolver = RigModifierRasterAssets::resolve): List<RigModifierDefinition> = store.snapshot().flatMap { entry ->
         entry.manifest.algorithms.flatMap { algorithm -> (algorithm.aliases + algorithm.type).map { type ->
             // Only bundled stable aliases can use host-captured author input adapters.
             val adapter = captured.singleOrNull { it.type in algorithm.aliases && (type == algorithm.type || it.type == type) && it.version == algorithm.version &&
@@ -22,7 +23,7 @@ internal object ModifierPluginCatalog {
                     override fun evaluate(input: io.github.psd2live.format.model.RigIR, instance: RigModifierInstance,
                                           context: ModifierAlgorithmContext, checkpoint: () -> Unit): io.github.psd2live.format.model.RigIR =
                         ModifierPluginWorkers.evaluate(entry, algorithm, input, instance, checkpoint, store,
-                            context = context, declaredParameters = adapter.parameters(native(instance)))
+                            context = context, resolveRasters = resolveRasters, declaredParameters = adapter.parameters(native(instance)))
                 }
                 adapter.copy(type = type, pluginReference = entry.reference, plugin = worker, evaluate = worker::evaluate,
                     parameters = { adapter.parameters(native(it)) },
@@ -36,7 +37,7 @@ internal object ModifierPluginCatalog {
                 val worker = object : ContextualModifierAlgorithmPlugin {
                     override fun evaluate(input: io.github.psd2live.format.model.RigIR, instance: RigModifierInstance,
                                           context: ModifierAlgorithmContext, checkpoint: () -> Unit): io.github.psd2live.format.model.RigIR =
-                        ModifierPluginWorkers.evaluate(entry, algorithm, input, instance, checkpoint, store, context = context)
+                        ModifierPluginWorkers.evaluate(entry, algorithm, input, instance, checkpoint, store, context = context, resolveRasters = resolveRasters)
                 }
                 RigModifierDefinition(type, algorithm.version, requires = algorithm.requires, provides = algorithm.provides,
                 references = { before, after, _ -> ModifierPluginOutput.sidecars(before, after) },
@@ -45,7 +46,7 @@ internal object ModifierPluginCatalog {
                 validate = { _, instance ->
                     require(instance.targets.all { it.kind in algorithm.targets }) { "Unsupported plugin target" }
                     ModifierPluginSchema.validate(instance.config, algorithm.configSchema)
-                }, evaluate = { rig, instance, checkpoint -> ModifierPluginWorkers.evaluate(entry, algorithm, rig, instance, checkpoint, store) },
+                }, evaluate = { rig, instance, checkpoint -> ModifierPluginWorkers.evaluate(entry, algorithm, rig, instance, checkpoint, store, resolveRasters = resolveRasters) },
                 pluginReference = entry.reference, plugin = worker, cacheReads = algorithm.reads + algorithm.writes, upstreamInputs = algorithm.contextVersion >= 2)
             }
         } }

@@ -27,13 +27,14 @@ internal object ModifierPluginWorkers {
     fun evaluate(entry: InstalledModifierPlugin, algorithm: ModifierPluginAlgorithm, rig: RigIR,
                  instance: RigModifierInstance, checkpoint: () -> Unit, store: ModifierPluginStore = ModifierPluginStore.shared,
                  timeoutMillis: Long = 120_000, context: ModifierAlgorithmContext = ModifierAlgorithmContext.Empty,
-                 declaredParameters: List<io.github.psd2live.format.model.Parameter> = emptyList()): RigIR {
+                 declaredParameters: List<io.github.psd2live.format.model.Parameter> = emptyList(),
+                 resolveRasters: ModifierRasterResolver = RigModifierRasterAssets::resolve): RigIR {
         require(timeoutMillis > 0)
         store.requireAvailable(entry.reference)
         if (!workers.containsKey(entry.reference)) store.verify(entry.reference)
         val worker = workers.computeIfAbsent(entry.reference) { Worker(entry, store) }
         try {
-            val result = worker.evaluate(algorithm, rig, instance, checkpoint, timeoutMillis, context, declaredParameters)
+            val result = worker.evaluate(algorithm, rig, instance, checkpoint, timeoutMillis, context, declaredParameters, resolveRasters)
             store.requireAvailable(entry.reference)
             return result
         } catch (failure: QueuedFailure) {
@@ -80,7 +81,7 @@ internal object ModifierPluginWorkers {
         @Volatile private var closed = false
         private val requests = java.util.concurrent.locks.ReentrantLock(true)
 
-        fun evaluate(algorithm: ModifierPluginAlgorithm, rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit, timeoutMillis: Long, context: ModifierAlgorithmContext, declaredParameters: List<io.github.psd2live.format.model.Parameter>): RigIR {
+        fun evaluate(algorithm: ModifierPluginAlgorithm, rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit, timeoutMillis: Long, context: ModifierAlgorithmContext, declaredParameters: List<io.github.psd2live.format.model.Parameter>, resolveRasters: ModifierRasterResolver): RigIR {
             // A cancelled queued request must neither wait on a JVM monitor nor kill the active request.
             try {
                 val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
@@ -91,11 +92,11 @@ internal object ModifierPluginWorkers {
                     if (requests.tryLock(minOf(remaining, TimeUnit.MILLISECONDS.toNanos(50)), TimeUnit.NANOSECONDS)) break
                 }
             } catch (failure: Throwable) { throw QueuedFailure(failure) }
-            try { return evaluateLocked(algorithm, rig, instance, checkpoint, timeoutMillis, context, declaredParameters) }
+            try { return evaluateLocked(algorithm, rig, instance, checkpoint, timeoutMillis, context, declaredParameters, resolveRasters) }
             finally { requests.unlock() }
         }
 
-        private fun evaluateLocked(algorithm: ModifierPluginAlgorithm, rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit, timeoutMillis: Long, context: ModifierAlgorithmContext, declaredParameters: List<io.github.psd2live.format.model.Parameter>): RigIR {
+        private fun evaluateLocked(algorithm: ModifierPluginAlgorithm, rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit, timeoutMillis: Long, context: ModifierAlgorithmContext, declaredParameters: List<io.github.psd2live.format.model.Parameter>, resolveRasters: ModifierRasterResolver): RigIR {
             check(!closed) { "Algorithm plugin was stopped" }
             check(process.isAlive) { "Algorithm plugin process exited" }
             checkpoint()
@@ -105,7 +106,7 @@ internal object ModifierPluginWorkers {
             }
             if (cached != null) {
                 cached.changes.requireWrites(algorithm.writes)
-                val output = try { cached.changes.apply(rig, checkpoint) } catch (_: IllegalArgumentException) { null }
+                val output = try { cached.changes.applyWithResources(rig, checkpoint, resolveRasters) } catch (_: IllegalArgumentException) { null }
                 if (output != null) {
                     AlgorithmResultValidation.validate(output)
                     val validated = ModifierPluginOutput.validate(rig, output, instance, algorithm, declaredParameters)
@@ -124,7 +125,7 @@ internal object ModifierPluginWorkers {
             val request = buildJsonObject {
                 put("protocol", 1); put("id", requestId); put("method", "evaluate")
                 put("type", algorithm.type); put("version", instance.version); put("instance", instance.id)
-                put("capabilities", JsonArray((ModifierPluginOutput.operations + setOf("rig_objects", "author_context_v1", "author_context_v2", "input_reads_v1", io.github.psd2live.algorithm.worker.AlgorithmChanges.CAPABILITY)).sorted().map(::JsonPrimitive)))
+                put("capabilities", JsonArray((ModifierPluginOutput.operations + setOf("rig_objects", "author_context_v1", "author_context_v2", "input_reads_v1", io.github.psd2live.algorithm.worker.AlgorithmChanges.CAPABILITY, io.github.psd2live.algorithm.worker.AlgorithmChanges.RASTER_CAPABILITY)).sorted().map(::JsonPrimitive)))
                 if (context != ModifierAlgorithmContext.Empty) put("context", io.github.psd2live.algorithm.worker.AlgorithmContexts.encode(context, ::blob))
                 put("invocation", Json.encodeToJsonElement(RigModifierInstance.serializer(), instance.copy(type = algorithm.type)))
                 put("dependencies", JsonArray(store.resolution(entry.reference).dependencies.map { reference ->
@@ -179,7 +180,7 @@ internal object ModifierPluginWorkers {
                 val reads = response["reads"]?.let { encoded ->
                     ModifierReadSet.capture(input, context, Json.decodeFromJsonElement<List<ModifierReadKey>>(encoded))
                 }
-                val merged = changes.apply(rig, checkpoint)
+                val merged = changes.applyWithResources(rig, checkpoint, resolveRasters)
                 AlgorithmResultValidation.validate(merged)
                 ModifierPluginOutput.validate(rig, merged, instance, algorithm, declaredParameters).also {
                     if (reads != null) readResult = ReadResult(algorithm, instance, context, reads, changes)

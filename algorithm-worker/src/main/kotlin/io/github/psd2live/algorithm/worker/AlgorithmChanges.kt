@@ -9,11 +9,13 @@ import java.nio.file.Path
 /** Sparse before/after carriers contain only explicitly edited objects, never the complete input model. */
 object AlgorithmChanges {
     const val CAPABILITY = "model_changes_v1"
+    const val RASTER_CAPABILITY = "model_changes_v2"
     private val empty = RigIR(Canvas(0f, 0f), emptyList())
     private val objectNames = setOf("parameters", "parts", "deformers", "meshes", "physicsGroups", "clips")
     private val fieldNames = setOf("canvas", "parameterLinks", "parameterTree", "parameterRoles", "rootChildren", "rootPart", "glues", "renderRoot", "textures", "physicsFps", "restPose", "authoring", "advanced", "hitAreas")
 
-    fun encode(changes: ModifierModelChanges, write: (ByteArray) -> JsonObject): JsonObject {
+    fun encode(changes: ModifierModelChanges, allowRasters: Boolean = false, write: (ByteArray) -> JsonObject): JsonObject {
+        require(changes.rasters.isEmpty() || allowRasters) { "Host does not support generated raster outputs" }
         fun <T> before(c: ModifierObjectChanges<T>) = c.removed + c.reused + c.updated.map { it.before }
         fun <T> after(c: ModifierObjectChanges<T>) = c.added + c.updated.map { it.after }
         fun <T> field(c: ModifierFieldChange<T>?, fallback: T, prior: Boolean): T =
@@ -43,7 +45,8 @@ object AlgorithmChanges {
         fun <T> counts(c: ModifierObjectChanges<T>): JsonArray = JsonArray(
             listOf(c.added.size, c.updated.size, c.removed.size, c.reused.size).map(::JsonPrimitive))
         return buildJsonObject {
-            put("schema", CAPABILITY)
+            put("schema", if (changes.rasters.isEmpty()) CAPABILITY else RASTER_CAPABILITY)
+            if (changes.rasters.isNotEmpty()) put("rasters", AlgorithmRasters.encode(changes.rasters, write))
             put("before", write(RigIrBinary.encode(carrier(true))))
             put("after", write(RigIrBinary.encode(carrier(false))))
             putJsonObject("objects") {
@@ -74,8 +77,10 @@ object AlgorithmChanges {
     }
 
     fun decode(value: JsonObject, directory: Path): ModifierModelChanges {
-        require(value.keys == setOf("schema", "before", "after", "objects", "fields")) { "Invalid change envelope" }
-        require(value.getValue("schema").jsonPrimitive.content == CAPABILITY) { "Unsupported change schema" }
+        val schema = value.getValue("schema").jsonPrimitive.content
+        require(schema == CAPABILITY || schema == RASTER_CAPABILITY) { "Unsupported change schema" }
+        val rasterKeys = if (schema == RASTER_CAPABILITY) setOf("rasters") else emptySet()
+        require(value.keys == setOf("schema", "before", "after", "objects", "fields") + rasterKeys) { "Invalid change envelope" }
         val operations = value.getValue("objects").jsonObject
         require(operations.keys.all { it in objectNames }) { "Unknown object change collection" }
         val fields = value.getValue("fields").jsonArray.map { it.jsonPrimitive.content }
@@ -100,6 +105,7 @@ object AlgorithmChanges {
         fun <T> field(name: String, old: T, new: T): ModifierFieldChange<T>? =
             if (name in fields) ModifierFieldChange(old, new) else null
         return ModifierModelChanges(
+            rasters = if (schema == RASTER_CAPABILITY) AlgorithmRasters.decode(value.getValue("rasters").jsonArray, directory) else emptyList(),
             parameters = objects("parameters", before.parameters, after.parameters),
             parts = objects("parts", before.parts, after.parts),
             deformers = objects("deformers", before.deformers, after.deformers),

@@ -17,6 +17,9 @@ internal class RigModifierSource(
     private val materialBase: PuppetModel,
     private val meshCache: PreviewMeshCache = PreviewMeshCache(),
 ) {
+    fun resolveRasters(input: RigIR, outputs: List<ModifierRasterOutput>, checkpoint: () -> Unit): RigIR =
+        RigModifierRasterAssets.attach(input, outputs, config, checkpoint)
+
     val physicsOrder: List<String> get() = config.rigEdits.physicsOrder
     private val stack by lazy { RigModifierStack.fromJson(requireNotNull(config.rigEdits.modifierStack)) }
     private val parameterDefinitions = java.util.IdentityHashMap<PuppetModel, List<io.github.psd2live.format.model.Parameter>>()

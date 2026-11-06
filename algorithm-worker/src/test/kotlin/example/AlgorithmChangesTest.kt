@@ -20,6 +20,31 @@ class AlgorithmChangesTest {
     private val p = Parameter("p", "P", -1f, 1f, 0f)
     private val mesh = Mesh("m", "M", null, geometry = null, offsets = null)
 
+    @Test fun rasterChangesRequireNegotiationAndPreserveHashedPixels() = resources { directory ->
+        val generated = mesh.copy(id = "new", geometry = MeshGeometry(Floats.values(0f, 0f, 1f, 0f, 0f, 1f),
+            Floats.values(0f, 0f, 2f, 0f, 0f, 2f), Ints.values(0, 1, 2)))
+        val raster = ModifierRasterOutput(mesh, generated, SourceLayer("art", "Art", "", 0, 0, 2, 2, true),
+            ModifierAlgorithmResource(ByteArray(16) { it.toByte() }))
+        val changes = ModifierModelChanges(rasters = listOf(raster))
+        assertFailsWith<IllegalArgumentException> {
+            AlgorithmChanges.encode(changes) { AlgorithmObjects.write(directory, it) }
+        }
+        val wire = AlgorithmChanges.encode(changes, allowRasters = true) { AlgorithmObjects.write(directory, it) }
+        assertEquals(AlgorithmChanges.RASTER_CAPABILITY, wire.getValue("schema").jsonPrimitive.content)
+        val decoded = AlgorithmChanges.decode(wire, directory)
+        val restored = decoded.rasters.single()
+        assertEquals(mesh, restored.owner)
+        assertEquals(generated, restored.mesh)
+        assertEquals(raster.layer, restored.layer)
+        assertEquals(raster.pixels, restored.pixels)
+        assertEquals(changes.writeKinds(), decoded.writeKinds())
+        assertFailsWith<IllegalArgumentException> { decoded.requireWrites(setOf("mesh")) }
+        assertFailsWith<IllegalArgumentException> { decoded.apply(RigIR(Canvas(2f, 2f), emptyList(), meshes = listOf(mesh))) }
+        val pixels = wire.getValue("rasters").jsonArray.single().jsonObject.getValue("pixels").jsonObject
+        Files.write(directory.resolve(pixels.getValue("sha256").jsonPrimitive.content), ByteArray(16))
+        assertFailsWith<IllegalArgumentException> { AlgorithmChanges.decode(wire, directory) }
+    }
+
     @Test fun sparseChangesRoundTripWithoutUnchangedGeometry() = resources { directory ->
         val input = RigIR(Canvas(128f, 128f), listOf(p), meshes = listOf(mesh), rootPart = "old")
         val changes = ModifierModelChanges(parameters = ModifierObjectChanges(

@@ -17,6 +17,9 @@ import org.umamo.format.art.*
 
 /** Restore independent raster assets before rebinding the authored checkpoint onto the live atlas. */
 internal object RigModifierRasterAssets {
+    fun resolve(input: RigIR, outputs: List<ModifierRasterOutput>, checkpoint: () -> Unit): RigIR =
+        attach(input, outputs, PipelineConfig(), checkpoint)
+
     fun restored(config: PipelineConfig): List<ClassifiedLayer> {
         val overlay = config.rigEdits
         if (overlay.checkpointIndex < 0) return emptyList()
