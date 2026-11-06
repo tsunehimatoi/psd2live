@@ -356,7 +356,7 @@ object RigBuilder {
                 }
 				io.github.psd2live.core.fit.FittedEyes(result, fits.mapValues { (side, drawn) ->
 					val fit = drawn.copy(artwork = artwork[side])
-					io.github.psd2live.core.fit.EyeRig(fit, values[0] / 100f, values[1] / 100f, values[2] / 100f,
+					io.github.psd2live.algorithms.binding.EyeRig(fit, values[0] / 100f, values[1] / 100f, values[2] / 100f,
 						smileArc = options.smileArc, smilePush = options.smilePush, wideLift = options.wideLift)
 				}, options)
 			}
@@ -1894,7 +1894,7 @@ object RigBuilder {
 
 	/**
 	 * Whether [layer] swaps with a drawn closed-eye line at the fitted eye's swap key: the closed line itself, and the
-	 * lashes and lower lash of an eye whose closed line the fit lies the closed lid on ([io.github.psd2live.core.fit.EyeRig.SWAP]).
+	 * lashes and lower lash of an eye whose closed line the fit lies the closed lid on ([io.github.psd2live.algorithms.binding.EyeRig.SWAP]).
 	 */
 	/** Whether [layer] is a part of the fitted mouth, whose closed and open parts hand over at [io.github.psd2live.core.fit.MouthRig.SWAP]. */
 	private fun mouthSwap(context: RigContext, config: PipelineConfig, layer: ClassifiedLayer): Boolean =

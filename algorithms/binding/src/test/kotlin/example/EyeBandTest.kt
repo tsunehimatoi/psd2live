@@ -1,6 +1,6 @@
-package io.github.psd2live.core
+package example
 
-import io.github.psd2live.core.fit.*
+import io.github.psd2live.algorithms.binding.*
 import kotlin.math.*
 import kotlin.test.*
 
@@ -54,4 +54,13 @@ class EyeBandTest {
 			}
 		}
 	}
+    @Test fun widenedEyeLoadsItsModelWithoutTheApplicationClasspath() {
+        val rig = EyeRig(fit, .05f, 1f, .6f, wideLift = .35f)
+        val drawn = rig.pose(1f)
+        val wide = rig.pose(2f)
+        assertEquals(fit.upper, drawn.upper)
+        assertTrue(wide.upper[8] < drawn.upper[8])
+        assertTrue(wide.lower[8] > wide.upper[8])
+        assertTrue(requireNotNull(wide.upperDx).all { it.isFinite() })
+    }
 }

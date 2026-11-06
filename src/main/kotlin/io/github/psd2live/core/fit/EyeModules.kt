@@ -1,5 +1,7 @@
 package io.github.psd2live.core.fit
 
+import io.github.psd2live.algorithms.binding.EyeRig
+
 import io.github.psd2live.core.Bounds
 import io.github.psd2live.core.PartRole
 import io.github.psd2live.core.SemanticTag

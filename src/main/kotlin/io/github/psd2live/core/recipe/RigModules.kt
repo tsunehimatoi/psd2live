@@ -36,7 +36,7 @@ object RigModules {
 	private val P = io.github.psd2live.core.RigTuning.Unit.PERCENT
 
 	/**
-	 * The eyes fitted from their drawn outline ([io.github.psd2live.core.fit.EyeRig]): the lids close over a pseudo-3D
+	 * The eyes fitted from their drawn outline ([io.github.psd2live.algorithms.binding.EyeRig]): the lids close over a pseudo-3D
 	 * eyeball, keeping their arc, the white, lashes and lid skin each following them their own way.
 	 */
 	val EYE_FITTED = RigBase("eye/fitted", version = 2, knobs = listOf(

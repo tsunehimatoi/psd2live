@@ -1,5 +1,7 @@
 package io.github.psd2live.core.fit
 
+import io.github.psd2live.algorithms.binding.EyeRig
+
 import kotlin.math.max
 import kotlin.math.min
 

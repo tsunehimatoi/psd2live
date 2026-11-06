@@ -3,7 +3,7 @@ package io.github.psd2live.core
 import io.github.psd2live.core.fit.BiharmonicField
 import io.github.psd2live.core.fit.EyeFit
 import io.github.psd2live.core.fit.EyeFitting
-import io.github.psd2live.core.fit.EyeRig
+import io.github.psd2live.algorithms.binding.EyeRig
 import io.github.psd2live.core.fit.EyelidModel
 import io.github.psd2live.core.fit.ThinPlateSpline
 import io.github.psd2live.project.WorkspaceSourceLayer

@@ -4,7 +4,7 @@ import io.github.psd2live.core.Bounds
 import io.github.psd2live.core.PSD2LivePipeline
 import io.github.psd2live.core.fit.EyeFit
 import io.github.psd2live.core.fit.EyeFitting
-import io.github.psd2live.core.fit.EyeRig
+import io.github.psd2live.algorithms.binding.EyeRig
 import java.awt.BasicStroke
 import java.awt.Color
 import java.awt.RenderingHints

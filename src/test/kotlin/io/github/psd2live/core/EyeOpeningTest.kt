@@ -3,7 +3,7 @@ package io.github.psd2live.core
 import io.github.psd2live.core.fit.EyeFit
 import io.github.psd2live.core.fit.EyeModules
 import io.github.psd2live.core.fit.EyeOptions
-import io.github.psd2live.core.fit.EyeRig
+import io.github.psd2live.algorithms.binding.EyeRig
 import io.github.psd2live.core.recipe.RigModules
 import org.umamo.runtime.eval.scalarAt
 import org.umamo.runtime.model.ChannelGrids
@@ -119,7 +119,7 @@ class EyeOpeningTest {
 			val open = 1f + step / 100f; val p = a.pose(open)
 			for (k in 1 until EyeFit.SAMPLES - 1) {
 				assertTrue(p.upper[k] < p.lower[k], "eyelids crossed at $open/$k")
-				if (p.upperDx != null) assertTrue(EyeFit.u(k) + p.upperDx[k] > EyeFit.u(k - 1) + p.upperDx[k - 1])
+				p.upperDx?.let { dx -> assertTrue(EyeFit.u(k) + dx[k] > EyeFit.u(k - 1) + dx[k - 1]) }
 			}
 			val pa = a.fit.toCanvas(0.2f, -0.15f); val pb = b.fit.toCanvas(0.2f, -0.15f)
 			val da = a.delta(EyeRig.EyeMesh.UPPER_LASH, pa.first, pa.second, open)

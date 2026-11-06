@@ -1,4 +1,4 @@
-package io.github.psd2live.core.fit
+package io.github.psd2live.algorithms.binding
 
 import kotlin.math.PI
 import kotlin.math.cos

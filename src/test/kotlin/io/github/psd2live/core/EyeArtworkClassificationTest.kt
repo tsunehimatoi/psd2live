@@ -4,7 +4,7 @@ import io.github.psd2live.core.fit.EyeArtworkFitting
 import io.github.psd2live.core.fit.EyeFit
 import io.github.psd2live.core.fit.EyePrimitive
 import io.github.psd2live.core.fit.EyeRegion
-import io.github.psd2live.core.fit.EyeRig
+import io.github.psd2live.algorithms.binding.EyeRig
 import io.github.psd2live.core.fit.EyeOpeningAssociation
 import io.github.psd2live.core.fit.EyeModules
 import io.github.psd2live.core.fit.EyeOptions

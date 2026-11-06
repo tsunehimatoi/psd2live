@@ -1,4 +1,4 @@
-package io.github.psd2live.core.fit
+package io.github.psd2live.algorithms.binding
 
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
