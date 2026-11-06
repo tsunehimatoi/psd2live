@@ -18,7 +18,6 @@ object ScaffoldHead {
     data class Hair(val bounds: Bounds, val sway: Boolean)
     data class Input(
         val bodyFrame: Bounds,
-        val characterFrame: Bounds,
         val headFrame: Bounds,
         val faceFrame: Bounds,
         val alignedPivot: Point,
@@ -64,9 +63,11 @@ object ScaffoldHead {
                 ((body.top + v * body.height - body.top) / body.height)
         }, body)
         val pivot = input.canvasPivot
+        val alignedPivot = input.alignedPivot
+        val rotationFrame = Bounds(alignedPivot.x, alignedPivot.y, alignedPivot.x + 1f, alignedPivot.y + 1f)
         add(Deformer.Rotation(rotationId, label("model.deformer.headRotation"), breathId, headPart, input.initialAngle,
             static(RotationPivotForm(normalize(pivot.x, body.left, body.width), normalize(pivot.y, body.top, body.height),
-                0f, 1f))), input.characterFrame)
+                0f, 1f))), rotationFrame)
         add(warp(headId, label("model.deformer.headContainer"), rotationId, headPart, 5, 4) { u, v ->
             (head.left + u * head.width - input.alignedPivot.x) to (head.top + v * head.height - input.alignedPivot.y)
         }, head)

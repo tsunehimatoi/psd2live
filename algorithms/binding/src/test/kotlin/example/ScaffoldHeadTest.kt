@@ -29,7 +29,7 @@ class ScaffoldHeadTest {
         val points = lattice(result, "DeformHeadContainer")
         assertContentEquals(floatArrayOf(-60f, -70f), points.take(2).toFloatArray())
         assertContentEquals(floatArrayOf(60f, 50f), points.takeLast(2).toFloatArray())
-        assertEquals(body, result.frames[rotation.id])
+        assertEquals(Bounds(100f, 90f, 101f, 91f), result.frames[rotation.id])
         val facePoints = lattice(result, "DeformFaceNinePose")
         assertContentEquals(floatArrayOf(1f / 6f, 1f / 6f), facePoints.take(2).toFloatArray())
         assertContentEquals(floatArrayOf(5f / 6f, 5f / 6f), facePoints.takeLast(2).toFloatArray())
@@ -76,7 +76,7 @@ class ScaffoldHeadTest {
     }
 
     private fun input() = ScaffoldHead.Input(
-        body, body, head, face, ScaffoldHead.Point(100f, 90f), ScaffoldHead.Point(90f, 100f),
+        body, head, face, ScaffoldHead.Point(100f, 90f), ScaffoldHead.Point(90f, 100f),
         12f, featureDisplacement = true, regions = emptyList(),
     )
 
