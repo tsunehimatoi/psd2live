@@ -12,25 +12,31 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.ExecutionException
+import java.util.concurrent.TimeoutException
 
 /** One serialized request stream per package. Worker failures discard the candidate, never the source document. */
 internal object ModifierPluginWorkers {
     private val workers = ConcurrentHashMap<ModifierPluginReference, Worker>()
     private val executor = Executors.newVirtualThreadPerTaskExecutor()
+    private class QueuedFailure(val original: Throwable) : RuntimeException(original)
     init { Runtime.getRuntime().addShutdownHook(Thread { workers.values.forEach { it.close() } }) }
     fun stop(reference: ModifierPluginReference) { workers.remove(reference)?.close() }
 
     fun evaluate(entry: InstalledModifierPlugin, algorithm: ModifierPluginAlgorithm, rig: RigIR,
-                 instance: RigModifierInstance, checkpoint: () -> Unit, store: ModifierPluginStore = ModifierPluginStore.shared): RigIR {
+                 instance: RigModifierInstance, checkpoint: () -> Unit, store: ModifierPluginStore = ModifierPluginStore.shared,
+                 timeoutMillis: Long = 120_000): RigIR {
+        require(timeoutMillis > 0)
         store.requireAvailable(entry.reference)
         if (!workers.containsKey(entry.reference)) store.verify(entry.reference)
         val worker = workers.computeIfAbsent(entry.reference) { Worker(entry, store) }
         try {
-            val result = worker.evaluate(algorithm, rig, instance, checkpoint)
+            val result = worker.evaluate(algorithm, rig, instance, checkpoint, timeoutMillis)
             store.requireAvailable(entry.reference)
             return result
+        } catch (failure: QueuedFailure) {
+            throw failure.original
         } catch (failure: Throwable) {
-            if (workers.remove(entry.reference, worker)) worker.close()
+            if (workers.remove(entry.reference, worker)) runCatching { worker.close() }.exceptionOrNull()?.let(failure::addSuppressed)
             throw failure
         }
     }
@@ -62,8 +68,24 @@ internal object ModifierPluginWorkers {
         private var sequence = 0L
         private var previous = emptyMap<String, JsonElement>()
         @Volatile private var closed = false
+        private val requests = java.util.concurrent.locks.ReentrantLock(true)
 
-        @Synchronized fun evaluate(algorithm: ModifierPluginAlgorithm, rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit): RigIR {
+        fun evaluate(algorithm: ModifierPluginAlgorithm, rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit, timeoutMillis: Long): RigIR {
+            // A cancelled queued request must neither wait on a JVM monitor nor kill the active request.
+            try {
+                val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
+                while (true) {
+                    checkpoint()
+                    val remaining = deadline - System.nanoTime()
+                    if (remaining <= 0) throw TimeoutException("Algorithm plugin queue timed out: ${entry.manifest.name}")
+                    if (requests.tryLock(minOf(remaining, TimeUnit.MILLISECONDS.toNanos(50)), TimeUnit.NANOSECONDS)) break
+                }
+            } catch (failure: Throwable) { throw QueuedFailure(failure) }
+            try { return evaluateLocked(algorithm, rig, instance, checkpoint, timeoutMillis) }
+            finally { requests.unlock() }
+        }
+
+        private fun evaluateLocked(algorithm: ModifierPluginAlgorithm, rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit, timeoutMillis: Long): RigIR {
             check(!closed) { "Algorithm plugin was stopped" }
             checkpoint()
             val input = ModifierInputCache.project(rig, algorithm.reads + algorithm.writes)
@@ -112,9 +134,9 @@ internal object ModifierPluginWorkers {
                 }
                 Json.parseToJsonElement(response.toString()).jsonObject
             }
-            val response = try { task.get(120, TimeUnit.SECONDS) }
+            val response = try { awaitResponse(task, checkpoint, timeoutMillis) }
             catch (failure: ExecutionException) { throw failure.cause ?: failure }
-            catch (failure: Exception) { task.cancel(true); close(); throw failure }
+            catch (failure: Exception) { task.cancel(true); throw failure }
             checkpoint()
             require(response.keys.all { it in setOf("protocol", "id", "commands", "error") } && response["protocol"]?.jsonPrimitive?.int == 1 && response["id"]?.jsonPrimitive?.long == requestId) { "Invalid plugin response envelope" }
             response["error"]?.let { error("${entry.manifest.name}: ${it.jsonPrimitive.content}") }
@@ -123,6 +145,18 @@ internal object ModifierPluginWorkers {
             val output = ModifierPluginOutput.apply(rig, instance, algorithm, JsonArray(commands.map(::expand)), checkpoint)
             previous = current
             return output
+        }
+
+        private fun awaitResponse(task: java.util.concurrent.Future<JsonObject>, checkpoint: () -> Unit, timeoutMillis: Long): JsonObject {
+            val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
+            while (true) {
+                checkpoint()
+                check(!closed) { "Algorithm plugin was stopped" }
+                val remaining = deadline - System.nanoTime()
+                if (remaining <= 0) throw TimeoutException("Algorithm plugin timed out: ${entry.manifest.name}")
+                try { return task.get(minOf(remaining, TimeUnit.MILLISECONDS.toNanos(50)), TimeUnit.NANOSECONDS) }
+                catch (_: TimeoutException) { continue }
+            }
         }
 
         private fun blob(bytes: ByteArray): JsonObject {

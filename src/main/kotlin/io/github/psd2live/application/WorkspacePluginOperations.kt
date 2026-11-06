@@ -95,7 +95,7 @@ internal fun registerPluginOperations(registry: WorkspaceOperationRegistry, jobs
     for (id in WorkspacePluginSchemas.jobs + "plugin_list") {
         val background = id != "plugin_list"
         registry.register(WorkspaceOperationDefinition(id,
-            "Manage local algorithm plugins. Install a local directory/ZIP or a Git HTTPS/SSH URL containing a built package; optional ref selects a Git branch, tag or commit. " +
+            "Manage local algorithm plugins. Install a local directory/ZIP or an HTTPS, SSH or git:// URL containing a built package; optional ref selects a Git branch, tag or commit. " +
                 "Packages are executable local code, not sandboxed. No installation script or source build is run. Uninstall preserves document instances. " +
                 "Use id=builtin,digest=builtin to enable/disable bundled algorithms. Other changes require the digest returned by plugin_list.",
             WorkspacePluginSchemas.request(id), if (background) WorkspaceOperationKind.SESSION else WorkspaceOperationKind.QUERY,

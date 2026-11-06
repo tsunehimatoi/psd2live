@@ -31,7 +31,15 @@ class ModifierPluginTest {
                 public static void main(String[] args) throws Exception {
                     BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
                     int sequence = 0;
-                    while (reader.readLine() != null) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        if (line.contains("\"mode\":\"crash\"")) System.exit(7);
+                        if (line.contains("\"mode\":\"wait\"")) { reader.readLine(); return; }
+                        if (line.contains("\"mode\":\"invalid\"")) { System.out.println("{\"protocol\":99}"); continue; }
+                        if (line.contains("\"mode\":\"bad-write\"")) {
+                            System.out.println("{\"protocol\":1,\"id\":" + (++sequence) + ",\"commands\":[{\"op\":\"mesh_opacity\",\"id\":\"body\",\"value\":2}]}");
+                            continue;
+                        }
                         System.out.println("{\"protocol\":1,\"id\":" + (++sequence) + ",\"commands\":[{\"op\":\"mesh_opacity\",\"id\":\"body\",\"value\":0.5}]}");
                     }
                 }
@@ -80,6 +88,15 @@ class ModifierPluginTest {
 
     @Test fun invalidPackagesNeverPublishPartialInstalls() = fixture { root, store, _ ->
         val path = packageAt(root.resolve("package"))
+        Files.writeString(path.resolve(".origin"), "a".repeat(40))
+        assertFailsWith<IllegalArgumentException> { store.install(path.toString()) }
+        assertTrue(store.snapshot().isEmpty())
+        Files.delete(path.resolve(".origin"))
+        val hidden = Files.createDirectories(path.resolve("nested")).resolve("plugin.json")
+        Files.writeString(hidden, "{}")
+        assertFailsWith<IllegalArgumentException> { store.install(path.toString()) }
+        assertTrue(store.snapshot().isEmpty())
+        Files.delete(hidden)
         Files.write(path.resolve("example.jar"), byteArrayOf(1, 2, 3))
         assertFailsWith<IllegalArgumentException> { store.install(path.toString()) }
         assertTrue(store.snapshot().isEmpty())
@@ -90,6 +107,29 @@ class ModifierPluginTest {
         assertFailsWith<IllegalArgumentException> { store.install(zip.toString()) }
         assertFalse(Files.exists(root.resolve("escaped")))
         assertTrue(store.snapshot().isEmpty())
+    }
+
+    @Test fun workerFailuresAndCancellationDiscardResultsAndRestartCleanly() = fixture { root, store, _ ->
+        val entry = store.install(packageAt(root.resolve("package")).toString())
+        val algorithm = entry.manifest.algorithms.single()
+        val instance = RigModifierInstance("m1", algorithm.type, 1, listOf(ModifierTarget("mesh", "body")), plugin = entry.reference)
+        val rig = RigIR(Canvas(1f, 1f), emptyList(), meshes = listOf(Mesh("body", "Body", null, geometry = null, offsets = null)))
+        fun request(mode: String) = instance.copy(config = buildJsonObject { put("mode", mode) })
+        try {
+            for (mode in listOf("crash", "invalid", "bad-write", "wait", "cancel")) {
+                var checkpoints = 0
+                val failure = assertFails {
+                    ModifierPluginWorkers.evaluate(entry, algorithm, rig, request(if (mode == "cancel") "wait" else mode), {
+                        if (mode == "cancel" && ++checkpoints >= 3) throw java.util.concurrent.CancellationException("Cancelled candidate")
+                    }, store, timeoutMillis = if (mode == "wait") 250 else 5_000)
+                }
+                if (mode == "wait") assertIs<java.util.concurrent.TimeoutException>(failure)
+                if (mode == "cancel") assertIs<java.util.concurrent.CancellationException>(failure)
+                assertEquals(1f, rig.meshes.single().opacity, "Failed output changed the input for $mode")
+                assertEquals(.5f, ModifierPluginWorkers.evaluate(entry, algorithm, rig, instance, {}, store).meshes.single().opacity,
+                    "A fresh worker must restart after $mode")
+            }
+        } finally { ModifierPluginWorkers.stop(entry.reference) }
     }
 
     @Test fun corruptedInstallationDoesNotPreventOpeningAndCanBeReinstalled() = fixture { root, store, preferences ->
@@ -105,12 +145,97 @@ class ModifierPluginTest {
         reopened.verify(restored.reference)
     }
 
+    @Test fun queuedCancellationDoesNotKillActiveWorkerAndUninstallStopsIt() = fixture { root, store, _ ->
+        val source = packageAt(root.resolve("package"))
+        val entry = store.install(source.toString())
+        val algorithm = entry.manifest.algorithms.single()
+        val instance = RigModifierInstance("m1", algorithm.type, 1, listOf(ModifierTarget("mesh", "body")), plugin = entry.reference)
+        val rig = RigIR(Canvas(1f, 1f), emptyList(), meshes = listOf(Mesh("body", "Body", null, geometry = null, offsets = null)))
+        val waiting = java.util.concurrent.CountDownLatch(1)
+        java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor().use { executor ->
+            val active = executor.submit<RigIR> {
+                var checkpoints = 0
+                ModifierPluginWorkers.evaluate(entry, algorithm, rig, instance.copy(config = buildJsonObject { put("mode", "wait") }), {
+                    if (++checkpoints >= 4) waiting.countDown()
+                }, store, timeoutMillis = 10_000)
+            }
+            try {
+                assertTrue(waiting.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                var checkpoints = 0
+                assertFailsWith<java.util.concurrent.CancellationException> {
+                    ModifierPluginWorkers.evaluate(entry, algorithm, rig, instance, {
+                        if (++checkpoints >= 3) throw java.util.concurrent.CancellationException("Cancelled queued request")
+                    }, store)
+                }
+                assertFalse(active.isDone, "Cancelling a queued candidate killed the active worker")
+                store.uninstall(entry.reference)
+                assertFailsWith<java.util.concurrent.ExecutionException> { active.get(5, java.util.concurrent.TimeUnit.SECONDS) }
+                assertTrue(store.snapshot().isEmpty())
+                val restored = store.install(source.toString())
+                assertEquals(instance.plugin, restored.reference)
+                assertEquals(.5f, ModifierPluginWorkers.evaluate(restored, algorithm, rig, instance, {}, store).meshes.single().opacity)
+            } finally { ModifierPluginWorkers.stop(entry.reference); active.cancel(true) }
+        }
+    }
+
     @Test fun pinnedPackageCannotResolveToAnotherBuild() {
         val reference = ModifierPluginReference("test-plugin", "1", "a".repeat(64))
         val definition = RigModifierDefinition("test-plugin/fade", 1, evaluate = { rig, _, _ -> rig }, pluginReference = reference)
         val registry = RigModifierRegistry(listOf(definition))
         val instance = RigModifierInstance("m1", definition.type, 1, listOf(ModifierTarget("mesh", "body")), plugin = reference.copy(digest = "b".repeat(64)))
         assertFailsWith<IllegalArgumentException> { registry.definition(instance) }
+    }
+
+    /** Opt-in real Git transport acceptance; regular regression does not require an installed Git daemon. */
+    @Test fun gitTagsAndCommitsInstallPrebuiltPinnedPackages() {
+        org.junit.jupiter.api.Assumptions.assumeTrue(System.getenv("PSD2LIVE_PLUGIN_GIT_TEST") == "1")
+        fixture { root, store, _ ->
+            val repository = packageAt(root.resolve("repository"))
+            fun git(vararg args: String): String {
+                val log = root.resolve("git-command.log")
+                val process = ProcessBuilder(listOf("git", "-c", "user.name=Plugin test", "-c", "user.email=plugin@example.invalid",
+                    "-c", "core.hooksPath=") + args).directory(repository.toFile()).redirectErrorStream(true).redirectOutput(log.toFile()).start()
+                try {
+                    assertTrue(process.waitFor(15, java.util.concurrent.TimeUnit.SECONDS))
+                    assertEquals(0, process.exitValue(), Files.readString(log))
+                    return Files.readString(log).trim()
+                } finally { if (process.isAlive) process.destroyForcibly() }
+            }
+            git("init"); git("add", "."); git("commit", "-m", "First package"); git("tag", "v1")
+            val first = git("rev-parse", "HEAD")
+            val manifestPath = repository.resolve("plugin.json")
+            val manifest = Json.decodeFromString(ModifierPluginManifest.serializer(), Files.readString(manifestPath))
+            Files.writeString(manifestPath, Json.encodeToString(ModifierPluginManifest.serializer(), manifest.copy(version = "2.0.0")))
+            git("add", "."); git("commit", "-m", "Second package")
+            val second = git("rev-parse", "HEAD")
+            val port = java.net.ServerSocket(0, 0, java.net.InetAddress.getLoopbackAddress()).use { it.localPort }
+            val daemon = ProcessBuilder("git", "daemon", "--verbose", "--export-all", "--reuseaddr", "--listen=127.0.0.1",
+                "--port=$port", "--base-path=${root.toAbsolutePath()}", root.toAbsolutePath().toString()).redirectErrorStream(true).start()
+            java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor().use { executor ->
+                val log = daemon.inputStream.bufferedReader()
+                val ready = executor.submit<Boolean> { generateSequence { log.readLine() }.any { "Ready to rumble" in it } }
+                try {
+                    assertTrue(ready.get(10, java.util.concurrent.TimeUnit.SECONDS))
+                    val url = "git://127.0.0.1:$port/repository"
+                    val tagged = store.install(url, "v1")
+                    val pinned = store.install(url, second)
+                    assertEquals(first, tagged.gitCommit)
+                    assertEquals(second, pinned.gitCommit)
+                    assertEquals("1", tagged.reference.version)
+                    assertEquals("2.0.0", pinned.reference.version)
+                    assertEquals(pinned.reference, store.install(url).reference)
+                    assertEquals(2, store.snapshot().size)
+                    val instance = RigModifierInstance("m1", "test-plugin/fade", 1, listOf(ModifierTarget("mesh", "body")), plugin = tagged.reference)
+                    val rig = RigIR(Canvas(1f, 1f), emptyList(), meshes = listOf(Mesh("body", "Body", null, geometry = null, offsets = null)))
+                    try { assertEquals(.5f, ModifierPluginWorkers.evaluate(tagged, tagged.manifest.algorithms.single(), rig, instance, {}, store).meshes.single().opacity) }
+                    finally { ModifierPluginWorkers.stop(tagged.reference) }
+                } finally {
+                    daemon.descendants().forEach { it.destroyForcibly() }; daemon.destroyForcibly()
+                    daemon.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
+                    log.close(); ready.cancel(true)
+                }
+            }
+        }
     }
 
     @Test fun componentCacheReusesIndependentAlgorithmWithoutErasingUpstreamChanges() {
