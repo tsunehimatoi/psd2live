@@ -6,7 +6,10 @@ import io.github.psd2live.algorithms.binding.MouthRig
  * The fitted mouth of a project: [rig] when the drawn mouth could be read ([result]), and which layers it moves;
  * [chin] is how far down the face reaches below the mouth, in the mouth's frame.
  */
-class FittedMouth(val result: MouthFitting.Result, val rig: MouthRig?, val chin: Float = 0.6f, layers: List<io.github.psd2live.core.ClassifiedLayer> = emptyList()) {
+class FittedMouth(val result: MouthFitting.Result, val rig: MouthRig?, val chin: Float = 0.6f,
+    layers: List<io.github.psd2live.core.ClassifiedLayer> = emptyList(),
+    val source: io.github.psd2live.algorithms.binding.MouthSourceContext? = null,
+) {
 	private val variant = result.layers.firstOrNull()?.semantic?.variant
 
 	/** Whether a closed mouth is drawn beside the open one: it shows at rest and hands over as the lips part. */

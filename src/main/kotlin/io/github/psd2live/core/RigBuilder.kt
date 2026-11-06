@@ -493,10 +493,11 @@ object RigBuilder {
                     io.github.psd2live.core.fit.MouthFitting.fit(analysis.layers, level, toRig)
                 }
 				val result = io.github.psd2live.core.fit.MouthFitting.Result(drawn.fit?.moved(rigMoves(config, "mouth", toRig)), drawn.reason, drawn.layers)
-				val rig = result.fit?.let { io.github.psd2live.algorithms.binding.MouthRig(it, options, sourceFit("mouth line width", listOf(it, analysis.layers, space)) {
+				val source = result.fit?.let { io.github.psd2live.algorithms.binding.MouthSourceContext(it, options, sourceFit("mouth line width", listOf(it, analysis.layers, space)) {
                     io.github.psd2live.core.fit.MouthFitting.lineWidth(it, analysis.layers, toRig)
                 }) }
-				io.github.psd2live.core.fit.FittedMouth(result, rig, rig?.let { chinDepth(it, config) } ?: 0.6f, analysis.layers)
+				val rig = source?.rig()
+				io.github.psd2live.core.fit.FittedMouth(result, rig, rig?.let { chinDepth(it, config) } ?: 0.6f, analysis.layers, source)
 			}
 		}
 
