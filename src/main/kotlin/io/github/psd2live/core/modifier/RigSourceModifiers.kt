@@ -5,7 +5,7 @@ import io.github.psd2live.core.recipe.*
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.targets.cubism.PuppetIr
 import kotlinx.serialization.json.*
-import org.umamo.edit.withParameterDeleted
+import org.umamo.edit.withParametersDeleted
 import org.umamo.runtime.keyform.*
 import org.umamo.runtime.model.*
 
@@ -532,7 +532,7 @@ internal class RigModifierSource(
         // Parameter deletion lifts channel constants but intentionally unkeys the last geometry axis. A Warp has
         // no separate rest lattice, so keep its sampled neutral form explicitly after removing binding parameters.
         val meshes = model.drawables.associate { it.id to restrict(it.geometryGrid, kept, defaults, MeshDeltaInterpolator) }
-        for (parameter in model.parameters.toList().filter { it.id !in kept }) model = model.withParameterDeleted(parameter.id)
+        model = model.withParametersDeleted(model.parameters.filter { it.id !in kept }.map { it.id })
         return model.copy(drawables = model.drawables.map { it.copy(geometryGrid = meshes[it.id]) },
             deformers = model.deformers.map { deformer -> when (deformer) {
             is Deformer.Warp -> deformer.copy(geometryGrid = (forms.getValue(deformer.id) as Deformer.Warp).geometryGrid)

@@ -155,7 +155,21 @@ fun PuppetModel.withParameterRenamed(id: ParameterId, newName: String): PuppetMo
  * @param ParameterId id The parameter to delete.
  * @return PuppetModel The model with the parameter removed, or this if it was absent.
  */
-fun PuppetModel.withParameterDeleted(id: ParameterId): PuppetModel {
+fun PuppetModel.withParameterDeleted(id: ParameterId): PuppetModel =
+	withoutParameter(id).let { if (it === this) this else it.withDerivedRenderRoot() }
+
+/** Delete in caller order, deriving the render tree once after all parameter tracks have been removed. */
+fun PuppetModel.withParametersDeleted(ids: Iterable<ParameterId>, checkpoint: () -> Unit = {}): PuppetModel {
+	var current = this
+	for (id in ids) {
+		checkpoint()
+		current = current.withoutParameter(id)
+	}
+	checkpoint()
+	return if (current === this) this else current.withDerivedRenderRoot()
+}
+
+private fun PuppetModel.withoutParameter(id: ParameterId): PuppetModel {
 	val deleted = parameters.firstOrNull { parameter -> parameter.id == id } ?: return this
 	val keepValue = deleted.default
 	// Both halves of a drawable key on parameters: the geometry grid and every channel track.
@@ -254,7 +268,7 @@ fun PuppetModel.withParameterDeleted(id: ParameterId): PuppetModel {
 		deformers = newDeformers,
 		parts = newParts,
 		glues = newGlues,
-	).withoutBlendParameter(id).withDerivedRenderRoot()
+	).withoutBlendParameter(id)
 }
 
 /**
