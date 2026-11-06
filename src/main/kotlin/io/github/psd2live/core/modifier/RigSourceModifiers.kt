@@ -27,9 +27,7 @@ internal class RigModifierSource(
     private fun generated(strength: Float = 1f, tuning: RigTuning = RigTuning(), headStrength: Float = 1f,
                           recipe: RigRecipe = RigRecipe.Legacy, outline: RigModifierInstance? = null,
                           featureDisplacement: Boolean = false, frontHairSway: Boolean = true, backHairSway: Boolean = true, capture: ((() -> PuppetModel) -> Unit)? = null): BuiltRig {
-        val clean = RigModifierPipeline.ordinaryConfig(config).copy(meshOnly = false, generateDeformers = true,
-            deferRig = false, rigPendingLayerIds = emptySet(), parentOverrides = emptyMap(),
-            rigEdits = RigEditOverlay(splitDrawableIds = primaryByLayer))
+        val clean = sourceConfig()
         val native = clean.copy(bodyStrength = strength, headTurnStrength = headStrength, rigTuning = tuning, recipe = recipe,
             featureDisplacementEnabled = featureDisplacement, mouthOutlineEnabled = outline != null,
             hairSimulationFront = !frontHairSway, hairSimulationBack = !backHairSway,
@@ -43,6 +41,10 @@ internal class RigModifierSource(
             listOf(atlas, lips, native.effectiveAtlasBudget()), pack) else pack()
         return RigBuilder.build(prepared, packed, native, meshCache, capture)
     }
+
+    private fun sourceConfig() = RigModifierPipeline.ordinaryConfig(config).copy(meshOnly = false, generateDeformers = true,
+        deferRig = false, rigPendingLayerIds = emptySet(), parentOverrides = emptyMap(),
+        rigEdits = RigEditOverlay(splitDrawableIds = primaryByLayer))
 
     private data class Template(val model: PuppetModel, val chains: List<RigModifierChains.Binding>, val bindingInput: (() -> PuppetModel)? = null)
     private val templates = HashMap<Map<String, JsonObject>, Template>()
@@ -106,11 +108,19 @@ internal class RigModifierSource(
                     if (type == LayerType.SWITCH) override?.switchId ?: layer.semantic.switchId else null)
         }.toMap()
         val catalog = io.github.psd2live.algorithms.binding.ExpressionChannels.catalog(layers.values.toList(), staggered = true)
-        // Preserve existing standard-name resolution until the standard catalog is independently packaged.
+        // Standard-name collisions need fitted parameter ranges, not meshes or an assembled model.
         val parameters = if (catalog.parameters.any { custom -> StandardParameters.all.any { it.id == custom.id } }) {
-            generated(recipe = RigRecipe(true, modules = RigModules.modules.associate {
+            val recipe = RigRecipe(true, modules = RigModules.modules.associate {
                 it.id to ModuleChoice(it == RigModules.EXPRESSION_TOGGLES)
-            })).puppet.parameters
+            })
+            val native = sourceConfig().copy(bodyStrength = 1f, headTurnStrength = 1f, rigTuning = RigTuning(), recipe = recipe,
+                featureDisplacementEnabled = false, mouthOutlineEnabled = false, hairSimulationFront = false,
+                hairSimulationBack = false, mouthThickness = 1.5f, mouthColor = null)
+            // These axes remain ordinary keyform parameters after Cubism lowering. Other standard names
+            // may be retyped from generated geometry, so keep their complete compatibility path for now.
+            val fittedAxes = setOf(StandardParameters.EYE_L_OPEN, StandardParameters.EYE_R_OPEN, StandardParameters.MOUTH_OPEN)
+            if (catalog.parameters.all { it.id in fittedAxes }) RigBuilder.sourceStandardParameters(analysis, native, meshCache)
+            else generated(recipe = recipe).puppet.parameters
         } else catalog.parameters
         PuppetIr.parametersToIr(materialBase.copy(parameters = parameters))
     }

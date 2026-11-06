@@ -1379,6 +1379,27 @@ class WorkspaceLegacyBindingTest {
         assertTrue(ribbons.all { ribbon -> imported.drawables.any { it.id == ribbon.id && it.mesh != null } })
     }
 
+    @Test fun expressionStandardNamesResolveWithoutBuildingGeometry(): Unit = runBlocking<Unit> {
+        val art = document(mouthDetails = true)
+        val f = Fixture(art.copy(layerOverrides = art.layerOverrides + mapOf(
+            "iris" to LayerClassificationOverride(LayerType.TOGGLE, parameter = StandardParameters.EYE_L_OPEN.raw),
+            "lash" to LayerClassificationOverride(LayerType.SWITCH, parameter = StandardParameters.EYE_L_OPEN.raw, switchId = 1),
+            "close" to LayerClassificationOverride(LayerType.TOGGLE, parameter = StandardParameters.MOUTH_OPEN.raw),
+        )))
+        f.install()
+        val recipe = RigRecipe(true, modules = RigModules.modules.associate { it.id to ModuleChoice(it == RigModules.EXPRESSION_TOGGLES) })
+        val reference = native(f.document, recipe).rig.puppet.parameters
+        f.group(emptyList())
+        f.edit("modifier_add", f.addition("expression.toggles", "expressions"))
+        val actual = f.now.model.rig.puppet.parameters
+        for (id in listOf(StandardParameters.EYE_L_OPEN, StandardParameters.MOUTH_OPEN)) {
+            assertEquals(reference.single { it.id == id }, actual.single { it.id == id })
+        }
+        val before = RigIrCompiler.compile(f.now.model)
+        f.edit("modifier_apply", buildJsonObject { put("id", "expressions") })
+        assertEquals(before, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
     @Test fun expressionModifierUsesNativeOpacityAndAddsInputsToChainsInEitherOrder(): Unit = runBlocking<Unit> {
         val art = document()
         val classified = art.layerOverrides + mapOf(

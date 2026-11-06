@@ -4337,6 +4337,10 @@ object RigBuilder {
 	private fun eyeOpenMax(context: RigContext, config: PipelineConfig): Float =
 		if (context.fittedEyes(config)?.let { it.options.wide && it.rigs.isNotEmpty() } == true) 2f else 1f
 
+	/** Fitted standard ranges without generating drawable geometry or atlas output; before parameter-kind lowering. */
+	internal fun sourceStandardParameters(analysis: PipelineAnalysis, config: PipelineConfig, cache: PreviewMeshCache? = null): List<Parameter> =
+		standardParameters(rigContext(analysis, config, cache), config)
+
 	/** A widening fitted eye opens up to 2; other projects retain the standard ranges. */
 	private fun standardParameters(context: RigContext, config: PipelineConfig): List<Parameter> {
 		val wide = eyeOpenMax(context, config) > 1f
