@@ -54,7 +54,7 @@ GUI 与 MCP 使用相同管理服务。`plugin_list` 返回包身份、启用状
 
 ## 编写插件
 
-JVM 契约已拆为独立的 `:algorithm-api` 模块，应用和插件共用同一份声明。它只依赖中立 `:format-model` 与 JSON 序列化库，不依赖应用、Umamo、Compose、工程或历史。`./gradlew :algorithm-api:build` 生成版本为 `1.2.0` 的 API JAR 与源码 JAR。
+JVM 契约已拆为独立的 `:algorithm-api` 模块，应用和插件共用同一份声明。它只依赖中立 `:format-model` 与 JSON 序列化库，不依赖应用、Umamo、Compose、工程或历史。`./gradlew :algorithm-api:build` 生成版本为 `1.3.0` 的 API JAR 与源码 JAR。
 
 `ModifierAlgorithmPlugin.evaluate(input, instance, checkpoint)` 接收上游 `RigIR`、不可变 `RigModifierInstance` 和取消检查函数，返回候选 `RigIR`。实现不能原地修改输入数组；长循环需调用 `checkpoint`，异常原样交回宿主。对象身份使用 `instance.outputId(localName)`，兼容已有别名；宿主仍负责输出验证、依赖、覆盖、CAS 和历史提交。API 同时公开目标引用、固定包引用、清单、版本范围与依赖声明；原 JSON 字段、序列化类型名称和对象 ID 编码保持不变。
 
@@ -232,3 +232,11 @@ API 1.2.0 增加可选的 `ContextualModifierAlgorithmPlugin`，接收独立的 
 `ScaffoldBinding.apply` 负责绑定结构的层级克隆、稳定 ID、共享对象冲突检查、父级框架迁移及组织树成员移动，直接使用引擎编辑原语，不再调用产品的 JSON 编辑分发器。`CapturedSource` 接收按目标索引的静态模板与普通素材网格；只对几何、UV、拓扑均未改变的原始素材使用直接挂接，其余网格通过默认姿态的逆坐标变换保留位置。版本 1 的逐目标层级、版本 2 的共享层级及固化后的别名保持兼容。该内核已被宿主和可安装工作进程使用；结构模板的源图计算仍由宿主捕获适配器提供。
 
 眼部运动内核 `EyeRig`、素材观察数据 `EyeFit`／`EyeArtwork` 和内部眼带、眼睑及睁眼曲线模型归入独立绑定模块；`rig/eye-opening.bin` 随模块分发。宿主继续负责图层识别和修改器组合，这次抽离不等于眼部修改器已完整独立。
+
+### 结构化变更接口（JVM API 1.3）
+
+`ChangingModifierAlgorithmPlugin.changes` 返回 `ModifierModelChanges`。具有稳定 ID 的参数、部件、变形器、网格、物理组和动作使用 `ModifierObjectChanges` 明确新增、更新、删除和复用；更新和删除携带预期旧对象，不能改写对象身份。其他单值或有序关系使用 `ModifierFieldChange`，明确区分“不修改”和“改为 null”。未涉及的字段与缓冲区保留引用。
+
+宿主在应用前用 `changeWrites` 校验实际写入部分，再校验对象前置状态；重复操作、已有 ID 的新增、旧值不一致均拒绝。应用只产生隔离候选，不提交工程。`contributions()` 当前报告对象集合操作，不包含单值字段的完整用户贡献；正式贡献、引用检查、覆盖和事务仍走现有宿主流程。物理组算法已使用此入口。
+
+这是增量框架的第一阶段，不是新外部线协议：外部工作进程暂通过兼容 `evaluate` 方法物化完整结果，宿主仍保留完整贡献比较。只读输入视图、跨语言增量传输、资源变更、按读取集合缓存和所有几何组合规则仍待实现；不能据此认定框架已达到批量迁移放行条件。

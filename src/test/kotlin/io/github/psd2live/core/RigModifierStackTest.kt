@@ -351,4 +351,20 @@ class RigModifierStackTest {
         assertEquals(result.rig, engine.applyThrough(input, stack, "a").result.rig)
     }
 
+    @Test fun directChangesRejectUndeclaredWritesBeforeReturningACandidate() {
+        val algorithm = object : ChangingModifierAlgorithmPlugin {
+            override fun changes(input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext,
+                                 checkpoint: () -> Unit) = ModifierModelChanges(parts = ModifierObjectChanges(
+                updated = listOf(ModifierObjectUpdate(input.parts.first(), input.parts.first().copy(drawOrder = 123)))))
+        }
+        val definition = RigModifierDefinition("direct", 1, evaluate = algorithm::evaluate,
+            plugin = algorithm, changeWrites = setOf("physics"))
+        val engine = RigModifierEvaluator(RigModifierRegistry(listOf(definition)))
+        val stack = RigModifierStack(listOf(entry("direct1", "direct")))
+        val failure = assertFailsWith<IllegalArgumentException> { engine.evaluate(authored, stack) }
+        assertTrue(failure.message.orEmpty().contains("Undeclared change sections"))
+        val allowed = RigModifierEvaluator(RigModifierRegistry(listOf(definition.copy(changeWrites = setOf("part")))))
+        assertEquals(123, allowed.evaluate(authored, stack).rig.parts.first().drawOrder)
+        assertNotEquals(123, authored.parts.first().drawOrder)
+    }
 }

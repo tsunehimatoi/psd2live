@@ -54,7 +54,7 @@ Use the existing `modifier_plan`, `modifier_add`, and `modifier_update` operatio
 
 ## Authoring and protocol
 
-The JVM contract lives in the independent `:algorithm-api` module used by the application. It depends only on the neutral `:format-model` module and JSON serialization, not the application, Umamo, Compose, projects or history. `./gradlew :algorithm-api:build` produces the version `1.2.0` API and sources JARs.
+The JVM contract lives in the independent `:algorithm-api` module used by the application. It depends only on the neutral `:format-model` module and JSON serialization, not the application, Umamo, Compose, projects or history. `./gradlew :algorithm-api:build` produces the version `1.3.0` API and sources JARs.
 
 `ModifierAlgorithmPlugin.evaluate(input, instance, checkpoint)` receives the upstream `RigIR`, an immutable `RigModifierInstance` and a cancellation checkpoint, and returns a candidate `RigIR`. Do not mutate input arrays; invoke the checkpoint in long loops and let failures propagate. Generate identities with `instance.outputId(localName)`, which preserves recorded aliases. The host owns output validation, dependencies, overrides, CAS and history. Targets, pinned package references, manifests, version ranges and dependency declarations are public in the same module. Existing JSON fields, serialized type names and object ID encoding are unchanged.
 
@@ -221,3 +221,11 @@ The independent binding module exposes `BindingProjection.retain`, taking a mode
 `ScaffoldBinding.apply` clones binding hierarchies, assigns stable IDs, checks shared-object conflicts, transports parent frames and moves organizational children directly through engine primitives, without the product's JSON edit dispatcher. `CapturedSource` accepts static templates indexed by target and ordinary material meshes. Only untouched positions, UVs and topology qualify for direct attachment; other meshes preserve their default-pose location through inverse coordinate transport. Version 1 per-target hierarchies, version 2 shared hierarchies and materialized aliases remain compatible. The host and installable worker use this kernel; the host capture adapter still computes structure templates from source art.
 
 The independent binding module owns `EyeRig`, the `EyeFit`/`EyeArtwork` observation data, and the internal band, eyelid and widening models. It ships `rig/eye-opening.bin` as a module resource. Layer recognition and modifier composition still belong to the host; this extraction does not complete the eye modifier migration.
+
+### Structured changes (JVM API 1.3)
+
+`ChangingModifierAlgorithmPlugin.changes` returns `ModifierModelChanges`. Stable-ID parameters, parts, deformers, meshes, physics groups and clips use `ModifierObjectChanges` for explicit additions, updates, removals and reuse. Updates and removals carry expected previous objects; updates cannot change identity. Other values and ordered relations use `ModifierFieldChange`, distinguishing no change from replacement with null. Unchanged fields and buffers retain their references.
+
+Before applying changes, the host checks actual sections against `changeWrites` and validates object preconditions. Duplicate operations, additions colliding with existing IDs and stale values are rejected. Applying produces an isolated candidate only. `contributions()` currently covers object collection operations, not complete user-facing contributions for singleton fields. Existing host logic still handles final reports, reference checks, overrides and transactions. The pendulum physics algorithm uses this entrypoint.
+
+This is the first incremental-framework stage, not a new external wire protocol. External workers still materialize complete results through the compatible `evaluate` method, and the host retains full contribution comparison. Read-only input views, cross-language delta transport, resource edits, read-set caching and geometry composition remain pending. The framework is not yet ready for bulk migration.

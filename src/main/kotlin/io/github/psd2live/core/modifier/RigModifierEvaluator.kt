@@ -30,6 +30,8 @@ internal data class RigModifierDefinition(
     val plugin: ModifierAlgorithmPlugin = ModifierAlgorithmPlugin(evaluate),
     /** Null keeps source-aware algorithms on the conservative ordered-prefix cache. */
     val cacheReads: Set<String>? = null,
+    /** Required for direct-output plugins; checked before any change is applied. */
+    val changeWrites: Set<String>? = null,
     val authorContext: (RigModifierInstance) -> ModifierAlgorithmContext = { ModifierAlgorithmContext.Empty },
 )
 
@@ -208,8 +210,13 @@ internal class RigModifierEvaluator(
                 cached.patch.apply(before)
             } else io.github.psd2live.core.RigBuildProfile.stage("modifier evaluate: ${instance.type}") {
                 val plugin = definition.plugin
-                if (plugin is ContextualModifierAlgorithmPlugin) plugin.evaluate(before, instance, authorContext, checkpoint)
-                else plugin.evaluate(before, instance, checkpoint)
+                when (plugin) {
+                    is ChangingModifierAlgorithmPlugin -> plugin.changes(before, instance, authorContext, checkpoint).also {
+                        it.requireWrites(requireNotNull(definition.changeWrites) { "${instance.type}: missing change write contract" })
+                    }.apply(before, checkpoint)
+                    is ContextualModifierAlgorithmPlugin -> plugin.evaluate(before, instance, authorContext, checkpoint)
+                    else -> plugin.evaluate(before, instance, checkpoint)
+                }
             }
             if (inputKey != null && cached == null) algorithmCache[instance.id] = ModifierInputCache.Entry(instance, inputKey, ModifierInputCache.Patch(before, generated))
             checkpoint()

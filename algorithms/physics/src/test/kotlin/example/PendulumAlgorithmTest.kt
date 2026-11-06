@@ -37,4 +37,16 @@ class PendulumAlgorithmTest {
         }
         assertTrue(input.physics.groups.isEmpty())
     }
+    @Test fun reportsOnlyItsPhysicsChangeAndPreservesOtherSections() {
+        val algorithm = PendulumAlgorithm()
+        val changes = algorithm.changes(input, instance, ModifierAlgorithmContext.Empty) {}
+        val output = changes.apply(input)
+        assertTrue(changes.parameters.isEmpty)
+        assertTrue(changes.meshes.isEmpty)
+        assertEquals(listOf(ModifierObjectContribution("physics", instance.outputId("physics"), ModifierChangeAction.ADD)),
+            changes.contributions())
+        assertEquals(algorithm.evaluate(input, instance) {}, output)
+        assertSame(input.parameters, output.parameters)
+        assertSame(input.meshes, output.meshes)
+    }
 }
