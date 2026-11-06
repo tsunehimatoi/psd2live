@@ -29,7 +29,7 @@ internal object RigModifierAlgorithms {
     }
 
     fun evaluator(source: RigModifierSource? = null) = RigModifierEvaluator(
-        if (source == null) registry else RigModifierRegistry(BuiltinModifierPlugins.definitions(source) + ModifierPluginCatalog.definitions()),
+        if (source == null) registry else RigModifierRegistry(BuiltinModifierPlugins.definitions(source).let { it + ModifierPluginCatalog.definitions(captured = it) }),
         sourceTargetExists = { it.kind == "layer" && source?.hasLayer(it.id) == true },
         physicsOrder = source?.physicsOrder.orEmpty()) { rig, instance, commands ->
         var model = PuppetIr.toPuppet(rig)

@@ -26,7 +26,11 @@ internal object ModifierPluginOutput {
         changed("hierarchy", "root-part", before.rootPart, after.rootPart)
         changed("physics", "fps", before.physics.fps, after.physics.fps)
     }
-    fun apply(rig: RigIR, instance: RigModifierInstance, algorithm: ModifierPluginAlgorithm, commands: JsonArray, checkpoint: () -> Unit): RigIR {
+    fun apply(rig: RigIR, instance: RigModifierInstance, algorithm: ModifierPluginAlgorithm, commands: JsonArray, checkpoint: () -> Unit): RigIR =
+        apply(rig, instance, algorithm, commands, checkpoint, emptyList())
+
+    fun apply(rig: RigIR, instance: RigModifierInstance, algorithm: ModifierPluginAlgorithm, commands: JsonArray, checkpoint: () -> Unit,
+              declaredParameters: List<io.github.psd2live.format.model.Parameter>): RigIR {
         require(commands.size <= 10000) { "Too many plugin commands" }
         var output = rig
         for (raw in commands) {
@@ -50,10 +54,11 @@ internal object ModifierPluginOutput {
                 }
             }
         }
-        return validate(rig, output, instance, algorithm)
+        return validate(rig, output, instance, algorithm, declaredParameters)
     }
 
-    fun validate(rig: RigIR, output: RigIR, instance: RigModifierInstance, algorithm: ModifierPluginAlgorithm): RigIR {
+    fun validate(rig: RigIR, output: RigIR, instance: RigModifierInstance, algorithm: ModifierPluginAlgorithm,
+                 declaredParameters: List<io.github.psd2live.format.model.Parameter> = emptyList()): RigIR {
         fun field(kind: String, before: Any?, after: Any?) {
             require(before == after || kind in algorithm.writes || "*" in algorithm.writes) { "Plugin wrote undeclared $kind data" }
         }
@@ -66,10 +71,16 @@ internal object ModifierPluginOutput {
         field("hierarchy", rig.renderRoot, output.renderRoot)
         field("hierarchy", rig.rootPart, output.rootPart)
         field("physics", rig.physics.fps, output.physics.fps)
+        require(declaredParameters.map { it.id }.distinct().size == declaredParameters.size) { "Duplicate captured shared parameter" }
+        val approved = declaredParameters.associateBy { it.id }
+        val existing = rig.parameters.mapTo(HashSet()) { it.id }
+        output.parameters.filter { it.id !in existing && it.id in approved }.forEach {
+            require(it == approved.getValue(it.id)) { "Plugin changed captured shared parameter ${it.id}" }
+        }
         val changes = RigModifierEvaluator.contributions(rig, output)
         require(changes.all { it.kind in algorithm.writes || "*" in algorithm.writes }) { "Plugin wrote undeclared object kinds" }
         require(changes.filter { it.change == ModifierChange.ADDED && it.kind !in setOf("relations", "hierarchy") }.all {
-            instance.localOutputName(it.id) != null || it.kind == "parameter" && algorithm.parameters.any { p -> p.id == it.id } ||
+            instance.localOutputName(it.id) != null || it.kind == "parameter" && (algorithm.parameters.any { p -> p.id == it.id } || it.id in approved) ||
                 algorithm.derivedOutputs.any { rule -> rule.matches(instance, it.kind, it.id) }
         }) { "Plugin outputs must use instance-owned deterministic IDs or declared shared parameters" }
         return output

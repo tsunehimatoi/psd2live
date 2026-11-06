@@ -9,7 +9,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 
 /** An adapter for a version of an existing algorithm; it receives the actual preceding result. */
-internal class RigModifierDefinition(
+internal data class RigModifierDefinition(
     val type: String,
     val version: Int,
     val requires: Set<String> = emptySet(),

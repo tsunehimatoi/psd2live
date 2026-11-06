@@ -210,6 +210,10 @@ tasks.test {
 
 // Keep Cubism out of classpath resources unless explicitly opted in.
 tasks.processResources {
+    dependsOn(":algorithms:binding:pluginPackage")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin")) {
+        into("algorithm-plugins/binding")
+    }
     dependsOn(":algorithms:physics:pluginPackage")
     from(project(":algorithms:physics").layout.buildDirectory.dir("plugin")) {
         into("algorithm-plugins/physics")

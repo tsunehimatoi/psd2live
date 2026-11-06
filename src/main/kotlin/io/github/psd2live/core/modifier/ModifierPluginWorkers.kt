@@ -26,13 +26,14 @@ internal object ModifierPluginWorkers {
 
     fun evaluate(entry: InstalledModifierPlugin, algorithm: ModifierPluginAlgorithm, rig: RigIR,
                  instance: RigModifierInstance, checkpoint: () -> Unit, store: ModifierPluginStore = ModifierPluginStore.shared,
-                 timeoutMillis: Long = 120_000, context: ModifierAlgorithmContext = ModifierAlgorithmContext.Empty): RigIR {
+                 timeoutMillis: Long = 120_000, context: ModifierAlgorithmContext = ModifierAlgorithmContext.Empty,
+                 declaredParameters: List<io.github.psd2live.format.model.Parameter> = emptyList()): RigIR {
         require(timeoutMillis > 0)
         store.requireAvailable(entry.reference)
         if (!workers.containsKey(entry.reference)) store.verify(entry.reference)
         val worker = workers.computeIfAbsent(entry.reference) { Worker(entry, store) }
         try {
-            val result = worker.evaluate(algorithm, rig, instance, checkpoint, timeoutMillis, context)
+            val result = worker.evaluate(algorithm, rig, instance, checkpoint, timeoutMillis, context, declaredParameters)
             store.requireAvailable(entry.reference)
             return result
         } catch (failure: QueuedFailure) {
@@ -72,7 +73,7 @@ internal object ModifierPluginWorkers {
         @Volatile private var closed = false
         private val requests = java.util.concurrent.locks.ReentrantLock(true)
 
-        fun evaluate(algorithm: ModifierPluginAlgorithm, rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit, timeoutMillis: Long, context: ModifierAlgorithmContext): RigIR {
+        fun evaluate(algorithm: ModifierPluginAlgorithm, rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit, timeoutMillis: Long, context: ModifierAlgorithmContext, declaredParameters: List<io.github.psd2live.format.model.Parameter>): RigIR {
             // A cancelled queued request must neither wait on a JVM monitor nor kill the active request.
             try {
                 val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
@@ -83,11 +84,11 @@ internal object ModifierPluginWorkers {
                     if (requests.tryLock(minOf(remaining, TimeUnit.MILLISECONDS.toNanos(50)), TimeUnit.NANOSECONDS)) break
                 }
             } catch (failure: Throwable) { throw QueuedFailure(failure) }
-            try { return evaluateLocked(algorithm, rig, instance, checkpoint, timeoutMillis, context) }
+            try { return evaluateLocked(algorithm, rig, instance, checkpoint, timeoutMillis, context, declaredParameters) }
             finally { requests.unlock() }
         }
 
-        private fun evaluateLocked(algorithm: ModifierPluginAlgorithm, rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit, timeoutMillis: Long, context: ModifierAlgorithmContext): RigIR {
+        private fun evaluateLocked(algorithm: ModifierPluginAlgorithm, rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit, timeoutMillis: Long, context: ModifierAlgorithmContext, declaredParameters: List<io.github.psd2live.format.model.Parameter>): RigIR {
             check(!closed) { "Algorithm plugin was stopped" }
             checkpoint()
             val input = ModifierInputCache.project(rig, algorithm.reads + algorithm.writes)
@@ -154,11 +155,11 @@ internal object ModifierPluginWorkers {
                 checkpoint()
                 val merged = ModifierInputCache.Patch(input, projected).apply(rig)
                 AlgorithmResultValidation.validate(merged)
-                ModifierPluginOutput.validate(rig, merged, instance, algorithm)
+                ModifierPluginOutput.validate(rig, merged, instance, algorithm, declaredParameters)
             } ?: run {
                 val commands = response.getValue("commands").jsonArray
                 require(commands.size <= 10000) { "Too many plugin commands" }
-                ModifierPluginOutput.apply(rig, instance, algorithm, JsonArray(commands.map(::expand)), checkpoint)
+                ModifierPluginOutput.apply(rig, instance, algorithm, JsonArray(commands.map(::expand)), checkpoint, declaredParameters)
             }
             previous = current
             return output

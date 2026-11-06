@@ -49,21 +49,44 @@ class PackagedPhysicsPluginTool {
             JsonObject(edit.copy(bake = bake).toJson() + ("automatic_weights" to weights)))
     }
 
+    @Test fun expressionArchiveReceivesSourceInputsAndSharedParameterApproval() {
+        val plugin = io.github.psd2live.algorithms.binding.ExpressionAlgorithm()
+        val parameters = listOf(Parameter("Expression", "Expression", 0f, 1f, 0f))
+        val context = ModifierAlgorithmContext(buildJsonObject {
+            put("schema", "expression/1")
+            putJsonObject("layers") { putJsonObject("layer") { put("parameter", "Expression") } }
+            putJsonObject("meshes") { put("body", "layer") }
+            putJsonObject("opacity") { put("layer", 1f) }
+            put("chain_owners", JsonArray(emptyList()))
+        }, mapOf("parameters" to ModifierAlgorithmResource(io.github.psd2live.format.compile.RigIrBinary.encode(RigIR(Canvas(1f, 1f), parameters)))))
+        val definition = RigModifierDefinition("expression.toggles", 1, requires = setOf("rig.scaffold"),
+            exclusiveFamily = "expression.toggles", parameters = { parameters },
+            composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter", "physics"),
+            evaluate = plugin::evaluate, plugin = plugin, authorContext = { context })
+        verifyPackage("expression.toggles", definition, JsonObject(emptyMap()), "binding")
+    }
+
+    private fun evaluate(definition: RigModifierDefinition, input: RigIR, instance: RigModifierInstance): RigIR {
+        val plugin = definition.plugin
+        return if (plugin is ContextualModifierAlgorithmPlugin) plugin.evaluate(input, instance, definition.authorContext(instance)) {}
+            else plugin.evaluate(input, instance) {}
+    }
+
     private fun testInput() = RigIR(Canvas(64f, 64f), listOf(Parameter("input", "Input", -1f, 1f, 0f),
         Parameter("output", "Output", -1f, 1f, 0f), Parameter("ParamAngleX", "Head X", -30f, 30f, 0f)),
         meshes = listOf(Mesh("body", "Body", null, geometry = MeshGeometry(
             Floats.values(0f, 0f, 10f, 0f, 0f, 30f), Floats.values(0f, 0f, 1f, 0f, 0f, 1f), Ints.values(0, 1, 2)), offsets = null)))
 
-    private fun verifyPackage(type: String, definition: RigModifierDefinition, config: JsonObject) {
+    private fun verifyPackage(type: String, definition: RigModifierDefinition, config: JsonObject, directory: String = type) {
         requireTools()
         val root = Files.createTempDirectory("packaged-algorithm-")
         val preferences = Preferences.userRoot().node("plugin-package-test/${UUID.randomUUID()}")
         val store = ModifierPluginStore(root.resolve("installed"), preferences)
         try {
-            val built = Path.of("algorithms/$type/build/plugin").toAbsolutePath()
+            val built = Path.of("algorithms/$directory/build/plugin").toAbsolutePath()
             val source = Files.createDirectory(root.resolve("package"))
             java.util.jar.JarFile(built.resolve("algorithm.jar").toFile()).use { jar ->
-                assertFalse(jar.entries().asSequence().any { entry -> (type !in setOf("swing", "simulation") && entry.name.startsWith("org/umamo/")) ||
+                assertFalse(jar.entries().asSequence().any { entry -> (type !in setOf("swing", "simulation", "expression.toggles") && entry.name.startsWith("org/umamo/")) ||
                     listOf("application", "ui", "project", "history").any { entry.name.startsWith("io/github/psd2live/$it/") } })
             }
             Files.copy(built.resolve("algorithm.jar"), source.resolve("algorithm.jar"))
@@ -79,7 +102,7 @@ class PackagedPhysicsPluginTool {
                 val replayed = wrapped.commands.fold(model) { current, command -> io.github.psd2live.core.RigAuthoringJournal.apply(current, command) }
                 assertEquals(io.github.psd2live.targets.cubism.PuppetIr.toIr(replayed), io.github.psd2live.targets.cubism.PuppetIr.toIr(wrapped.model))
             }
-            val expected = definition.plugin.evaluate(input, instance) {}
+            val expected = evaluate(definition, input, instance)
             if (type == "simulation") {
                 assertEquals(1, expected.physics.groups.size)
                 assertTrue(expected.parameters.any { it.id == instance.outputId("simulation:mode") })
@@ -92,11 +115,16 @@ class PackagedPhysicsPluginTool {
                     io.github.psd2live.targets.cubism.PuppetIr.toIr(RigSimulationWeights.apply(model, config)))
                 assertEquals(1, io.github.psd2live.targets.cubism.PuppetIr.toPuppet(expected).vertexGroups.size)
             }
-            val registry = RigModifierRegistry(listOf(definition) + ModifierPluginCatalog.definitions(store))
+            val prerequisites = definition.requires.map { RigModifierDefinition(it, 1, evaluate = { rig, _, _ -> rig }) }
+            val registry = RigModifierRegistry(prerequisites + listOf(definition) + ModifierPluginCatalog.definitions(store, listOf(definition)))
             assertEquals(entry.reference, registry.definition(instance).pluginReference)
             assertSame(definition, registry.definition(instance.copy(plugin = BuiltinModifierPlugins.reference(type, 1))))
             repeat(2) {
-                assertEquals(expected, registry.definition(instance).plugin.evaluate(input, instance) {})
+                assertEquals(expected, evaluate(registry.definition(instance), input, instance))
+            }
+            if (type == "expression.toggles") {
+                val canonical = instance.copy(type = entry.manifest.algorithms.single().type)
+                assertEquals(expected, evaluate(registry.definition(canonical), input, canonical))
             }
             BundledAlgorithmArtifacts.retain(store)
             assertTrue(store.snapshot().any { it.reference == instance.plugin })
@@ -104,13 +132,13 @@ class PackagedPhysicsPluginTool {
             ModifierPluginWorkers.stop(entry.reference)
             val reopened = ModifierPluginStore(store.root, preferences)
             val restored = RigModifierStack.fromJson(RigModifierStack(instances = listOf(instance)).toJson()).instances.single()
-            val restoredRegistry = RigModifierRegistry(listOf(definition) + ModifierPluginCatalog.definitions(reopened))
-            assertEquals(expected, restoredRegistry.definition(restored).plugin.evaluate(input, restored) {})
+            val restoredRegistry = RigModifierRegistry(prerequisites + listOf(definition) + ModifierPluginCatalog.definitions(reopened, listOf(definition)))
+            assertEquals(expected, evaluate(restoredRegistry.definition(restored), input, restored))
             store.uninstall(entry.reference)
             assertFailsWith<IllegalArgumentException> { store.requireAvailable(entry.reference) }
             val reinstalled = store.install(source.toString())
             assertEquals(entry.reference, reinstalled.reference)
-            assertEquals(expected, ModifierPluginWorkers.evaluate(reinstalled, reinstalled.manifest.algorithms.single(), input, instance, {}, store))
+            assertEquals(expected, ModifierPluginWorkers.evaluate(reinstalled, reinstalled.manifest.algorithms.single(), input, instance, {}, store, context = definition.authorContext(instance), declaredParameters = definition.parameters(instance)))
             store.uninstall(reinstalled.reference)
         } finally {
             store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }

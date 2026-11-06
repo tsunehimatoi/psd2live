@@ -2,9 +2,31 @@ package io.github.psd2live.core.modifier
 
 /** All catalog consumers use the same installed package snapshot. */
 internal object ModifierPluginCatalog {
-    fun definitions(store: ModifierPluginStore = ModifierPluginStore.shared): List<RigModifierDefinition> = store.snapshot().flatMap { entry ->
+    fun definitions(store: ModifierPluginStore = ModifierPluginStore.shared,
+                    captured: List<RigModifierDefinition> = emptyList()): List<RigModifierDefinition> = store.snapshot().flatMap { entry ->
         entry.manifest.algorithms.flatMap { algorithm -> (algorithm.aliases + algorithm.type).map { type ->
-            RigModifierDefinition(type, algorithm.version, requires = algorithm.requires,
+            // Only bundled stable aliases can use host-captured author input adapters.
+            val adapter = captured.singleOrNull { it.type in algorithm.aliases && (type == algorithm.type || it.type == type) && it.version == algorithm.version &&
+                it.plugin is ContextualModifierAlgorithmPlugin && entry.reference.id.startsWith("builtin.") }
+            if (adapter != null) {
+                require(adapter.requires == algorithm.requires && adapter.exclusiveFamily == algorithm.exclusiveFamily &&
+                    adapter.composableKinds == algorithm.composableKinds) { "Bundled source adapter contract mismatch: $type" }
+                fun native(instance: RigModifierInstance) = instance.copy(type = adapter.type)
+                val worker = object : ContextualModifierAlgorithmPlugin {
+                    override fun evaluate(input: io.github.psd2live.format.model.RigIR, instance: RigModifierInstance,
+                                          context: ModifierAlgorithmContext, checkpoint: () -> Unit): io.github.psd2live.format.model.RigIR =
+                        ModifierPluginWorkers.evaluate(entry, algorithm, input, instance, checkpoint, store,
+                            context = context, declaredParameters = adapter.parameters(native(instance)))
+                }
+                adapter.copy(type = type, pluginReference = entry.reference, plugin = worker, evaluate = worker::evaluate,
+                    parameters = { adapter.parameters(native(it)) },
+                    authorContext = { adapter.authorContext(native(it)) },
+                    validate = { rig, instance -> adapter.validate(rig, native(instance)) },
+                    providers = { adapter.providers(native(it)) },
+                    resolveParameter = { instance, before, declared -> adapter.resolveParameter(native(instance), before, declared) },
+                    references = { before, after, instance -> adapter.references(before, after, native(instance)) },
+                    cacheReads = algorithm.reads + algorithm.writes)
+            } else RigModifierDefinition(type, algorithm.version, requires = algorithm.requires,
                 references = { before, after, _ -> ModifierPluginOutput.sidecars(before, after) },
                 parameters = { algorithm.parameters.map { it.definition() } },
                 exclusiveFamily = algorithm.exclusiveFamily, composableKinds = algorithm.composableKinds,

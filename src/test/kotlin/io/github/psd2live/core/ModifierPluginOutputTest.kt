@@ -7,6 +7,23 @@ import kotlinx.serialization.json.*
 import kotlin.test.*
 
 class ModifierPluginOutputTest {
+    @Test fun dynamicSharedParametersRequireExactHostApproval() {
+        val rig = RigIR(Canvas(1f, 1f), emptyList())
+        val parameter = Parameter("Expression", "Expression", 0f, 1f, 0f)
+        val output = rig.copy(parameters = listOf(parameter))
+        val instance = RigModifierInstance("m1", "test/expression", 1, listOf(ModifierTarget("mesh", "body")))
+        val algorithm = ModifierPluginAlgorithm(instance.type, name = "Expression", writes = setOf("parameter"),
+            configSchema = JsonObject(emptyMap()), defaults = JsonObject(emptyMap()))
+        assertFailsWith<IllegalArgumentException> { ModifierPluginOutput.validate(rig, output, instance, algorithm) }
+        assertEquals(output, ModifierPluginOutput.validate(rig, output, instance, algorithm, listOf(parameter)))
+        assertFailsWith<IllegalArgumentException> {
+            ModifierPluginOutput.validate(rig, output.copy(parameters = listOf(parameter.copy(max = 2f))), instance, algorithm, listOf(parameter))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            ModifierPluginOutput.validate(rig, output.copy(parameters = listOf(parameter, parameter.copy(id = "Unexpected"))), instance, algorithm, listOf(parameter))
+        }
+    }
+
     @Test fun vertexWeightsUseAuthoringDataAndCannotEscapeDeclaredWrites() {
         val rig = RigIR(Canvas(100f, 100f), emptyList(), meshes = listOf(Mesh("cloth", "Cloth", null,
             geometry = MeshGeometry(Floats.values(0f, 0f, 10f, 0f, 0f, 10f), Floats.values(0f, 0f, 1f, 0f, 0f, 1f), Ints.values(0, 1, 2)), offsets = null)))
