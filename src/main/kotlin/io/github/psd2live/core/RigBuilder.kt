@@ -1176,13 +1176,15 @@ object RigBuilder {
 		SemanticTag.TONGUE,
 	)
 
-	fun build(inputAnalysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig, meshCache: PreviewMeshCache? = null): BuiltRig =
+    /** Optional transient input capture lets local algorithms rerun target lowering without rebuilding source geometry. */
+	fun build(inputAnalysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig, meshCache: PreviewMeshCache? = null,
+              onBindingInput: ((() -> PuppetModel) -> Unit)? = null): BuiltRig =
 		RigBuildProfile.stage("build: total") {
 			if (config.deferRig || config.rigPendingLayerIds.isNotEmpty())
 				return@stage buildWithPendingMeshes(inputAnalysis, atlas, config, meshCache)
 			val context = RigBuildProfile.stage("build: context") { rigContext(inputAnalysis, config, meshCache) }
 			val ids = RigBuildProfile.stage("build: split ids") { splitStableDrawableIds(inputAnalysis, config) }
-			buildWithContext(inputAnalysis, atlas, config, meshCache, context, ids)
+			buildWithContext(inputAnalysis, atlas, config, meshCache, context, ids, onBindingInput)
 		}
 
 	/** Pending means only that semantic generation waits; these meshes belong to the same replayable base rig. */
@@ -1331,6 +1333,7 @@ object RigBuilder {
 		meshCache: PreviewMeshCache?,
 		context: RigContext,
 		stableDrawableIds: Map<String, DrawableId>,
+        onBindingInput: ((() -> PuppetModel) -> Unit)? = null,
 	): BuiltRig {
         val generatedLips = generatedMouthLips(inputAnalysis)
 		val analysis = context.analysis
@@ -1760,6 +1763,14 @@ object RigBuilder {
 		fun seeThrough(puppet: PuppetModel) = SeeThroughLayers.candidates(puppet, config.alphaThreshold) { id ->
 			classifiedByDrawable[id]?.takeIf { inferredGroup(it, analysis.anchors) == LayerGroup.HEAD }
 		}
+        onBindingInput?.let { capture ->
+            require(!v2 && skeleton == null) { "Binding input capture requires an ordinary generated template" }
+            val input by lazy(LazyThreadSafetyMode.NONE) {
+                UvBinding.bind(assembled.withDerivedRenderRoot().let { withoutLegacyHairSway(it, config) },
+                    inputAnalysis, atlas) { classifiedByDrawable[it.id] }.puppet
+            }
+            capture { input }
+        }
 		fun finish(): BuiltRig {
 			// Blend shapes only where Cubism takes them, so the editor shows what the moc3 does (see [CubismBlendShapes]).
 			val unbound = assembled.withDerivedRenderRoot().let { withoutLegacyHairSway(it, config) }.let(CubismBlendShapes::lawful)
@@ -3814,19 +3825,8 @@ object RigBuilder {
 			else -> 0f
 		} * config.recipe.value(m.EXPRESSION_CHEEK.id, "strength") / 100f
 		val dark = (if (skin) 1f else 0f) * config.recipe.value(m.EXPRESSION_GLOOM.id, "strength") / 100f
-		var out = grids.gridsByChannel
-		val axes = listOfNotNull(axis(ParameterId("ParamCheek"), 0f, 1f).takeIf { cheek && warmth > 0f }, axis(ParameterId("ParamGloom"), 0f, 1f).takeIf { gloom && dark > 0f })
-		if (axes.isNotEmpty() && FormChannel.MULTIPLY_COLOR !in out) {
-			out = out + (FormChannel.MULTIPLY_COLOR to grid(axes) { values ->
-				val c = if (axes[0].parameterId.raw == "ParamCheek") values[0] * warmth else 0f
-				val g = (if (axes.last().parameterId.raw == "ParamGloom") values.last() else 0f) * dark * 0.13f
-				ChannelValue.Color(org.umamo.runtime.model.ColorRgb((1f - g).coerceIn(0f, 1f), (1f - c - g).coerceIn(0f, 1f), (1f - c - 0.6f * g).coerceIn(0f, 1f)))
-			})
-		}
-		if (gloom && role == PartRole.HIGHLIGHT && FormChannel.OPACITY !in out) {
-			out = out + (FormChannel.OPACITY to scalarGrid(ParameterId("ParamGloom"), floatArrayOf(0f, 1f)) { 1f - 0.85f * it })
-		}
-		return if (out === grids.gridsByChannel) grids else ChannelGrids(out)
+        return io.github.psd2live.algorithms.binding.MoodChannels.apply(grids, warmth, dark,
+            role == PartRole.HIGHLIGHT, cheek, gloom)
 	}
 
 	/** [grids] with the opacity the eye modules give [layer] ([io.github.psd2live.core.fit.EyeModules.opacity]) where it has none of its own. */

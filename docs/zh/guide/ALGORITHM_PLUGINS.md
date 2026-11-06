@@ -170,3 +170,5 @@ API 1.2.0 增加可选的 `ContextualModifierAlgorithmPlugin`，接收独立的 
 宿主通过定义的 `authorContext` 捕获输入。前缀缓存和组件依赖缓存均比较上下文内容，资源变化会重新求值。这一接口及传输能力已实现；剩余绑定算法的图层语义、原始图像适配仍在迁移中，尚未全部通过此入口执行。
 
 表情开关的应用计算已迁到 `:algorithms:binding` 的 `ExpressionAlgorithm`，实现 `ContextualModifierAlgorithmPlugin`。它直接构造开关透明度曲线、合并作者通道残差，并补充链物理的表情输入；不调用应用、历史或工程服务。上下文 `schema: "expression/1"` 的 `layers` 保存参数名称及可选开关编号，`meshes` 保存网格到图层的映射，`opacity` 保存源透明度，`chain_owners` 保存前置链修改器身份；二进制资源 `parameters` 使用 `RigIrBinary` 编码仅含已解析参数定义的空模型。`./gradlew :algorithms:binding:pluginPackage` 生成 `algorithms/binding/build/plugin`，包 ID 为 `builtin.65787072657373696f6e2e746f67676c6573.v1`，入口为 `/toggles`，保留别名 `expression.toggles`。当前包进程内执行，历史包通过工作进程接收同一上下文。宿主只为已知内置别名及算法修订绑定作者输入适配器，并核对前置依赖、互斥与可组合写入声明。动态共享参数由宿主从捕获的作者输入批准，新增参数必须与批准定义完全相同；工作进程不能自行扩大允许列表。别名和规范入口均使用同一适配。标准参数名称冲突时的参数解析仍保留兼容生成路径。
+
+`MoodChannels` 已作为绑定模块的独立颜色计算内核，由完整生成和局部模板共享。腮红／阴影追加到已有绑定时，普通路径复用转换前的源几何，仅更新参数与颜色／透明度通道，再执行原有 Cubism 结构转换；不复用已经折叠关键形的结果，避免因颜色轴增加而漏掉转向变形器。标准参数命名冲突和缺少可复用前置输入时保留完整生成路径。关闭阶段缓存仍走完整生成，用于等价验证。这两类修改器尚未提供独立可安装入口。
