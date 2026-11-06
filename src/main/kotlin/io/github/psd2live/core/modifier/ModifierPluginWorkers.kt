@@ -162,9 +162,12 @@ internal object ModifierPluginWorkers {
                 descendants.forEach { it.destroyForcibly() }
                 process.destroyForcibly()
                 // On Windows executable/JAR handles remain locked until the process actually exits.
-                process.waitFor(5, TimeUnit.SECONDS)
+                check(process.waitFor(5, TimeUnit.SECONDS)) { "Plugin worker did not exit; package remains installed" }
                 descendants.forEach { runCatching { it.onExit().get(5, TimeUnit.SECONDS) } }
                 stderr.cancel(true)
+                runCatching { process.inputStream.close() }
+                runCatching { process.outputStream.close() }
+                runCatching { process.errorStream.close() }
                 runCatching { ModifierPluginStore.deleteTree(resources) }
             } finally { if (interrupted) Thread.currentThread().interrupt() }
         }

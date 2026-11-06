@@ -124,11 +124,23 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
         val entry = installed.single { it.reference == reference }
         stopAffected(reference)
         val trash = root.resolve(".removed-${reference.digest}-${System.nanoTime()}")
-        Files.move(entry.directory, trash, ATOMIC_MOVE)
+        movePackage(entry.directory, trash)
         installed = installed - entry
         preferences.remove(reference.digest)
         changes.value++
         runCatching { deleteTree(trash) }
+    }
+
+    /** Windows scanners can briefly retain a directory handle after its worker exits. No state changes until rename succeeds. */
+    private fun movePackage(source: Path, destination: Path) {
+        for (attempt in 0..6) {
+            checkCancelled()
+            try { Files.move(source, destination, ATOMIC_MOVE); return }
+            catch (failure: java.nio.file.FileSystemException) {
+                if (!platform.startsWith("windows-") || attempt == 6) throw failure
+                Thread.sleep(10L shl attempt)
+            }
+        }
     }
 
     private fun stopAffected(reference: ModifierPluginReference) {
