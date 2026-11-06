@@ -61,8 +61,8 @@ internal class WorkspacePoseCommands(private val runtime: WorkspaceRuntime<RigPr
         val keyed = linkedSetOf<MotionKeyRef>()
         request["auto_key"]?.jsonObject?.let { record ->
             val id = record.getValue("clip_id").jsonPrimitive.content
-            val clip = requireNotNull(document.rigEdits.motionClips.firstOrNull { it.id == id }
-                ?: id.takeIf { it.startsWith("preset:") }?.removePrefix("preset:")?.let { builtin ->
+            val clip = requireNotNull(MotionCatalog.entries(document.rigEdits).firstOrNull { it.id == id }
+                ?: id.takeIf { document.rigEdits.modifierStack == null && it.startsWith("preset:") }?.removePrefix("preset:")?.let { builtin ->
                     require(builtin in MotionClips.BUILTIN_NAMES) { "Unknown generated motion" }
                     MotionClips.overrideOf(document.rigEdits.motionClips, builtin) ?: MotionPresets.clip(id, builtin,
                         document.rigEdits.skeleton, document.rigEdits.motionPresets[builtin] ?: MotionPresetSettings(), document.rigEdits.idRenames.parameters)
@@ -83,9 +83,10 @@ internal class WorkspacePoseCommands(private val runtime: WorkspaceRuntime<RigPr
             if (next != clip) {
                 val materialized = if (id.startsWith("preset:") && document.rigEdits.motionClips.none { it.id == clip.id })
                     next.copy(id = MotionClips.newId(document.rigEdits.motionClips, aids.clips.keys)) else next
-                val clips = document.rigEdits.motionClips.filterNot { it.id == materialized.id } + materialized
-                WorkspaceSkeletonMotionEdits.validated(clips, io.github.psd2live.core.MotionLoops.keyLimits(puppet.parameters))
-                document = document.copy(rigEdits = document.rigEdits.copy(motionClips = clips))
+                val clips = MotionCatalog.entries(document.rigEdits).filterNot { it.id == materialized.id } + materialized
+                WorkspaceSkeletonMotionEdits.validated(clips, io.github.psd2live.core.MotionLoops.keyLimits(puppet.parameters),
+                    reserveBuiltinNames = document.rigEdits.modifierStack == null)
+                document = document.copy(rigEdits = MotionCatalog.replacing(document.rigEdits, clips))
             }
         }
         val auxiliary = if (pose == current) before.auxiliary else JsonObject(before.auxiliary + ("posesByWorkspace" to

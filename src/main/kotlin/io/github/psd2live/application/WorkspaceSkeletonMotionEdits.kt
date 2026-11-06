@@ -69,6 +69,7 @@ internal object WorkspaceSkeletonMotionEdits {
         limits: Map<String, ClosedFloatingPointRange<Float>> = ranges,
         parameters: List<org.umamo.runtime.model.Parameter> = emptyList(),
         renames: Map<String, String> = emptyMap(),
+        reserveBuiltinNames: Boolean = true,
     ): List<MotionClip> {
         val mode = request.requiredText("mode")
         val next = when (mode) {
@@ -221,7 +222,7 @@ internal object WorkspaceSkeletonMotionEdits {
             }
             else -> error("Unknown motion mode: $mode")
         }
-        return validated(next, limits)
+        return validated(next, limits, reserveBuiltinNames)
     }
 
     /** Generated-motion knobs and lifecycle share the same candidate as timeline edits. */
@@ -252,13 +253,13 @@ internal object WorkspaceSkeletonMotionEdits {
      * [next] once every clip is known to fit the model's parameters and the limits a request may not pass. [ranges] are
      * the values a key may hold ([io.github.psd2live.core.MotionLoops.keyLimits]).
      */
-    fun validated(next: List<MotionClip>, ranges: Map<String, ClosedFloatingPointRange<Float>>): List<MotionClip> {
+    fun validated(next: List<MotionClip>, ranges: Map<String, ClosedFloatingPointRange<Float>>, reserveBuiltinNames: Boolean = true): List<MotionClip> {
         require(next.map { it.id }.distinct().size == next.size) { "Duplicate motion IDs" }
         require(next.mapNotNull { it.builtin }.distinct().size == next.count { it.builtin != null }) { "Duplicate built-in override" }
         require(next.map { it.name.lowercase() }.distinct().size == next.size) { "Duplicate motion names" }
         next.forEach { clip ->
             require(clip.builtin == null || clip.builtin in MotionClips.BUILTIN_NAMES) { "Unknown built-in override: ${clip.builtin}" }
-            require(clip.builtin != null || MotionClips.BUILTIN_NAMES.none { it.equals(clip.name, ignoreCase = true) }) {
+            require(!reserveBuiltinNames || clip.builtin != null || MotionClips.BUILTIN_NAMES.none { it.equals(clip.name, ignoreCase = true) }) {
                 "Custom motion name conflicts with a generated motion: ${clip.name}"
             }
             require(clip.curves.size <= 256) { "A motion may contain at most 256 curves" }

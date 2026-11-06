@@ -105,15 +105,17 @@ class HeadlessHostScenario {
 					val again = agent.call("timeline_bookmark_set", req("state" to marked, "parameter" to "ParamWheel", "bookmarked" to true))
 					assertEquals(marked, again.getValue("state").jsonPrimitive.content, "bookmarking a bookmarked parameter made the held state stale")
 
-					val first = agent.edit("motion_create", "name" to "Spin")
-					assertEquals("motion_1", host.captureQueries().motionClips().single().id, "the first motion: $first")
-					agent.edit("motion_set_key", "id" to "motion_1", "parameter" to "ParamWheel", "key" to mapOf("time" to 0, "value" to 0))
-					agent.edit("timeline_freeze_set", "clip_id" to "motion_1", "parameter" to "ParamWheel", "frozen" to true, "value" to 90)
-					agent.edit("motion_delete", "id" to "motion_1")
-					agent.edit("motion_create", "name" to "Wave")
-					val created = host.captureQueries().motionClips().single().id
-					assertNotEquals("motion_1", created, "a new motion took the deleted one's ID and its frozen track")
-					assertEquals(mapOf("ParamWheel" to 90f), host.savedProjectData().data.timelineAids.clip("motion_1").frozen,
+					val existingIds = host.captureQueries().motionClips().mapTo(HashSet()) { it.id }
+					agent.edit("motion_create", "name" to "Custom spin")
+					val firstId = host.captureQueries().motionClips().single { it.name == "Custom spin" }.id
+					assertTrue(firstId !in existingIds)
+					agent.edit("motion_set_key", "id" to firstId, "parameter" to "ParamWheel", "key" to mapOf("time" to 0, "value" to 0))
+					agent.edit("timeline_freeze_set", "clip_id" to firstId, "parameter" to "ParamWheel", "frozen" to true, "value" to 90)
+					agent.edit("motion_delete", "id" to firstId)
+					agent.edit("motion_create", "name" to "Custom wave")
+					val created = host.captureQueries().motionClips().single { it.name == "Custom wave" }.id
+					assertNotEquals(firstId, created, "a new motion took the deleted one's ID and its frozen track")
+					assertEquals(mapOf("ParamWheel" to 90f), host.savedProjectData().data.timelineAids.clip(firstId).frozen,
 						"deleting the motion dropped the aids an undo would find")
 					assertTrue(host.savedProjectData().data.timelineAids.clip(created).isEmpty, "the new motion inherited aids")
 				}

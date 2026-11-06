@@ -405,7 +405,8 @@ internal object WorkspaceDocumentEdits {
         val ranges = parameters.associate { it.id.raw to (it.min..it.max) }
         val clips = WorkspaceSkeletonMotionEdits.motion(
             MotionCatalog.entries(document.rigEdits), request, ranges, document.rigEdits.skeleton, document.rigEdits.motionPresets,
-            MotionLoops.keyLimits(parameters), parameters, document.rigEdits.idRenames.parameters)
+            MotionLoops.keyLimits(parameters), parameters, document.rigEdits.idRenames.parameters,
+            reserveBuiltinNames = document.rigEdits.modifierStack == null)
         if (request["mode"]?.jsonPrimitive?.content == "duplicate") {
             val stack = document.rigEdits.modifierStack?.let(io.github.psd2live.core.modifier.RigModifierStack::fromJson)
             val owner = stack?.instances?.firstOrNull { it.type == "motion" && it.outputId("motion") == request["id"]?.jsonPrimitive?.content }
