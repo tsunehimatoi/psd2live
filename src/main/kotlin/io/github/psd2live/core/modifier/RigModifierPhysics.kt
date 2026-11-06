@@ -66,24 +66,9 @@ internal object RigModifierPhysics {
         return next
     }
 
-    fun addExpressionInputs(rig: RigIR, owners: List<RigModifierInstance>, parameters: List<String>): RigIR {
-        val live = rig.parameters.mapTo(HashSet()) { it.id }
-        val inputs = io.github.psd2live.core.fit.HairChain.expressionInputs(parameters.filter { it in live }.distinct().sorted()).map {
-            io.github.psd2live.format.model.PhysicsInput(it.parameter, it.weight, io.github.psd2live.format.model.PhysicsSource.X, it.reflect)
-        }
-        if (inputs.isEmpty()) return rig
-        val chainOwners = owners.filter { RigModifierChains.kinds(it.type).isNotEmpty() }
-        val groups = rig.physics.groups.map { group ->
-            val slot = chainOwners.firstNotNullOfOrNull { it.localOutputName(group.id) }
-            if (slot?.startsWith("physics:chain:") != true || slot.endsWith(":Y")) return@map group
-            val existing = group.inputs.groupBy { it.parameter }
-            for (input in inputs) require(existing[input.parameter].orEmpty().all { it == input }) {
-                "Incompatible expression input ${input.parameter} in physics group ${group.id}"
-            }
-            group.copy(inputs = group.inputs + inputs.filter { it.parameter !in existing })
-        }
-        return rig.copy(physics = rig.physics.copy(groups = groups))
-    }
+    fun addExpressionInputs(rig: RigIR, owners: List<RigModifierInstance>, parameters: List<String>): RigIR =
+        io.github.psd2live.algorithms.binding.ExpressionAlgorithm.addPhysicsInputs(rig,
+            owners.filter { RigModifierChains.kinds(it.type).isNotEmpty() }, parameters)
 
     fun references(before: RigIR, after: RigIR, instance: RigModifierInstance) = entries(instance, after).mapNotNull { (slot, requested) ->
         reused(before, requested)?.let { ModifierContribution("physics", it.id, ModifierChange.REUSED, physicsSlot = slot) }

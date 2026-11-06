@@ -94,7 +94,16 @@ internal object RigLegacyBindings {
         spec.related.forEach { put(it, dependencies.getValue(it).jsonPrimitive.content) }
     }
 
-    fun definition(spec: Spec, source: RigModifierSource?) = RigModifierDefinition(spec.type, spec.version,
+    fun definition(spec: Spec, source: RigModifierSource?): RigModifierDefinition {
+        val evaluate: (io.github.psd2live.format.model.RigIR, RigModifierInstance, () -> Unit) -> io.github.psd2live.format.model.RigIR = { rig, instance, checkpoint ->
+            if (spec.seeThrough) requireNotNull(source).seeThrough(rig, instance, checkpoint)
+            else if (spec.expressionToggles) requireNotNull(source).expression(rig, instance, checkpoint)
+            else {
+                val bindings = RigSourceBinding.apply(rig, instance, requireNotNull(source), checkpoint)
+                if (spec.mouthOutline) source.outline(bindings, instance, checkpoint) else bindings
+            }
+        }
+        return RigModifierDefinition(spec.type, spec.version,
         requires = spec.requires, provides = if (spec.type == FITTED_FACE) setOf("face/legacy") else emptySet(), exclusiveFamily = if (spec.isBase) "base:${spec.area}" else if (spec.chainKinds.isNotEmpty()) "chain:${spec.type}" else if (spec.expressionToggles || spec.mouthOutline) spec.type else null,
         providers = { instance -> providers(instance) },
         appliedConfig = { it.config }, resolveParameter = { instance, before, declared -> requireNotNull(source).resolveParameter(instance, before, declared) },
@@ -113,12 +122,9 @@ internal object RigLegacyBindings {
             requireNotNull(source).provider(instance)
         }, composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter") +
             if (spec.expressionToggles || spec.chainKinds.isNotEmpty()) setOf("physics") else emptySet(),
-        evaluate = { rig, instance, checkpoint ->
-            if (spec.seeThrough) requireNotNull(source).seeThrough(rig, instance, checkpoint)
-            else if (spec.expressionToggles) requireNotNull(source).expression(rig, instance, checkpoint)
-            else {
-                val bindings = RigSourceBinding.apply(rig, instance, requireNotNull(source), checkpoint)
-                if (spec.mouthOutline) source.outline(bindings, instance, checkpoint) else bindings
-            }
-        })
+        evaluate = evaluate,
+        plugin = if (spec.expressionToggles) io.github.psd2live.algorithms.binding.ExpressionAlgorithm() else ModifierAlgorithmPlugin(evaluate),
+        authorContext = { if (spec.expressionToggles) requireNotNull(source).expressionContext(it) else ModifierAlgorithmContext.Empty },
+        )
+    }
 }

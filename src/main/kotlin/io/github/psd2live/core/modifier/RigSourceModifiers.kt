@@ -75,7 +75,7 @@ internal class RigModifierSource(
         }))
     }
 
-    private val expressionTemplate by lazy {
+    private val expressionParameterDefinitions by lazy {
         val layers = analysis.layers.mapNotNull { layer ->
             val override = config.layerOverrides[layer.source.id.raw]
             val type = override?.type ?: layer.semantic.type
@@ -85,22 +85,13 @@ internal class RigModifierSource(
                     if (type == LayerType.SWITCH) override?.switchId ?: layer.semantic.switchId else null)
         }.toMap()
         val catalog = io.github.psd2live.algorithms.binding.ExpressionChannels.catalog(layers.values.toList(), staggered = true)
-        // Standard-name collisions retain the legacy range and ordering resolution until that path is migrated.
-        if (catalog.parameters.any { custom -> StandardParameters.all.any { it.id == custom.id } }) {
+        // Preserve existing standard-name resolution until the standard catalog is independently packaged.
+        val parameters = if (catalog.parameters.any { custom -> StandardParameters.all.any { it.id == custom.id } }) {
             generated(recipe = RigRecipe(true, modules = RigModules.modules.associate {
                 it.id to ModuleChoice(it == RigModules.EXPRESSION_TOGGLES)
-            })).puppet
-        } else {
-            val opacity = analysis.layers.associate { it.source.id.raw to it.source.opacity.coerceIn(0f, 1f) }
-            materialBase.copy(parameters = catalog.parameters,
-                parameterTree = catalog.parameters.map { ParameterNode.Param(it.id) },
-                drawables = materialBase.drawables.map { mesh ->
-                    val layer = layersByMesh[mesh.id.raw]
-                    val expression = layers[layer] ?: return@map mesh
-                    val grid = requireNotNull(io.github.psd2live.algorithms.binding.ExpressionChannels.opacity(expression, catalog.switchKeys))
-                    mesh.copy(opacity = opacity.getValue(requireNotNull(layer)), channelGrids = ChannelGrids(mapOf(FormChannel.OPACITY to grid)))
-                })
-        }
+            })).puppet.parameters
+        } else catalog.parameters
+        PuppetIr.parametersToIr(materialBase.copy(parameters = parameters))
     }
 
     private val expressionLayers by lazy {
@@ -119,38 +110,32 @@ internal class RigModifierSource(
     fun expressionParameters(instance: RigModifierInstance): List<io.github.psd2live.format.model.Parameter> {
         val ids = expressionIds(instance).mapTo(HashSet()) { it.raw }
         if (ids.isEmpty()) return emptyList()
-        return parameterDefinitions.getOrPut(expressionTemplate) { PuppetIr.parametersToIr(expressionTemplate) }
+        return expressionParameterDefinitions
             .filter { it.id in ids }
     }
 
-    fun expression(rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit): RigIR {
-        checkpoint()
-        val ids = expressionIds(instance)
-        if (ids.isEmpty()) return rig
-        val current = PuppetIr.toPuppet(rig)
-        val existing = current.parameters.mapTo(HashSet()) { it.id }
-        val additions = expressionTemplate.parameters.filter { it.id in ids && it.id !in existing }
-        val templates = expressionTemplate.drawables.associateBy { it.id.raw }
-        val targets = instance.targets.mapTo(HashSet()) { it.id }
-        val model = current.copy(parameters = current.parameters + additions,
-            parameterTree = current.parameterTree + additions.map { ParameterNode.Param(it.id) })
-        val drawables = model.drawables.map { actual ->
-            val layer = layersByMesh[actual.id.raw]
-            if (actual.id.raw !in targets || layer == null || layer !in expressionLayers) return@map actual
-            val template = templates.getValue(primaryByLayer.getValue(layer))
-            val opacity = requireNotNull(template.channelGrids[FormChannel.OPACITY]) { "${instance.id}: missing expression track on ${actual.id.raw}" }
-            require(opacity.axes.singleOrNull()?.parameterId == expressionLayers[layer]) { "${instance.id}: incompatible expression track on ${actual.id.raw}" }
-            require(actual.channelGrids[FormChannel.OPACITY]?.axes.orEmpty().none { it.parameterId in ids }) {
-                "${instance.id}: expression track already exists on ${actual.id.raw}"
+    fun expressionContext(instance: RigModifierInstance): ModifierAlgorithmContext = ModifierAlgorithmContext(buildJsonObject {
+        put("schema", "expression/1")
+        putJsonObject("layers") {
+            analysis.layers.forEach { layer ->
+                val override = config.layerOverrides[layer.source.id.raw]
+                val type = override?.type ?: layer.semantic.type
+                val parameter = (override?.parameter ?: layer.semantic.parameter).trim()
+                if (type != LayerType.PRESET && parameter.isNotBlank()) putJsonObject(layer.source.id.raw) {
+                    put("parameter", parameter)
+                    if (type == LayerType.SWITCH) put("switch", override?.switchId ?: layer.semantic.switchId)
+                }
             }
-            checkpoint()
-            val neutral = actual.copy(channelGrids = ChannelGrids.Empty, opacity = template.opacity)
-            val desired = neutral.copy(channelGrids = ChannelGrids(mapOf(FormChannel.OPACITY to opacity)))
-            actual.copy(channelGrids = io.github.psd2live.core.legacy.RigGenerationResidual.channels(model, actual, neutral, desired, checkpoint))
         }
-        val output = rig.withPuppet(model.copy(drawables = drawables))
-        return RigModifierPhysics.addExpressionInputs(output, activeBefore(instance), ids.map { it.raw })
-    }
+        put("meshes", JsonObject(layersByMesh.mapValues { JsonPrimitive(it.value) }))
+        putJsonObject("opacity") { analysis.layers.forEach { put(it.source.id.raw, it.source.opacity.coerceIn(0f, 1f)) } }
+        put("chain_owners", Json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(RigModifierInstance.serializer()),
+            activeBefore(instance).filter { RigModifierChains.kinds(it.type).isNotEmpty() }))
+    }, resources = mapOf("parameters" to ModifierAlgorithmResource(io.github.psd2live.format.compile.RigIrBinary.encode(
+        RigIR(io.github.psd2live.format.model.Canvas(1f, 1f), expressionParameters(instance))))))
+
+    fun expression(rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit): RigIR =
+        io.github.psd2live.algorithms.binding.ExpressionAlgorithm().evaluate(rig, instance, expressionContext(instance), checkpoint)
 
     fun addUpstreamExpressionInputs(rig: RigIR, instance: RigModifierInstance): RigIR {
         val preceding = activeBefore(instance).filter { RigLegacyBindings.find(it.type)?.expressionToggles == true }

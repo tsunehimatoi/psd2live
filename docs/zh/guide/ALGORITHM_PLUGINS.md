@@ -168,3 +168,5 @@ API 1.2.0 增加可选的 `ContextualModifierAlgorithmPlugin`，接收独立的 
 宿主声明 `author_context_v1` 能力。请求的可选 `context` 包含 `version: 1`、元数据资源引用 `values` 和逻辑名称到资源引用的映射 `resources`。引用使用 SHA-256 与长度校验；元数据上限 1 MiB，单项资源上限 64 MiB，最多 10000 项、总计 512 MiB。同内容载荷只落盘一次；不支持的版本和损坏资源拒绝求值。缺省上下文为空。
 
 宿主通过定义的 `authorContext` 捕获输入。前缀缓存和组件依赖缓存均比较上下文内容，资源变化会重新求值。这一接口及传输能力已实现；剩余绑定算法的图层语义、原始图像适配仍在迁移中，尚未全部通过此入口执行。
+
+表情开关的应用计算已迁到 `:algorithms:binding` 的 `ExpressionAlgorithm`，实现 `ContextualModifierAlgorithmPlugin`。它直接构造开关透明度曲线、合并作者通道残差，并补充链物理的表情输入；不调用应用、历史或工程服务。上下文 `schema: "expression/1"` 的 `layers` 保存参数名称及可选开关编号，`meshes` 保存网格到图层的映射，`opacity` 保存源透明度，`chain_owners` 保存前置链修改器身份；二进制资源 `parameters` 使用 `RigIrBinary` 编码仅含已解析参数定义的空模型。该入口已接入进程内求值，尚未发布为可安装的独立表情包；动态共享参数的外部输出声明与宿主源数据适配还需完成。标准参数名称冲突时的参数解析仍保留兼容生成路径。

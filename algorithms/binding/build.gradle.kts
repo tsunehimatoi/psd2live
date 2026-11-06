@@ -5,6 +5,9 @@ version = "1.0.0"
 kotlin { jvmToolchain(21) }
 dependencies {
     api(project(":umamo"))
+    api(project(":algorithm-api"))
+    implementation(project(":format-compile"))
+    implementation(project(":targets:cubism"))
     testImplementation(kotlin("test"))
 }
 tasks.withType<Test>().configureEach { useJUnitPlatform(); filter.isFailOnNoMatchingTests = false }
