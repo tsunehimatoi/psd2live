@@ -100,7 +100,7 @@ internal object ModifierPluginWorkers {
             val request = buildJsonObject {
                 put("protocol", 1); put("id", requestId); put("method", "evaluate")
                 put("type", algorithm.type); put("version", instance.version); put("instance", instance.id)
-                put("capabilities", JsonArray((ModifierPluginOutput.operations + setOf("rig_objects", "author_context_v1")).sorted().map(::JsonPrimitive)))
+                put("capabilities", JsonArray((ModifierPluginOutput.operations + setOf("rig_objects", "author_context_v1", io.github.psd2live.algorithm.worker.AlgorithmChanges.CAPABILITY)).sorted().map(::JsonPrimitive)))
                 if (context != ModifierAlgorithmContext.Empty) put("context", io.github.psd2live.algorithm.worker.AlgorithmContexts.encode(context, ::blob))
                 put("invocation", Json.encodeToJsonElement(RigModifierInstance.serializer(), instance.copy(type = algorithm.type)))
                 put("dependencies", JsonArray(store.resolution(entry.reference).dependencies.map { reference ->
@@ -143,10 +143,16 @@ internal object ModifierPluginWorkers {
             catch (failure: ExecutionException) { throw failure.cause ?: failure }
             catch (failure: Exception) { task.cancel(true); throw failure }
             checkpoint()
-            require(response.keys.all { it in setOf("protocol", "id", "commands", "objects", "error") } && response["protocol"]?.jsonPrimitive?.int == 1 && response["id"]?.jsonPrimitive?.long == requestId) { "Invalid plugin response envelope" }
+            require(response.keys.all { it in setOf("protocol", "id", "commands", "objects", "changes", "error") } && response["protocol"]?.jsonPrimitive?.int == 1 && response["id"]?.jsonPrimitive?.long == requestId) { "Invalid plugin response envelope" }
             response["error"]?.let { error("${entry.manifest.name}: ${it.jsonPrimitive.content}") }
-            require(("commands" in response) != ("objects" in response)) { "Plugin must return commands or model objects" }
-            val output = response["objects"]?.let { value ->
+            require(listOf("commands", "objects", "changes").count { it in response } == 1) { "Plugin must return exactly one result format" }
+            val output = response["changes"]?.let { value ->
+                val changes = io.github.psd2live.algorithm.worker.AlgorithmChanges.decode(value.jsonObject, resources)
+                changes.requireWrites(algorithm.writes)
+                val merged = changes.apply(rig, checkpoint)
+                AlgorithmResultValidation.validate(merged)
+                ModifierPluginOutput.validate(rig, merged, instance, algorithm, declaredParameters)
+            } ?: response["objects"]?.let { value ->
                 val delta = value.jsonObject
                 require(delta.keys == setOf("changed", "removed", "mesh_order", "deformer_order")) { "Invalid model object result" }
                 val objects = AlgorithmObjects.apply(current, delta)

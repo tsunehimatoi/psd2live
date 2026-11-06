@@ -54,7 +54,7 @@ GUI 与 MCP 使用相同管理服务。`plugin_list` 返回包身份、启用状
 
 ## 编写插件
 
-JVM 契约已拆为独立的 `:algorithm-api` 模块，应用和插件共用同一份声明。它只依赖中立 `:format-model` 与 JSON 序列化库，不依赖应用、Umamo、Compose、工程或历史。`./gradlew :algorithm-api:build` 生成版本为 `1.3.0` 的 API JAR 与源码 JAR。
+JVM 契约已拆为独立的 `:algorithm-api` 模块，应用和插件共用同一份声明。它只依赖中立 `:format-model` 与 JSON 序列化库，不依赖应用、Umamo、Compose、工程或历史。`./gradlew :algorithm-api:build` 生成版本为 `1.3.1` 的 API JAR 与源码 JAR。
 
 `ModifierAlgorithmPlugin.evaluate(input, instance, checkpoint)` 接收上游 `RigIR`、不可变 `RigModifierInstance` 和取消检查函数，返回候选 `RigIR`。实现不能原地修改输入数组；长循环需调用 `checkpoint`，异常原样交回宿主。对象身份使用 `instance.outputId(localName)`，兼容已有别名；宿主仍负责输出验证、依赖、覆盖、CAS 和历史提交。API 同时公开目标引用、固定包引用、清单、版本范围与依赖声明；原 JSON 字段、序列化类型名称和对象 ID 编码保持不变。
 
@@ -239,4 +239,10 @@ API 1.2.0 增加可选的 `ContextualModifierAlgorithmPlugin`，接收独立的 
 
 宿主在应用前用 `changeWrites` 校验实际写入部分，再校验对象前置状态；重复操作、已有 ID 的新增、旧值不一致均拒绝。应用只产生隔离候选，不提交工程。`contributions()` 当前报告对象集合操作，不包含单值字段的完整用户贡献；正式贡献、引用检查、覆盖和事务仍走现有宿主流程。物理组算法已使用此入口。
 
-这是增量框架的第一阶段，不是新外部线协议：外部工作进程暂通过兼容 `evaluate` 方法物化完整结果，宿主仍保留完整贡献比较。只读输入视图、跨语言增量传输、资源变更、按读取集合缓存和所有几何组合规则仍待实现；不能据此认定框架已达到批量迁移放行条件。
+外部工作进程协商 `model_changes_v1` 能力后，直接返回 `changes`，不物化并编码完整输出。未声明该能力的宿主仍获得原来的 `objects` 响应。`commands`、`objects`、`changes` 必须且只能出现一种，外层协议仍为 1。
+
+`changes` 严格包含 `schema`、`before`、`after`、`objects`、`fields`。`schema` 为 `model_changes_v1`；`before`／`after` 是带 SHA-256 和字节数的二进制资源引用，使用现有 RigIR 二进制版本 6，仅存放涉及的对象及字段，不包含未改动网格。`objects` 的键为 `parameters`、`parts`、`deformers`、`meshes`、`physicsGroups`、`clips`，每个值按 `[新增数, 更新数, 删除数, 复用数]` 排列。前置载荷顺序为删除、复用、更新旧对象；结果载荷顺序为新增、更新新对象。对象操作总数上限 10000，每个载荷上限 64 MiB。
+
+`fields` 列出替换的单值或关系字段（与 `ModifierModelChanges` 的字段名一致）；列出的字段从前后载荷取值，允许明确替换为 null。JVM 编解码辅助库为 `AlgorithmChanges`。宿主校验版本、键集、计数、资源完整性、写入范围与旧对象前置条件，再执行现有完整引用和输出合法性检查。安装包清单中的写入名沿用 `textures`、`glue` 等既有目录词汇。
+
+当前物理包已实测跨进程安装、连续求值、重开、卸载和重装等价。其他语言仍可使用既有命令协议；尚未完成六语言对新变更载荷的逐一实现与验收。输入仍使用原来的对象投影，宿主仍保留完整贡献比较；只读输入视图、资源变更、按读取集合缓存和几何组合规则仍待完成，尚未达到批量迁移放行条件。

@@ -25,12 +25,20 @@ object AlgorithmWorker {
                 val checkpoint = {
                     if (Thread.currentThread().isInterrupted) throw java.util.concurrent.CancellationException()
                 }
-                val output = if (algorithm is ContextualModifierAlgorithmPlugin)
-                    algorithm.evaluate(input, instance, AlgorithmContexts.decode(request["context"], resources), checkpoint)
-                else algorithm.evaluate(input, instance, checkpoint)
-                val encoded = AlgorithmObjects.encode(output) { AlgorithmObjects.write(resources, it) }
+                val context = AlgorithmContexts.decode(request["context"], resources)
+                val response = if (algorithm is ChangingModifierAlgorithmPlugin &&
+                    request.getValue("capabilities").jsonArray.any { it.jsonPrimitive.content == AlgorithmChanges.CAPABILITY }) {
+                    val changes = algorithm.changes(input, instance, context, checkpoint)
+                    buildJsonObject { put("changes", AlgorithmChanges.encode(changes) { AlgorithmObjects.write(resources, it) }) }
+                } else {
+                    val output = if (algorithm is ContextualModifierAlgorithmPlugin)
+                        algorithm.evaluate(input, instance, context, checkpoint)
+                    else algorithm.evaluate(input, instance, checkpoint)
+                    val encoded = AlgorithmObjects.encode(output) { AlgorithmObjects.write(resources, it) }
+                    buildJsonObject { put("objects", AlgorithmObjects.delta(objects, encoded, output)) }
+                }
                 previous = objects
-                buildJsonObject { put("objects", AlgorithmObjects.delta(objects, encoded, output)) }
+                response
             } catch (failure: Exception) {
                 buildJsonObject { put("error", failure.message ?: failure.javaClass.simpleName) }
             }
