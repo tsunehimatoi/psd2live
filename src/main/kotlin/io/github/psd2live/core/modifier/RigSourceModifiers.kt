@@ -676,15 +676,7 @@ internal object RigSourceModifiers {
         return rig.withPuppet(current.withDerivedRenderRoot())
     }
 
-    /** Use the same canvas-space transfer as ordinary DCC rebinding, including non-affine Warp parents. */
-    internal fun pointsInParent(model: PuppetModel, sample: Drawable, points: FloatArray, parent: DeformerId, scratch: String): FloatArray {
-        val id = DrawableId(scratch)
-        require(model.drawables.none { it.id == id }) { "Binding frame ID collision" }
-        val drawable = sample.copy(id = id, parentDeformerId = null,
-            mesh = DrawableMesh(points, FloatArray(points.size), IntArray(0)), geometryGrid = null,
-            channelGrids = ChannelGrids.Empty, blendShapes = emptyList())
-        val before = model.copy(drawables = model.drawables + drawable)
-        val after = before.copy(drawables = before.drawables.map { if (it.id == id) it.copy(parentDeformerId = parent) else it })
-        return RigStructureEdits.carriedToParent(before, after, id).drawables.single { it.id == id }.mesh!!.positions
-    }
+    internal fun pointsInParent(model: PuppetModel, sample: Drawable, points: FloatArray, parent: DeformerId, scratch: String): FloatArray =
+        io.github.psd2live.algorithms.binding.BindingFrames.pointsInParent(model, sample, points, parent, scratch)
+
 }

@@ -5,7 +5,7 @@ import io.github.psd2live.core.legacy.RigGenerationResidual
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.targets.cubism.PuppetIr
 import kotlinx.serialization.json.*
-import org.umamo.render.eval.drawableSpaceMapping
+import io.github.psd2live.algorithms.binding.BindingFrames.reparent
 import org.umamo.runtime.eval.rotationFormAt
 import org.umamo.runtime.eval.warpControlPointsAt
 import org.umamo.runtime.model.*
@@ -138,7 +138,7 @@ internal object RigSourceBinding {
                 }
                 val destination = desiredBranch.firstOrNull()?.let(mapped::getValue)
                 current = current.copy(drawables = current.drawables.map { if (it.id == id) it.copy(parentDeformerId = destination) else it })
-                if (!nativeGeometry) current = carry(beforeInsertion, current, id, instance)
+                if (!nativeGeometry) current = carry(beforeInsertion, current, id, instance, checkpoint)
             }
             val previousFrame = current.copy(deformers = current.deformers.map { updatedDeformers[it.id] ?: it })
             for (canonical in branch) {
@@ -188,7 +188,7 @@ internal object RigSourceBinding {
             }
             // Fitting may change a neutral parent frame even when its ID stays. Re-express the authored geometry
             // in that new frame before adding the local algorithm correction, as ordinary canvas-space rebinding does.
-            if (!nativeGeometry) current = carry(previousFrame, current, id, instance)
+            if (!nativeGeometry) current = carry(previousFrame, current, id, instance, checkpoint)
             // Parent motion remains in deformers. Only local mesh corrections are transferred through the native
             // residual mapper, against static projections, so no ancestor's motion is counted a second time.
             val oldMesh = previous.drawables.single { it.id == id }
@@ -260,7 +260,7 @@ internal object RigSourceBinding {
         return if (chains.isEmpty()) output else source.addUpstreamExpressionInputs(output, instance)
     }
 
-    private fun carry(before: PuppetModel, after: PuppetModel, id: DrawableId, instance: RigModifierInstance): PuppetModel {
+    private fun carry(before: PuppetModel, after: PuppetModel, id: DrawableId, instance: RigModifierInstance, checkpoint: () -> Unit): PuppetModel {
         fun frame(model: PuppetModel): List<Deformer> {
             val nodes = model.deformers.associateBy { it.id }
             val path = ArrayList<Deformer>()
@@ -276,7 +276,7 @@ internal object RigSourceBinding {
         // An unchanged frame needs no inverse. Fitted lattices can have ambiguous inverses outside their bounds.
         if (frame(before).map(PuppetIr::deformerToIr) == frame(after).map(PuppetIr::deformerToIr) &&
             before.parameters == after.parameters) return after
-        return try { RigStructureEdits.carriedToParent(before, after, id) }
+        return try { io.github.psd2live.algorithms.binding.BindingFrames.carriedToParent(before, after, id, checkpoint) }
         catch (failure: IllegalArgumentException) {
             throw IllegalArgumentException("${instance.type} (${instance.id}), ${id.raw}: ${failure.message}", failure)
         }
@@ -289,39 +289,6 @@ internal object RigSourceBinding {
         if (old == next) return authored
         require(authored == old || authored == next) { "${instance.id}: incompatible authored masks on ${actual.id.raw}" }
         return next
-    }
-
-    /** Only invert the authored path below a shared anchor, avoiding ambiguous inverses outside fitted ancestors. */
-    private fun reparent(model: PuppetModel, sample: Drawable, warp: Deformer.Warp, anchor: DeformerId?, destination: DeformerId?,
-                         scratch: String, checkpoint: () -> Unit): Deformer.Warp {
-        var top = destination
-        val visited = HashSet<DeformerId>()
-        var relative: PuppetModel? = null
-        while (top != null) {
-            require(visited.add(top)) { "Cyclic authored carrier parent" }
-            val node = model.deformers.single { it.id == top }
-            if (node.parent == anchor) {
-                val detached = when (node) {
-                    is Deformer.Warp -> node.copy(parent = null)
-                    is Deformer.Rotation -> node.copy(parent = null)
-                }
-                relative = model.copy(deformers = model.deformers.map { if (it.id == node.id) detached else it })
-                break
-            }
-            top = node.parent
-        }
-        val frame = model.copy(drawables = model.drawables.map { if (it.id == sample.id) it.copy(parentDeformerId = anchor) else it })
-        val mapping = if (relative == null) requireNotNull(drawableSpaceMapping(frame, emptyMap(), sample.id)) else null
-        fun points(values: FloatArray): FloatArray {
-            checkpoint()
-            val canvas = mapping?.localToWorld(values) ?: values
-            return if (destination == null) canvas else RigSourceModifiers.pointsInParent(relative ?: model, sample, canvas, destination, scratch)
-        }
-        return warp.copy(parent = destination, geometryGrid = warp.geometryGrid?.let { grid -> KeyformGrid(grid.axes, grid.cells.map {
-            KeyformCell(it.coordinate, WarpLatticeForm(points(it.form.controlPoints)))
-        }) }, blendShapes = warp.blendShapes.map { binding -> binding.copy(forms = binding.forms.map { form -> form?.let {
-            WarpForm(points(it.controlPoints), it.opacity, it.multiplyColor, it.screenColor)
-        } }) })
     }
 
     private fun sources(from: PuppetModel, original: Drawable, to: PuppetModel, target: Drawable, checkpoint: () -> Unit) =
