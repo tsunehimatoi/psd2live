@@ -8,7 +8,7 @@
 
 当前内置入口仍随应用编译和发布，尚不是可单独分发、安装的 JAR。绑定算法仍调用应用提供的共享生成服务；入口摘要不是整个应用和全部底层依赖的摘要。独立包发布、历史二进制保留和绑定算法局部计算仍需继续迁移，不能把逐项管理与身份固定视为这部分已经完成。
 
-其中物理组实现已迁到 `:algorithms:physics`：`PendulumAlgorithm` 直接实现公共求值接口，配置解析、物理组转换和输出冲突检查均在该模块完成。它只依赖 `algorithm-api`，能独立构建 JAR，应用注册入口只委托调用；普通物理导出和其他生成器复用同一转换实现。当前仍随应用链接发布，尚不能把这个构建产物直接交给插件安装器，独立包加载与历史版本恢复仍未完成。
+其中物理组实现已迁到 `:algorithms:physics`：`PendulumAlgorithm` 直接实现公共求值接口，配置解析、物理组转换和输出冲突检查均在该模块完成。算法仅使用 `algorithm-api`，应用注册入口只委托调用；普通物理导出和其他生成器复用同一转换实现。另由 `algorithm-worker` 提供工作进程入口，`./gradlew :algorithms:physics:pluginPackage` 在 `algorithms/physics/build/plugin` 生成独立安装目录（`plugin.json` 与携带依赖的 `algorithm.jar`），可交给 `plugin_install`。包 ID 为 `psd2live.physics`；它不会自动替换工程中已有的 `builtin.*` 引用，内置历史引用的自动恢复仍未完成。
 
 ## 安装与卸载
 
@@ -43,6 +43,14 @@ JVM 契约已拆为独立的 `:algorithm-api` 模块，应用和插件共用同�
 `ModifierAlgorithmPlugin.evaluate(input, instance, checkpoint)` 接收上游 `RigIR`、不可变 `RigModifierInstance` 和取消检查函数，返回候选 `RigIR`。实现不能原地修改输入数组；长循环需调用 `checkpoint`，异常原样交回宿主。对象身份使用 `instance.outputId(localName)`，兼容已有别名；宿主仍负责输出验证、依赖、覆盖、CAS 和历史提交。API 同时公开目标引用、固定包引用、清单、版本范围与依赖声明；原 JSON 字段、序列化类型名称和对象 ID 编码保持不变。
 
 API JAR 本身不是可安装算法包。独立编译契约不等于内置实现已迁出应用；内置包加载与历史实现保留仍按上面的迁移状态处理。外部六语言工作进程继续使用下述版本化协议。
+
+### JVM 模型结果适配
+
+`algorithm-worker` 可把 `ModifierAlgorithmPlugin` 放入常驻 JVM 进程。入口调用 `AlgorithmWorker.run(mapOf((type to version) to implementation))`，不需要依赖应用、编辑器或工程。标准输出仅用于协议响应。请求的 `invocation` 提供完整实例信息（含持久化输出别名），原有 `instance`、`config`、`targets` 字段继续兼容其他语言。
+
+宿主在 `capabilities` 中声明 `rig_objects` 后，工作进程可返回 `objects`，替代 `commands`；两者不能同时出现。`objects` 必须恰含 `changed`、`removed`、`mesh_order`、`deformer_order`：以请求输入为基线，仅列出改变的 `frame`、`mesh:<id>`、`deformer:<id>` 资源引用及被删除的键。资源采用 `RigIrObjects` 二进制格式，引用包含 `sha256` 和 `bytes`。单个资源上限 64 MiB，总计上限 512 MiB；宿主验证摘要、大小、对象类型和 ID，不接受路径作为资源引用。
+
+宿主将对象差异合并回完整上游输入，因此按读写声明裁剪掉的无关内容不会丢失。随后检查结构、数值、声明的写入类型和输出 ID，再进入候选、覆盖与事务流程。进程内与工作进程调用同一算法实现；宿主不再通过物理配置命令重新执行该算法。二进制结果适配不改变其他语言已有的命令输出协议。
 
 六语言源码与打包工具见 [examples/plugins](../../../examples/plugins/README.md)。包根目录的 `plugin.json` 声明：
 

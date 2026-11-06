@@ -10,7 +10,7 @@ These entries still compile and ship with the application, rather than independe
 
 ## Install and remove
 
-The physics-group implementation now lives in `:algorithms:physics`. `PendulumAlgorithm` implements the public evaluation interface; configuration parsing, group conversion and output conflict checks run in that module. It depends only on `algorithm-api` and builds an independent JAR. The application registration delegates to it, while ordinary physics export and other generators reuse the same conversion. It is still linked and shipped with the application: this JAR alone is not accepted by the plugin installer, and independent package loading and historical version restoration remain unfinished.
+The physics-group implementation now lives in `:algorithms:physics`. `PendulumAlgorithm` implements the public evaluation interface; configuration parsing, group conversion and output conflict checks run in that module using only `algorithm-api`. Application registration delegates to it, while ordinary physics export and other generators reuse the conversion. A process entrypoint uses `algorithm-worker`: `./gradlew :algorithms:physics:pluginPackage` produces `algorithms/physics/build/plugin`, containing `plugin.json` and a self-contained `algorithm.jar` accepted by `plugin_install`. Its package ID is `psd2live.physics`; it does not automatically replace existing `builtin.*` references. Restoration of historical bundled references remains unfinished.
 
 Use Preferences → Algorithm plugins to select a ZIP or enter an absolute directory or an HTTPS, SSH or git:// Git URL. Git sources accept an optional branch, tag or full commit hash and record the resolved commit. The repository root must contain a built package. The installer does not fetch submodules, run setup scripts, or compile source.
 
@@ -43,6 +43,14 @@ The JVM contract lives in the independent `:algorithm-api` module used by the ap
 `ModifierAlgorithmPlugin.evaluate(input, instance, checkpoint)` receives the upstream `RigIR`, an immutable `RigModifierInstance` and a cancellation checkpoint, and returns a candidate `RigIR`. Do not mutate input arrays; invoke the checkpoint in long loops and let failures propagate. Generate identities with `instance.outputId(localName)`, which preserves recorded aliases. The host owns output validation, dependencies, overrides, CAS and history. Targets, pinned package references, manifests, version ranges and dependency declarations are public in the same module. Existing JSON fields, serialized type names and object ID encoding are unchanged.
 
 The API JAR is not an installable algorithm package. An independently compiled contract does not mean bundled implementations have left the application; package loading and historical implementation retention remain subject to the migration limitations above. External workers in all six languages continue to use the versioned protocol below.
+
+### JVM model results
+
+`algorithm-worker` runs public algorithm implementations in a persistent JVM. An entrypoint calls `AlgorithmWorker.run(mapOf((type to version) to implementation))` without loading application, editor or project code. Reserve stdout for protocol responses. Requests include the complete instance in `invocation`, including persisted output aliases, while keeping the existing `instance`, `config` and `targets` fields for other languages.
+
+When the host advertises `rig_objects`, a response can contain `objects` instead of `commands`, never both. Its exact fields are `changed`, `removed`, `mesh_order` and `deformer_order`. Relative to the request input, it lists changed `frame`, `mesh:<id>` and `deformer:<id>` resource references and removed keys. References contain `sha256` and `bytes`; payloads use `RigIrObjects` binary encoding. The host checks hashes, sizes, object types and identities, with limits of 64 MiB per resource and 512 MiB total. Resource references cannot contain paths.
+
+The host merges the object delta into the complete upstream input, preserving content excluded by read/write projection. It then checks structure, numeric values, declared writes and output IDs before overlays and the candidate transaction. Both execution modes call the same algorithm; the host does not rerun the physics algorithm from configuration commands. Other languages retain their existing command response protocol.
 
 See [six-language examples and packaging instructions](../../../examples/plugins/README.md). Package-root `plugin.json` contains:
 

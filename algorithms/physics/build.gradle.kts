@@ -1,3 +1,6 @@
+import java.util.HexFormat
+import java.security.MessageDigest
+
 plugins {
     `java-library`
     kotlin("jvm")
@@ -10,7 +13,41 @@ java { withSourcesJar() }
 
 dependencies {
     api(project(":algorithm-api"))
+    implementation(project(":algorithm-worker"))
     testImplementation(kotlin("test"))
+}
+
+val workerJar by tasks.registering(Jar::class) {
+    dependsOn(configurations.runtimeClasspath)
+    archiveClassifier.set("worker")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest { attributes["Main-Class"] = "io.github.psd2live.algorithms.physics.PhysicsWorker" }
+    from(sourceSets.main.get().output)
+    from(configurations.runtimeClasspath.map { files -> files.map { if (it.isDirectory) it else zipTree(it) } })
+    exclude("META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA")
+}
+
+tasks.register("pluginPackage") {
+    dependsOn(workerJar)
+    val output = layout.buildDirectory.dir("plugin")
+    inputs.file(workerJar.flatMap { it.archiveFile })
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val jar = workerJar.get().archiveFile.get().asFile
+        val payload = directory.resolve("algorithm.jar")
+        jar.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"psd2live.physics","version":"1.0.0","name":"Pendulum physics",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"psd2live.physics/pendulum","version":1,"name":"Pendulum physics","category":"physics",
+               "targets":["mesh","deformer"],"reads":["parameter","physics"],"writes":["physics"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
 }
 
 tasks.withType<Test>().configureEach {
