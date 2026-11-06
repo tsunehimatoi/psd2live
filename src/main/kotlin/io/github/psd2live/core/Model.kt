@@ -41,7 +41,7 @@ enum class SemanticTag(val canonicalName: String, val group: LayerGroup) {
 
 enum class LayerGroup { HEAD, BODY, EXTRA, UNKNOWN }
 
-enum class Side { LEFT, RIGHT, NONE }
+typealias Side = io.github.psd2live.algorithms.binding.Side
 
 enum class LayerType { PRESET, TOGGLE, SWITCH }
 
@@ -67,26 +67,7 @@ data class ClassifiedLayer(
 	val opaquePixels: Int,
 )
 
-data class Bounds(val left: Float, val top: Float, val right: Float, val bottom: Float) {
-	val width: Float get() = right - left
-	val height: Float get() = bottom - top
-	val centerX: Float get() = (left + right) * 0.5f
-	val centerY: Float get() = (top + bottom) * 0.5f
-
-	fun union(other: Bounds): Bounds =
-		Bounds(
-			minOf(left, other.left),
-			minOf(top, other.top),
-			maxOf(right, other.right),
-			maxOf(bottom, other.bottom),
-		)
-
-	fun expanded(fraction: Float): Bounds {
-		val dx = width * fraction
-		val dy = height * fraction
-		return Bounds(left - dx, top - dy, right + dx, bottom + dy)
-	}
-}
+typealias Bounds = io.github.psd2live.algorithms.binding.Bounds
 
 data class RigAnchors(
 	val character: Bounds,
