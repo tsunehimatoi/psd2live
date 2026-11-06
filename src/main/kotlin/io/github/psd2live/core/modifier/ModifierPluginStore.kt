@@ -30,6 +30,22 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
             return "$os-$arch"
         }
         fun hash(bytes: ByteArray): String = java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes))
+        internal fun hash(path: Path): String = io.github.psd2live.core.RigBuildProfile.stage("plugin payload verification") {
+            val digest = MessageDigest.getInstance("SHA-256")
+            val buffer = ByteArray(64 * 1024)
+            var bytes = 0L
+            Files.newInputStream(path).use { input ->
+                while (true) {
+                    checkCancelled()
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    bytes += count
+                    require(bytes <= MAX_BYTES) { "Plugin payload exceeds size limit" }
+                    digest.update(buffer, 0, count)
+                }
+            }
+            java.util.HexFormat.of().formatHex(digest.digest())
+        }
         private val token = Regex("[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}")
         private val digest = Regex("[a-f0-9]{64}")
         private val codec = Json { encodeDefaults = true }
@@ -303,7 +319,7 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
             val path = inside(directory, name)
             require(digest.matches(expected) && Files.isRegularFile(path, NOFOLLOW_LINKS) && !Files.isSymbolicLink(path)) { "Missing plugin payload: $name" }
             size += Files.size(path); require(size <= MAX_BYTES) { "Plugin payload exceeds size limit" }
-            require(hash(Files.readAllBytes(path)) == expected) { "Plugin checksum mismatch: $name" }
+            require(hash(path) == expected) { "Plugin checksum mismatch: $name" }
             hashes.append('\n').append(name).append(':').append(expected)
         }
         Files.walk(directory).use { paths -> paths.forEach { path ->

@@ -15,6 +15,23 @@ import javax.tools.ToolProvider
 import kotlin.test.*
 
 class ModifierPluginTest {
+    @Test fun streamedPayloadHashMatchesWholeContentAndHonorsCancellation() {
+        val file = Files.createTempFile("plugin-hash-", ".bin")
+        try {
+            for (size in listOf(0, 65536, 131079)) {
+                val bytes = ByteArray(size) { (it * 31 + it / 256).toByte() }
+                Files.write(file, bytes)
+                assertEquals(ModifierPluginStore.hash(bytes), ModifierPluginStore.hash(file))
+            }
+            Thread.currentThread().interrupt()
+            try {
+                assertFailsWith<java.util.concurrent.CancellationException> { ModifierPluginStore.hash(file) }
+            } finally { Thread.interrupted() }
+            Files.write(file, byteArrayOf(42))
+            assertEquals(ModifierPluginStore.hash(byteArrayOf(42)), ModifierPluginStore.hash(file))
+        } finally { Files.deleteIfExists(file) }
+    }
+
     private fun fixture(action: (Path, ModifierPluginStore, Preferences) -> Unit) {
         val root = Files.createTempDirectory("plugin-test-")
         val preferences = Preferences.userRoot().node("psd2live-test/plugins/${UUID.randomUUID()}")
