@@ -7,6 +7,28 @@ import io.github.psd2live.targets.cubism.PuppetIr
 import kotlin.test.*
 
 class ExpressionGeometryCacheTest {
+    @Test fun facialModulesKeepBodyMeshesWhileChestMotionInvalidatesThem() {
+        val document = Characters.figure()
+        val recipe = RigRecipe(true, bases = RigModules.areas.associate { it.id to BaseChoice(it.legacy.id) },
+            modules = RigModules.modules.associate { it.id to ModuleChoice(false) })
+        val config = document.rawConfig().copy(recipe = recipe)
+        val analysis = CharacterAnalyzer.analyze(document.source, config)
+        val atlas = AtlasLayout.pack(analysis.layers, config)
+        val cache = PreviewMeshCache()
+        val before = RigBuilder.build(analysis, atlas, config, cache)
+        val initial = cache.stages.misses(RigStageCache.MESH)
+        val smile = config.copy(recipe = recipe.copy(modules = recipe.modules + (RigModules.EYE_SMILE.id to ModuleChoice(true))))
+        val after = RigBuilder.build(analysis, atlas, smile, cache)
+        val facialMisses = cache.stages.misses(RigStageCache.MESH)
+        assertTrue(facialMisses - initial < analysis.layers.size, "facial options must not rebuild every body mesh")
+        assertEquals(PuppetIr.toIr(before.puppet), PuppetIr.toIr(after.puppet))
+        val bust = smile.copy(recipe = smile.recipe.copy(modules = smile.recipe.modules + (RigModules.BODY_BUST.id to ModuleChoice(true))))
+        val changed = RigBuilder.build(analysis, atlas, bust, cache)
+        assertTrue(cache.stages.misses(RigStageCache.MESH) > facialMisses)
+        assertNotEquals(PuppetIr.toIr(after.puppet), PuppetIr.toIr(changed.puppet))
+        assertEquals(PuppetIr.toIr(RigBuilder.build(analysis, atlas, bust).puppet), PuppetIr.toIr(changed.puppet))
+    }
+
     @Test fun meshLocalModulesReuseScaffoldButGazeRebuildsIt() {
         val document = Characters.head(physics = false)
         val recipe = RigRecipe(true,

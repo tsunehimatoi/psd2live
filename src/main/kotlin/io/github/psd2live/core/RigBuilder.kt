@@ -2321,10 +2321,20 @@ object RigBuilder {
 					m.knobs.map { config.recipe.value(m.id, it.id) } }, config.headTurnStrength, context.faceTurn(config) != null && styled(rigLayer))
 			}),
 			matchingEyeWhiteBounds(rigLayer, context.eyeWhiteLayers),
-			MeshResolution.unitScale(config, context.analysis.source), meshConfig, config.meshOverrides[layer.source.id.raw],
+			MeshResolution.unitScale(config, context.analysis.source), meshConfigFor(rigLayer, meshConfig), config.meshOverrides[layer.source.id.raw],
 			io.github.psd2live.i18n.I18n.currentLanguage.tag)
 		return stages.get(RigStageCache.MESH, 1024, key, build)
 	}
+
+    private fun meshConfigFor(layer: ClassifiedLayer, config: PipelineConfig): PipelineConfig {
+        // These tags have no eye/brow/mouth-local geometry. Neck shadows can still turn with the
+        // head; chest and neck motion remain explicit inputs along with all frames in MeshKey.
+        if (layer.semantic.tag !in setOf(SemanticTag.TOPWEAR, SemanticTag.BOTTOMWEAR, SemanticTag.HANDWEAR,
+                SemanticTag.LEGWEAR, SemanticTag.FOOTWEAR, SemanticTag.NECKWEAR, SemanticTag.NECK)) return config
+        return config.copy(recipe = config.recipe.copy(modules = config.recipe.modules.filterKeys {
+            it in setOf("body.bust", "face.neck", "face.depth-turn")
+        }))
+    }
 
 	/**
 	 * One version 2 part built on its recorded mesh (Rule A): positions are the record's rest canvas positions,
