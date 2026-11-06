@@ -4,6 +4,7 @@ import io.github.psd2live.algorithms.binding.BindingProjection
 import io.github.psd2live.algorithms.binding.ScaffoldHead
 import io.github.psd2live.algorithms.binding.ScaffoldFramesContext
 import io.github.psd2live.algorithms.binding.ScaffoldBranchesContext
+import io.github.psd2live.algorithms.binding.ScaffoldMeshContext
 import io.github.psd2live.core.modifier.RigModifierPipeline
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.project.rawConfig
@@ -77,7 +78,8 @@ class ScaffoldHeadParityTest {
         )
         val actual = ScaffoldHead.build(input, { tr(it) })
         val atlas = AtlasLayout.pack(analysis.layers, config)
-        val generated = RigBuilder.build(analysis, atlas, config, cache).puppet
+        val built = RigBuilder.build(analysis, atlas, config, cache)
+        val generated = built.puppet
         val legacy = BindingProjection.retain(generated, emptySet(), mapOf(StandardParameters.MOUTH_OPEN to 1f))
         val optimized = RigBuilder.buildNeutralScaffold(analysis, atlas, config, cache).puppet
         val optimizedNeutral = BindingProjection.retain(optimized, emptySet(), mapOf(StandardParameters.MOUTH_OPEN to 1f))
@@ -87,9 +89,19 @@ class ScaffoldHeadParityTest {
         val pluginFrames = ScaffoldFramesContext.build(inputs.frames)
         assertEquals(legacy.deformers.filter { ScaffoldFramesContext.owns(it.id) }.map(PuppetIr::deformerToIr),
             pluginFrames.map(PuppetIr::deformerToIr), "Frames computed from captured source measurements")
-        val pluginBranches = ScaffoldBranchesContext.build(inputs.branches, pluginFrames).deformers
-        assertEquals(legacy.deformers.map(PuppetIr::deformerToIr), (pluginFrames + pluginBranches).map(PuppetIr::deformerToIr),
+        val pluginBranches = ScaffoldBranchesContext.build(inputs.branches, pluginFrames)
+        assertEquals(legacy.deformers.map(PuppetIr::deformerToIr), (pluginFrames + pluginBranches.deformers).map(PuppetIr::deformerToIr),
             "Complete structure computed from source measurements")
+        val meshInputs = RigBuilder.scaffoldMeshInputs(analysis, atlas, config, cache,
+            built.layerIdByDrawableId.entries.associate { it.value to it.key })
+        val pluginMeshes = ScaffoldMeshContext.build(meshInputs, pluginBranches.parents)
+        val expectedMeshes = legacy.drawables.map { drawable ->
+            org.umamo.runtime.model.Drawable(drawable.id, drawable.id.raw, drawable.parentDeformerId,
+                org.umamo.runtime.model.BlendMode.Normal, emptyList(), drawable.mesh, drawable.geometryGrid)
+        }
+        assertEquals(PuppetIr.toIr(legacy.copy(drawables = expectedMeshes)).meshes.associateBy { it.id },
+            PuppetIr.toIr(legacy.copy(drawables = pluginMeshes)).meshes.associateBy { it.id },
+            "Static meshes computed from unbound source topology")
         assertEquals(before.deformers, after.deformers, "Complete static deformer scaffold")
         assertEquals(before.meshes.map { it.id }, after.meshes.map { it.id })
         before.meshes.zip(after.meshes).forEach { (old, fresh) -> assertEquals(old, fresh, "Static mesh ${old.id}") }

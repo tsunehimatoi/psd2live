@@ -14,25 +14,30 @@ class ScaffoldAlgorithm : ContextualModifierAlgorithmPlugin {
         checkpoint()
         require(instance.version in 1..2) { "Unsupported scaffold algorithm version" }
         val schema = context.values["schema"]?.jsonPrimitive?.content
-        require(schema in setOf("scaffold/1", "scaffold/2", "scaffold/3", "scaffold/4")) { "Missing scaffold author inputs" }
-        val captured = PuppetIr.toPuppet(RigIrBinary.decode(context.resources.getValue("template").read()))
+        require(schema in setOf("scaffold/1", "scaffold/2", "scaffold/3", "scaffold/4", "scaffold/5")) { "Missing scaffold author inputs" }
+        val captured = if (schema == "scaffold/5") {
+            require("template" !in context.resources) { "Source scaffold does not accept a generated template" }
+            PuppetModel(emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), null)
+        } else PuppetIr.toPuppet(RigIrBinary.decode(context.resources.getValue("template").read()))
         val template = if (schema != "scaffold/1") {
             require(captured.parts.isEmpty() && captured.rootChildren.isEmpty() && captured.rootPartId == null) {
                 "Source organization must be computed by the scaffold plugin"
             }
             val organization = ScaffoldPartsContext.build(context.values.getValue("organization").jsonObject, checkpoint)
-            val frames = if (schema in setOf("scaffold/3", "scaffold/4")) {
+            val frames = if (schema in setOf("scaffold/3", "scaffold/4", "scaffold/5")) {
                 require(captured.deformers.none { ScaffoldFramesContext.owns(it.id) }) {
                     "Source body and head frames must be computed by the scaffold plugin"
                 }
                 ScaffoldFramesContext.build(context.values.getValue("frames").jsonObject, checkpoint)
             } else emptyList()
-            val branches = if (schema == "scaffold/4") {
+            val branches = if (schema in setOf("scaffold/4", "scaffold/5")) {
                 require(captured.deformers.isEmpty()) { "Source structure must be computed by the scaffold plugin" }
-                ScaffoldBranchesContext.build(context.values.getValue("branches").jsonObject, frames, checkpoint).deformers
-            } else captured.deformers
+                ScaffoldBranchesContext.build(context.values.getValue("branches").jsonObject, frames, checkpoint)
+            } else null
+            val drawables = if (schema == "scaffold/5")
+                ScaffoldMeshContext.build(context, requireNotNull(branches).parents, checkpoint) else captured.drawables
             captured.copy(parts = organization.parts, rootChildren = organization.rootChildren,
-                deformers = frames + branches)
+                deformers = frames + (branches?.deformers ?: captured.deformers), drawables = drawables)
         } else captured
         val materials = PuppetIr.toPuppet(RigIrBinary.decode(context.resources.getValue("materials").read())).drawables.associateBy { it.id }
         val canonical = context.values.getValue("canonical_targets").jsonObject
@@ -55,6 +60,26 @@ class ScaffoldAlgorithm : ContextualModifierAlgorithmPlugin {
     }
 
     companion object {
+        fun captureSource(materials: PuppetModel, canonicalTargets: Map<String, String>, organization: JsonObject,
+                          frames: JsonObject, branches: JsonObject, meshes: ModifierAlgorithmContext): ModifierAlgorithmContext =
+            ModifierAlgorithmContext(buildJsonObject {
+                put("schema", "scaffold/5")
+                put("canonical_targets", JsonObject(canonicalTargets.mapValues { JsonPrimitive(it.value) }))
+                put("organization", organization)
+                put("frames", frames)
+                put("branches", branches)
+                put("mesh_inputs", meshes.values.getValue("mesh_inputs"))
+            }, resources = mapOf("materials" to materialsResource(materials, canonicalTargets.keys),
+                "source_meshes" to meshes.resources.getValue("source_meshes")))
+
+        private fun materialsResource(materials: PuppetModel, targets: Set<String>): ModifierAlgorithmResource {
+            val original = PuppetModel(emptyList(), emptyList(), emptyList(),
+                materials.drawables.filter { it.id.raw in targets }.map {
+                    Drawable(it.id, it.id.raw, null, BlendMode.Normal, emptyList(), it.mesh, null)
+                }, emptyList(), null)
+            return ModifierAlgorithmResource(RigIrBinary.encode(PuppetIr.toIr(original)))
+        }
+
         /** Capture immutable binary model resources once; no live source or application callbacks cross the boundary. */
         fun capture(template: PuppetModel, materials: PuppetModel, canonicalTargets: Map<String, String>,
                     organization: JsonObject? = null, frames: JsonObject? = null, branches: JsonObject? = null): ModifierAlgorithmContext {
@@ -68,11 +93,6 @@ class ScaffoldAlgorithm : ContextualModifierAlgorithmPlugin {
                 template.drawables.filter { it.id.raw in sourceIds }.map {
                     Drawable(it.id, it.id.raw, it.parentDeformerId, BlendMode.Normal, emptyList(), it.mesh, it.geometryGrid)
                 }, if (organization == null) template.rootChildren else emptyList(), if (organization == null) template.rootPartId else null)
-            // Ordinary material is used only for exact position/UV/topology comparisons.
-            val original = PuppetModel(emptyList(), emptyList(), emptyList(),
-                materials.drawables.filter { it.id.raw in canonicalTargets }.map {
-                    Drawable(it.id, it.id.raw, null, BlendMode.Normal, emptyList(), it.mesh, null)
-                }, emptyList(), null)
             return ModifierAlgorithmContext(buildJsonObject {
                 put("schema", if (organization == null) "scaffold/1" else if (frames == null) "scaffold/2" else if (branches == null) "scaffold/3" else "scaffold/4")
                 organization?.let { put("organization", it) }
@@ -81,7 +101,7 @@ class ScaffoldAlgorithm : ContextualModifierAlgorithmPlugin {
                 put("canonical_targets", JsonObject(canonicalTargets.mapValues { JsonPrimitive(it.value) }))
             }, resources = mapOf(
                 "template" to ModifierAlgorithmResource(RigIrBinary.encode(PuppetIr.toIr(model))),
-                "materials" to ModifierAlgorithmResource(RigIrBinary.encode(PuppetIr.toIr(original))),
+                "materials" to materialsResource(materials, canonicalTargets.keys),
             ))
         }
     }

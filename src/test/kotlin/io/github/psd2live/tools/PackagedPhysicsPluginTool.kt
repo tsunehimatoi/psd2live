@@ -1,6 +1,7 @@
 package io.github.psd2live.tools
 
 import io.github.psd2live.core.modifier.*
+import io.github.psd2live.algorithms.binding.*
 import io.github.psd2live.core.MotionClip
 import io.github.psd2live.core.MotionCurve
 import io.github.psd2live.core.MotionKey
@@ -19,6 +20,33 @@ import kotlinx.serialization.json.*
 
 /** Opt-in real installation and process evaluation of independently built bundled packages. */
 class PackagedPhysicsPluginTool {
+    @Test fun scaffoldArchivesBuildFromUnboundSourcesWithoutTemplates() {
+        requireTools()
+        val input = testInput()
+        val material = io.github.psd2live.targets.cubism.PuppetIr.toPuppet(input)
+        val bounds = Bounds(0f, 0f, 100f, 100f)
+        val head = ScaffoldHead.Input(bounds, bounds, bounds, ScaffoldHead.Point(50f, 50f),
+            ScaffoldHead.Point(50f, 50f), 0f, false, emptyList())
+        val drawable = material.drawables.single()
+        val raw = requireNotNull(drawable.mesh)
+        val context = ScaffoldAlgorithm.captureSource(material, mapOf("body" to "body"),
+            ScaffoldPartsContext.capture(listOf(ScaffoldParts.Material(drawable.id, ScaffoldParts.Slot.BODY, 0)), { it }),
+            ScaffoldFramesContext.capture(bounds, null, head, { it }),
+            ScaffoldBranchesContext.capture(listOf(ScaffoldBranchesContext.Layer("source", "Body", "TOPWEAR",
+                Side.NONE, bounds, ScaffoldParts.Slot.BODY)), bounds, null, head, { it }, { it }),
+            ScaffoldMeshContext.capture(listOf(ScaffoldMeshContext.Material("body", "source",
+                ScaffoldMesh.RawMesh(raw.positions, raw.uvs, raw.indices), ScaffoldMesh.Geometry.Zero))))
+        assertEquals("scaffold/5", context.values.getValue("schema").jsonPrimitive.content)
+        assertTrue("template" !in context.resources)
+        val plugin = ScaffoldAlgorithm()
+        for (revision in 1..2) {
+            val definition = RigModifierDefinition("rig.scaffold", revision, exclusiveFamily = "rig.scaffold",
+                composableKinds = setOf("mesh", "part", "deformer", "hierarchy"),
+                evaluate = plugin::evaluate, plugin = plugin, authorContext = { context })
+            verifyPackage("rig.scaffold", definition, JsonObject(emptyMap()), "binding", "plugin-scaffold-$revision", input)
+        }
+    }
+
     @Test fun scaffoldArchivesPreserveBothHierarchyVersionsThroughWorkers() {
         requireTools()
         val input = testInput()

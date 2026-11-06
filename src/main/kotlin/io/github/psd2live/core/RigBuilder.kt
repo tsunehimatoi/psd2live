@@ -5,6 +5,8 @@ import io.github.psd2live.algorithms.binding.ScaffoldBranchesContext
 import io.github.psd2live.algorithms.binding.ScaffoldFramesContext
 import io.github.psd2live.algorithms.binding.ScaffoldBody
 import io.github.psd2live.algorithms.binding.ScaffoldHead
+import io.github.psd2live.algorithms.binding.ScaffoldMesh
+import io.github.psd2live.algorithms.binding.ScaffoldMeshContext
 import io.github.psd2live.algorithms.binding.ScaffoldParts
 import io.github.psd2live.algorithms.binding.ScaffoldPairs
 
@@ -1231,6 +1233,44 @@ object RigBuilder {
 
     internal fun scaffoldFrameInputs(analysis: PipelineAnalysis, config: PipelineConfig, cache: PreviewMeshCache) =
         scaffoldSourceInputs(analysis, config, cache).frames
+
+    /** Source topology and measurements, before parent binding or default-pose generation. */
+    internal fun scaffoldMeshInputs(analysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig,
+                                    cache: PreviewMeshCache, canonicalByLayer: Map<String, String>): io.github.psd2live.core.modifier.ModifierAlgorithmContext {
+        require(!config.recipe.modern && !config.mouthOutlineEnabled && config.rigEdits.skeleton?.enabled != true)
+        val context = rigContext(analysis, config.copy(generateDeformers = false), cache)
+        val tuning = config.rigTuning
+        val curve = if (config.mouthShape == "custom") config.mouthCurve else MouthCurve.preset(config.mouthShape)
+        val unit = Bounds(0f, 0f, 1f, 1f)
+        val materials = context.analysis.layers.mapNotNull { layer ->
+            val id = canonicalByLayer[layer.source.id.raw] ?: return@mapNotNull null
+            val placement = atlas.placementByLayerId[layer.source.id.raw] ?: return@mapNotNull null
+            if (layer.opaquePixels == 0) return@mapNotNull null
+            val aligned = context.rigLayer(layer)
+            // headSpaceFor intentionally returns null for the unbound measurement context.
+            val space = context.headSpace.takeIf { inferredGroup(layer, context.analysis.anchors) == LayerGroup.HEAD }
+            val source = buildGridMesh(layer, unit, space, config, cache, MeshResolution.unitScale(config, context.analysis.source))
+            val raw = ScaffoldMesh.RawMesh(source.rigPositions,
+                LayerTexture.packed(layer, placement, atlas).bind(source.mesh.uvs), source.mesh.indices)
+            val geometry = when (layer.semantic.tag) {
+                SemanticTag.EYEWHITE, SemanticTag.EYELASH -> ScaffoldMesh.Geometry.Eye(
+                    layer.semantic.tag == SemanticTag.EYELASH, aligned.bounds,
+                    matchingEyeWhiteBounds(aligned, context.eyeWhiteLayers), aligned.centroidY, layer.source.bounds.left,
+                    if (layer.semantic.tag == SemanticTag.EYELASH && context.faceRig.initialAngleZ == 0f)
+                        eyelashCenterline(aligned) else null,
+                    tuning.blinkCorner, tuning.blinkDepth, tuning.eyelashSquash)
+                SemanticTag.IRIDES -> ScaffoldMesh.Geometry.Iris(aligned.centroidX, aligned.centroidY,
+                    tuning.irisJellySquash, tuning.irisJellyStretch)
+                SemanticTag.EYEBROW -> ScaffoldMesh.Geometry.Brow(aligned.bounds.height, tuning.browLift)
+                SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN -> ScaffoldMesh.Geometry.Mouth(
+                    mouthApertureFor(aligned) ?: aligned.bounds, curve.points.map { ScaffoldMesh.CurvePoint(it.x, it.y) },
+                    tuning.mouthClosedNarrow, tuning.mouthSeam, tuning.mouthSmileBase, tuning.mouthSmile, tuning.mouthFormWiden)
+                else -> ScaffoldMesh.Geometry.Zero
+            }
+            ScaffoldMeshContext.Material(id, layer.source.id.raw, raw, geometry)
+        }
+        return ScaffoldMeshContext.capture(materials)
+    }
 
     private fun scaffoldStanding(stance: BodyStance): ScaffoldBody.Standing? = stance.legsFrame?.let { frame ->
         ScaffoldBody.Standing(frame, stance.legs.map { leg ->
