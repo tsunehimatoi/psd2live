@@ -106,7 +106,7 @@ Windows ではリポジトリ直下の `run-gui.bat` でも GUI を起動でき�
 
 ## 開発ツール
 
-`src/test/kotlin/io/github/psd2live/tools/` には、結果を目視で確認したり測定したりする開発ツールがあります。パイプラインの内部 API を使えるようにテストとして書かれており、`PSD2LIVE_TOOLS=1` を設定したときだけ実行されます。通常の `./gradlew test` では skip されます。出力先は `build/tools/` です。
+`src/test/kotlin/io/github/psd2live/tools/` には、結果を目視で確認したり測定したりする開発ツールがあります。パイプラインの内部 API を使えるようにテストとして書かれており、`PSD2LIVE_TOOLS=1` を設定したときだけ実行されます。通常の `./gradlew test` では skip されます。出力先は `build/tools/` です。開発ツール有効時は Gradle の結果キャッシュと up-to-date による省略を無効にし、毎回実際に測定します。
 
 ```bash
 python tools/examples/fetch.py --case ds

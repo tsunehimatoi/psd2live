@@ -171,6 +171,14 @@ val testForks = providers.gradleProperty("psd2live.testForks").map(String::toInt
 
 tasks.withType<Test>().configureEach {
 	useJUnitPlatform()
+	// Development tools measure this invocation and write artifacts outside test reports.
+	// Never substitute a cached/skipped test task for an actual measurement.
+	val toolsEnabled = providers.environmentVariable("PSD2LIVE_TOOLS").orNull == "1"
+	inputs.property("developmentTools", toolsEnabled)
+	if (toolsEnabled) {
+		outputs.upToDateWhen { false }
+		outputs.doNotCacheIf("Development tools require fresh execution") { true }
+	}
 	maxHeapSize = providers.gradleProperty("psd2live.testHeap").getOrElse("2g")
 	// `--tests` names one class from either module; the other module simply has nothing to run.
 	filter.isFailOnNoMatchingTests = false

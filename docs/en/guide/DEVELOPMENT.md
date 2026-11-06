@@ -107,7 +107,7 @@ Ordinary CI uses small synthetic inputs and internal contract tests without down
 
 ## Development tools
 
-`src/test/kotlin/io/github/psd2live/tools/` holds development tools for checking results by eye and measuring them. They are written as tests so they can reach the pipeline's internals, and run only with `PSD2LIVE_TOOLS=1`; a plain `./gradlew test` skips them. Outputs go to `build/tools/`.
+`src/test/kotlin/io/github/psd2live/tools/` holds development tools for checking results by eye and measuring them. They are written as tests so they can reach the pipeline's internals, and run only with `PSD2LIVE_TOOLS=1`; a plain `./gradlew test` skips them. Outputs go to `build/tools/`. With tools enabled, the test task disables Gradle result caching and up-to-date skipping so each measurement actually runs.
 
 ```bash
 python tools/examples/fetch.py --case ds
