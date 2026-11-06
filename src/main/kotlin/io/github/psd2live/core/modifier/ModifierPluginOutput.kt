@@ -50,6 +50,10 @@ internal object ModifierPluginOutput {
                 }
             }
         }
+        return validate(rig, output, instance, algorithm)
+    }
+
+    fun validate(rig: RigIR, output: RigIR, instance: RigModifierInstance, algorithm: ModifierPluginAlgorithm): RigIR {
         fun field(kind: String, before: Any?, after: Any?) {
             require(before == after || kind in algorithm.writes || "*" in algorithm.writes) { "Plugin wrote undeclared $kind data" }
         }

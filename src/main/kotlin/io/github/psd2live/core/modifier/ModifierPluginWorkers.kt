@@ -1,6 +1,8 @@
 package io.github.psd2live.core.modifier
 
 import io.github.psd2live.core.RigBuildProfile
+import io.github.psd2live.algorithm.worker.AlgorithmObjects
+import io.github.psd2live.algorithm.worker.AlgorithmResultValidation
 import io.github.psd2live.format.compile.RigIrObjects
 import io.github.psd2live.format.model.RigIR
 import kotlinx.serialization.json.*
@@ -97,7 +99,8 @@ internal object ModifierPluginWorkers {
             val request = buildJsonObject {
                 put("protocol", 1); put("id", requestId); put("method", "evaluate")
                 put("type", instance.type); put("version", instance.version); put("instance", instance.id)
-                put("capabilities", JsonArray(ModifierPluginOutput.operations.sorted().map(::JsonPrimitive)))
+                put("capabilities", JsonArray((ModifierPluginOutput.operations + "rig_objects").sorted().map(::JsonPrimitive)))
+                put("invocation", Json.encodeToJsonElement(RigModifierInstance.serializer(), instance))
                 put("dependencies", JsonArray(store.resolution(entry.reference).dependencies.map { reference ->
                     Json.encodeToJsonElement(ModifierPluginReference.serializer(), reference)
                 }))
@@ -138,11 +141,24 @@ internal object ModifierPluginWorkers {
             catch (failure: ExecutionException) { throw failure.cause ?: failure }
             catch (failure: Exception) { task.cancel(true); throw failure }
             checkpoint()
-            require(response.keys.all { it in setOf("protocol", "id", "commands", "error") } && response["protocol"]?.jsonPrimitive?.int == 1 && response["id"]?.jsonPrimitive?.long == requestId) { "Invalid plugin response envelope" }
+            require(response.keys.all { it in setOf("protocol", "id", "commands", "objects", "error") } && response["protocol"]?.jsonPrimitive?.int == 1 && response["id"]?.jsonPrimitive?.long == requestId) { "Invalid plugin response envelope" }
             response["error"]?.let { error("${entry.manifest.name}: ${it.jsonPrimitive.content}") }
-            val commands = response.getValue("commands").jsonArray
-            require(commands.size <= 10000) { "Too many plugin commands" }
-            val output = ModifierPluginOutput.apply(rig, instance, algorithm, JsonArray(commands.map(::expand)), checkpoint)
+            require(("commands" in response) != ("objects" in response)) { "Plugin must return commands or model objects" }
+            val output = response["objects"]?.let { value ->
+                val delta = value.jsonObject
+                require(delta.keys == setOf("changed", "removed", "mesh_order", "deformer_order")) { "Invalid model object result" }
+                val objects = AlgorithmObjects.apply(current, delta)
+                val projected = AlgorithmObjects.decode(objects, delta.getValue("mesh_order").jsonArray,
+                    delta.getValue("deformer_order").jsonArray, resources)
+                checkpoint()
+                val merged = ModifierInputCache.Patch(input, projected).apply(rig)
+                AlgorithmResultValidation.validate(merged)
+                ModifierPluginOutput.validate(rig, merged, instance, algorithm)
+            } ?: run {
+                val commands = response.getValue("commands").jsonArray
+                require(commands.size <= 10000) { "Too many plugin commands" }
+                ModifierPluginOutput.apply(rig, instance, algorithm, JsonArray(commands.map(::expand)), checkpoint)
+            }
             previous = current
             return output
         }

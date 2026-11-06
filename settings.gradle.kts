@@ -19,6 +19,7 @@ rootProject.name = "psd2live"
 include(":umamo")
 include(":format-model")
 include(":algorithm-api")
+include(":algorithm-worker")
 include(":algorithms:physics")
 include(":format-compile")
 include(":targets:cubism")
