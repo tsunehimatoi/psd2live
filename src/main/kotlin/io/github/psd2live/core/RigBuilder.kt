@@ -1429,7 +1429,10 @@ object RigBuilder {
 		}
 
 		val builtDeformPaths = mutableListOf<DeformPath>()
-		val meshConfig = stageConfig(config)
+		// Expressions change channels during assembly, not mesh geometry or lip ribbons.
+		// Keep their values out of this stage's key so successive expression plugins reuse geometry.
+		val meshConfig = stageConfig(config).let { stage -> stage.copy(recipe = stage.recipe.copy(
+			modules = stage.recipe.modules - setOf("expression.cheek", "expression.gloom", "expression.toggles"))) }
 		val seeds = RigMeshSeed.layers(config.rigEdits)
 		val reservedDrawableIds = stableDrawableIds.values.toMutableSet()
 		val orderedLayers = orderMouthLayers(baseLayers.sortedBy { it.source.order })
