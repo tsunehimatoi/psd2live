@@ -6,6 +6,8 @@ import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import io.github.psd2live.project.config
+import io.github.psd2live.core.modifier.*
+import kotlinx.serialization.json.*
 
 /** Opt-in end-to-end PSD import, including presets, simulation baking and initial history. */
 class ModifierPerfTool {
@@ -21,7 +23,7 @@ class ModifierPerfTool {
             repeat(2) { round ->
                 RigBuildProfile.reset()
                 val builder = WorkspacePreviewBuilder()
-                val runtime = WorkspaceRuntime<RigPreviewModel>({ builder.build(it) })
+                val runtime = WorkspaceRuntime<RigPreviewModel>({ builder.build(it) }, rebuildFrom = { document, previous -> builder.build(document, previous) })
                 val start = System.nanoTime()
                 WorkspaceSourceImporter(runtime, build = { builder.build(it) }).importPsd(
                     sample.path.toAbsolutePath(), null, runtime.state.value.state,
@@ -33,6 +35,28 @@ class ModifierPerfTool {
                 }
                 output("modifier-perf").resolve("report.txt").writeText(report.toString())
                 println("import $round: $elapsed ms")
+                if (round == 1) {
+                    val before = runtime.capture()
+                    val stack = RigModifierStack.fromJson(requireNotNull(before.document.rigEdits.modifierStack))
+                    val eye = stack.instances.firstOrNull { it.type == "eye/fitted" }
+                    if (eye != null) {
+                        val values = eye.config["values"]?.jsonObject.orEmpty()
+                        val old = values["roundness"]?.jsonPrimitive?.float ?: 50f
+                        RigBuildProfile.reset()
+                        val editStart = System.nanoTime()
+                        WorkspaceDocumentCommands(runtime).execute(before.projectId, before.state, "Adjust eye preset", listOf(
+                            WorkspaceDocumentOperation("modifier_update", buildJsonObject {
+                                put("id", eye.id); put("type", eye.type)
+                                put("config", JsonObject(eye.config + ("values" to JsonObject(values + ("roundness" to JsonPrimitive(if (old < 99f) old + 1f else old - 1f))))))
+                            })), io.github.psd2live.project.MutationAuthor.USER)
+                        report.appendLine("modifier adjustment: %.1f ms".format((System.nanoTime() - editStart) / 1e6))
+                        report.appendLine("adjustment simulation bakes: " + (RigBuildProfile.snapshot()["modifier simulation: bake"]?.second ?: 0))
+                        RigBuildProfile.snapshot().forEach { (name, value) ->
+                            report.appendLine("adjustment %-54s %9.1f ms x%d".format(name, value.first, value.second))
+                        }
+                        output("modifier-perf").resolve("report.txt").writeText(report.toString())
+                    }
+                }
                 if (round == 1 && setting("PSD2LIVE_VERIFY", "0") == "1") {
                     val capture = runtime.capture()
                     val enabled = RigStageCache.enabled

@@ -85,7 +85,7 @@ internal fun WorkspaceQueries.inspect(a: JsonObject): JsonObject {
             "simulations" -> {
                 val puppet = queries.currentPuppet()
                 // The bake's arrays stay out; its summary and whether it is stale are what a caller acts on.
-                put("simulations", JsonArray(queries.listSimulations().map { sim -> JsonObject(sim.toJson() - "bake" + buildJsonObject {
+                put("simulations", JsonArray(queries.listSimulations().map { sim -> JsonObject(sim.copy(bake = null).toJson() - "bake" + buildJsonObject {
                     sim.bake?.let { bake ->
                         put("bake", bake.summary())
                         if (puppet != null) put("bake_stale", io.github.psd2live.core.sim.SimBake.stale(puppet, sim))

@@ -258,7 +258,7 @@ internal class WorkspacePreviewBuilder {
                     current.analysis.source == document.source && before - "organization" == after - "organization" &&
                     config.copy(rigEdits = config.rigEdits.copy(modifierStack = before)) == current.config)
                     return@runInterruptible current.copy(config = config)
-                if (pipeline.modifierCache.snapshot == null) current?.modifierEvaluation?.let { pipeline.modifierCache.snapshot = it }
+                pipeline.reuseModifierInputs(current)
                 return@runInterruptible pipeline.buildPreview(document.source, config, progress, current?.atlas)
             }
             val materializable = pipeline.materializable(config)

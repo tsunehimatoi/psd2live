@@ -22,7 +22,7 @@ internal object WorkspaceModifierSimulation {
                 pipeline: PSD2LivePipeline = PSD2LivePipeline().apply { deferRuntimeBundles = true }, evaluated: RigPreviewModel? = null): RigModifierStack {
         require(validatedPrefix in 0..stack.instances.size)
         if (stack.instances.any { it.enabled && !ModifierPluginCatalog.available(it) }) return stack
-        evaluated?.modifierEvaluation?.let { pipeline.modifierCache.snapshot = it }
+        pipeline.reuseModifierInputs(evaluated)
         var next = stack
         for (index in stack.instances.indices) {
             work.checkpoint()
@@ -37,20 +37,20 @@ internal object WorkspaceModifierSimulation {
             val prefix = next.copy(instances = next.instances.take(index))
             val overlay = document.rigEdits.copy(modifierStack = prefix.toJson())
             work.progress(0f, "Evaluating simulation inputs: ${instance.id}")
-            val model = pipeline.buildPreview(document.source, document.config().copy(rigEdits = overlay))
+            val model = pipeline.buildPreview(document.source, document.config().copy(rigEdits = overlay), previousAtlas = evaluated?.modifierAuthorAtlas ?: evaluated?.atlas)
             work.checkpoint()
             val activeProviders = model.rig.modifierReport?.get("entries")?.jsonArray.orEmpty().map { it.jsonObject }
                 .filter { it.getValue("status").jsonPrimitive.content == "active" }.mapTo(HashSet()) { it.getValue("id").jsonPrimitive.content }
             activeProviders += prefix.appliedCapabilities.mapNotNull { it.id }
             val parameters = model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }
             if (instance.parameterProviders.any { (parameter, provider) -> provider !in activeProviders || parameter !in parameters }) continue
-            val fingerprint = RigModifierInput.fingerprint(requireNotNull(model.rig.modifierOutput))
+            val fingerprint = RigModifierInput.simulationFingerprint(requireNotNull(model.rig.modifierOutput), source)
             val weighted = RigSimulationWeights.apply(model.rig.puppet, instance.config)
             val availableMotions = requireNotNull(model.rig.modifierOutput).clips.mapTo(HashSet()) { it.id }
             if (source.trainingClips.keys.any { it !in availableMotions }) continue
             if (source.bake != null && !SimBake.stale(weighted, source) &&
-                (instance.inputFingerprint == null || instance.inputFingerprint == fingerprint)) {
-                if (instance.inputFingerprint == null) next = next.update(instance.id) { it.copy(inputFingerprint = fingerprint) }
+                RigModifierInput.simulationMatches(requireNotNull(model.rig.modifierOutput), source, instance.inputFingerprint)) {
+                if (instance.inputFingerprint != fingerprint) next = next.update(instance.id) { it.copy(inputFingerprint = fingerprint) }
                 continue
             }
             require(allowRebake) { "${instance.id}: conversion cannot preserve the existing simulation bake on the rebuilt inputs" }

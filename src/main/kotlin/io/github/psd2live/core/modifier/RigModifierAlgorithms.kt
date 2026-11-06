@@ -54,7 +54,7 @@ internal object RigModifierAlgorithms {
         require(source.targets == instance.targets.map { it.id }) { "Simulation targets changed; bake again before adding the modifier" }
         val weighted = RigSimulationWeights.apply(PuppetIr.toPuppet(rig), instance.config)
         require(!io.github.psd2live.core.sim.SimBake.stale(weighted, source)) { "Simulation inputs changed; bake again before adding the modifier" }
-        require(instance.inputFingerprint == null || instance.inputFingerprint == RigModifierInput.fingerprint(rig)) {
+        require(RigModifierInput.simulationMatches(rig, io.github.psd2live.core.sim.RigSimEdit.fromJson(instance.config), instance.inputFingerprint)) {
             "${instance.id}: upstream modifier input changed; bake the simulation again"
         }
         val edit = simulationOutputs(instance, source)

@@ -37,7 +37,14 @@ class PSD2LivePipeline {
 	internal var deferRuntimeBundles = false
 	internal val modifierCache = io.github.psd2live.core.modifier.RigModifierEvaluationCache()
     internal var modifierBase: io.github.psd2live.core.modifier.ModifierBaseSnapshot? = null
-	internal val meshCache = PreviewMeshCache()
+	internal var meshCache = PreviewMeshCache()
+    /** Carry content-keyed intermediates between isolated candidates, never a mutable document or worker. */
+    internal fun reuseModifierInputs(current: RigPreviewModel?) {
+        current ?: return
+        current.modifierMeshCache?.let { meshCache = it }
+        current.modifierEvaluation?.let { modifierCache.snapshot = it }
+        current.modifierBaseSnapshot?.let { modifierBase = it }
+    }
 	private val generatedGeometry = GeneratedGeometryCache()
 	fun inspect(psd: Path, config: PipelineConfig = PipelineConfig()): PipelineAnalysis {
 		require(Files.isRegularFile(psd)) { tr("error.psdMissing", psd) }

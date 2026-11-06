@@ -133,4 +133,18 @@ class ModifierPluginTest {
         assertEquals("B", result.rig.clips.single().name)
         assertEquals(evaluator.evaluate(rig, changed).rig, result.rig)
     }
+    @Test fun simulationFingerprintIgnoresUnrelatedMeshesButTracksCarriers() {
+        val body = Mesh("body", "Body", "parent", geometry = null, offsets = null)
+        val eye = Mesh("eye", "Eye", null, geometry = null, offsets = null)
+        val parent = Deformer.Rotation("parent", "Parent", null, null, 0f, null)
+        val rig = RigIR(Canvas(1f, 1f), emptyList(), meshes = listOf(body, eye), deformers = listOf(parent))
+        val edit = io.github.psd2live.core.sim.RigSimEdit("simulation", "Simulation", io.github.psd2live.core.sim.SimKind.CLOTH, listOf("body"))
+        val captured = RigModifierInput.simulationFingerprint(rig, edit)
+        assertTrue(RigModifierInput.simulationMatches(rig.copy(meshes = listOf(body, eye.copy(opacity = .5f))), edit, captured))
+        assertFalse(RigModifierInput.simulationMatches(rig.copy(deformers = listOf(parent.copy(baseAngle = 5f))), edit, captured))
+        assertTrue(RigModifierInput.simulationMatches(rig, edit, RigModifierInput.fingerprint(rig)))
+        val connected = rig.copy(glues = listOf(Glue("link", "body", "eye", emptyList())))
+        assertNotEquals(RigModifierInput.simulationFingerprint(connected, edit), RigModifierInput.simulationFingerprint(connected.copy(meshes = listOf(body, eye.copy(opacity = .5f))), edit))
+    }
+
 }

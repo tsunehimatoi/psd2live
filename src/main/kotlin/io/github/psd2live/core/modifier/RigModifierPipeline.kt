@@ -86,6 +86,8 @@ internal object RigModifierPipeline {
             modifierAuthorAtlas = base.atlas, modifierAuthorAnalysis = base.analysis).also {
                 it.modifierEvaluation = pipeline.modifierCache.snapshot
                 pipeline.modifierBase = ModifierBaseSnapshot(baseKey, base, input)
+                it.modifierBaseSnapshot = pipeline.modifierBase
+                it.modifierMeshCache = pipeline.meshCache
             }
     }
 }

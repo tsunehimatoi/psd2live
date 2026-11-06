@@ -212,7 +212,7 @@ object SimBake {
         // The default inputs hash as no inputs did when that meant them, so a bake from then stays current.
         val available = model.parameters.mapTo(HashSet()) { it.id.raw }
         val defaults = edit.inputs.filter { it.parameter in available } == RigSimEdit.defaultInputs(available)
-        val settings = JsonObject(edit.toJson() - "name" - "enabled" - "bake" - "blend_shapes" - "auto_bake" - "exaggeration" - "output_names" - "outputs" -
+        val settings = JsonObject(edit.copy(bake = null).toJson() - "name" - "enabled" - "bake" - "blend_shapes" - "auto_bake" - "exaggeration" - "output_names" - "outputs" -
             listOfNotNull("inputs".takeIf { defaults }))
         text.append(settings.toString())
         for (raw in edit.targets) {
