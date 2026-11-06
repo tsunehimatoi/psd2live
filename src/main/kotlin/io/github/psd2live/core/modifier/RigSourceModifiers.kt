@@ -275,18 +275,11 @@ internal class RigModifierSource(
             .map { Parameter(ParameterId(it.id), io.github.psd2live.i18n.tr(it.nameKey), it.min, it.max, it.default) }
         val order = RigModules.modules.flatMap { it.defines }.map { ParameterId(it.id) }.withIndex().associate { it.value to it.index }
         val dynamic = previous.chains.flatMapTo(HashSet()) { it.native.parameters }
-        val parameters = (input.parameters + additions).sortedBy { order[it.id] ?: if (it.id in dynamic) Int.MAX_VALUE else -1 }
-        val tree = input.parameterTree.map { node ->
-            if (node is ParameterNode.Group && node.id.raw == "ParamGroupFace") node.copy(children =
-                (node.children + additions.map { ParameterNode.Param(it.id) }).sortedBy { child ->
-                    if (child is ParameterNode.Param) order[child.id] ?: -1 else -1
-                }) else node
-        }
         val layers = analysis.layers.associateBy { it.source.id.raw }
         val cheek = active.any { it == RigModules.EXPRESSION_CHEEK }
         val gloom = active.any { it == RigModules.EXPRESSION_GLOOM }
-        val drawables = input.drawables.map { mesh ->
-            val layer = layers[layersByMesh[mesh.id.raw]] ?: return@map mesh
+        val influences = input.drawables.mapNotNull { mesh ->
+            val layer = layers[layersByMesh[mesh.id.raw]] ?: return@mapNotNull null
             val tag = layer.semantic.tag; val role = layer.semantic.role
             val skin = tag == SemanticTag.FACE || tag == SemanticTag.NOSE || tag == SemanticTag.EARS || tag == SemanticTag.FACE_DETAIL && role != PartRole.HIGHLIGHT
             val warmth = when {
@@ -296,17 +289,15 @@ internal class RigModifierSource(
                 else -> 0f
             } * (state["expression.cheek"]?.let { RigLegacyBindings.values(it)["strength"] } ?: 100f) / 100f
             val darkness = (if (skin) 1f else 0f) * (state["expression.gloom"]?.let { RigLegacyBindings.values(it)["strength"] } ?: 100f) / 100f
-            val tracks = ChannelGrids(mesh.channelGrids.gridsByChannel.filterValues { grid ->
-                grid.axes.none { it.parameterId in io.github.psd2live.algorithms.binding.MoodChannels.parameters }
-            })
-            val changed = io.github.psd2live.algorithms.binding.MoodChannels.apply(tracks, warmth, darkness, role == PartRole.HIGHLIGHT, cheek, gloom)
-            mesh.copy(channelGrids = changed)
-        }
+            mesh.id to io.github.psd2live.algorithms.binding.MoodBinding.Influence(warmth, darkness, role == PartRole.HIGHLIGHT)
+        }.toMap()
+        val evaluated = io.github.psd2live.algorithms.binding.MoodBinding(carrierName = { head, meshName ->
+            io.github.psd2live.i18n.tr(if (head) "model.deformer.meshTurn" else "model.deformer.meshShape", meshName)
+        }).evaluate(input, additions, order, dynamic, influences, cheek, gloom)
         RigBuildProfile.count("modifier local color templates")
-        val nextInput = input.copy(parameters = parameters, parameterTree = tree, drawables = drawables)
         val kept = state.keys.flatMapTo(HashSet()) { RigLegacyBindings.spec(it).parameters }
         val areas = instances.filter { RigLegacyBindings.spec(it.type).isBase }.mapTo(HashSet()) { RigLegacyBindings.spec(it.type).area }
-        return finishTemplate(CubismBlendShapes.lawful(nextInput), previous.chains, kept, areas) { nextInput }
+        return finishTemplate(evaluated.model, previous.chains, kept, areas) { evaluated.source }
     }
 
     fun transition(instance: RigModifierInstance, target: ModifierTarget, checkpoint: () -> Unit): Pair<PuppetModel, PuppetModel> {
