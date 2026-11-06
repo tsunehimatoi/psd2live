@@ -1447,6 +1447,33 @@ class WorkspaceLegacyBindingTest {
         assertTrue(f.now.document.rigEdits.physicsEdits.any { group -> group.inputs.any { it.parameter == "Variant" } })
     }
 
+    @Test fun eyeSeeThroughCapturesCanonicalCopyOwnersBeforeAndAfterApplication(): Unit = runBlocking<Unit> {
+        val f = Fixture(document(bangOverlay = true)); f.install()
+        val artifact = requireNotNull(BundledAlgorithmArtifacts.find("eye.see-through", 1))
+        val algorithm = artifact.manifest.algorithms.single()
+        val target = ModifierTarget("mesh", f.now.model.rig.puppet.drawables.first().id.raw)
+        val owner = RigModifierInstance("window", algorithm.type, algorithm.version, listOf(target),
+            outputAliases = mapOf("see-through:${target.id}" to "window-copy"), plugin = artifact.reference)
+        val follower = RigModifierInstance("closed-line", "eye.see-through", 1, listOf(target))
+        val applied = ModifierCapability(owner.type, owner.version, owner.targets, owner.id, owner.config,
+            owner.outputAliases, owner.plugin)
+
+        fun capturedOwners(stack: RigModifierStack): List<RigModifierInstance> {
+            val model = f.now.model
+            val config = model.config.copy(rigEdits = model.config.rigEdits.copy(modifierStack = stack.toJson()))
+            val context = RigModifierSource.of(model.copy(config = config)).seeThroughContext(follower)
+            return Json.decodeFromJsonElement(
+                kotlinx.serialization.builtins.ListSerializer(RigModifierInstance.serializer()),
+                context.values.getValue("earlier_owners"),
+            )
+        }
+
+        assertEquals(listOf(owner), capturedOwners(RigModifierStack(instances = listOf(owner, follower))))
+        assertEquals(listOf(owner), capturedOwners(RigModifierStack(instances = listOf(follower),
+            retiredIds = setOf(owner.id), appliedCapabilities = listOf(applied))))
+        assertEquals(emptyList(), capturedOwners(RigModifierStack(instances = listOf(owner.copy(enabled = false), follower))))
+    }
+
     @Test fun seeThroughModifiersReuseTheNativeMasksAndKeepCopiesAfterApplication(): Unit = runBlocking<Unit> {
         val f = Fixture(document(bangOverlay = true)); f.install()
         f.group(listOf("body/legacy", "face/legacy", "eye/fitted", "brow/fitted", "mouth/fitted", "hair/legacy"))
@@ -1458,6 +1485,23 @@ class WorkspaceLegacyBindingTest {
         f.edit("modifier_add", f.addition("eye.see-through", "eyes", targets))
         f.edit("modifier_add", f.addition("brow.see-through", "brows", targets))
         val instances = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.takeLast(2)
+        val browInstance = instances.single { it.id == "brows" }
+        val rig = f.now.model.rig
+        val browId = rig.layerIdByDrawableId.entries.single { (id, layer) ->
+            layer == "brow" && browInstance.localOutputName(id) == null
+        }.key
+        val browCopyId = browInstance.outputId("see-through:$browId")
+        val browCopy = rig.puppet.drawables.single { it.id.raw == browCopyId }
+        assertEquals(browId, browCopy.textureSourceId?.raw)
+        assertFalse(browCopy.invertMask)
+        assertTrue(browCopy.maskedBy.isNotEmpty())
+        val browReport = assertNotNull(rig.modifierReport).getValue("entries").jsonArray
+            .map { it.jsonObject }.single { it.getValue("id").jsonPrimitive.content == "brows" }
+        val browMeshes = browReport.getValue("contributions").jsonArray.map { it.jsonObject }
+            .filter { it.getValue("kind").jsonPrimitive.content == "mesh" }
+            .associate { it.getValue("id").jsonPrimitive.content to it.getValue("change").jsonPrimitive.content }
+        assertEquals(mapOf(browCopyId to "added", browId to "reused") +
+            browCopy.maskedBy.associate { it.raw to "reused" }, browMeshes)
         val aliases = f.now.model.rig.puppet.drawables.mapNotNull { mesh ->
             val originalId = instances.firstNotNullOfOrNull { it.localOutputName(mesh.id.raw) }?.removePrefix("see-through:")
                 ?: return@mapNotNull null

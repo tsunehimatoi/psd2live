@@ -109,7 +109,8 @@ internal object RigLegacyBindings {
         requires = spec.requires, provides = if (spec.type == FITTED_FACE) setOf("face/legacy") else emptySet(), exclusiveFamily = if (spec.isBase) "base:${spec.area}" else if (spec.chainKinds.isNotEmpty()) "chain:${spec.type}" else if (spec.expressionToggles || spec.mouthOutline) spec.type else null,
         providers = { instance -> providers(instance) },
         appliedConfig = { it.config }, resolveParameter = { instance, before, declared -> requireNotNull(source).resolveParameter(instance, before, declared) },
-        references = RigModifierPhysics::references, parameters = { instance -> when {
+        references = if (spec.seeThrough) SeeThroughContributions::references else RigModifierPhysics::references,
+        parameters = { instance -> when {
             spec.seeThrough || spec.skinClip -> emptyList()
             spec.expressionToggles -> requireNotNull(source).expressionParameters(instance)
             else -> requireNotNull(source).parameters(instance)

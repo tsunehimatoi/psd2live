@@ -101,8 +101,18 @@ internal class RigModifierSource(
             put("bangs", JsonArray(candidate.bangs.map(::JsonPrimitive)))
         }) } }
         put("earlier_owners", Json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(RigModifierInstance.serializer()),
-            activeBefore(instance).filter { RigLegacyBindings.find(it.type)?.seeThrough == true }))
+            activeBefore(instance).filter { RigLegacyBindings.find(it.type)?.seeThrough == true || isPackagedSeeThrough(it) }))
     })
+
+    private fun isPackagedSeeThrough(instance: RigModifierInstance): Boolean {
+        val plugin = instance.plugin ?: return false
+        return listOf("eye.see-through", "brow.see-through").any { alias ->
+            val artifact = BundledAlgorithmArtifacts.find(alias, instance.version) ?: return@any false
+            plugin.id == artifact.manifest.id && artifact.manifest.algorithms.any {
+                it.type == instance.type && it.version == instance.version && alias in it.aliases
+            }
+        }
+    }
 
     fun seeThrough(rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit): RigIR =
         io.github.psd2live.algorithms.binding.SeeThroughAlgorithm().evaluate(rig, instance, seeThroughContext(instance), checkpoint)
