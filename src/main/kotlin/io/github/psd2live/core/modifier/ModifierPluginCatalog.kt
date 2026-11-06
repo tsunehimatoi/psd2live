@@ -2,22 +2,23 @@ package io.github.psd2live.core.modifier
 
 /** All catalog consumers use the same installed package snapshot. */
 internal object ModifierPluginCatalog {
-    fun definitions(): List<RigModifierDefinition> = ModifierPluginStore.shared.snapshot().flatMap { entry ->
-        entry.manifest.algorithms.map { algorithm ->
-            RigModifierDefinition(algorithm.type, algorithm.version, requires = algorithm.requires,
+    fun definitions(store: ModifierPluginStore = ModifierPluginStore.shared): List<RigModifierDefinition> = store.snapshot().flatMap { entry ->
+        entry.manifest.algorithms.flatMap { algorithm -> (algorithm.aliases + algorithm.type).map { type ->
+            RigModifierDefinition(type, algorithm.version, requires = algorithm.requires,
                 references = { before, after, _ -> ModifierPluginOutput.sidecars(before, after) },
                 parameters = { algorithm.parameters.map { it.definition() } },
                 exclusiveFamily = algorithm.exclusiveFamily, composableKinds = algorithm.composableKinds,
                 validate = { _, instance ->
                     require(instance.targets.all { it.kind in algorithm.targets }) { "Unsupported plugin target" }
                     ModifierPluginSchema.validate(instance.config, algorithm.configSchema)
-                }, evaluate = { rig, instance, checkpoint -> ModifierPluginWorkers.evaluate(entry, algorithm, rig, instance, checkpoint) },
+                }, evaluate = { rig, instance, checkpoint -> ModifierPluginWorkers.evaluate(entry, algorithm, rig, instance, checkpoint, store) },
                 pluginReference = entry.reference, cacheReads = algorithm.reads + algorithm.writes)
-        }
+        } }
     }
 
     fun available(instance: RigModifierInstance): Boolean = instance.plugin?.let { reference ->
-        if (reference.id.startsWith("builtin.")) BuiltinModifierPlugins.matches(instance) && ModifierPluginStore.shared.builtinEnabled(reference.id)
+        if (reference.id.startsWith("builtin.")) ModifierPluginStore.shared.builtinEnabled(reference.id) &&
+            (BuiltinModifierPlugins.matches(instance) || ModifierPluginStore.shared.resolution(reference).available)
         else ModifierPluginStore.shared.resolution(reference).available
     } ?: BuiltinModifierPlugins.reference(instance.type, instance.version)?.let { ModifierPluginStore.shared.builtinEnabled(it.id) }
         ?: ModifierPluginStore.shared.builtinsEnabled()

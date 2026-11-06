@@ -32,6 +32,7 @@ internal object BuiltinModifierPlugins {
 
     val entries: List<Entry> by lazy {
         definitions(null).map { definition ->
+            BundledAlgorithmArtifacts.find(definition.type, definition.version)?.let { return@map Entry(it.reference, definition) }
             val implementation = when (definition.type) {
                 "swing" -> SwingAlgorithmPlugin::class.java
                 "simulation" -> SimulationAlgorithmPlugin::class.java

@@ -41,6 +41,8 @@ data class ModifierPluginAlgorithm(
     val configSchema: JsonObject,
     val defaults: JsonObject,
     val parameters: List<ModifierPluginParameter> = emptyList(),
+    /** Stable document types retained by a bundled algorithm after moving into a package. */
+    val aliases: Set<String> = emptySet(),
 )
 
 @Serializable

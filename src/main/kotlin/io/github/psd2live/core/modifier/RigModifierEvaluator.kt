@@ -52,8 +52,9 @@ internal class RigModifierRegistry(definitions: List<RigModifierDefinition>) {
         known.forEach(::visit)
     }
 
-    fun definition(instance: RigModifierInstance): RigModifierDefinition = requireNotNull(entries[Triple(instance.type, instance.version, instance.plugin)]
-        ?: if (BuiltinModifierPlugins.matches(instance)) entries[Triple(instance.type, instance.version, null)] else null) {
+    fun definition(instance: RigModifierInstance): RigModifierDefinition = requireNotNull(
+        (if (BuiltinModifierPlugins.matches(instance)) entries[Triple(instance.type, instance.version, null)] else null)
+            ?: entries[Triple(instance.type, instance.version, instance.plugin)]) {
         "Unsupported modifier algorithm: ${instance.type}@${instance.version}"
     }.also { require(it.pluginReference == instance.plugin || it.pluginReference == null && BuiltinModifierPlugins.matches(instance)) { "Missing pinned plugin for ${instance.type}: ${instance.plugin}" } }
 

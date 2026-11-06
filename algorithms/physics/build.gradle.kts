@@ -41,9 +41,9 @@ tasks.register("pluginPackage") {
         jar.copyTo(payload, overwrite = true)
         val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
         directory.resolve("plugin.json").writeText("""
-            {"protocol":1,"id":"psd2live.physics","version":"1.0.0","name":"Pendulum physics",
+            {"protocol":1,"id":"builtin.70687973696373.v1","version":"1.0.0","name":"Pendulum physics",
              "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
-             "algorithms":[{"type":"psd2live.physics/pendulum","version":1,"name":"Pendulum physics","category":"physics",
+             "algorithms":[{"type":"builtin.70687973696373.v1/pendulum","aliases":["physics"],"version":1,"name":"Pendulum physics","category":"physics",
                "targets":["mesh","deformer"],"reads":["parameter","physics"],"writes":["physics"],
                "configSchema":{"type":"object"},"defaults":{}}]}
         """.trimIndent())

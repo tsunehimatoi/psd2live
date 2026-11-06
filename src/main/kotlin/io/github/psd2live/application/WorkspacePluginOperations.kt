@@ -16,7 +16,7 @@ internal object WorkspacePluginManagement {
                 if (id == "builtin") {
                     require(operation != "plugin_uninstall") { "Bundled plugins can be disabled but cannot be deleted" }
                     store.setBuiltinsEnabled(operation == "plugin_enable")
-                } else if (BuiltinModifierPlugins.entry(id) != null) {
+                } else if (BuiltinModifierPlugins.entry(id)?.reference?.digest == request.getValue("digest").jsonPrimitive.content) {
                     require(operation != "plugin_uninstall") { "Bundled plugins can be disabled but cannot be deleted" }
                     val reference = BuiltinModifierPlugins.entry(id)!!.reference
                     require(request.getValue("digest").jsonPrimitive.content == reference.digest) { "Bundled plugin version changed" }
@@ -49,7 +49,7 @@ internal object WorkspacePluginManagement {
                     put("exclusive_family", definition.exclusiveFamily?.let(::JsonPrimitive) ?: JsonNull)
                 } }
             } }
-            store.snapshot().forEach { add(describe(it, store)) }
+            store.snapshot().filterNot { entry -> BuiltinModifierPlugins.entries.any { it.reference == entry.reference } }.forEach { add(describe(it, store)) }
         } }
     }
 

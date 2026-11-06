@@ -22,6 +22,7 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
         val shared by lazy {
             val prefs = Preferences.userRoot().node("io.github.psd2live.settings/algorithm-plugins")
             ModifierPluginStore(Path.of(prefs.get("directory", Path.of(System.getProperty("user.home"), ".psd2live", "plugins").toString())), prefs)
+                .also(BundledAlgorithmArtifacts::retain)
         }
         val platform: String get() {
             val os = System.getProperty("os.name").lowercase().let { when { "win" in it -> "windows"; "mac" in it -> "macos"; else -> "linux" } }
@@ -66,7 +67,11 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
     private var installed: List<InstalledModifierPlugin> = load()
 
     fun snapshot(): List<InstalledModifierPlugin> = synchronized(lock) { installed.toList() }
-    fun packages(): List<InstalledModifierPlugin> = synchronized(lock) { installed + BuiltinModifierPlugins.packages(this) }
+    fun packages(): List<InstalledModifierPlugin> = synchronized(lock) {
+        (BuiltinModifierPlugins.packages(this) + installed.map { entry ->
+            if (entry.reference.id.startsWith("builtin.")) entry.copy(enabled = entry.enabled && builtinEnabled(entry.reference.id)) else entry
+        }).distinctBy { it.reference }
+    }
     fun resolution(reference: ModifierPluginReference): ModifierPluginResolution = synchronized(lock) { ModifierPluginDependencies.resolve(reference, packages()) }
     fun problems(): List<String> = synchronized(lock) { loadProblems.toList() }
     fun <T> withRevision(expected: Long, action: () -> T): T = synchronized(lock) {
@@ -84,7 +89,10 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
         if (enabled) {
             val resolution = ModifierPluginDependencies.resolve(reference, packages().map { if (it.reference == reference) it.copy(enabled = true) else it })
             require(resolution.available) { resolution.issues.joinToString("; ") }
-        } else stopAffected(reference)
+        } else {
+            stopAffected(reference)
+            installed.filter { it.reference.id == reference.id && it.reference != reference }.forEach { stopAffected(it.reference) }
+        }
         val before = preferences.get(reference.id, null)
         try { preferences.putBoolean(reference.id, enabled); preferences.flush() }
         catch (failure: Exception) {
@@ -101,7 +109,7 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
                 val resolution = ModifierPluginDependencies.resolve(entry.reference, candidates)
                 require(resolution.available) { resolution.issues.joinToString("; ") }
             }
-        } else installed.filter { entry -> resolution(entry.reference).dependencies.any { it.id.startsWith("builtin.") } }
+        } else installed.filter { entry -> entry.reference.id.startsWith("builtin.") || resolution(entry.reference).dependencies.any { it.id.startsWith("builtin.") } }
             .forEach { ModifierPluginWorkers.stop(it.reference) }
         val previous = BuiltinModifierPlugins.entries.associate { it.reference.id to preferences.get(it.reference.id, null) }
         try {
@@ -132,7 +140,8 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
             require(installed.none { it.reference.id != checked.reference.id && it.manifest.algorithms.any { old -> checked.manifest.algorithms.any { it.type == old.type } } }) {
                 "Another plugin owns this algorithm type"
             }
-            val resolution = ModifierPluginDependencies.resolve(checked.reference, packages() + checked)
+            val resolution = ModifierPluginDependencies.resolve(checked.reference,
+                packages().filterNot { it.reference == checked.reference } + checked)
             require(resolution.available) { resolution.issues.joinToString("; ") }
             Files.writeString(directory.resolve(".dependencies"), codec.encodeToString(kotlinx.serialization.builtins.ListSerializer(ModifierPluginReference.serializer()), resolution.dependencies))
             val destination = root.resolve(checked.reference.digest)
@@ -199,8 +208,9 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
     }
 
     private fun checkDependencies(packages: List<InstalledModifierPlugin>) {
-        val dependencies = packages.flatMap { it.manifest.algorithms }.groupBy { it.type }
-            .mapValues { (_, versions) -> versions.flatMapTo(HashSet()) { it.requires } }
+        val dependencies = packages.flatMap { it.manifest.algorithms }.flatMap { algorithm ->
+            (algorithm.aliases + algorithm.type).map { it to algorithm.requires }
+        }.groupBy({ it.first }, { it.second }).mapValues { (_, versions) -> versions.flatten().toSet() }
         val visited = HashSet<String>()
         val visiting = HashSet<String>()
         fun visit(type: String) {
@@ -236,7 +246,7 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
         val bytes = Files.readAllBytes(directory.resolve("plugin.json"))
         require(bytes.size <= 1024 * 1024) { "Plugin manifest is too large" }
         val manifest = codec.decodeFromString(ModifierPluginManifest.serializer(), bytes.decodeToString())
-        require(manifest.id != "builtin" && !manifest.id.startsWith("builtin.")) { "Bundled plugin identities are reserved" }
+        require(manifest.id != "builtin") { "The aggregate bundled identity is reserved" }
         require(manifest.protocol == 1 && token.matches(manifest.id) && manifest.version.length <= 128) { "Unsupported plugin manifest" }
         ModifierPluginVersion.parse(manifest.version, legacy = true)
         for (relation in manifest.dependencies + manifest.conflicts) {
@@ -246,7 +256,13 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
         require(manifest.dependencies.map { it.id }.distinct().size == manifest.dependencies.size) { "Duplicate package dependency" }
         require(manifest.name.isNotBlank() && manifest.algorithms.size in 1..128) { "A plugin must describe its algorithms" }
         require(manifest.algorithms.map { it.type to it.version }.distinct().size == manifest.algorithms.size) { "Duplicate plugin algorithm" }
+        val entryKeys = manifest.algorithms.flatMap { algorithm ->
+            (algorithm.aliases + algorithm.type).map { it to algorithm.version }
+        }
+        require(entryKeys.distinct().size == entryKeys.size) { "Duplicate plugin algorithm alias" }
         manifest.algorithms.forEach {
+            require(it.aliases.all { alias -> manifest.id == "builtin." + java.util.HexFormat.of().formatHex(alias.encodeToByteArray()) + ".v${it.version}" }) { "Only a matching bundled package may declare a legacy type" }
+            require(!manifest.id.startsWith("builtin.") || it.aliases.size == 1) { "Bundled archives require a stable algorithm alias" }
             require(it.type.startsWith("${manifest.id}/") && it.version > 0 && it.name.isNotBlank()) { "Algorithm type must belong to its plugin namespace" }
             require(it.targets.isNotEmpty() && it.targets.all { kind -> kind in setOf("mesh", "deformer", "part", "layer") }) { "Invalid algorithm targets" }
             require((it.reads + it.writes + it.composableKinds).all { kind -> kind in ModifierPluginOutput.components }) { "Unknown plugin model component" }

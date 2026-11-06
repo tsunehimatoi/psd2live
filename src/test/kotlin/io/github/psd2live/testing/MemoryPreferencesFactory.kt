@@ -18,7 +18,7 @@ class MemoryPreferencesFactory : PreferencesFactory {
 		private val values = HashMap<String, String>()
 		private val children = HashMap<String, Node>()
 		override fun putSpi(key: String, value: String) { values[key] = value }
-		override fun getSpi(key: String): String? = values[key]
+		override fun getSpi(key: String): String? = values[key] ?: if (key == "directory" && absolutePath() == "/io.github.psd2live.settings/algorithm-plugins") pluginDirectory else null
 		override fun removeSpi(key: String) { values.remove(key) }
 		override fun removeNodeSpi() { (parent() as Node?)?.children?.remove(name()) }
 		override fun keysSpi(): Array<String> = values.keys.toTypedArray()
@@ -29,6 +29,13 @@ class MemoryPreferencesFactory : PreferencesFactory {
 	}
 
 	private companion object {
+		val pluginDirectory: String by lazy {
+			val directory = java.nio.file.Files.createTempDirectory("psd2live-test-plugins-")
+			Runtime.getRuntime().addShutdownHook(Thread {
+				runCatching { java.nio.file.Files.walk(directory).use { paths -> paths.sorted(Comparator.reverseOrder()).forEach(java.nio.file.Files::deleteIfExists) } }
+			})
+			directory.toString()
+		}
 		val system = Node(null, "")
 		val user = Node(null, "")
 	}

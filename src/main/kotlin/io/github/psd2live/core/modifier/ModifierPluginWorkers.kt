@@ -98,9 +98,9 @@ internal object ModifierPluginWorkers {
             val requestId = ++sequence
             val request = buildJsonObject {
                 put("protocol", 1); put("id", requestId); put("method", "evaluate")
-                put("type", instance.type); put("version", instance.version); put("instance", instance.id)
+                put("type", algorithm.type); put("version", instance.version); put("instance", instance.id)
                 put("capabilities", JsonArray((ModifierPluginOutput.operations + "rig_objects").sorted().map(::JsonPrimitive)))
-                put("invocation", Json.encodeToJsonElement(RigModifierInstance.serializer(), instance))
+                put("invocation", Json.encodeToJsonElement(RigModifierInstance.serializer(), instance.copy(type = algorithm.type)))
                 put("dependencies", JsonArray(store.resolution(entry.reference).dependencies.map { reference ->
                     Json.encodeToJsonElement(ModifierPluginReference.serializer(), reference)
                 }))

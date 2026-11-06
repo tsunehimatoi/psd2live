@@ -61,6 +61,23 @@ class ModifierPluginTest {
         return directory
     }
 
+    @Test fun bundledAliasesMustBeUniqueAndMatchPackageIdentity() = fixture { root, store, _ ->
+        val path = packageAt(root.resolve("package"))
+        val manifestPath = path.resolve("plugin.json")
+        val manifest = Json.decodeFromString(ModifierPluginManifest.serializer(), Files.readString(manifestPath))
+        val id = "builtin.70687973696373.v1"
+        val algorithm = manifest.algorithms.single().copy(type = "$id/pendulum", aliases = setOf("physics"))
+        fun write(value: ModifierPluginManifest) = Files.writeString(manifestPath,
+            Json.encodeToString(ModifierPluginManifest.serializer(), value))
+        write(manifest.copy(algorithms = listOf(manifest.algorithms.single().copy(aliases = setOf("physics")))))
+        assertFailsWith<IllegalArgumentException> { store.inspect(path.toString()) }
+        write(manifest.copy(id = id, algorithms = listOf(algorithm, algorithm.copy(type = "$id/other"))))
+        assertFailsWith<IllegalArgumentException> { store.inspect(path.toString()) }
+        write(manifest.copy(id = id, algorithms = listOf(algorithm)))
+        assertEquals(setOf("physics"), store.inspect(path.toString()).manifest.algorithms.single().aliases)
+        assertTrue(store.snapshot().isEmpty())
+    }
+
     @Test fun installationReplayAndWorkerReusePreserveIdentity() = fixture { root, store, preferences ->
         val path = packageAt(root.resolve("package"))
         val entry = store.install(path.toString())
