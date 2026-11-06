@@ -324,6 +324,19 @@ object RigBuilder {
 
 		private val fittedEyes = java.util.concurrent.ConcurrentHashMap<List<Any?>, io.github.psd2live.core.fit.FittedEyes>()
 
+        private class SourceFitValue<T>(val value: T)
+
+        private fun <T> sourceFit(kind: String, key: Any, build: () -> T): T {
+            val compute = { SourceFitValue(RigBuildProfile.stage("source fitting: $kind") { build() }) }
+            return (if (RigStageCache.enabled && sharedStages != null) sharedStages.get("source fitting: $kind", 64, key, compute)
+                else compute()).value
+        }
+
+        /** Artwork measurements are shared across modifier templates; motion options do not change source pixels. */
+        private fun sourceEyes(space: HeadCoordinateSpace?) = sourceFit("eyes", listOf(analysis.layers, faceRig.centerX, space)) {
+            io.github.psd2live.core.fit.EyeFitting.fit(analysis.layers, faceRig.centerX) { x, y -> space?.toAligned(x, y) ?: (x to y) }
+        }
+
 		/**
 		 * The eyes of the `eye/fitted` base under [config], fitted once per set of its values; null when the recipe
 		 * builds the eyes another way. An eye the fit could not read is left out, and its layers fall back to the legacy rig.
@@ -336,9 +349,11 @@ object RigBuilder {
 			return fittedEyes.getOrPut(listOf(values, options, config.parentOverrides, deformersEnabled, moved, config.recipe.eyeParts)) {
 				val space = analysis.layers.firstOrNull { it.semantic.tag == SemanticTag.EYEWHITE && it.opaquePixels > 0 }?.let { headSpaceFor(it, config) }
 				val toRig = { x: Float, y: Float -> space?.toAligned(x, y) ?: (x to y) }
-				val result = io.github.psd2live.core.fit.EyeFitting.fit(analysis.layers, faceRig.centerX, toRig)
+				val result = sourceEyes(space)
 				val fits = result.fits.mapValues { (side, drawn) -> drawn.moved(rigMoves(config, if (side == Side.LEFT) "eye.L" else "eye.R", toRig)) }
-				val artwork = io.github.psd2live.core.fit.EyeArtworkFitting.fit(analysis.layers, fits, config.recipe.eyeParts, toRig)
+				val artwork = sourceFit("eye artwork", listOf(analysis.layers, fits, config.recipe.eyeParts, space)) {
+                    io.github.psd2live.core.fit.EyeArtworkFitting.fit(analysis.layers, fits, config.recipe.eyeParts, toRig)
+                }
 				io.github.psd2live.core.fit.FittedEyes(result, fits.mapValues { (side, drawn) ->
 					val fit = drawn.copy(artwork = artwork[side])
 					io.github.psd2live.core.fit.EyeRig(fit, values[0] / 100f, values[1] / 100f, values[2] / 100f,
@@ -465,10 +480,14 @@ object RigBuilder {
 				val mouth = analysis.layers.firstOrNull { it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && it.semantic.role == null && it.opaquePixels > 0 }
 				val space = mouth?.let { headSpaceFor(it, config) }
 				val toRig = { x: Float, y: Float -> space?.toAligned(x, y) ?: (x to y) }
-				val level = fittedEyes(config)?.fitting?.level ?: io.github.psd2live.core.fit.EyeFitting.fit(analysis.layers, faceRig.centerX, toRig).level
-				val drawn = io.github.psd2live.core.fit.MouthFitting.fit(analysis.layers, level, toRig)
+				val level = fittedEyes(config)?.fitting?.level ?: sourceEyes(space).level
+				val drawn = sourceFit("mouth", listOf(analysis.layers, level, space)) {
+                    io.github.psd2live.core.fit.MouthFitting.fit(analysis.layers, level, toRig)
+                }
 				val result = io.github.psd2live.core.fit.MouthFitting.Result(drawn.fit?.moved(rigMoves(config, "mouth", toRig)), drawn.reason, drawn.layers)
-				val rig = result.fit?.let { io.github.psd2live.core.fit.MouthRig(it, options, io.github.psd2live.core.fit.MouthFitting.lineWidth(it, analysis.layers, toRig)) }
+				val rig = result.fit?.let { io.github.psd2live.core.fit.MouthRig(it, options, sourceFit("mouth line width", listOf(it, analysis.layers, space)) {
+                    io.github.psd2live.core.fit.MouthFitting.lineWidth(it, analysis.layers, toRig)
+                }) }
 				io.github.psd2live.core.fit.FittedMouth(result, rig, rig?.let { chinDepth(it, config) } ?: 0.6f, analysis.layers)
 			}
 		}
@@ -511,7 +530,7 @@ object RigBuilder {
 				val space = brows.firstOrNull()?.let { headSpaceFor(it, config) }
 				val toRig = { x: Float, y: Float -> space?.toAligned(x, y) ?: (x to y) }
 				val eyes = fittedEyes(config)
-				val level = eyes?.fitting?.level ?: io.github.psd2live.core.fit.EyeFitting.fit(analysis.layers, faceRig.centerX, toRig).level
+				val level = eyes?.fitting?.level ?: sourceEyes(space).level
 				brows.groupBy { it.semantic.side }.mapNotNull { (side, layers) ->
 					val layer = layers.maxBy { it.opaquePixels }
 					val fit = io.github.psd2live.core.fit.BrowFit.of(layer, level, faceRig.centerX, toRig)

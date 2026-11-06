@@ -7,6 +7,29 @@ import io.github.psd2live.targets.cubism.PuppetIr
 import kotlin.test.*
 
 class ExpressionGeometryCacheTest {
+    @Test fun sourceEyeMeasurementIsSharedAcrossOptionsAndInvalidatedBySourceChanges() {
+        val document = Characters.head(physics = false)
+        val recipe = RigRecipe(true,
+            bases = RigModules.areas.associate { it.id to BaseChoice(if (it.id == "eye") RigModules.EYE_FITTED.id else it.legacy.id) },
+            modules = RigModules.modules.associate { it.id to ModuleChoice(false) })
+        val config = document.rawConfig().copy(recipe = recipe)
+        val analysis = CharacterAnalyzer.analyze(document.source, config)
+        val cache = PreviewMeshCache()
+        val first = RigBuilder.rigContext(analysis, config, cache).fittedEyes(config)!!
+        val changed = config.copy(recipe = recipe.copy(modules = recipe.modules + (RigModules.EYE_SMILE.id to ModuleChoice(true, values = mapOf("arch" to 60f)))))
+        val second = RigBuilder.rigContext(analysis, changed, cache).fittedEyes(changed)!!
+        assertSame(first.fitting, second.fitting)
+        assertNotEquals(first.options, second.options)
+        assertEquals(1L, cache.stages.misses("source fitting: eyes"))
+        assertTrue(cache.stages.hits("source fitting: eyes") > 0)
+        val reordered = analysis.copy(layers = analysis.layers.reversed())
+        val third = RigBuilder.rigContext(reordered, changed, cache).fittedEyes(changed)!!
+        assertNotSame(second.fitting, third.fitting)
+        val cold = RigBuilder.rigContext(reordered, changed).fittedEyes(changed)!!
+        assertEquals(cold.fitting.fits, third.fitting.fits)
+        assertEquals(cold.fitting.level, third.fitting.level)
+    }
+
     @Test fun expressionChannelsChangeWithoutRebuildingGeometry() {
         val document = Characters.head(physics = false)
         val recipe = RigRecipe(true,
