@@ -62,6 +62,7 @@ kotlin {
 }
 
 dependencies {
+	implementation(project(":algorithm-api"))
 	implementation(platform("io.ktor:ktor-bom:3.5.1"))
 	// Engine ported from Umamo (format, runtime, interop, render, edit); it brings its own libraries.
 	implementation(project(":umamo"))

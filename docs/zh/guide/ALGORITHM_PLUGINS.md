@@ -30,11 +30,17 @@ GUI 与 MCP 使用相同管理服务。`plugin_list` 返回包身份、启用状
 
 以上为 `plugin_install` 的业务请求；`plugin_inspect` 接受相同输入，只检查、不安装。Git 请求可增加 `ref`。
 
-`plugin_enable`、`plugin_disable`、`plugin_uninstall` 使用 `plugin_list` 返回的 `id` 与 `digest`。内置包的两个值都是 `builtin`。除列表外均返回后台任务，通过 `job_wait`／`job_get` 查询终态。无需已打开工程。
+`plugin_enable`、`plugin_disable`、`plugin_uninstall` 使用 `plugin_list` 返回的 `id` 与 `digest`。内置项也使用列表返回的独立身份；旧的两个值均为 `builtin` 的调用只兼容整体启停，不用于卸载。除列表外均返回后台任务，通过 `job_wait`／`job_get` 查询终态。无需已打开工程。
 
 添加和编辑外部修改器继续使用 `modifier_plan`、`modifier_add`、`modifier_update` 等现有操作；配置按插件提供的 schema 校验。计划结果固定包引用，提交期间插件改变则拒绝旧候选。所有公开操作均声明严格结果 schema。
 
 ## 编写插件
+
+JVM 契约已拆为独立的 `:algorithm-api` 模块，应用和插件共用同一份声明。它只依赖中立 `:format-model` 与 JSON 序列化库，不依赖应用、Umamo、Compose、工程或历史。`./gradlew :algorithm-api:build` 生成版本为 `1.0.0` 的 API JAR 与源码 JAR。
+
+`ModifierAlgorithmPlugin.evaluate(input, instance, checkpoint)` 接收上游 `RigIR`、不可变 `RigModifierInstance` 和取消检查函数，返回候选 `RigIR`。实现不能原地修改输入数组；长循环需调用 `checkpoint`，异常原样交回宿主。对象身份使用 `instance.outputId(localName)`，兼容已有别名；宿主仍负责输出验证、依赖、覆盖、CAS 和历史提交。API 同时公开目标引用、固定包引用、清单、版本范围与依赖声明；原 JSON 字段、序列化类型名称和对象 ID 编码保持不变。
+
+API JAR 本身不是可安装算法包。独立编译契约不等于内置实现已迁出应用；内置包加载与历史实现保留仍按上面的迁移状态处理。外部六语言工作进程继续使用下述版本化协议。
 
 六语言源码与打包工具见 [examples/plugins](../../../examples/plugins/README.md)。包根目录的 `plugin.json` 声明：
 

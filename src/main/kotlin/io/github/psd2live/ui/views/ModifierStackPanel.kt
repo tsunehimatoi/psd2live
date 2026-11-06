@@ -186,7 +186,7 @@ private fun ModifierModulePhysicsValues(instance: RigModifierInstance, report: J
 
 @Composable
 private fun ModifierSourceValues(instance: RigModifierInstance, enabled: Boolean, vm: PSD2LiveViewModel) {
-    if (instance.plugin != null && !instance.plugin.id.startsWith("builtin.")) {
+    if (instance.plugin?.let { !it.id.startsWith("builtin.") } == true) {
         ModifierPluginValues(instance, enabled, vm)
         return
     }

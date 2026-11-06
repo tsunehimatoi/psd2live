@@ -6,28 +6,28 @@ import kotlinx.serialization.json.JsonObject
 
 /** Immutable identity captured by a document, never resolved to a newer package at replay time. */
 @Serializable
-internal data class ModifierPluginReference(val id: String, val version: String, val digest: String,
+data class ModifierPluginReference(val id: String, val version: String, val digest: String,
     val dependencyDigests: Map<String, String> = emptyMap())
 
 /** Bounds are inclusive at minimum and exclusive at maximum; exact cannot be combined with bounds. */
 @Serializable
-internal data class ModifierPluginVersionRange(val exact: String? = null, val minimum: String? = null, val maximum: String? = null)
+data class ModifierPluginVersionRange(val exact: String? = null, val minimum: String? = null, val maximum: String? = null)
 
 @Serializable
-internal data class ModifierPluginDependency(val id: String, val version: ModifierPluginVersionRange = ModifierPluginVersionRange())
+data class ModifierPluginDependency(val id: String, val version: ModifierPluginVersionRange = ModifierPluginVersionRange())
 
 /** Execution is independent of packaging: bundled algorithms do not pay an IPC or serialization cost. */
-internal fun interface ModifierAlgorithmPlugin {
+fun interface ModifierAlgorithmPlugin {
     fun evaluate(input: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit): RigIR
 }
 
 @Serializable
-internal data class ModifierPluginParameter(val id: String, val name: String, val min: Float, val max: Float, val default: Float) {
+data class ModifierPluginParameter(val id: String, val name: String, val min: Float, val max: Float, val default: Float) {
     fun definition() = io.github.psd2live.format.model.Parameter(id, name, min, max, default)
 }
 
 @Serializable
-internal data class ModifierPluginAlgorithm(
+data class ModifierPluginAlgorithm(
     val type: String,
     val version: Int = 1,
     val name: String,
@@ -44,7 +44,7 @@ internal data class ModifierPluginAlgorithm(
 )
 
 @Serializable
-internal data class ModifierPluginManifest(
+data class ModifierPluginManifest(
     val protocol: Int = 1,
     val id: String,
     val version: String,

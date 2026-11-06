@@ -30,11 +30,17 @@ GUI and MCP share one management service. `plugin_list` returns package identity
 {"source":"D:/plugins/example-python.zip"}
 ```
 
-`plugin_enable`, `plugin_disable`, and `plugin_uninstall` take the `id` and `digest` returned by the list. Both values are `builtin` for bundled algorithms. All operations except listing return process jobs; use `job_wait` or `job_get`. No open project is required.
+`plugin_enable`, `plugin_disable`, and `plugin_uninstall` take the `id` and `digest` returned by the list, including individual bundled identities. The legacy pair of `builtin` values only supports aggregate enable/disable, not uninstall. All operations except listing return process jobs; use `job_wait` or `job_get`. No open project is required.
 
 Use the existing `modifier_plan`, `modifier_add`, and `modifier_update` operations for external algorithms. Configurations are validated against their package schema. Plans pin their package reference; changing plugins invalidates prepared candidates. Public operations declare strict result schemas.
 
 ## Authoring and protocol
+
+The JVM contract lives in the independent `:algorithm-api` module used by the application. It depends only on the neutral `:format-model` module and JSON serialization, not the application, Umamo, Compose, projects or history. `./gradlew :algorithm-api:build` produces the version `1.0.0` API and sources JARs.
+
+`ModifierAlgorithmPlugin.evaluate(input, instance, checkpoint)` receives the upstream `RigIR`, an immutable `RigModifierInstance` and a cancellation checkpoint, and returns a candidate `RigIR`. Do not mutate input arrays; invoke the checkpoint in long loops and let failures propagate. Generate identities with `instance.outputId(localName)`, which preserves recorded aliases. The host owns output validation, dependencies, overrides, CAS and history. Targets, pinned package references, manifests, version ranges and dependency declarations are public in the same module. Existing JSON fields, serialized type names and object ID encoding are unchanged.
+
+The API JAR is not an installable algorithm package. An independently compiled contract does not mean bundled implementations have left the application; package loading and historical implementation retention remain subject to the migration limitations above. External workers in all six languages continue to use the versioned protocol below.
 
 See [six-language examples and packaging instructions](../../../examples/plugins/README.md). Package-root `plugin.json` contains:
 
