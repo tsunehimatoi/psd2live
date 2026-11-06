@@ -298,7 +298,7 @@ object SimAuthoring {
         val edit = overlay.simEdits.firstOrNull { it.id == id } ?: return overlay to null
         if (!(autoBake ?: edit.autoBake) || !edit.enabled) return overlay to null
         val model = unbakedModel(overlay, authored, id)
-        if (edit.bake != null && edit.bake.fingerprint == SimBake.fingerprint(model, edit)) return overlay to null
+        if (edit.bake?.fingerprint == SimBake.fingerprint(model, edit)) return overlay to null
         return try {
             withBake(overlay, id, SimBaker.bake(model, edit, SimBaker.Options(physicsFps = overlay.physicsFps, previous = edit.bake?.physics, previousExtra = edit.bake?.extraPhysics.orEmpty(),
                 progress = progress, cancelled = cancelled, trainingMotions = trainingMotions(overlay, edit, model)))) to null

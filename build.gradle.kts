@@ -67,6 +67,7 @@ dependencies {
 	implementation(project(":algorithms:physics"))
 	implementation(project(":algorithms:motion"))
 	implementation(project(":algorithms:swing"))
+	implementation(project(":algorithms:simulation"))
 	implementation(platform("io.ktor:ktor-bom:3.5.1"))
 	// Engine ported from Umamo (format, runtime, interop, render, edit); it brings its own libraries.
 	implementation(project(":umamo"))
@@ -219,6 +220,10 @@ tasks.processResources {
     dependsOn(":algorithms:swing:pluginPackage")
     from(project(":algorithms:swing").layout.buildDirectory.dir("plugin")) {
         into("algorithm-plugins/swing")
+    }
+    dependsOn(":algorithms:simulation:pluginPackage")
+    from(project(":algorithms:simulation").layout.buildDirectory.dir("plugin")) {
+        into("algorithm-plugins/simulation")
     }
 	if (!includeCubism) {
 		exclude("cubism/**")

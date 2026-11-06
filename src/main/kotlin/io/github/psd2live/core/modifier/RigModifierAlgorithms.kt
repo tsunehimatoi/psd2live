@@ -74,17 +74,9 @@ internal object RigModifierAlgorithms {
     }
 
     internal fun simulationOutputs(instance: RigModifierInstance, source: RigSimEdit): RigSimEdit =
-        source.copy(outputs = requireNotNull(source.bake).parameters.associateWith { parameter ->
-            val previous = source.outputs[parameter]
-            (previous ?: io.github.psd2live.core.sim.SimOutput()).copy(id = instance.outputId("simulation:$parameter"))
-        })
-
-    internal fun simulationPhysics(instance: RigModifierInstance, edit: RigSimEdit, available: Set<String>): Map<String, RigPhysicsEdit> {
-        val valid = SimGenerator.physicsRules(listOf(edit), available).associateBy { it.id }
-        return SimGenerator.writtenPendulums(edit).mapIndexedNotNull { index, group ->
-            valid[group.id]?.let { group.id to it.copy(id = instance.outputId("physics:$index")) }
-        }.toMap()
-    }
+        io.github.psd2live.algorithms.simulation.SimulationOutputs.outputs(instance, source)
+    internal fun simulationPhysics(instance: RigModifierInstance, edit: RigSimEdit, available: Set<String>): Map<String, RigPhysicsEdit> =
+        io.github.psd2live.algorithms.simulation.SimulationOutputs.physics(instance, edit, available)
 
     internal fun addPhysics(rig: RigIR, groups: List<PhysicsGroup>): RigIR =
         io.github.psd2live.algorithms.physics.PhysicsGroups.append(rig, groups)

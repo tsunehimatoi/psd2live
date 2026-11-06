@@ -235,6 +235,6 @@ object SimBake {
     /** Whether [edit]'s bake no longer matches its setup in [model]. */
     fun stale(model: PuppetModel, edit: RigSimEdit): Boolean = edit.bake != null && edit.bake.fingerprint != fingerprint(model, edit)
 
-    internal fun sha1(text: String): String =
+    fun sha1(text: String): String =
         MessageDigest.getInstance("SHA-1").digest(text.toByteArray()).joinToString("") { "%02x".format(it) }.take(16)
 }

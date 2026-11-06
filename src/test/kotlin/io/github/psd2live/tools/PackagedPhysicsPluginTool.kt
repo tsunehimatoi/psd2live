@@ -8,6 +8,7 @@ import io.github.psd2live.core.MotionData
 import io.github.psd2live.core.RigPhysicsEdit
 import io.github.psd2live.core.PhysicsInput
 import io.github.psd2live.core.PhysicsOutput
+import io.github.psd2live.core.sim.*
 import io.github.psd2live.format.model.*
 import java.nio.file.Files
 import java.nio.file.Path
@@ -29,6 +30,30 @@ class PackagedPhysicsPluginTool {
         io.github.psd2live.core.RigSwingEdit.single("draft", "Swing", io.github.psd2live.core.SwingKind.LATERAL,
             listOf("body"), listOf("angle")).toJson())
 
+    @Test fun simulationArchiveWritesBakedModesAndPhysics() {
+        requireTools()
+        val input = testInput()
+        val edit = RigSimEdit("sim", "Cloth", SimKind.CLOTH, listOf("body"), inputs = listOf(PhysicsInput("ParamAngleX")))
+        val weights = buildJsonArray { addJsonObject {
+            put("op", "vertex_group_put"); put("target", "mesh:body"); put("name", "pin"); put("kind", "pin")
+            put("weights", JsonArray(listOf(JsonPrimitive(1f), JsonPrimitive(1f), JsonPrimitive(0f))))
+        } }
+        val config = JsonObject(edit.toJson() + ("automatic_weights" to weights))
+        val weighted = RigSimulationWeights.apply(io.github.psd2live.targets.cubism.PuppetIr.toPuppet(input), config)
+        val axis = SimBakedAxis("mode", floatArrayOf(-1f, 0f, 1f), mapOf("body" to listOf(
+            floatArrayOf(0f, 0f, 0f, 0f, -2f, 0f), FloatArray(6), floatArrayOf(0f, 0f, 0f, 0f, 2f, 0f))))
+        val bake = SimBakeResult(SimBake.fingerprint(weighted, edit),
+            mapOf("body" to 3), emptyList(), listOf(SimBakedMode(axis, 2f, 1f)),
+            RigPhysicsEdit("pendulum", "Cloth", listOf(PhysicsInput("ParamAngleX")), listOf(PhysicsOutput("mode"))))
+        verifyPackage("simulation", SimulationAlgorithmPlugin.definition,
+            JsonObject(edit.copy(bake = bake).toJson() + ("automatic_weights" to weights)))
+    }
+
+    private fun testInput() = RigIR(Canvas(64f, 64f), listOf(Parameter("input", "Input", -1f, 1f, 0f),
+        Parameter("output", "Output", -1f, 1f, 0f), Parameter("ParamAngleX", "Head X", -30f, 30f, 0f)),
+        meshes = listOf(Mesh("body", "Body", null, geometry = MeshGeometry(
+            Floats.values(0f, 0f, 10f, 0f, 0f, 30f), Floats.values(0f, 0f, 1f, 0f, 0f, 1f), Ints.values(0, 1, 2)), offsets = null)))
+
     private fun verifyPackage(type: String, definition: RigModifierDefinition, config: JsonObject) {
         requireTools()
         val root = Files.createTempDirectory("packaged-algorithm-")
@@ -38,7 +63,7 @@ class PackagedPhysicsPluginTool {
             val built = Path.of("algorithms/$type/build/plugin").toAbsolutePath()
             val source = Files.createDirectory(root.resolve("package"))
             java.util.jar.JarFile(built.resolve("algorithm.jar").toFile()).use { jar ->
-                assertFalse(jar.entries().asSequence().any { entry -> (type != "swing" && entry.name.startsWith("org/umamo/")) ||
+                assertFalse(jar.entries().asSequence().any { entry -> (type !in setOf("swing", "simulation") && entry.name.startsWith("org/umamo/")) ||
                     listOf("application", "ui", "project", "history").any { entry.name.startsWith("io/github/psd2live/$it/") } })
             }
             Files.copy(built.resolve("algorithm.jar"), source.resolve("algorithm.jar"))
@@ -47,10 +72,7 @@ class PackagedPhysicsPluginTool {
             val entry = store.install(source.toString())
             val instance = RigModifierInstance("instance1", type, 1, listOf(ModifierTarget("mesh", "body")),
                 config = config, outputAliases = mapOf(type to "retained-output"), plugin = entry.reference)
-            val input = RigIR(Canvas(64f, 64f), listOf(Parameter("input", "Input", -1f, 1f, 0f),
-                Parameter("output", "Output", -1f, 1f, 0f), Parameter("ParamAngleX", "Head X", -30f, 30f, 0f)),
-                meshes = listOf(Mesh("body", "Body", null, geometry = MeshGeometry(
-                    Floats.values(0f, 0f, 10f, 0f, 0f, 30f), Floats.values(0f, 0f, 1f, 0f, 0f, 1f), Ints.values(0, 1, 2)), offsets = null)))
+            val input = testInput()
             if (type == "swing") {
                 val model = io.github.psd2live.targets.cubism.PuppetIr.toPuppet(input)
                 val wrapped = io.github.psd2live.core.SwingWrapping.wrap(model, io.github.psd2live.core.RigSwingEdit.fromJson(config))
@@ -58,6 +80,18 @@ class PackagedPhysicsPluginTool {
                 assertEquals(io.github.psd2live.targets.cubism.PuppetIr.toIr(replayed), io.github.psd2live.targets.cubism.PuppetIr.toIr(wrapped.model))
             }
             val expected = definition.plugin.evaluate(input, instance) {}
+            if (type == "simulation") {
+                assertEquals(1, expected.physics.groups.size)
+                assertTrue(expected.parameters.any { it.id == instance.outputId("simulation:mode") })
+                assertTrue(expected.meshes.single().offsets != null || expected.meshes.single().shapes.isNotEmpty())
+                val model = io.github.psd2live.targets.cubism.PuppetIr.toPuppet(input)
+                val replayed = config.getValue("automatic_weights").jsonArray.fold(model) { current, command ->
+                    io.github.psd2live.core.RigAuthoringJournal.apply(current, command.jsonObject)
+                }
+                assertEquals(io.github.psd2live.targets.cubism.PuppetIr.toIr(replayed),
+                    io.github.psd2live.targets.cubism.PuppetIr.toIr(RigSimulationWeights.apply(model, config)))
+                assertEquals(1, io.github.psd2live.targets.cubism.PuppetIr.toPuppet(expected).vertexGroups.size)
+            }
             val registry = RigModifierRegistry(listOf(definition) + ModifierPluginCatalog.definitions(store))
             assertEquals(entry.reference, registry.definition(instance).pluginReference)
             assertSame(definition, registry.definition(instance.copy(plugin = BuiltinModifierPlugins.reference(type, 1))))

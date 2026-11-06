@@ -89,8 +89,8 @@ internal object MaterializedMeshRebuild {
     private fun migrateSimulations(overlay: RigEditOverlay, id: String, count: Int,
                                    sources: List<VertexSource>, checkpoint: () -> Unit): RigEditOverlay = overlay.copy(simEdits = overlay.simEdits.map { sim ->
         checkpoint()
-        if (id !in sim.targets || sim.bake == null) sim else {
-            val bake = sim.bake
+        val bake = sim.bake
+        if (id !in sim.targets || bake == null) sim else {
             require(bake.vertexCounts[id] == count) { "Simulation bake has a stale mesh topology" }
             fun migrate(axis: SimBakedAxis): SimBakedAxis {
                 val previous = axis.offsets[id] ?: return axis

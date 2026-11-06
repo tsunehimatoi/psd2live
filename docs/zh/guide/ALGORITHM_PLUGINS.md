@@ -6,15 +6,17 @@
 
 外部包可以在 `dependencies` 中引用 `plugin_list` 返回的内置包 ID 与版本；安装时锁定相同的内容摘要，内置项被停用或对应版本缺失时依赖包也不可用。`builtin` 整体身份保留；`builtin.*` 安装包必须声明与包 ID 和算法修订匹配的稳定类型别名，供历史内置算法恢复。启停状态保存在偏好中，求值从内存快照读取，不逐项访问系统偏好。
 
-物理组、动作和摆动之外的内置入口仍随应用编译和发布，尚不是可单独分发、安装的 JAR。绑定算法仍调用应用提供的共享生成服务；入口摘要不是整个应用和全部底层依赖的摘要。其余算法的独立包发布、历史二进制保留和绑定算法局部计算仍需继续迁移，不能把逐项管理与身份固定视为这部分已经完成。
+物理组、动作、摆动和烘焙模拟之外的内置入口仍随应用编译和发布，尚不是可单独分发、安装的 JAR。绑定算法仍调用应用提供的共享生成服务；入口摘要不是整个应用和全部底层依赖的摘要。其余算法的独立包发布、历史二进制保留和绑定算法局部计算仍需继续迁移，不能把逐项管理与身份固定视为这部分已经完成。
 
 其中物理组实现已迁到 `:algorithms:physics`：`PendulumAlgorithm` 直接实现公共求值接口，配置解析、物理组转换和输出冲突检查均在该模块完成。算法仅使用 `algorithm-api`，应用注册入口只委托调用；普通物理导出和其他生成器复用同一转换实现。另由 `algorithm-worker` 提供工作进程入口，`./gradlew :algorithms:physics:pluginPackage` 在 `algorithms/physics/build/plugin` 生成独立安装目录（`plugin.json` 与携带依赖的 `algorithm.jar`），可交给 `plugin_install`。包 ID 为 `builtin.70687973696373.v1`，入口为该命名空间下的 `/pendulum`，`aliases: ["physics"]` 保留工程中的类型、算法修订和输出 ID。
 
-应用携带并保留物理组、动作和摆动的完整安装包，新实例固定整个包的内容摘要。与当前包完全匹配时进程内执行；旧包引用只有在对应内容已安装时才通过工作进程执行，不回退到当前实现。旧版本安装包可以卸载与重装；当前应用自带版本只能启停。迁移之前仅记录入口字节码摘要的开发期引用不会被改写，也不能用新包替代；找不到原内容时仍报告不可用。
+应用携带并保留物理组、动作、摆动和烘焙模拟的完整安装包，新实例固定整个包的内容摘要。与当前包完全匹配时进程内执行；旧包引用只有在对应内容已安装时才通过工作进程执行，不回退到当前实现。旧版本安装包可以卸载与重装；当前应用自带版本只能启停。迁移之前仅记录入口字节码摘要的开发期引用不会被改写，也不能用新包替代；找不到原内容时仍报告不可用。
 
 动作实现已迁到 `:algorithms:motion`，包 ID 为 `builtin.6d6f74696f6e.v1`，入口为 `/clip`，稳定别名为 `motion`。`MotionData` 提供原格式的数据模型、JSON 读写和曲线转换，应用编辑器与独立工作进程共用此实现；模块不依赖播放会话、UI 或 Umamo。构建命令为 `./gradlew :algorithms:motion:pluginPackage`，输出目录为 `algorithms/motion/build/plugin`。
 
 摆动实现位于 `:algorithms:swing`，包 ID 为 `builtin.7377696e67.v1`，入口 `/sway`，稳定别名 `swing`。网格包裹、关键形求值和摆动物理组均在算法模块完成，不调用工程或历史接口。此模块使用 GPL Umamo 引擎与 Cubism 格式转换器，属于 GPL 算法，不能作为 MIT API／格式模块分发；不包含 Cubism 专有 SDK。构建命令为 `./gradlew :algorithms:swing:pluginPackage`。
+
+烘焙模拟求值位于 `:algorithms:simulation`，包 ID 为 `builtin.73696d756c6174696f6e.v1`，入口 `/baked`，稳定别名 `simulation`。输入包含原烘焙结果和捕获的自动权重；插件检查烘焙与上游输入是否匹配，再写回权重、模式关键形和物理组。既有作者权重优先，不允许通过缺失或过期烘焙生成残缺结果。数值烘焙仍由原流程执行，此迁移不改变求解器。此模块同样依赖 GPL 引擎；构建命令为 `./gradlew :algorithms:simulation:pluginPackage`。
 
 算法清单可声明 `derivedOutputs`，用于保留原有确定性对象名称。每条规则包含 `kind`、`localName`、`prefix`、`suffixes`（默认 `[""]`）和 `numbered`（默认 `false`）。宿主只接受 `prefix + instance.outputId(localName) + suffix`；开启 `numbered` 时另外允许 `_2` 到 `_10000` 的规范十进制后缀。规则不能跨对象种类或超出声明写入范围，不接受任意正则表达式。摆动使用 `Warp_Swing_` 和 `PhysicsSwing_` 规则，保持原工程对象 ID。
 

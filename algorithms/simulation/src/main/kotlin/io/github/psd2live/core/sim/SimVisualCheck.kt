@@ -15,7 +15,7 @@ import kotlin.math.sqrt
  * does not count as a swing), the world positions both put the particles at, the mode parameters (-1..1 of their
  * range), and whether the inputs moved since the frame before.
  */
-internal class SimVisualRun(
+class SimVisualRun(
     val simulated: List<FloatArray>,
     val baked: List<FloatArray>,
     val simulatedWorld: List<FloatArray>,
@@ -83,7 +83,7 @@ class SimVisualCheck(
                 f("clipped"), f("stalled"), f("shorten"), f("static_px"), f("static_share"), f("r2"), f("p95_px"), f("sim_px"))
         }
 
-        internal fun measure(run: SimVisualRun, edges: List<Pair<Int, Int>>, rest: FloatArray, fps: Int): SimVisualCheck {
+        fun measure(run: SimVisualRun, edges: List<Pair<Int, Int>>, rest: FloatArray, fps: Int): SimVisualCheck {
             val frames = run.simulated.size
             val particles = run.simulated.first().size / 2
             // The tips: the particles that move most in the simulation.
@@ -249,7 +249,7 @@ class SimVisualCheck(
 
         private fun dot(a: FloatArray, b: FloatArray): Float { var s = 0f; for (i in a.indices) s += a[i] * b[i]; return s }
 
-        internal fun percentile(values: List<Float>, q: Float): Float {
+        fun percentile(values: List<Float>, q: Float): Float {
             if (values.isEmpty()) return 0f
             val sorted = values.sorted()
             return sorted[((sorted.size - 1) * q).toInt().coerceIn(0, sorted.size - 1)]

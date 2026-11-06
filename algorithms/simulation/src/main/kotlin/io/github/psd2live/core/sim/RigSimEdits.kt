@@ -403,9 +403,16 @@ data class RigSimEdit(
          * of the vertical inputs it takes only the body rising and sinking.
          */
         fun defaultInputs(available: Set<String>?, kind: SimKind? = null): List<PhysicsInput> =
-            io.github.psd2live.core.PhysicsGenerator.headAndBodyInputs(available) +
-                SimBaker.VERTICAL_INPUTS.filter { (available == null || it in available) && (kind != SimKind.CLOTH || it == CLOTH_VERTICAL_INPUT) }
+            listOf(
+                PhysicsInput("ParamAngleX", 60f, io.github.psd2live.core.PhysicsSourceType.X),
+                PhysicsInput("ParamAngleZ", 60f, io.github.psd2live.core.PhysicsSourceType.ANGLE),
+                PhysicsInput("ParamBodyAngleX", 40f, io.github.psd2live.core.PhysicsSourceType.X),
+                PhysicsInput("ParamBodyAngleZ", 40f, io.github.psd2live.core.PhysicsSourceType.ANGLE),
+            ).filter { available == null || it.parameter in available } +
+                VERTICAL_INPUTS.filter { (available == null || it in available) && (kind != SimKind.CLOTH || it == CLOTH_VERTICAL_INPUT) }
                     .map { PhysicsInput(it, 40f, io.github.psd2live.core.PhysicsSourceType.X) }
+
+        val VERTICAL_INPUTS = listOf("ParamAngleY", "ParamBodyAngleY", "ParamBodyLean")
 
         private const val CLOTH_VERTICAL_INPUT = "ParamBodyAngleY"
 

@@ -1,7 +1,7 @@
 package io.github.psd2live.core.sim
 
 import io.github.psd2live.core.RigPhysicsEdit
-import io.github.psd2live.core.SwingAuthoring
+import io.github.psd2live.core.SwingGenerator
 import org.umamo.edit.withParameterCreated
 import org.umamo.edit.withParameterKeys
 import org.umamo.runtime.keyform.MeshDeltaInterpolator
@@ -38,13 +38,13 @@ object SimGenerator {
     fun issues(model: PuppetModel, sim: RigSimEdit): List<String> = applyOne(model, sim).second
 
     /** `ParamSim<id>_<k>` for mode [k] (1-based). */
-    fun parameterId(sim: RigSimEdit, k: Int) = "ParamSim${SwingAuthoring.asciiStem(sim.id)}_$k"
+    fun parameterId(sim: RigSimEdit, k: Int) = "ParamSim${SwingGenerator.asciiStem(sim.id)}_$k"
 
     /**
      * `ParamSim<id>_Y`: how the body lags and bounces up and down, as an artist's `裙y` or `长发y`. A pendulum
      * answers only sideways, so the inputs that move the body up and down drive it apart, as translations.
      */
-    fun verticalParameterId(sim: RigSimEdit) = "ParamSim${SwingAuthoring.asciiStem(sim.id)}_Y"
+    fun verticalParameterId(sim: RigSimEdit) = "ParamSim${SwingGenerator.asciiStem(sim.id)}_Y"
 
     /** What mode parameter [id], the [k]th (0-based) of [sideways] that are not the vertical one, is called unless renamed. */
     fun defaultParameterName(sim: RigSimEdit, id: String, k: Int, sideways: Int) = when {
@@ -83,7 +83,7 @@ object SimGenerator {
      * Baked mode [axis] as [sim] writes it: on its output ID, its keys stretched to the output's range and
      * its shapes scaled by the output's gain.
      */
-    internal fun written(sim: RigSimEdit, axis: SimBakedAxis): SimBakedAxis {
+    fun written(sim: RigSimEdit, axis: SimBakedAxis): SimBakedAxis {
         val stretch = sim.outputRange(axis.parameter) / MODE_RANGE
         val gain = sim.outputGain(axis.parameter)
         return SimBakedAxis(sim.outputId(axis.parameter), FloatArray(axis.keys.size) { axis.keys[it] * stretch },
@@ -228,7 +228,7 @@ object SimGenerator {
      * its offsets added; an axis the grid already has gains the baked keys and every cell adds the offsets
      * at its key, so what was keyed there before is kept.
      */
-    internal fun withOffsets(grid: KeyformGrid<MeshDeltaForm>, parameter: Parameter, axis: SimBakedAxis, mesh: String): KeyformGrid<MeshDeltaForm>? {
+    fun withOffsets(grid: KeyformGrid<MeshDeltaForm>, parameter: Parameter, axis: SimBakedAxis, mesh: String): KeyformGrid<MeshDeltaForm>? {
         if (!grid.isDense) return null
         val count = grid.cells.first().form.positionDeltas.size
         var next = grid

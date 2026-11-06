@@ -460,7 +460,7 @@ object SimBaker {
     }
 
     /** The inputs that move the body up and down: nodding, the body rising and sinking, and leaning in. */
-    internal val VERTICAL_INPUTS = listOf("ParamAngleY", "ParamBodyAngleY", "ParamBodyLean")
+    internal val VERTICAL_INPUTS = RigSimEdit.VERTICAL_INPUTS
 
     /** [count] keys over [parameter]'s range, half on each side of its default (the default itself is one). */
     internal fun staticKeys(parameter: Parameter, count: Int): FloatArray {
