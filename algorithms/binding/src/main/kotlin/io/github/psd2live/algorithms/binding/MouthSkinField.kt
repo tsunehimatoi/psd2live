@@ -1,11 +1,10 @@
-package io.github.psd2live.core.fit
+package io.github.psd2live.algorithms.binding
 
-import io.github.psd2live.core.Bounds
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.*
 
 /** A shared piecewise-affine skin cage around the mouth opening. The opening is a hole, not a skin strip. */
-internal class MouthSkinField(upper: FloatArray, lower: FloatArray, bounds: Bounds) {
+class MouthSkinField(upper: FloatArray, lower: FloatArray, bounds: Bounds) {
     private val count = upper.size / 2
     private val samples = (0 until count).map { true to it } + (count - 2 downTo 1).map { false to it }
     private val sectors = samples.size
@@ -46,7 +45,7 @@ internal class MouthSkinField(upper: FloatArray, lower: FloatArray, bounds: Boun
         areas = FloatArray(triangles.size / 3) { t -> area(rest, triangles[t * 3], triangles[t * 3 + 1], triangles[t * 3 + 2]) }
     }
 
-    internal inner class Posed(private val positions: FloatArray, private val center: Pair<Float, Float>) {
+    inner class Posed(private val positions: FloatArray, private val center: Pair<Float, Float>) {
         fun displacement(x: Float, y: Float, upper: Boolean? = null): Pair<Float, Float>? {
             val l = locations.computeIfAbsent(Triple(x, y, upper)) { locate(x, y, upper) }
             if (l.a < 0) return null

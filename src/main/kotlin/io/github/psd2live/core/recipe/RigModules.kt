@@ -115,7 +115,7 @@ object RigModules {
 		knobs = listOf(RecipeKnob("dip", P, 0f..200f, 100f)))
 
 	/**
-	 * The mouth fitted from its drawn open outline ([io.github.psd2live.core.fit.MouthRig]): it opens in stages, the
+	 * The mouth fitted from its drawn open outline ([io.github.psd2live.algorithms.binding.MouthRig]): it opens in stages, the
 	 * lower lip first into a crescent, then an oval, then the drawing, and its form runs from a pout (closed a frown, open
 	 * a round "o") to a smile (corners up, open a wide D), with keys between the ends.
 	 */

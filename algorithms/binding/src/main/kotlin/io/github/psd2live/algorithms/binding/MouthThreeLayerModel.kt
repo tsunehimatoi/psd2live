@@ -1,4 +1,4 @@
-package io.github.psd2live.core.fit
+package io.github.psd2live.algorithms.binding
 
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -20,7 +20,7 @@ import kotlin.math.sin
  *    shapes without corner spikes or self-intersections.
  * 3. User-parameter evaluation over `(open, form, press)` plus additive articulatory and facial-capture modes.
  */
-internal class MouthThreeLayerModel private constructor(
+class MouthThreeLayerModel private constructor(
 	val stations: Int,
 	val axisCount: Int,
 	private val orig65: FloatArray,

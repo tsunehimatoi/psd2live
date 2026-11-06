@@ -493,7 +493,7 @@ object RigBuilder {
                     io.github.psd2live.core.fit.MouthFitting.fit(analysis.layers, level, toRig)
                 }
 				val result = io.github.psd2live.core.fit.MouthFitting.Result(drawn.fit?.moved(rigMoves(config, "mouth", toRig)), drawn.reason, drawn.layers)
-				val rig = result.fit?.let { io.github.psd2live.core.fit.MouthRig(it, options, sourceFit("mouth line width", listOf(it, analysis.layers, space)) {
+				val rig = result.fit?.let { io.github.psd2live.algorithms.binding.MouthRig(it, options, sourceFit("mouth line width", listOf(it, analysis.layers, space)) {
                     io.github.psd2live.core.fit.MouthFitting.lineWidth(it, analysis.layers, toRig)
                 }) }
 				io.github.psd2live.core.fit.FittedMouth(result, rig, rig?.let { chinDepth(it, config) } ?: 0.6f, analysis.layers)
@@ -504,7 +504,7 @@ object RigBuilder {
 		 * How far down the face its bottom reaches below the mouth, in the mouth's frame: where the jaw's drop is
 		 * whole. A quarter of the face's height below the corners when the face can not be read.
 		 */
-		private fun chinDepth(rig: io.github.psd2live.core.fit.MouthRig, config: PipelineConfig): Float {
+		private fun chinDepth(rig: io.github.psd2live.algorithms.binding.MouthRig, config: PipelineConfig): Float {
 			val face = analysis.layers.filter { it.semantic.tag == SemanticTag.FACE && it.opaquePixels > 0 }.maxByOrNull { it.opaquePixels }
 				?: return 0.6f
 			val space = headSpaceFor(face, config)
@@ -1085,7 +1085,7 @@ object RigBuilder {
 		atlas: PackedAtlas,
 		generatedLips: Map<String, ClassifiedLayer>,
 		config: PipelineConfig,
-		rig: io.github.psd2live.core.fit.MouthRig? = null,
+		rig: io.github.psd2live.algorithms.binding.MouthRig? = null,
 		turn: io.github.psd2live.core.fit.HeadTurn? = null,
 	): List<MouthLip> {
 		if (!config.mouthOutlineEnabled || config.meshOnly || aperture == null) return emptyList()
@@ -1678,8 +1678,8 @@ object RigBuilder {
 		// A highlight or shadow lying inside the opening is in the mouth too, and so is what is clipped onto it: the inside's base.
 		fun inMouth(layer: ClassifiedLayer) = layer.semantic.tag in CharacterAnalyzer.MOUTH_COMPONENT_TAGS ||
 			fittedMouth != null && layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && (layer.semantic.role != null || layer.source.clipped) && fittedMouth.covers(layer) &&
-			fittedMouth.follow(layer).let { it == io.github.psd2live.core.fit.MouthRig.Follow.DEEP || it == io.github.psd2live.core.fit.MouthRig.Follow.INSIDE ||
-				it == io.github.psd2live.core.fit.MouthRig.Follow.OPENING }
+			fittedMouth.follow(layer).let { it == io.github.psd2live.algorithms.binding.MouthRig.Follow.DEEP || it == io.github.psd2live.algorithms.binding.MouthRig.Follow.INSIDE ||
+				it == io.github.psd2live.algorithms.binding.MouthRig.Follow.OPENING }
 		val skinClip = io.github.psd2live.core.recipe.RigModules.let { it.builds(it.FACE_SKIN_CLIP, config, io.github.psd2live.core.recipe.RecipeSubject.of(context.analysis)) }
 		val faceMasks = if (!skinClip) emptyList() else maskSources.filter { classifiedByDrawable.getValue(it.id).semantic.tag == SemanticTag.FACE }
 		val neckClip = io.github.psd2live.core.recipe.RigModules.let { it.builds(it.FACE_NECK, config, io.github.psd2live.core.recipe.RecipeSubject.of(context.analysis)) }
@@ -1757,11 +1757,11 @@ object RigBuilder {
 				val positions = requireNotNull(tongue.mesh).positions
 				val rigPositions = FloatArray(positions.size) { i -> if (i % 2 == 0) frame.left + positions[i] * frame.width else frame.top + positions[i] * frame.height }
 				val base = tongue.copy(id = copyId, maskedBy = emptyList(), channelGrids = ChannelGrids.Empty, opacity = 0f, drawOrder = lowerOrder + 1f,
-					geometryGrid = mouthRig.grid(rigPositions, frame, StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN, io.github.psd2live.core.fit.MouthRig.Follow.PROTRUDING_TONGUE, fittedMouth.chin))
+					geometryGrid = mouthRig.grid(rigPositions, frame, StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN, io.github.psd2live.algorithms.binding.MouthRig.Follow.PROTRUDING_TONGUE, fittedMouth.chin))
 				val shapes = mouthRig.protrudingTongueShapes(rigPositions, frame, layer.source.opacity, chin = fittedMouth.chin)
 				// Tongue-out reveals a statically transparent copy; preserve its authored opacity instead of multiplying by zero.
 				val normalized = neutralized(shapes, base).map { binding ->
-					if (binding.parameterId != io.github.psd2live.core.fit.MouthRig.TONGUE_OUT) binding else
+					if (binding.parameterId != io.github.psd2live.algorithms.binding.MouthRig.TONGUE_OUT) binding else
 						binding.copy(forms = binding.forms.mapIndexed { i, form -> form?.let { f ->
 							org.umamo.runtime.model.MeshForm(f.positionDeltas, f.drawOrder, shapes.first { it.parameterId == binding.parameterId }.forms[i]!!.opacity, f.multiplyColor, f.screenColor)
 						} })
@@ -1957,7 +1957,7 @@ object RigBuilder {
 	 * Whether [layer] swaps with a drawn closed-eye line at the fitted eye's swap key: the closed line itself, and the
 	 * lashes and lower lash of an eye whose closed line the fit lies the closed lid on ([io.github.psd2live.algorithms.binding.EyeRig.SWAP]).
 	 */
-	/** Whether [layer] is a part of the fitted mouth, whose closed and open parts hand over at [io.github.psd2live.core.fit.MouthRig.SWAP]. */
+	/** Whether [layer] is a part of the fitted mouth, whose closed and open parts hand over at [io.github.psd2live.algorithms.binding.MouthRig.SWAP]. */
 	private fun mouthSwap(context: RigContext, config: PipelineConfig, layer: ClassifiedLayer): Boolean =
 		context.fittedMouth(config)?.let { it.closedLine && it.covers(layer) } == true
 
@@ -1985,7 +1985,7 @@ object RigBuilder {
 	private fun lipsStage(
 		owner: Drawable, layer: ClassifiedLayer, parts: LayerMeshParts, parentFrame: Bounds, atlas: PackedAtlas,
 		generatedLips: Map<String, ClassifiedLayer>, config: PipelineConfig, meshConfig: PipelineConfig, stages: RigStageCache?,
-		rig: io.github.psd2live.core.fit.MouthRig? = null,
+		rig: io.github.psd2live.algorithms.binding.MouthRig? = null,
 		turn: io.github.psd2live.core.fit.HeadTurn? = null,
 	): List<MouthLip> {
 		val build = { RigBuildProfile.stage("mesh: mouth lips (built)") {
@@ -3591,7 +3591,7 @@ object RigBuilder {
 			}
 		}
 		return shapes.map { binding ->
-			val opening = binding.parameterId in io.github.psd2live.core.fit.MouthRig.OPENING
+			val opening = binding.parameterId in io.github.psd2live.algorithms.binding.MouthRig.OPENING
 			val relative = binding.parameterId == StandardParameters.ANGLE_X || binding.parameterId == StandardParameters.ANGLE_Y ||
 				binding.parameterId == StandardParameters.ANGLE_Z
 			binding.copy(forms = binding.forms.map { form ->
@@ -3776,12 +3776,12 @@ object RigBuilder {
 		if (mouth.covers(layer)) {
 			val closedLayer = tag == SemanticTag.MOUTH_CLOSE
 			val depth = when (mouth.follow(layer)) {
-				io.github.psd2live.core.fit.MouthRig.Follow.UPPER_TEETH -> 0.06f
-				io.github.psd2live.core.fit.MouthRig.Follow.LOWER_TEETH -> 0.1f
-				io.github.psd2live.core.fit.MouthRig.Follow.TONGUE -> 0.16f
-				io.github.psd2live.core.fit.MouthRig.Follow.DEEP -> 0.2f
+				io.github.psd2live.algorithms.binding.MouthRig.Follow.UPPER_TEETH -> 0.06f
+				io.github.psd2live.algorithms.binding.MouthRig.Follow.LOWER_TEETH -> 0.1f
+				io.github.psd2live.algorithms.binding.MouthRig.Follow.TONGUE -> 0.16f
+				io.github.psd2live.algorithms.binding.MouthRig.Follow.DEEP -> 0.2f
 				// A layered mouth's opening clips the rest and keeps to its lines: turned it would show past them.
-				io.github.psd2live.core.fit.MouthRig.Follow.INSIDE, io.github.psd2live.core.fit.MouthRig.Follow.OPENING -> 0f
+				io.github.psd2live.algorithms.binding.MouthRig.Follow.INSIDE, io.github.psd2live.algorithms.binding.MouthRig.Follow.OPENING -> 0f
 				// A separate inside behind the drawn mouth.
 				else -> if (tag == SemanticTag.MOUTH_OPEN && mouth.result.layers.any { it.semantic.tag == SemanticTag.MOUTH }) 0.12f else 0f
 			}
@@ -3793,7 +3793,7 @@ object RigBuilder {
 		val below = tag == SemanticTag.FACE_DETAIL && rig.fit.toMouth(layer.centroidX, layer.centroidY).second > 0f
 		if (tag != SemanticTag.FACE && tag != SemanticTag.NOSE && !below) return emptyList()
 		return rig.faceShapes(data.rigPositions, frame, mouth.chin, tag == SemanticTag.NOSE, StandardParameters.MOUTH_OPEN,
-			if (rig.options.spring) io.github.psd2live.core.fit.MouthRig.SPRING else null,
+			if (rig.options.spring) io.github.psd2live.algorithms.binding.MouthRig.SPRING else null,
 			lippedSkin = tag == SemanticTag.FACE && layer.semantic.role == null && mouth.lipped && !rig.fit.hasLines)
 	}
 
@@ -3848,9 +3848,9 @@ object RigBuilder {
 		if (!rig.options.depth || !mouth.covers(layer) || FormChannel.MULTIPLY_COLOR in grids.gridsByChannel) return grids
 		val follow = mouth.follow(layer)
 		// The teeth stay white; the tongue and the dark of the mouth shade.
-		val inside = follow == io.github.psd2live.core.fit.MouthRig.Follow.TONGUE ||
-			follow == io.github.psd2live.core.fit.MouthRig.Follow.DEEP || follow == io.github.psd2live.core.fit.MouthRig.Follow.INSIDE ||
-			follow == io.github.psd2live.core.fit.MouthRig.Follow.OPENING ||
+		val inside = follow == io.github.psd2live.algorithms.binding.MouthRig.Follow.TONGUE ||
+			follow == io.github.psd2live.algorithms.binding.MouthRig.Follow.DEEP || follow == io.github.psd2live.algorithms.binding.MouthRig.Follow.INSIDE ||
+			follow == io.github.psd2live.algorithms.binding.MouthRig.Follow.OPENING ||
 			layer.semantic.tag == SemanticTag.MOUTH_OPEN && layer.semantic.role == null && mouth.result.layers.any { it.semantic.tag == SemanticTag.MOUTH }
 		if (!inside) return grids
 		return ChannelGrids(grids.gridsByChannel + (FormChannel.MULTIPLY_COLOR to grid(listOf(axis(StandardParameters.MOUTH_OPEN, 0f, 0.25f, 1f))) { v ->
@@ -4196,7 +4196,7 @@ object RigBuilder {
         side: Int,
         layer: ClassifiedLayer,
         space: HeadCoordinateSpace?,
-        rig: io.github.psd2live.core.fit.MouthRig? = null,
+        rig: io.github.psd2live.algorithms.binding.MouthRig? = null,
         turn: io.github.psd2live.core.fit.HeadTurn? = null,
     ): Pair<Drawable, DeformPath?> {
         val columns = MouthContour.uniformColumns(data, MouthContour.DEFAULT_SEGMENTS)
@@ -4353,17 +4353,17 @@ object RigBuilder {
 					SemanticTag.EYE_CLOSE -> io.github.psd2live.core.fit.EyeModules.drawingOpacity(layer.semantic.side, true, eyeSwap, eyeOpenMax)
 					SemanticTag.EYELASH -> if (!eyeSwap) null else
 						io.github.psd2live.core.fit.EyeModules.drawingOpacity(layer.semantic.side, false, true, eyeOpenMax)
-					SemanticTag.MOUTH_CLOSE -> if (mouthSwap) scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, io.github.psd2live.core.fit.MouthRig.SWAP, 1f)) { open -> if (open == 0f) 1f else 0f }
+					SemanticTag.MOUTH_CLOSE -> if (mouthSwap) scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, io.github.psd2live.algorithms.binding.MouthRig.SWAP, 1f)) { open -> if (open == 0f) 1f else 0f }
 						else scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, 1f)) { 1f - it }
 					// A fitted mouth beside a drawn closed one shuts into it: the open drawing hands over as the lips part.
 					SemanticTag.MOUTH -> if (!mouthSwap) null
-						else scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, io.github.psd2live.core.fit.MouthRig.SWAP, 1f)) { open -> if (open == 0f) 0f else 1f }
+						else scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, io.github.psd2live.algorithms.binding.MouthRig.SWAP, 1f)) { open -> if (open == 0f) 0f else 1f }
 					SemanticTag.TONGUE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B ->
 						if (layeredMouth && !mouthSwap) null else scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, fadeIn, 1f)) { open -> (open / fadeIn).coerceIn(0f, 1f) }
 					// Beside a closed mouth the open one only flattens at rest, and it and its lip ribbons (which copy
 					// its channels) showed as a second, differently coloured line under the closed mouth. Alone it
 					// is the only mouth there is and stays.
-					SemanticTag.MOUTH_OPEN -> if (mouthSwap) scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, io.github.psd2live.core.fit.MouthRig.SWAP, 1f)) { open -> if (open == 0f) 0f else 1f }
+					SemanticTag.MOUTH_OPEN -> if (mouthSwap) scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, io.github.psd2live.algorithms.binding.MouthRig.SWAP, 1f)) { open -> if (open == 0f) 0f else 1f }
 						else if (!closedMouth) null
 						else scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, fadeIn, 1f)) { open -> (open / fadeIn).coerceIn(0f, 1f) }
 					else -> null

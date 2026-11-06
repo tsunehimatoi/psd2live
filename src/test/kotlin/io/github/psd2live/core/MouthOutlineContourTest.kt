@@ -2,7 +2,7 @@ package io.github.psd2live.core
 
 import io.github.psd2live.core.fit.MouthFit
 import io.github.psd2live.core.fit.MouthOptions
-import io.github.psd2live.core.fit.MouthRig
+import io.github.psd2live.algorithms.binding.MouthRig
 import io.github.psd2live.scenario.Characters
 import io.github.psd2live.scenario.Studio
 import io.github.psd2live.scenario.Oracles

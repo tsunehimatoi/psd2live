@@ -1,6 +1,6 @@
 package io.github.psd2live.core
 
-import io.github.psd2live.core.fit.MouthSkinField
+import io.github.psd2live.algorithms.binding.MouthSkinField
 import kotlin.math.*
 import kotlin.test.*
 

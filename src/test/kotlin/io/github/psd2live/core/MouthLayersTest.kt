@@ -4,8 +4,8 @@ import io.github.psd2live.core.fit.FittedMouth
 import io.github.psd2live.core.fit.MouthFit
 import io.github.psd2live.core.fit.MouthFitting
 import io.github.psd2live.core.fit.MouthOptions
-import io.github.psd2live.core.fit.MouthRig
-import io.github.psd2live.core.fit.MouthRig.Follow
+import io.github.psd2live.algorithms.binding.MouthRig
+import io.github.psd2live.algorithms.binding.MouthRig.Follow
 import io.github.psd2live.project.WorkspaceSourceLayer
 import org.umamo.format.art.ChannelMask
 import org.umamo.format.art.LayerBlend

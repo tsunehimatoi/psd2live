@@ -1,6 +1,6 @@
 package io.github.psd2live.core
 
-import io.github.psd2live.core.fit.MouthThreeLayerModel
+import io.github.psd2live.algorithms.binding.MouthThreeLayerModel
 import kotlin.math.abs
 import kotlin.test.*
 
