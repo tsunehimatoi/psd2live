@@ -46,6 +46,29 @@ internal class RigModifierSource(
     private val transitions = HashMap<Pair<String, ModifierTarget>, Pair<RigModifierChains.Projection, RigModifierChains.Projection>>()
     private val chainProjections = java.util.IdentityHashMap<PuppetModel, MutableMap<List<RigModifierChains.Owned>, RigModifierChains.Projection>>()
 
+    fun skinClipContext(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val clips = RigOrdinaryMaterials.clipping(analysis.source, primaryByLayer.entries.associate { it.value to it.key })
+        fun bounds(layer: ClassifiedLayer) = JsonArray(listOf(layer.bounds.left, layer.bounds.top, layer.bounds.right, layer.bounds.bottom).map(::JsonPrimitive))
+        val layers = analysis.layers.associateBy { it.source.id.raw }
+        return ModifierAlgorithmContext(buildJsonObject {
+            put("schema", "skin-clip/1")
+            putJsonArray("faces") { analysis.layers.sortedBy { it.source.order }.filter { it.semantic.tag == SemanticTag.FACE }.forEach { layer ->
+                primaryByLayer[layer.source.id.raw]?.let { id -> add(buildJsonObject { put("id", id); put("bounds", bounds(layer)) }) }
+            } }
+            putJsonObject("overlays") { for ((mesh, layerId) in layersByMesh) {
+                val layer = layers[layerId] ?: continue
+                if (layerId !in clips && (layer.semantic.tag == SemanticTag.FACE_DETAIL ||
+                    layer.semantic.tag == SemanticTag.FRONT_HAIR && layer.semantic.role == PartRole.SHADOW)) put(mesh, bounds(layer))
+            } }
+            put("already_active", JsonArray(instance.targets.filter { target ->
+                relevantBefore(instance, target).any { it.type == "face.skin-clip" }
+            }.map { JsonPrimitive(it.id) }))
+        })
+    }
+
+    fun skinClip(rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit): RigIR =
+        io.github.psd2live.algorithms.binding.SkinClipAlgorithm().evaluate(rig, instance, skinClipContext(instance), checkpoint)
+
     private val seeThroughCandidates by lazy {
         val layers = analysis.layers.associateBy { it.source.id.raw }
         // Coverage depends only on source pixels and semantics. Expand against the live model in the plugin.

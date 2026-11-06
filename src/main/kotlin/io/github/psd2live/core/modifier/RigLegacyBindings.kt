@@ -14,6 +14,7 @@ internal object RigLegacyBindings {
         val area get() = type.substringBefore('/').substringBefore('.')
         val mouthOutline get() = module == RigModules.MOUTH_OUTLINE
         val expressionToggles get() = module == RigModules.EXPRESSION_TOGGLES
+        val skinClip get() = module == RigModules.FACE_SKIN_CLIP
         val seeThrough get() = module == RigModules.EYE_SEE_THROUGH || module == RigModules.BROW_SEE_THROUGH
         val chainKinds get() = RigModifierChains.kinds(type)
         val hasPhysics get() = module?.physicsGroups.orEmpty().isNotEmpty() || chainKinds.isNotEmpty()
@@ -96,7 +97,8 @@ internal object RigLegacyBindings {
 
     fun definition(spec: Spec, source: RigModifierSource?): RigModifierDefinition {
         val evaluate: (io.github.psd2live.format.model.RigIR, RigModifierInstance, () -> Unit) -> io.github.psd2live.format.model.RigIR = { rig, instance, checkpoint ->
-            if (spec.seeThrough) requireNotNull(source).seeThrough(rig, instance, checkpoint)
+            if (spec.skinClip) requireNotNull(source).skinClip(rig, instance, checkpoint)
+            else if (spec.seeThrough) requireNotNull(source).seeThrough(rig, instance, checkpoint)
             else if (spec.expressionToggles) requireNotNull(source).expression(rig, instance, checkpoint)
             else {
                 val bindings = RigSourceBinding.apply(rig, instance, requireNotNull(source), checkpoint)
@@ -108,7 +110,7 @@ internal object RigLegacyBindings {
         providers = { instance -> providers(instance) },
         appliedConfig = { it.config }, resolveParameter = { instance, before, declared -> requireNotNull(source).resolveParameter(instance, before, declared) },
         references = RigModifierPhysics::references, parameters = { instance -> when {
-            spec.seeThrough -> emptyList()
+            spec.seeThrough || spec.skinClip -> emptyList()
             spec.expressionToggles -> requireNotNull(source).expressionParameters(instance)
             else -> requireNotNull(source).parameters(instance)
         } },
@@ -126,11 +128,13 @@ internal object RigLegacyBindings {
         plugin = when {
             spec.expressionToggles -> io.github.psd2live.algorithms.binding.ExpressionAlgorithm()
             spec.seeThrough -> io.github.psd2live.algorithms.binding.SeeThroughAlgorithm()
+            spec.skinClip -> io.github.psd2live.algorithms.binding.SkinClipAlgorithm()
             else -> ModifierAlgorithmPlugin(evaluate)
         },
         authorContext = { when {
             spec.expressionToggles -> requireNotNull(source).expressionContext(it)
             spec.seeThrough -> requireNotNull(source).seeThroughContext(it)
+            spec.skinClip -> requireNotNull(source).skinClipContext(it)
             else -> ModifierAlgorithmContext.Empty
         } },
         )

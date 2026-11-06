@@ -89,6 +89,23 @@ class PackagedPhysicsPluginTool {
         }
     }
 
+    @Test fun skinClipArchiveAddsOnlyCapturedMasks() {
+        requireTools()
+        val plugin = io.github.psd2live.algorithms.binding.SkinClipAlgorithm()
+        val context = ModifierAlgorithmContext(buildJsonObject {
+            put("schema", "skin-clip/1")
+            putJsonArray("faces") { addJsonObject { put("id", "face"); put("bounds", JsonArray(listOf(0, 0, 10, 30).map(::JsonPrimitive))) } }
+            putJsonObject("overlays") { put("body", JsonArray(listOf(1, 1, 3, 3).map(::JsonPrimitive))) }
+            put("already_active", JsonArray(emptyList()))
+        })
+        val definition = RigModifierDefinition("face.skin-clip", 1, requires = setOf("rig.scaffold"),
+            composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter"),
+            evaluate = plugin::evaluate, plugin = plugin, authorContext = { context })
+        val base = testInput()
+        verifyPackage("face.skin-clip", definition, JsonObject(emptyMap()), "binding", "plugin-skin",
+            base.copy(meshes = base.meshes + base.meshes.single().copy(id = "face")))
+    }
+
     private fun evaluate(definition: RigModifierDefinition, input: RigIR, instance: RigModifierInstance): RigIR {
         val plugin = definition.plugin
         return if (plugin is ContextualModifierAlgorithmPlugin) plugin.evaluate(input, instance, definition.authorContext(instance)) {}
@@ -109,7 +126,7 @@ class PackagedPhysicsPluginTool {
             val built = Path.of("algorithms/$directory/build/$packageDirectory").toAbsolutePath()
             val source = Files.createDirectory(root.resolve("package"))
             java.util.jar.JarFile(built.resolve("algorithm.jar").toFile()).use { jar ->
-                assertFalse(jar.entries().asSequence().any { entry -> (type !in setOf("swing", "simulation", "expression.toggles", "eye.see-through", "brow.see-through") && entry.name.startsWith("org/umamo/")) ||
+                assertFalse(jar.entries().asSequence().any { entry -> (type !in setOf("swing", "simulation", "expression.toggles", "eye.see-through", "brow.see-through", "face.skin-clip") && entry.name.startsWith("org/umamo/")) ||
                     listOf("application", "ui", "project", "history").any { entry.name.startsWith("io/github/psd2live/$it/") } })
             }
             Files.copy(built.resolve("algorithm.jar"), source.resolve("algorithm.jar"))
@@ -125,6 +142,12 @@ class PackagedPhysicsPluginTool {
                 assertEquals(io.github.psd2live.targets.cubism.PuppetIr.toIr(replayed), io.github.psd2live.targets.cubism.PuppetIr.toIr(wrapped.model))
             }
             val expected = evaluate(definition, input, instance)
+            if (type == "face.skin-clip") {
+                assertEquals(listOf("face"), expected.meshes.single { it.id == "body" }.maskedBy)
+                assertEquals(input, expected.copy(meshes = expected.meshes.map { mesh ->
+                    mesh.copy(maskedBy = input.meshes.single { it.id == mesh.id }.maskedBy)
+                }))
+            }
             if (type.endsWith(".see-through")) {
                 assertEquals(input.meshes.size + 1, expected.meshes.size)
                 assertTrue(expected.meshes.any { it.id.startsWith("modifier:") })
@@ -149,7 +172,7 @@ class PackagedPhysicsPluginTool {
             repeat(2) {
                 assertEquals(expected, evaluate(registry.definition(instance), input, instance))
             }
-            if (type == "expression.toggles" || type.endsWith(".see-through")) {
+            if (type == "expression.toggles" || type.endsWith(".see-through") || type == "face.skin-clip") {
                 val canonical = instance.copy(type = entry.manifest.algorithms.single().type)
                 assertEquals(expected, evaluate(registry.definition(canonical), input, canonical))
             }

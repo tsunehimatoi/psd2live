@@ -10,6 +10,8 @@ object ExpressionWorker {
             val id = "builtin." + java.util.HexFormat.of().formatHex("$area.see-through".encodeToByteArray()) + ".v1/visibility"
             algorithms[id to 1] = SeeThroughAlgorithm()
         }
+        val skinId = "builtin." + java.util.HexFormat.of().formatHex("face.skin-clip".encodeToByteArray()) + ".v1/clip"
+        algorithms[skinId to 1] = SkinClipAlgorithm()
         AlgorithmWorker.run(algorithms)
     }
 }

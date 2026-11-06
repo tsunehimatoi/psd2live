@@ -4,7 +4,7 @@ import java.security.MessageDigest
 // Binding kernels use the GPL engine; they are separate from the MIT API/format modules.
 plugins { `java-library`; kotlin("jvm") }
 group = "io.github.psd2live.algorithms"
-version = "1.0.10"
+version = "1.0.11"
 kotlin { jvmToolchain(21) }
 dependencies {
     api(project(":umamo"))
@@ -40,7 +40,7 @@ tasks.register("pluginPackage") {
         jar.copyTo(payload, overwrite = true)
         val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
         directory.resolve("plugin.json").writeText("""
-            {"protocol":1,"id":"builtin.65787072657373696f6e2e746f67676c6573.v1","version":"1.0.10","name":"Expressions",
+            {"protocol":1,"id":"builtin.65787072657373696f6e2e746f67676c6573.v1","version":"1.0.11","name":"Expressions",
              "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
              "algorithms":[{"type":"builtin.65787072657373696f6e2e746f67676c6573.v1/toggles","aliases":["expression.toggles"],"version":1,"name":"Expressions","category":"expression",
                "targets":["mesh"],"requires":["rig.scaffold"],"exclusiveFamily":"expression.toggles",
@@ -51,8 +51,12 @@ tasks.register("pluginPackage") {
 }
 
 // Each stable built-in identity has its own installable package and legacy alias.
-for (area in listOf("eye", "brow")) {
-    tasks.register("plugin" + area.replaceFirstChar { it.uppercase() } + "SeeThrough") {
+for ((type, area, taskName) in listOf(
+    Triple("eye.see-through", "eye", "pluginEyeSeeThrough"),
+    Triple("brow.see-through", "brow", "pluginBrowSeeThrough"),
+    Triple("face.skin-clip", "skin", "pluginSkinClip"),
+)) {
+    tasks.register(taskName) {
         dependsOn(workerJar)
         val output = layout.buildDirectory.dir("plugin-$area")
         inputs.file(workerJar.flatMap { it.archiveFile })
@@ -63,12 +67,13 @@ for (area in listOf("eye", "brow")) {
             val payload = directory.resolve("algorithm.jar")
             workerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
             val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
-            val type = "$area.see-through"
+            val entrypoint = if (area == "skin") "clip" else "visibility"
+            val title = if (area == "skin") "Skin clipping" else "$area through bangs"
             val id = "builtin." + HexFormat.of().formatHex(type.toByteArray(Charsets.UTF_8)) + ".v1"
             directory.resolve("plugin.json").writeText("""
-                {"protocol":1,"id":"$id","version":"${project.version}","name":"$area through bangs",
+                {"protocol":1,"id":"$id","version":"${project.version}","name":"$title",
                  "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
-                 "algorithms":[{"type":"$id/visibility","aliases":["$type"],"version":1,"name":"$area through bangs","category":"$area",
+                 "algorithms":[{"type":"$id/$entrypoint","aliases":["$type"],"version":1,"name":"$title","category":"$area",
                    "targets":["mesh"],"requires":["rig.scaffold"],"reads":["*"],"writes":["*"],
                    "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
                    "configSchema":{"type":"object"},"defaults":{}}]}
