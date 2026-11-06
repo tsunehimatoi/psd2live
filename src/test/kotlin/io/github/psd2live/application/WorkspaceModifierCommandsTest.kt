@@ -123,6 +123,42 @@ class WorkspaceModifierCommandsTest {
         assertTrue(SwingCatalog.entries(f.now.document.rigEdits).isEmpty())
     }
 
+    @Test fun registeringAnotherSwingMeshUpdatesTheExistingInstanceAndReplays(): Unit = runBlocking {
+        val f = fixture(layerCount = 2)
+        val targets = f.now.model.rig.puppet.drawables.map { it.id.raw }
+        val source = RigSwingEdit.single("accessory", "Accessory swing", SwingKind.LATERAL,
+            targets.take(1), listOf("SwingMode"), preset = SwingPreset.ACCESSORY)
+        f.edit("swing_put", source.toJson())
+        val before = stack(f).instances.single()
+        val wrapper = "Warp_Swing_${before.outputId("swing")}"
+        overrideFarPoint(f, wrapper)
+        val overridden = farPoints(f).copyOf()
+        val overrides = stack(f).overrides.getValue(before.id)
+        val sessions = WorkspaceSwingSessions(f.runtime)
+        val draft = sessions.execute(f.now.projectId, f.now.state, "main", buildJsonObject {
+            put("mode", "begin"); putJsonArray("targets") { add(targets.first()) }
+        })
+        val updated = sessions.execute(f.now.projectId, f.now.state, "main", buildJsonObject {
+            put("mode", "update"); put("session_id", draft.report.getValue("session_id"))
+            put("draft", draft.draft.copy(targets = targets).toJson())
+        })
+        assertEquals(before, stack(f).instances.single())
+        sessions.execute(f.now.projectId, f.now.state, "main", buildJsonObject {
+            put("mode", "commit"); put("session_id", updated.report.getValue("session_id"))
+        })
+        val after = stack(f).instances.single()
+        assertEquals(before.copy(targets = targets.map { ModifierTarget("mesh", it) }, config = after.config), after)
+        assertEquals(targets, RigSwingEdit.fromJson(after.config).targets)
+        assertEquals(overrides, stack(f).overrides.getValue(after.id))
+        assertContentEquals(overridden, farPoints(f))
+        val expected = RigIrCompiler.compile(f.now.model)
+        assertTrue(expected.meshes.all { it.parent == wrapper })
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+        f.edit("modifier_apply", id(after.id))
+        assertTrue(stack(f).instances.isEmpty())
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
     @Test fun nativeAdditionPlanCreatesAnotherInstanceInsteadOfReusingTheFirst(): Unit = runBlocking<Unit> {
         val f = fixture()
         val swing = RigSwingEdit.single("template", "Swing", SwingKind.LATERAL, listOf(f.target.id), listOf("P"))
@@ -803,12 +839,12 @@ class WorkspaceModifierCommandsTest {
         return grid.cells.single { it.coordinate.single() == grid.axes.single().keys.lastIndex }.form.controlPoints
     }
 
-    private suspend fun overrideFarPoint(f: Fixture) {
+    private suspend fun overrideFarPoint(f: Fixture, target: String = "warp") {
         val parameter = stack(f).instances.single().outputId("swing:lateral:0")
         val before = farPoints(f)
         f.edit("keyform_apply", buildJsonObject {
             putJsonArray("changes") { addJsonObject {
-                put("op", "set"); put("target", "warp:warp")
+                put("op", "set"); put("target", "warp:$target")
                 putJsonObject("key") { put(parameter, 1f) }
                 putJsonObject("geometry") {
                     put("controlPoints", JsonArray(before.mapIndexed { index, value -> JsonPrimitive(if (index == before.lastIndex - 1) value + .1f else value) }))

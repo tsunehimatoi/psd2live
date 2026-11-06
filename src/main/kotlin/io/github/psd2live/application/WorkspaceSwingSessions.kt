@@ -57,7 +57,10 @@ internal class WorkspaceSwingSessions(private val runtime: WorkspaceRuntime<RigP
         val draft = when (mode) {
             "begin", "select", "play", "cancel", "commit" -> session.draft
             "update" -> RigSwingEdit.fromJson(request.getValue("draft").jsonObject).also {
-                require(it.id == session.draft.id && it.targets == session.draft.targets) { "A draft keeps its captured ID and targets" }
+                require(it.id == session.draft.id && it.targets.size <= 128 &&
+                    it.targets.take(session.draft.targets.size) == session.draft.targets) {
+                    "A draft keeps its captured ID and can only append targets (up to 128)"
+                }
             }
             "kinds" -> SwingAuthoring.withKinds(puppet, overlay, session.draft,
                 request.getValue("kinds").jsonArray.map { SwingKind.valueOf(it.jsonPrimitive.content.uppercase()) })

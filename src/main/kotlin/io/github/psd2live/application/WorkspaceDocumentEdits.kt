@@ -425,10 +425,12 @@ internal object WorkspaceDocumentEdits {
             val stack = io.github.psd2live.core.modifier.RigModifierStack.fromJson(raw)
             val owner = SwingCatalog.owner(document.rigEdits, edit.id)
             val source = if (estimatePhysics) SwingAuthoring.resized(puppet, edit) else edit
-            val next = if (owner == null) stack.add("swing", 1, source.targets.map { target ->
-                io.github.psd2live.core.modifier.ModifierTarget(if (puppet.deformers.any { it.id.raw == target }) "deformer" else "mesh", target)
-            }, source.toJson(), id = source.id)
-            else stack.update(owner.id) { it.copy(config = JsonObject(it.config + source.toJson())) }
+            val targets = source.targets.map { target ->
+                owner?.targets?.firstOrNull { it.id == target }
+                    ?: io.github.psd2live.core.modifier.ModifierTarget(if (puppet.deformers.any { it.id.raw == target }) "deformer" else "mesh", target)
+            }
+            val next = if (owner == null) stack.add("swing", 1, targets, source.toJson(), id = source.id)
+            else stack.update(owner.id) { it.copy(targets = targets, config = JsonObject(it.config + source.toJson())) }
             return document.copy(rigEdits = document.rigEdits.copy(modifierStack = next.toJson()))
         }
         val overlay = SwingAuthoring.put(document.rigEdits, puppet, edit, estimatePhysics)
