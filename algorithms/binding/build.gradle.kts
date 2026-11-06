@@ -4,7 +4,7 @@ import java.security.MessageDigest
 // Binding kernels use the GPL engine; they are separate from the MIT API/format modules.
 plugins { `java-library`; kotlin("jvm") }
 group = "io.github.psd2live.algorithms"
-version = "1.0.19"
+version = "1.0.20"
 kotlin { jvmToolchain(21) }
 dependencies {
     api(project(":umamo"))
@@ -40,13 +40,37 @@ tasks.register("pluginPackage") {
         jar.copyTo(payload, overwrite = true)
         val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
         directory.resolve("plugin.json").writeText("""
-            {"protocol":1,"id":"builtin.65787072657373696f6e2e746f67676c6573.v1","version":"1.0.19","name":"Expressions",
+            {"protocol":1,"id":"builtin.65787072657373696f6e2e746f67676c6573.v1","version":"1.0.20","name":"Expressions",
              "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
              "algorithms":[{"type":"builtin.65787072657373696f6e2e746f67676c6573.v1/toggles","aliases":["expression.toggles"],"version":1,"name":"Expressions","category":"expression",
                "targets":["mesh"],"requires":["rig.scaffold"],"exclusiveFamily":"expression.toggles",
                "reads":["*"],"writes":["*"],"composableKinds":["mesh","part","deformer","hierarchy","relations","parameter","physics"],
                "configSchema":{"type":"object"},"defaults":{}}]}
         """.trimIndent())
+    }
+}
+
+for (revision in 1..2) {
+    tasks.register("pluginScaffold$revision") {
+        dependsOn(workerJar)
+        val output = layout.buildDirectory.dir("plugin-scaffold-$revision")
+        inputs.file(workerJar.flatMap { it.archiveFile })
+        inputs.property("packageVersion", project.version.toString())
+        outputs.dir(output)
+        doLast {
+            val directory = output.get().asFile.apply { mkdirs() }
+            val payload = directory.resolve("algorithm.jar")
+            workerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+            val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+            val id = "builtin." + HexFormat.of().formatHex("rig.scaffold".toByteArray(Charsets.UTF_8)) + ".v$revision"
+            directory.resolve("plugin.json").writeText("""
+                {"protocol":1,"id":"$id","version":"${project.version}","name":"Binding structure",
+                 "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+                 "algorithms":[{"type":"$id/structure","aliases":["rig.scaffold"],"version":$revision,"name":"Binding structure","category":"body",
+                   "targets":["mesh"],"exclusiveFamily":"rig.scaffold","reads":["*"],"writes":["*"],
+                   "composableKinds":["mesh","part","deformer","hierarchy"],"configSchema":{"type":"object"},"defaults":{}}]}
+            """.trimIndent())
+        }
     }
 }
 

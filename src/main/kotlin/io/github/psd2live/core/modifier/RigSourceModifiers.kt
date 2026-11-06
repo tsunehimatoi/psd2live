@@ -215,6 +215,12 @@ internal class RigModifierSource(
     private val staticModels = java.util.IdentityHashMap<PuppetModel, PuppetModel>()
     fun static(model: PuppetModel) = staticModels.getOrPut(model) { restricted(model, emptySet()) }
 
+    private val scaffoldContexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
+    fun scaffoldContext(instance: RigModifierInstance): ModifierAlgorithmContext = scaffoldContexts.getOrPut(instance) {
+        io.github.psd2live.algorithms.binding.ScaffoldAlgorithm.capture(scaffold(instance) {}, materialBase,
+            instance.targets.associate { it.id to primaryByLayer.getValue(layersByMesh.getValue(it.id)) })
+    }
+
     private fun templateKey(instances: List<RigModifierInstance>, scaffold: JsonObject): Map<String, JsonObject> {
         val state = instances.associateBy { it.type }
         val key = state.mapValues { (_, instance) -> buildJsonObject {
@@ -526,11 +532,6 @@ internal class RigModifierSource(
         return result
     }
 
-    /** Only exact, unedited source geometry can bypass numerical inverse mapping. */
-    fun originalMaterial(actual: Drawable, desired: Drawable): Boolean =
-        io.github.psd2live.algorithms.binding.ScaffoldBinding.isOriginalMaterial(actual, desired,
-            materialBase.drawables.singleOrNull { it.id == actual.id })
-
     fun scaffoldFor(instance: RigModifierInstance, target: ModifierTarget, checkpoint: () -> Unit) = forTarget(scaffold(instance, checkpoint), target)
 
     private fun forTarget(model: PuppetModel, target: ModifierTarget): PuppetModel {
@@ -581,7 +582,9 @@ internal object RigSourceModifiers {
                 val input = requireNotNull(source) { "Binding modifiers require the captured source artwork" }
                 require(instance.targets.all { input.hasMesh(it.id) }) { "A binding scaffold target has no source layer" }
             }, composableKinds = setOf("mesh", "part", "deformer", "hierarchy"),
-            evaluate = { rig, instance, checkpoint -> scaffold(rig, instance, requireNotNull(source), checkpoint) })
+            evaluate = { rig, instance, checkpoint -> scaffold(rig, instance, requireNotNull(source), checkpoint) },
+            plugin = io.github.psd2live.algorithms.binding.ScaffoldAlgorithm(),
+            authorContext = { requireNotNull(source).scaffoldContext(it) })
     } + RigLegacyBindings.specs.map { RigLegacyBindings.definition(it, source) }
 
     /** Version 2 retains the source hierarchy; version 1 keeps persisted per-mesh identities replayable. */
@@ -591,12 +594,7 @@ internal object RigSourceModifiers {
         io.github.psd2live.algorithms.binding.ScaffoldBinding.partId(instance, mesh, canonical, shared)
 
     private fun scaffold(rig: RigIR, instance: RigModifierInstance, source: RigModifierSource, checkpoint: () -> Unit): RigIR =
-        rig.withPuppet(io.github.psd2live.algorithms.binding.ScaffoldBinding.apply(PuppetIr.toPuppet(rig), instance,
-            object : io.github.psd2live.algorithms.binding.ScaffoldBinding.Source {
-                override fun scaffoldFor(instance: RigModifierInstance, target: ModifierTarget, checkpoint: () -> Unit) =
-                    source.scaffoldFor(instance, target, checkpoint)
-                override fun originalMaterial(actual: Drawable, desired: Drawable) = source.originalMaterial(actual, desired)
-            }, checkpoint))
+        io.github.psd2live.algorithms.binding.ScaffoldAlgorithm().evaluate(rig, instance, source.scaffoldContext(instance), checkpoint)
 
     internal fun pointsInParent(model: PuppetModel, sample: Drawable, points: FloatArray, parent: DeformerId, scratch: String): FloatArray =
         io.github.psd2live.algorithms.binding.BindingFrames.pointsInParent(model, sample, points, parent, scratch)

@@ -210,6 +210,12 @@ tasks.test {
 
 // Keep Cubism out of classpath resources unless explicitly opted in.
 tasks.processResources {
+    for (revision in 1..2) {
+        dependsOn(":algorithms:binding:pluginScaffold$revision")
+        from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-scaffold-$revision")) {
+            into("algorithm-plugins/scaffold-$revision")
+        }
+    }
     dependsOn(":algorithms:binding:pluginSkinClip")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-skin")) {
         into("algorithm-plugins/skin-clip")

@@ -12,6 +12,10 @@ object ExpressionWorker {
         }
         val skinId = "builtin." + java.util.HexFormat.of().formatHex("face.skin-clip".encodeToByteArray()) + ".v1/clip"
         algorithms[skinId to 1] = SkinClipAlgorithm()
+        for (version in 1..2) {
+            val id = "builtin." + java.util.HexFormat.of().formatHex("rig.scaffold".encodeToByteArray()) + ".v$version/structure"
+            algorithms[id to version] = ScaffoldAlgorithm()
+        }
         AlgorithmWorker.run(algorithms)
     }
 }
