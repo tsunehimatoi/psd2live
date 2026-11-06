@@ -9,17 +9,87 @@ import io.github.psd2live.core.MotionData
 import io.github.psd2live.core.RigPhysicsEdit
 import io.github.psd2live.core.PhysicsInput
 import io.github.psd2live.core.PhysicsOutput
+import io.github.psd2live.core.PipelineConfig
+import io.github.psd2live.core.RigIrCompiler
 import io.github.psd2live.core.sim.*
+import io.github.psd2live.application.WorkspacePreviewBuilder
 import io.github.psd2live.format.model.*
+import io.github.psd2live.project.ProjectRepository
+import io.github.psd2live.project.SyntheticProject
+import io.github.psd2live.project.WorkspaceRevisions
+import io.github.psd2live.project.WorkspaceSettingsCodec
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
 import java.util.prefs.Preferences
 import kotlin.test.*
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
 
 /** Opt-in real installation and process evaluation of independently built bundled packages. */
 class PackagedPhysicsPluginTool {
+    @Test fun scaffoldWorkspaceArchiveRestoresAnExactWorkerPin(): Unit = runBlocking {
+        requireTools()
+        val root = Files.createTempDirectory("packaged-scaffold-workspace-")
+        val preferences = Preferences.userRoot().node("plugin-package-test/${UUID.randomUUID()}")
+        val store = ModifierPluginStore(root.resolve("installed"), preferences)
+        try {
+            val built = Path.of("algorithms/binding/build/plugin-scaffold-2")
+            val source = Files.createDirectory(root.resolve("package"))
+            Files.copy(built.resolve("algorithm.jar"), source.resolve("algorithm.jar"))
+            val manifest = Json.parseToJsonElement(Files.readString(built.resolve("plugin.json"))).jsonObject
+            // Keep the current source protocol while giving this physical installation a distinct lock.
+            val version = manifest.getValue("version").jsonPrimitive.content.substringBefore('+')
+            Files.writeString(source.resolve("plugin.json"), JsonObject(manifest + ("version" to JsonPrimitive("$version+workspace-test"))).toString())
+            val installed = store.install(source.toString())
+            val project = SyntheticProject(root.resolve("project"), layers = 1, size = 12, revisions = 1)
+            val unbound = RigModifierStack().toJson()
+            val original = project.tree.head()
+            val config = PipelineConfig(atlasSize = 64, meshSpacing = 8, rigEdits = original.snapshot.rigEdits.copy(modifierStack = unbound))
+            val document = original.snapshot.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+            val preview = WorkspacePreviewBuilder().build(document)
+            val input = RigIrCompiler.compile(preview)
+            val target = ModifierTarget("mesh", input.meshes.single().id)
+            val pinned = RigModifierInstance("workspace-scaffold", "rig.scaffold", 2, listOf(target), plugin = installed.reference)
+            val native = RigSourceModifiers.definitions(RigModifierSource.of(preview))
+                .single { it.type == pinned.type && it.version == pinned.version }
+            val context = native.authorContext(pinned)
+            assertEquals("scaffold/5", context.values.getValue("schema").jsonPrimitive.content)
+            assertFalse("template" in context.resources)
+            val expected = evaluate(native, input, pinned)
+            assertTrue(expected.deformers.size > input.deformers.size)
+
+            val saved = document.copy(rigEdits = document.rigEdits.copy(modifierStack = RigModifierStack(instances = listOf(pinned)).toJson()))
+            val revision = WorkspaceRevisions.of(saved)
+            project.tree.commit(original.node.id, saved, revision, revision, "Install locked binding structure")
+            val repository = ProjectRepository(writeHeadCache = false)
+            val archive = root.resolve("scaffold.psd2live")
+            repository.save(project.capture(), archive)
+            repository.open(archive).use { opened ->
+                val reopened = opened.history.head().snapshot
+                val restored = RigModifierStack.fromJson(requireNotNull(reopened.rigEdits.modifierStack)).instances.single()
+                assertEquals(pinned, restored)
+                val authored = WorkspacePreviewBuilder().build(reopened.copy(rigEdits = reopened.rigEdits.copy(modifierStack = unbound)))
+                val reopenedInput = RigIrCompiler.compile(authored)
+                val captured = BuiltinModifierPlugins.definitions(RigModifierSource.of(authored))
+                fun registry() = RigModifierRegistry(captured + ModifierPluginCatalog.definitions(store, captured))
+
+                val worker = registry().definition(restored)
+                assertEquals(installed.reference, worker.pluginReference)
+                assertEquals(expected, evaluate(worker, reopenedInput, restored))
+                store.uninstall(installed.reference)
+                assertFailsWith<IllegalArgumentException> { registry().definition(restored) }
+                assertFailsWith<IllegalArgumentException> { evaluate(worker, reopenedInput, restored) }
+                assertEquals(restored.plugin, store.install(source.toString()).reference)
+                assertEquals(expected, evaluate(registry().definition(restored), reopenedInput, restored))
+            }
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(root)
+        }
+    }
+
     @Test fun scaffoldArchivesBuildFromUnboundSourcesWithoutTemplates() {
         requireTools()
         val input = testInput()
