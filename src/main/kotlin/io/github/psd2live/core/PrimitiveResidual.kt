@@ -47,29 +47,9 @@ internal object PrimitiveResidual {
 		return result
 	}
 
-	/** Axes with every knot of [input] per parameter, in first-seen order; near-duplicate knots merge. */
-	fun unionAxes(input: List<KeyformAxis>): List<KeyformAxis> = input.groupBy { it.parameterId }.map { (id, axes) ->
-		val values = ArrayList<Float>()
-		axes.forEach { axis -> axis.keys.forEach { value -> if (values.none { abs(it - value) < EPS_KEY }) values += value } }
-		KeyformAxis(id, values.sorted().toFloatArray())
-	}
-
-	/** Every coordinate of a grid over [axes], first axis fastest. */
-	fun coordinates(axes: List<KeyformAxis>): List<IntArray> {
-		var count = 1L
-		for (axis in axes) {
-			require(axis.keys.isNotEmpty()) { "Art primitive keyform axis is empty" }
-			count = Math.multiplyExact(count, axis.keys.size.toLong())
-			require(count <= 262144) { "Art primitive keyforms exceed the allocation limit" }
-		}
-		return (0 until count.toInt()).map { index ->
-			var value = index
-			IntArray(axes.size) { axis -> (value % axes[axis].keys.size).also { value /= axes[axis].keys.size } }
-		}
-	}
-
-	fun key(axes: List<KeyformAxis>, coordinate: IntArray): Map<ParameterId, Float> =
-		axes.indices.associate { axes[it].parameterId to axes[it].keys[coordinate[it]] }
+	fun unionAxes(input: List<KeyformAxis>): List<KeyformAxis> = io.github.psd2live.algorithms.binding.BindingAxes.unionAxes(input)
+	fun coordinates(axes: List<KeyformAxis>): List<IntArray> = io.github.psd2live.algorithms.binding.BindingAxes.coordinates(axes)
+	fun key(axes: List<KeyformAxis>, coordinate: IntArray): Map<ParameterId, Float> = io.github.psd2live.algorithms.binding.BindingAxes.key(axes, coordinate)
 
 	/** [values] (x/y per vertex) on the vertices [sources] derive from them. */
 	fun transfer(values: FloatArray, sources: List<VertexSource>): FloatArray =
