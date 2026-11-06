@@ -1,6 +1,11 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.core.modifier.ModifierTarget
+import io.github.psd2live.core.modifier.RigModifierInstance
+import io.github.psd2live.core.modifier.RigModifierSource
 import io.github.psd2live.core.recipe.*
+import io.github.psd2live.format.model.Canvas
+import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.project.rawConfig
 import io.github.psd2live.scenario.Characters
 import io.github.psd2live.targets.cubism.PuppetIr
@@ -59,6 +64,33 @@ class ExpressionGeometryCacheTest {
         val fittedAxes = setOf(StandardParameters.EYE_L_OPEN, StandardParameters.EYE_R_OPEN, StandardParameters.MOUTH_OPEN)
         assertEquals(reference.filter { it.id in fittedAxes }, declared.filter { it.id in fittedAxes })
         assertTrue(cache.stages.misses(RigStageCache.MESH) > 0)
+    }
+
+    @Test fun mixedExpressionTargetsResolveWithoutGeneratingUnrelatedStandardAxes() {
+        val document = Characters.figure()
+        val (eye, variant, unrelated) = document.layerOverrides.keys.take(3)
+        val overrides = document.layerOverrides + mapOf(
+            eye to document.layerOverrides.getValue(eye).copy(type = LayerType.TOGGLE, parameter = StandardParameters.EYE_L_OPEN.raw),
+            variant to document.layerOverrides.getValue(variant).copy(type = LayerType.SWITCH, parameter = "Variant", switchId = 2),
+            unrelated to document.layerOverrides.getValue(unrelated).copy(type = LayerType.TOGGLE, parameter = StandardParameters.ANGLE_X.raw),
+        )
+        val recipe = RigRecipe(true, modules = RigModules.modules.associate { it.id to ModuleChoice(it == RigModules.EXPRESSION_TOGGLES) })
+        val config = document.rawConfig().copy(recipe = recipe, layerOverrides = overrides)
+        val analysis = CharacterAnalyzer.analyze(document.source, config)
+        val atlas = AtlasLayout.pack(analysis.layers, config)
+        val base = PuppetIr.toPuppet(RigIR(Canvas(1f, 1f), emptyList()))
+        val cache = PreviewMeshCache()
+        val source = RigModifierSource(analysis, atlas, config, mapOf("eye" to eye, "variant" to variant),
+            materialBase = base, meshCache = cache)
+        val instance = RigModifierInstance("expression", "expression.toggles", 1,
+            listOf(ModifierTarget("mesh", "eye"), ModifierTarget("mesh", "variant")))
+
+        val actual = source.expressionParameters(instance)
+        val expectedIds = listOf(StandardParameters.EYE_L_OPEN.raw, "Variant")
+        assertEquals(expectedIds, actual.map { it.id })
+        assertEquals(0L, cache.stages.misses(RigStageCache.MESH))
+        val reference = RigBuilder.build(analysis, atlas, config, cache).puppet
+        assertEquals(PuppetIr.parametersToIr(reference).filter { it.id in expectedIds }, actual)
     }
 
     @Test fun facialModulesKeepBodyMeshesWhileChestMotionInvalidatesThem() {

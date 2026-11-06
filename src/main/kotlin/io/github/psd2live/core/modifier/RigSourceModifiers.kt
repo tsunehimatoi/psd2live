@@ -117,8 +117,8 @@ internal class RigModifierSource(
     fun seeThrough(rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit): RigIR =
         io.github.psd2live.algorithms.binding.SeeThroughAlgorithm().evaluate(rig, instance, seeThroughContext(instance), checkpoint)
 
-    private val expressionParameterDefinitions by lazy {
-        val layers = analysis.layers.mapNotNull { layer ->
+    private val expressionLayers by lazy {
+        analysis.layers.mapNotNull { layer ->
             val override = config.layerOverrides[layer.source.id.raw]
             val type = override?.type ?: layer.semantic.type
             val parameter = (override?.parameter ?: layer.semantic.parameter).trim()
@@ -126,54 +126,49 @@ internal class RigModifierSource(
                 io.github.psd2live.algorithms.binding.ExpressionChannels.Layer(parameter,
                     if (type == LayerType.SWITCH) override?.switchId ?: layer.semantic.switchId else null)
         }.toMap()
-        val catalog = io.github.psd2live.algorithms.binding.ExpressionChannels.catalog(layers.values.toList(), staggered = true)
-        // Standard-name collisions need fitted parameter ranges, not meshes or an assembled model.
-        val parameters = if (catalog.parameters.any { custom -> StandardParameters.all.any { it.id == custom.id } }) {
-            val recipe = RigRecipe(true, modules = RigModules.modules.associate {
-                it.id to ModuleChoice(it == RigModules.EXPRESSION_TOGGLES)
-            })
-            val native = sourceConfig().copy(bodyStrength = 1f, headTurnStrength = 1f, rigTuning = RigTuning(), recipe = recipe,
-                featureDisplacementEnabled = false, mouthOutlineEnabled = false, hairSimulationFront = false,
-                hairSimulationBack = false, mouthThickness = 1.5f, mouthColor = null)
-            // These axes remain ordinary keyform parameters after Cubism lowering. Other standard names
-            // may be retyped from generated geometry, so keep their complete compatibility path for now.
-            val fittedAxes = setOf(StandardParameters.EYE_L_OPEN, StandardParameters.EYE_R_OPEN, StandardParameters.MOUTH_OPEN)
-            if (catalog.parameters.all { it.id in fittedAxes }) RigBuilder.sourceStandardParameters(analysis, native, meshCache)
-            else generated(recipe = recipe).puppet.parameters
-        } else catalog.parameters
-        PuppetIr.parametersToIr(materialBase.copy(parameters = parameters))
     }
 
-    private val expressionLayers by lazy {
-        analysis.layers.mapNotNull { layer ->
-            val override = config.layerOverrides[layer.source.id.raw]
-            val type = override?.type ?: layer.semantic.type
-            val parameter = (override?.parameter ?: layer.semantic.parameter).trim()
-            (layer.source.id.raw to ParameterId(parameter)).takeIf { type != LayerType.PRESET && parameter.isNotEmpty() }
-        }.toMap()
+    private val expressionCatalog by lazy {
+        io.github.psd2live.algorithms.binding.ExpressionChannels.catalog(expressionLayers.values.toList(), staggered = true)
     }
+    private val expressionRecipe by lazy {
+        RigRecipe(true, modules = RigModules.modules.associate { it.id to ModuleChoice(it == RigModules.EXPRESSION_TOGGLES) })
+    }
+    private val fittedExpressionParameters by lazy {
+        val native = generationConfig(1f, RigTuning(), 1f, expressionRecipe, null,
+            featureDisplacement = false, frontHairSway = true, backHairSway = true)
+        RigBuilder.sourceStandardParameters(analysis, native, meshCache)
+    }
+    private val loweredExpressionParameters by lazy { generated(recipe = expressionRecipe).puppet.parameters }
 
     private fun expressionIds(instance: RigModifierInstance) = instance.targets.mapNotNullTo(linkedSetOf()) {
-        expressionLayers[layersByMesh[it.id]]
+        expressionLayers[layersByMesh[it.id]]?.let { layer -> ParameterId(layer.parameter) }
     }
 
     fun expressionParameters(instance: RigModifierInstance): List<io.github.psd2live.format.model.Parameter> {
-        val ids = expressionIds(instance).mapTo(HashSet()) { it.raw }
+        val ids = expressionIds(instance)
         if (ids.isEmpty()) return emptyList()
-        return expressionParameterDefinitions
-            .filter { it.id in ids }
+        val standardIds = StandardParameters.all.mapTo(HashSet()) { it.id }
+        val collisions = ids.intersect(standardIds)
+        // These three axes retain their fitted keyform definitions through Cubism lowering.
+        // Only a requested collision on another standard axis needs the lowered model.
+        val fittedAxes = setOf(StandardParameters.EYE_L_OPEN, StandardParameters.EYE_R_OPEN, StandardParameters.MOUTH_OPEN)
+        val parameters = if (collisions.any { it !in fittedAxes }) {
+            loweredExpressionParameters.filter { it.id in ids }
+        } else {
+            val fitted = if (collisions.isEmpty()) emptyList() else fittedExpressionParameters.filter { it.id in collisions }
+            fitted + expressionCatalog.parameters.filter { it.id in ids && it.id !in standardIds }
+        }
+        return PuppetIr.parametersToIr(materialBase.copy(parameters = parameters))
     }
 
     fun expressionContext(instance: RigModifierInstance): ModifierAlgorithmContext = ModifierAlgorithmContext(buildJsonObject {
         put("schema", "expression/1")
         putJsonObject("layers") {
-            analysis.layers.forEach { layer ->
-                val override = config.layerOverrides[layer.source.id.raw]
-                val type = override?.type ?: layer.semantic.type
-                val parameter = (override?.parameter ?: layer.semantic.parameter).trim()
-                if (type != LayerType.PRESET && parameter.isNotBlank()) putJsonObject(layer.source.id.raw) {
-                    put("parameter", parameter)
-                    if (type == LayerType.SWITCH) put("switch", override?.switchId ?: layer.semantic.switchId)
+            expressionLayers.forEach { (id, layer) ->
+                putJsonObject(id) {
+                    put("parameter", layer.parameter)
+                    layer.switchId?.let { put("switch", it) }
                 }
             }
         }
@@ -412,7 +407,7 @@ internal class RigModifierSource(
 
     private fun moodTemplate(instances: List<RigModifierInstance>, scaffold: JsonObject, state: Map<String, RigModifierInstance>): Template? {
         // Source tracks using these names participate in standard parameter resolution; retain that compatibility path.
-        if (expressionLayers.values.any { it in io.github.psd2live.algorithms.binding.MoodChannels.parameters }) return null
+        if (expressionLayers.values.any { ParameterId(it.parameter) in io.github.psd2live.algorithms.binding.MoodChannels.parameters }) return null
         val previous = template(instances.dropLast(1), scaffold)
         val input = previous.bindingInput?.invoke() ?: return null
         val modules = listOf(RigModules.EXPRESSION_CHEEK, RigModules.EXPRESSION_GLOOM)
