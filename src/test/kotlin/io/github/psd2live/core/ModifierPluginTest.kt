@@ -78,6 +78,39 @@ class ModifierPluginTest {
         assertTrue(store.snapshot().isEmpty())
     }
 
+    @Test fun incompatibleCapturedAdapterDoesNotPoisonUnrelatedCatalogEntries() = fixture { root, store, _ ->
+        val path = packageAt(root.resolve("package"))
+        val manifestPath = path.resolve("plugin.json")
+        val original = Json.decodeFromString(ModifierPluginManifest.serializer(), Files.readString(manifestPath))
+        val unrelated = store.install(path.toString())
+        val id = "builtin.70687973696373.v1"
+        val algorithm = original.algorithms.single().copy(type = "$id/pendulum", aliases = setOf("physics"))
+        Files.writeString(manifestPath, Json.encodeToString(ModifierPluginManifest.serializer(),
+            original.copy(id = id, algorithms = listOf(algorithm))))
+        val incompatible = store.install(path.toString())
+        val adapter = RigModifierDefinition("physics", 1, requires = setOf("rig.scaffold"),
+            evaluate = { _, _, _ -> error("must not execute captured adapter") },
+            plugin = object : ContextualModifierAlgorithmPlugin {
+                override fun evaluate(input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext,
+                                      checkpoint: () -> Unit): RigIR = error("must not execute captured adapter")
+            }, authorContext = { error("must reject before capturing author inputs") })
+        val definitions = ModifierPluginCatalog.definitions(store, listOf(adapter))
+        val registry = RigModifierRegistry(definitions)
+        val input = RigIR(Canvas(100f, 100f), emptyList(), meshes = listOf(Mesh("body", "Body", null, geometry = null, offsets = null)))
+        val targets = listOf(ModifierTarget("mesh", "body"))
+        val good = RigModifierInstance("good", "test-plugin/fade", 1, targets, plugin = unrelated.reference)
+        registry.definition(good).validate(input, good)
+        for (type in listOf("physics", algorithm.type)) {
+            val instance = RigModifierInstance("bad", type, 1, targets, plugin = incompatible.reference)
+            val definition = registry.definition(instance)
+            val failure = assertFailsWith<IllegalArgumentException> { definition.authorContext(instance) }
+            assertTrue(failure.message.orEmpty().contains("$id@${incompatible.reference.version}"))
+            assertFailsWith<IllegalArgumentException> { definition.parameters(instance) }
+            assertFailsWith<IllegalArgumentException> { definition.validate(input, instance) }
+            assertFailsWith<IllegalArgumentException> { definition.evaluate(input, instance) {} }
+        }
+    }
+
     @Test fun installationReplayAndWorkerReusePreserveIdentity() = fixture { root, store, preferences ->
         val path = packageAt(root.resolve("package"))
         val entry = store.install(path.toString())

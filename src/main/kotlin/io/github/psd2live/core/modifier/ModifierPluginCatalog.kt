@@ -9,9 +9,15 @@ internal object ModifierPluginCatalog {
             val adapter = captured.singleOrNull { it.type in algorithm.aliases && (type == algorithm.type || it.type == type) && it.version == algorithm.version &&
                 it.plugin is ContextualModifierAlgorithmPlugin && entry.reference.id.startsWith("builtin.") }
             if (adapter != null) {
-                require(adapter.requires == algorithm.requires && adapter.exclusiveFamily == algorithm.exclusiveFamily &&
-                    adapter.composableKinds == algorithm.composableKinds) { "Bundled source adapter contract mismatch: $type" }
-                fun native(instance: RigModifierInstance) = instance.copy(type = adapter.type)
+                fun native(instance: RigModifierInstance): RigModifierInstance {
+                    // Reject only consumers of this exact package. An unused incompatible historical
+                    // version must not prevent unrelated projects from constructing their registry.
+                    require(adapter.requires == algorithm.requires && adapter.exclusiveFamily == algorithm.exclusiveFamily &&
+                        adapter.composableKinds == algorithm.composableKinds) {
+                        "Bundled source adapter contract mismatch: $type (${entry.reference.id}@${entry.reference.version})"
+                    }
+                    return instance.copy(type = adapter.type)
+                }
                 val worker = object : ContextualModifierAlgorithmPlugin {
                     override fun evaluate(input: io.github.psd2live.format.model.RigIR, instance: RigModifierInstance,
                                           context: ModifierAlgorithmContext, checkpoint: () -> Unit): io.github.psd2live.format.model.RigIR =
