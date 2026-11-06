@@ -46,7 +46,7 @@ internal class RigModifierSource(
     private val transitions = HashMap<Pair<String, ModifierTarget>, Pair<RigModifierChains.Projection, RigModifierChains.Projection>>()
     private val chainProjections = java.util.IdentityHashMap<PuppetModel, MutableMap<List<RigModifierChains.Owned>, RigModifierChains.Projection>>()
 
-    fun skinClipContext(instance: RigModifierInstance): ModifierAlgorithmContext {
+    fun skinClipContext(instance: RigModifierInstance, includeEarlier: Boolean = true): ModifierAlgorithmContext {
         val clips = RigOrdinaryMaterials.clipping(analysis.source, primaryByLayer.entries.associate { it.value to it.key })
         fun bounds(layer: ClassifiedLayer) = JsonArray(listOf(layer.bounds.left, layer.bounds.top, layer.bounds.right, layer.bounds.bottom).map(::JsonPrimitive))
         val layers = analysis.layers.associateBy { it.source.id.raw }
@@ -60,7 +60,7 @@ internal class RigModifierSource(
                 if (layerId !in clips && (layer.semantic.tag == SemanticTag.FACE_DETAIL ||
                     layer.semantic.tag == SemanticTag.FRONT_HAIR && layer.semantic.role == PartRole.SHADOW)) put(mesh, bounds(layer))
             } }
-            put("already_active", JsonArray(instance.targets.filter { target ->
+            put("already_active", JsonArray(if (!includeEarlier) emptyList() else instance.targets.filter { target ->
                 relevantBefore(instance, target).any { it.type == "face.skin-clip" }
             }.map { JsonPrimitive(it.id) }))
         })
@@ -228,6 +228,9 @@ internal class RigModifierSource(
     }
 
     private fun buildTemplate(instances: List<RigModifierInstance>, scaffold: JsonObject, state: Map<String, RigModifierInstance>): Template {
+        if (RigStageCache.enabled && instances.lastOrNull()?.type == "face.skin-clip") {
+            return skinTemplate(instances, scaffold)
+        }
         // Keep the full generator as the uncached equivalence path. Color-only additions do not rebuild geometry.
         if (RigStageCache.enabled && instances.lastOrNull()?.type in setOf("expression.cheek", "expression.gloom") &&
             instances.dropLast(1).any { !it.type.endsWith("/legacy") }) {
@@ -279,6 +282,29 @@ internal class RigModifierSource(
                     channelGrids = if ((eye || mouth) && !active) ChannelGrids.Empty else mesh.channelGrids,
                     opacity = if ((eye || mouth) && !active) opacity[layer] ?: mesh.opacity else mesh.opacity)
             }), chains, bindingInput)
+    }
+
+    private fun skinTemplate(instances: List<RigModifierInstance>, scaffold: JsonObject): Template {
+        val previous = template(instances.dropLast(1), scaffold)
+        val instance = instances.last()
+        // Clipping reads only identities and mask state; never serialize geometry for this local pass.
+        val input = RigIR(io.github.psd2live.format.model.Canvas(1f, 1f), emptyList(), meshes = previous.model.drawables.map {
+            io.github.psd2live.format.model.Mesh(it.id.raw, it.name, null, geometry = null, offsets = null,
+                maskedBy = it.maskedBy.map { id -> id.raw }, invertMask = it.invertMask)
+        })
+        val context = skinClipContext(instance, includeEarlier = false)
+        val complete = instance.copy(targets = input.meshes.map { ModifierTarget("mesh", it.id) })
+        val result = io.github.psd2live.algorithms.binding.SkinClipAlgorithm().evaluate(input, complete,
+            context) {}
+        val masks = result.meshes.filterIndexed { index, mesh -> mesh != input.meshes[index] }
+            .associate { it.id to (it.maskedBy.map(::DrawableId) to it.invertMask) }
+        fun apply(model: PuppetModel) = model.copy(drawables = model.drawables.map { mesh ->
+            val next = masks[mesh.id.raw] ?: return@map mesh
+            if (mesh.maskedBy == next.first && mesh.invertMask == next.second) mesh
+            else mesh.copy(maskedBy = next.first, invertMask = next.second)
+        })
+        RigBuildProfile.count("modifier local clipping templates")
+        return Template(apply(previous.model), previous.chains, previous.bindingInput?.let { capture -> { apply(capture()) } })
     }
 
     private fun moodTemplate(instances: List<RigModifierInstance>, scaffold: JsonObject, state: Map<String, RigModifierInstance>): Template? {
