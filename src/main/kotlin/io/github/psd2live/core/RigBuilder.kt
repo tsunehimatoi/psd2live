@@ -1,5 +1,6 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.algorithms.binding.ScaffoldParts
 import io.github.psd2live.algorithms.binding.ScaffoldPairs
 
 import io.github.psd2live.core.fit.handles
@@ -1685,58 +1686,24 @@ object RigBuilder {
 		}
 		val maskedParts = if (!v2) emptyList() else maskedAll.filter { it.id in partLayerById }
 
-		fun childrenFor(group: LayerGroup): List<OrgChild> =
-			maskedDrawables
-				.filter { inferredGroup(classifiedByDrawable.getValue(it.id), analysis.anchors) == group }
-				.sortedBy { classifiedByDrawable.getValue(it.id).source.order }
-				.map { OrgChild.Drawable(it.id) }
-		fun headChildrenFor(predicate: (SemanticTag) -> Boolean): List<OrgChild> =
-			maskedDrawables
-				.filter { drawable ->
-					val layer = classifiedByDrawable.getValue(drawable.id)
-					inferredGroup(layer, analysis.anchors) == LayerGroup.HEAD && predicate(layer.semantic.tag)
-				}
-				.sortedBy { classifiedByDrawable.getValue(it.id).source.order }
-				.map { OrgChild.Drawable(it.id) }
-		val parts = listOf(
-			Part(
-				headPartId,
-				tr("model.part.head"),
-				listOf(
-					OrgChild.Part(backHairPartId),
-					OrgChild.Part(facePartId),
-					OrgChild.Part(frontHairPartId),
-					OrgChild.Part(headAccessoryPartId),
-				),
-				groupMode = PartGroupMode.PassThrough,
-			),
-			Part(backHairPartId, tr("model.part.backHair"), headChildrenFor { it == SemanticTag.BACK_HAIR }, groupMode = PartGroupMode.PassThrough),
-			Part(facePartId, tr("model.part.face"), headChildrenFor { it in faceTags }, groupMode = PartGroupMode.PassThrough),
-			Part(frontHairPartId, tr("model.part.frontHair"), headChildrenFor { it == SemanticTag.FRONT_HAIR }, groupMode = PartGroupMode.PassThrough),
-			Part(
-				headAccessoryPartId,
-				tr("model.part.headAccessories"),
-				headChildrenFor { it !in faceTags && it != SemanticTag.FRONT_HAIR && it != SemanticTag.BACK_HAIR },
-				groupMode = PartGroupMode.PassThrough,
-			),
-			Part(extraPartId, tr("model.part.extra"), childrenFor(LayerGroup.EXTRA), groupMode = PartGroupMode.PassThrough),
-			Part(bodyPartId, tr("model.part.body"), childrenFor(LayerGroup.BODY) + childrenFor(LayerGroup.UNKNOWN), groupMode = PartGroupMode.PassThrough),
-		)
-		// Each part's slot in the part tree, as [childrenFor] and [headChildrenFor] would give it.
-		val partSlots = LinkedHashMap<DrawableId, PartId>()
-		for (part in maskedParts) {
-			val layer = classifiedByDrawable.getValue(part.id)
-			partSlots[part.id] = when (inferredGroup(layer, analysis.anchors)) {
-				LayerGroup.HEAD -> when {
-					layer.semantic.tag == SemanticTag.BACK_HAIR -> backHairPartId
-					layer.semantic.tag in faceTags -> facePartId
-					layer.semantic.tag == SemanticTag.FRONT_HAIR -> frontHairPartId
-					else -> headAccessoryPartId
-				}
-				LayerGroup.EXTRA -> extraPartId
-				else -> bodyPartId
+		fun slotFor(layer: ClassifiedLayer): ScaffoldParts.Slot = when (inferredGroup(layer, analysis.anchors)) {
+			LayerGroup.HEAD -> when {
+				layer.semantic.tag == SemanticTag.BACK_HAIR -> ScaffoldParts.Slot.BACK_HAIR
+				layer.semantic.tag in faceTags -> ScaffoldParts.Slot.FACE
+				layer.semantic.tag == SemanticTag.FRONT_HAIR -> ScaffoldParts.Slot.FRONT_HAIR
+				else -> ScaffoldParts.Slot.ACCESSORIES
 			}
+			LayerGroup.EXTRA -> ScaffoldParts.Slot.EXTRA
+			LayerGroup.UNKNOWN -> ScaffoldParts.Slot.UNKNOWN
+			else -> ScaffoldParts.Slot.BODY
 		}
+		val organization = ScaffoldParts.build(maskedDrawables.map { drawable ->
+			val layer = classifiedByDrawable.getValue(drawable.id)
+			ScaffoldParts.Material(drawable.id, slotFor(layer), layer.source.order)
+		}) { tr(it) }
+		val parts = organization.parts
+		val partSlots = LinkedHashMap<DrawableId, PartId>()
+		for (part in maskedParts) partSlots[part.id] = slotFor(classifiedByDrawable.getValue(part.id)).id
 		val standardIds = (StandardParameters.all + moduleParams).map { it.id }.toSet()
 		val uniqueCustomParams = customParams.filter { it.id !in standardIds }
 		val parameterTree = parameterTree(uniqueCustomParams, moduleParams)
@@ -1748,7 +1715,7 @@ object RigBuilder {
 			parts = parts,
 			deformers = deformers,
 			drawables = maskedDrawables,
-			rootChildren = listOf(OrgChild.Part(headPartId), OrgChild.Part(extraPartId), OrgChild.Part(bodyPartId)),
+			rootChildren = organization.rootChildren,
 			rootPartId = null,
 			parameterLinks = listOf(
 				ParameterLink(StandardParameters.ANGLE_X, StandardParameters.ANGLE_Y),
