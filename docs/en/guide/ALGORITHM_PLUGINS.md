@@ -2,6 +2,12 @@
 
 Every preset modifier evaluates through an algorithm interface. Bundled Kotlin algorithms run in-process; external algorithms run in persistent worker processes and may be written in Python, Kotlin, Rust, C, C++, or C#. A package may provide multiple algorithms.
 
+Bundled entries are catalogued and enabled independently by algorithm type and revision. Swing, simulation, physics and motion have separate Kotlin implementation entrypoints. New instances pin a `builtin.*` identity, a full version and an entrypoint-bytecode digest. A mismatched digest is unavailable rather than silently replaced. Historical unpinned instances retain their original revision without rewriting history on open. `id=builtin,digest=builtin` remains a compatibility operation controlling the whole bundled set.
+
+External packages may declare dependencies on bundled package IDs and versions returned by `plugin_list`. Installation locks their content digests; disabling or losing a required bundled version makes the dependent package unavailable too. External packages cannot claim `builtin` or `builtin.*` identities. Enabled states persist in preferences but evaluation reads an in-memory snapshot instead of accessing system preferences per entry.
+
+These entries still compile and ship with the application, rather than independently installable JARs. Binding algorithms still call shared application generation services; the entrypoint digest does not cover the complete application and all underlying dependencies. Independent package distribution, retaining historical binaries and local binding computation remain migration work. Individual management and pinned identities do not establish completion of that work.
+
 ## Install and remove
 
 Use Preferences → Algorithm plugins to select a ZIP or enter an absolute directory or an HTTPS, SSH or git:// Git URL. Git sources accept an optional branch, tag or full commit hash and record the resolved commit. The repository root must contain a built package. The installer does not fetch submodules, run setup scripts, or compile source.
