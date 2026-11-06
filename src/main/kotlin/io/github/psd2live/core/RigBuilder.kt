@@ -874,7 +874,8 @@ object RigBuilder {
         // rather than the complete recipe which also contains unrelated motion/physics choices.
         val stages = stagesOf(meshCache)
         if (stages != null && analysis.calibration == null) {
-            val key = listOf(analysis, config.meshTrace, MeshResolution.unitScale(config, analysis.source),
+            val key = listOf(analysis.source, analysis.layers, analysis.anchors, analysis.warnings,
+                config.meshTrace, MeshResolution.unitScale(config, analysis.source),
                 config.alphaThreshold, RigMeshSeed.layers(config.rigEdits), resolution.partByLayer,
                 analysis.layers.map { meshSettings(it, config).first })
             return stages.get("framed analysis", 16, key) {

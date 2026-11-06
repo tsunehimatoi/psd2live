@@ -37,7 +37,10 @@ internal object RigGenerationSource {
         }
 
         fun get(source: SourceArt, reference: SourceArt?, config: PipelineConfig, stage: String, analyze: () -> PipelineAnalysis): PipelineAnalysis {
-            val key = Key(source, reference, config.copy(textureOverrides = emptyMap(), atlasArrangement = null), stage)
+            // Explicit modifiers execute after source classification; neither their settings nor baked arrays
+            // are inputs to geometrySource/CharacterAnalyzer. Keep all ordinary authoring inputs in the key.
+            val key = Key(source, reference, config.copy(textureOverrides = emptyMap(), atlasArrangement = null,
+                rigEdits = config.rigEdits.copy(modifierStack = null)), stage)
             synchronized(entries) { entries[key] }?.let { return it }
             return analyze().also { synchronized(entries) { entries[key] = it } }
         }
