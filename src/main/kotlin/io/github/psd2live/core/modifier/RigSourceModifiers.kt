@@ -5,8 +5,6 @@ import io.github.psd2live.core.recipe.*
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.targets.cubism.PuppetIr
 import kotlinx.serialization.json.*
-import org.umamo.edit.withParametersDeleted
-import org.umamo.runtime.keyform.*
 import org.umamo.runtime.model.*
 
 /** Immutable source inputs captured with the candidate, never the editor's current selection or a previous output. */
@@ -517,28 +515,9 @@ internal class RigModifierSource(
         return found.values.toList()
     }
 
-    private fun restricted(input: PuppetModel, kept: Set<ParameterId>): PuppetModel {
-        // The source mouth is drawn open. Parameter default 0 is the algorithm's closed pose, not the material
-        // state before that algorithm exists. Removing this axis must retain its source pose at 1.
-        var model = input.copy(parameters = input.parameters.map { parameter ->
-            if (parameter.id == StandardParameters.MOUTH_OPEN && parameter.id !in kept) parameter.copy(default = 1f.coerceIn(parameter.min, parameter.max))
-            else parameter
-        })
-        val defaults = model.parameters.associate { it.id to it.default }
-        val forms = model.deformers.associate { deformer -> deformer.id to when (deformer) {
-            is Deformer.Warp -> deformer.copy(geometryGrid = restrict(deformer.geometryGrid, kept, defaults, WarpLatticeInterpolator))
-            is Deformer.Rotation -> deformer.copy(geometryGrid = restrict(deformer.geometryGrid, kept, defaults, RotationPivotInterpolator))
-        } }
-        // Parameter deletion lifts channel constants but intentionally unkeys the last geometry axis. A Warp has
-        // no separate rest lattice, so keep its sampled neutral form explicitly after removing binding parameters.
-        val meshes = model.drawables.associate { it.id to restrict(it.geometryGrid, kept, defaults, MeshDeltaInterpolator) }
-        model = model.withParametersDeleted(model.parameters.filter { it.id !in kept }.map { it.id })
-        return model.copy(drawables = model.drawables.map { it.copy(geometryGrid = meshes[it.id]) },
-            deformers = model.deformers.map { deformer -> when (deformer) {
-            is Deformer.Warp -> deformer.copy(geometryGrid = (forms.getValue(deformer.id) as Deformer.Warp).geometryGrid)
-            is Deformer.Rotation -> deformer.copy(geometryGrid = (forms.getValue(deformer.id) as Deformer.Rotation).geometryGrid)
-        } })
-    }
+    private fun restricted(input: PuppetModel, kept: Set<ParameterId>): PuppetModel =
+        // The source mouth is open; removing its binding retains the artwork pose at 1.
+        io.github.psd2live.algorithms.binding.BindingProjection.retain(input, kept, mapOf(StandardParameters.MOUTH_OPEN to 1f))
 
     private fun scaffold(instance: RigModifierInstance, checkpoint: () -> Unit): PuppetModel {
         checkpoint()
@@ -583,22 +562,6 @@ internal class RigModifierSource(
         }
         return preceding ?: RigModifierInstance(id, RigSourceModifiers.SCAFFOLD, requireNotNull(applied).version, targets,
             config = applied.config, outputAliases = applied.outputAliases)
-    }
-
-    private fun <F> restrict(grid: KeyformGrid<F>?, kept: Set<ParameterId>, defaults: Map<ParameterId, Float>, interpolator: FormInterpolator<F>): KeyformGrid<F>? {
-        var current = grid ?: return null
-        while (current.axes.any { it.parameterId !in kept }) {
-            val axis = current.axes.first { it.parameterId !in kept }
-            val value = (defaults[axis.parameterId] ?: 0f).coerceIn(axis.keys.first(), axis.keys.last())
-            current = current.withKeyInserted(axis.parameterId, value, interpolator)
-            if (current.axes.size == 1) {
-                val index = current.axes.single().keys.indices.minBy { kotlin.math.abs(current.axes.single().keys[it] - value) }
-                val form = current.cells.single { it.coordinate.single() == index }.form
-                return KeyformGrid(emptyList(), listOf(KeyformCell(IntArray(0), form)))
-            }
-            current = requireNotNull(current.withAxisCollapsed(axis.parameterId, value))
-        }
-        return current
     }
 
     companion object {
