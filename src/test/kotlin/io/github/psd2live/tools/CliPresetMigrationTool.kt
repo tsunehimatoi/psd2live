@@ -296,6 +296,18 @@ class CliPresetMigrationTool {
         appendLine("  texture pages match = ${expected.textures.pages == actual.textures.pages}")
         appendLine("  parameter links reordered only = ${expected.parameterLinks != actual.parameterLinks &&
             expected.parameterLinks.toSet() == actual.parameterLinks.toSet()}")
+        val rotations = expected.deformers.filterIsInstance<io.github.psd2live.format.model.Deformer.Rotation>()
+            .associateBy { it.id }
+        for (rotation in actual.deformers.filterIsInstance<io.github.psd2live.format.model.Deformer.Rotation>()) {
+            val before = rotations[rotation.id] ?: continue
+            if (before == rotation) continue
+            val cellDiff = before.pivot?.cells.orEmpty().zip(rotation.pivot?.cells.orEmpty())
+                .firstOrNull { (left, right) -> left != right }
+            appendLine("  rotation ${rotation.id}: angle=${before.baseAngle}->${rotation.baseAngle}" +
+                " handle=${before.handleLength}->${rotation.handleLength}" +
+                " axes changed=${before.pivot?.axes != rotation.pivot?.axes}" +
+                " first changed pivot=$cellDiff")
+        }
         val meshes = expected.meshes.associateBy { it.id }
         fun <T> meshDifferences(kind: String, value: (RigIRMesh) -> T) {
             val changed = actual.meshes.mapNotNull { mesh ->
@@ -303,6 +315,13 @@ class CliPresetMigrationTool {
                 mesh.id.takeIf { value(previous) != value(mesh) }
             }
             appendLine("  mesh $kind differences = $changed")
+        }
+        for (mesh in actual.meshes) {
+            val before = meshes[mesh.id]?.geometry ?: continue
+            val after = mesh.geometry ?: continue
+            if (before.indices == after.indices) continue
+            appendLine("  topology ${mesh.id}: vertices=${before.positions.size / 2}->${after.positions.size / 2}" +
+                " triangles=${before.indices.size / 3}->${after.indices.size / 3}")
         }
         meshDifferences("indices") { it.geometry?.indices }
         meshDifferences("UVs") { it.geometry?.uvs }
