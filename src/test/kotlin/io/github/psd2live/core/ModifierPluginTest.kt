@@ -258,11 +258,23 @@ class ModifierPluginTest {
             conflicts = listOf(ModifierPluginDependency(swing.reference.id)))))
         val dependent = store.install(source.toString())
         assertEquals(listOf(motion.reference), dependent.dependencyLock)
-        store.retainBundledReferences(listOf(swing.reference))
+        assertEquals("candidate", store.withArchivedBundles(listOf(swing.reference)) { "candidate" })
         assertFalse(store.resolution(swing.reference).available)
         val reopened = ModifierPluginStore(store.root, preferences)
         assertEquals(setOf(physics.reference, motion.reference, swing.reference, dependent.reference), reopened.snapshot().map { it.reference }.toSet())
         assertTrue(reopened.resolution(dependent.reference).available)
+    }
+
+    @Test fun failedBundledArchivePreventsReturningAnEvaluatedCandidate() = fixture { root, _, preferences ->
+        val blocked = Files.write(root.resolve("blocked-archive"), byteArrayOf(1))
+        val store = ModifierPluginStore(blocked, preferences, bundledWorkers = true)
+        val physics = assertNotNull(BundledAlgorithmArtifacts.find("physics", 1))
+        var evaluated = false
+        assertFailsWith<java.nio.file.FileAlreadyExistsException> {
+            store.withArchivedBundles(listOf(physics.reference)) { evaluated = true }
+        }
+        assertTrue(evaluated)
+        assertTrue(store.snapshot().isEmpty())
     }
 
     @Test fun queuedCancellationDoesNotKillActiveWorkerAndUninstallStopsIt() = fixture { root, store, _ ->

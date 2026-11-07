@@ -13,6 +13,7 @@ import java.util.concurrent.Callable
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
+import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
 import java.util.prefs.Preferences
 import java.util.zip.ZipInputStream
@@ -103,11 +104,39 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
     }
 
     fun retainBundledReferences(references: Collection<ModifierPluginReference>) {
-        if (!bundledWorkers || references.isEmpty()) return
-        val requested = references.toSet()
-        val artifacts = BundledAlgorithmArtifacts.artifacts.filter { it.reference in requested }
+        val artifacts = unretainedBundles(references)
         if (artifacts.isEmpty()) return
         synchronized(archiveLock) { BundledAlgorithmArtifacts.retain(this, artifacts) }
+    }
+
+    /** Archive immutable payloads while the candidate evaluates, and join before returning its result. */
+    fun <T> withArchivedBundles(references: Collection<ModifierPluginReference>, evaluate: () -> T): T {
+        val artifacts = unretainedBundles(references)
+        if (artifacts.isEmpty()) return evaluate()
+        val archive = FutureTask {
+            synchronized(archiveLock) {
+                checkCancelled()
+                BundledAlgorithmArtifacts.retain(this, artifacts)
+            }
+        }
+        Thread.ofVirtual().name("psd2live-plugin-archive").start(archive)
+        try {
+            val result = evaluate()
+            RigBuildProfile.stage("plugin load: wait for bundled archive") {
+                try { archive.get() }
+                catch (failure: ExecutionException) { throw failure.cause ?: failure }
+            }
+            return result
+        } finally {
+            archive.cancel(true)
+        }
+    }
+
+    private fun unretainedBundles(references: Collection<ModifierPluginReference>): List<BundledAlgorithmArtifacts.Artifact> {
+        if (!bundledWorkers || references.isEmpty()) return emptyList()
+        val requested = references.toSet()
+        val retained = synchronized(lock) { installed.mapTo(HashSet()) { it.reference } }
+        return BundledAlgorithmArtifacts.artifacts.filter { it.reference in requested && it.reference !in retained }
     }
     private fun catalog(): CatalogSnapshot {
         catalogSnapshot?.takeIf { it.revision == changes.value }?.let { return it }

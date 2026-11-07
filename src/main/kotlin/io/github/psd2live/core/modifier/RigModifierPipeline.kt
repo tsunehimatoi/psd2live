@@ -72,11 +72,12 @@ internal object RigModifierPipeline {
         val source = RigModifierSource(base.analysis, base.atlas, config, base.rig.layerIdByDrawableId, base.rig.copiedDrawableIds, base.baseRig.puppet, pipeline.meshCache)
         val context = listOf(artwork, config.copy(rigEdits = config.rigEdits.copy(modifierStack = null)),
             io.github.psd2live.i18n.I18n.currentLanguage)
-        val result = RigModifierAlgorithms.evaluator(source).evaluate(input, stack, pipeline.modifierCache, context) {
-            if (Thread.currentThread().isInterrupted) throw CancellationException("Modifier evaluation cancelled")
-            progress.update("Evaluating modifier stack", .85)
+        val result = ModifierPluginStore.shared.withArchivedBundles(stack.pluginReferences()) {
+            RigModifierAlgorithms.evaluator(source).evaluate(input, stack, pipeline.modifierCache, context) {
+                if (Thread.currentThread().isInterrupted) throw CancellationException("Modifier evaluation cancelled")
+                progress.update("Evaluating modifier stack", .85)
+            }
         }
-        ModifierPluginStore.shared.retainBundledReferences(stack.pluginReferences())
         val rig = base.rig.withModifierMeshes(PuppetIr.toPuppet(result.rig), result.rig.textures.tileArt)
             .copy(modifierOutput = result.rig, modifierReport = result.report())
         val extra = RigModifierRasterAssets.layers(rig, config).filterNot { it.source.id.raw in base.atlas.placementByLayerId }
