@@ -6,6 +6,7 @@ import io.github.psd2live.algorithms.binding.MouthVowelV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV6Algorithm
+import io.github.psd2live.algorithms.binding.MouthVowelV7Algorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.i18n.tr
@@ -53,6 +54,35 @@ internal object RigMouthVowelModifier {
 
     fun sourceOutlineDefinition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthVowelV6Algorithm.VERSION, sourceOutlineAlgorithm)
+
+    fun sharedFrameDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val legacy = RigLegacyBindings.definition(RigLegacyBindings.spec(MouthVowelAlgorithm.TYPE), source)
+        val plugin = object : ChangingModifierAlgorithmPlugin by MouthVowelV7Algorithm, ModifierOptionalUpstream, ModifierVersionSelection {
+            override val optionalUpstream = RigLegacyBindings.specs.filter { !it.expressionToggles && !it.seeThrough }
+                .mapTo(linkedSetOf()) { it.type } - setOf(MouthVowelAlgorithm.TYPE, "mouth/fitted")
+            override val canonicalOptInType = MouthVowelAlgorithm.TYPE
+        }
+        val contexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
+        fun capture(instance: RigModifierInstance) = contexts.getOrPut(instance) { requireNotNull(source).captureSharedFrames(instance) }
+        return legacy.copy(version = MouthVowelV7Algorithm.VERSION, plugin = plugin, upstreamInputs = true,
+            parameters = { MouthVowelV7Algorithm.parameters(capture(it)) }, resolveParameter = { _, _, _ -> null },
+            changeWrites = MouthVowelV7Algorithm.WRITES, authorContext = ::capture)
+    }
+
+    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val scaffold = provider(instance)
+        val prior = bindingPredecessors(instance, scaffold)
+        val outline = prior.single { it.type == "mouth.outline" && it.version in setOf(1, 8) }
+        require(prior.all { it.targets.containsAll(instance.targets) } &&
+            prior.none { it.type.startsWith("mouth.") && it.id != outline.id }) {
+            "Mouth vowel v7 requires a shared fitted outline"
+        }
+        return captureBindingTransition(instance, scaffold, prior, CharacterAnalyzer.MOUTH_TAGS + SemanticTag.FACE,
+            values = buildJsonObject {
+                put("outline", outline.id)
+                put("folder", tr("model.group.mouth"))
+            })
+    }
 
     fun definition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthVowelAlgorithm.VERSION, algorithm)
