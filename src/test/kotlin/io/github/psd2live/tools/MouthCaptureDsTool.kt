@@ -23,7 +23,9 @@ class MouthCaptureDsTool {
         val bindings = CliPresetBindings(analysis, config)
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4, "mouth/fitted" to 6,
             "mouth.outline" to setting("PSD2LIVE_DS_OUTLINE", "1").toInt(),
-            "mouth.vowel" to setting("PSD2LIVE_DS_VOWEL", "1").toInt(), "mouth.capture" to 1)
+            "mouth.vowel" to setting("PSD2LIVE_DS_VOWEL", "1").toInt(), "mouth.capture" to 1,
+            "eye.smile" to 4, "eye.wide" to 4, "eye.gaze-lid" to 4, "eye.emotion" to 4, "eye.aftershock" to 5, "eye.squash" to 5,
+            "brow.shape" to 5, "brow.lid-coupling" to 7, "brow.blink" to 5, "brow.spring" to 6)
         val (planned, historical) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
             WorkspaceInitialPreset(clothing = false), requestedVersions = versions, cliBindings = bindings)
         val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
