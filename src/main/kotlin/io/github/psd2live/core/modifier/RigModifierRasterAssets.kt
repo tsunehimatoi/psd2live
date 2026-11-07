@@ -75,12 +75,17 @@ internal object RigModifierRasterAssets {
         require(outputs.none { output -> existing?.layers?.any { it.key == output.layer.key } == true }) { "Modifier raster collides with existing artwork" }
         val tileIds = rig.textures.tiles.mapTo(HashSet()) { it.id }
         require(outputs.all { tileIds.add(PuppetSourceAtlas.tileIdFor(it.layer.key).raw) }) { "Modifier raster tile collision" }
-        val assets = outputs.map { output ->
+        val rasters = outputs.map { output ->
             checkpoint()
+            val pixels = output.pixels.read()
+            RasterDigest.seed(pixels, output.pixels.digest)
+            LayerRaster(output.layer.width, output.layer.height, pixels)
+        }
+        val assets = outputs.mapIndexed { index, output ->
             val source = output.layer
             CharacterAnalyzer.classify(WorkspaceSourceLayer(LayerId(source.key), source.name, source.groupPath, SourceLayerKind.Raster,
                 source.visible, Int.MAX_VALUE, LayerBounds(source.left, source.top, source.width, source.height), 1f, false,
-                LayerBlend.Normal, ChannelMask.ALL, LayerRaster(source.width, source.height, output.pixels.read()), null, null, true), config)
+                LayerBlend.Normal, ChannelMask.ALL, rasters[index], null, null, true), config)
         }
         val packed = append(PackedAtlas(emptyList(), emptyMap()), assets, config)
         checkpoint()
@@ -126,7 +131,10 @@ internal object RigModifierRasterAssets {
             tilePages = rig.textures.tilePages + packed.pages.map { io.github.psd2live.format.model.PageSize(it.image.width, it.image.height) },
             tiles = rig.textures.tiles + tiles,
             bindings = rig.textures.bindings + meshes.associate { it.id to it.page },
-            tileArt = rig.textures.tileArt + outputs.map { TileArt(PuppetSourceAtlas.tileIdFor(it.layer.key).raw, it.layer.width, it.layer.height, Bytes.wrap(it.pixels.read())) })
+            tileArt = rig.textures.tileArt + outputs.mapIndexed { index, output ->
+                val raster = rasters[index]
+                TileArt(PuppetSourceAtlas.tileIdFor(output.layer.key).raw, raster.width, raster.height, Bytes.wrap(raster.rgba))
+            })
         val changes = ModifierModelChanges(meshes = ModifierObjectChanges(added = meshes),
             parts = ModifierObjectChanges(updated = rig.parts.mapNotNull { part ->
                 val updated = part.copy(children = children(part.children))

@@ -11,10 +11,7 @@ import org.umamo.format.art.SourceLayer
 import java.awt.image.BufferedImage
 import java.lang.ref.SoftReference
 import java.nio.file.Path
-import java.security.MessageDigest
-import java.util.Collections
 import java.util.Locale
-import java.util.WeakHashMap
 import javax.imageio.ImageIO
 
 /**
@@ -444,12 +441,6 @@ internal object AtlasLayout {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Recipe, SoftReference<AtlasPage>>?) = size > PAGE_CACHE_CAPACITY
     }
     private const val PAGE_CACHE_CAPACITY = 8
-    private val digests = Collections.synchronizedMap(WeakHashMap<ByteArray, String>())
-
-    /** Layer rasters keep their identity across rebuilds, so each is hashed once. */
-    private fun digest(rgba: ByteArray): String = digests.getOrPut(rgba) {
-        java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(rgba))
-    }
 
     /**
      * One page of [tiles] (texture layers and where they go): [base] itself when it has the same recipe, else a
@@ -460,7 +451,7 @@ internal object AtlasLayout {
      */
     private fun page(size: Int, tiles: List<Tile>, base: AtlasPage?, caller: Thread): AtlasPage {
         val recipe = Recipe(size, tiles.map { tile ->
-            TileKey(tile.at.x, tile.at.y, tile.at.width, tile.at.height, digest(tile.texture.raster.rgba), tile.mask?.key ?: "", tile.at.rotation)
+            TileKey(tile.at.x, tile.at.y, tile.at.width, tile.at.height, RasterDigest.of(tile.texture.raster.rgba), tile.mask?.key ?: "", tile.at.rotation)
         }.sortedWith(compareBy<TileKey> { it.y }.thenBy { it.x }))
         if (base?.recipe == recipe) return base
         synchronized(pageCache) { pageCache[recipe]?.get()?.let { return it } }
