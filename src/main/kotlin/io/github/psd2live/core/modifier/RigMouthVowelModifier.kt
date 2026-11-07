@@ -4,6 +4,7 @@ import io.github.psd2live.algorithms.binding.MouthRig
 import io.github.psd2live.algorithms.binding.MouthVowelAlgorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV4Algorithm
+import io.github.psd2live.algorithms.binding.MouthVowelV5Algorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.i18n.tr
@@ -34,6 +35,15 @@ internal object RigMouthVowelModifier {
     fun fittedDefinition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthVowelV4Algorithm.VERSION, fittedAlgorithm)
 
+    private val closedAlgorithm = object : ReadingModifierAlgorithmPlugin by MouthVowelV5Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = MouthVowelV5Algorithm.optionalUpstream
+        override val canonicalOptInType = MouthVowelAlgorithm.TYPE
+    }
+
+    fun closedDefinition(source: RigModifierSource?): RigModifierDefinition =
+        definition(source, MouthVowelV5Algorithm.VERSION, closedAlgorithm)
+
     fun definition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthVowelAlgorithm.VERSION, algorithm)
 
@@ -48,6 +58,7 @@ internal object RigMouthVowelModifier {
     }
 
     private fun RigModifierSource.capture(instance: RigModifierInstance, version: Int): ModifierAlgorithmContext {
+        val closedDrawing = version == MouthVowelV5Algorithm.VERSION
         val scaffold = provider(instance)
         require(scaffold.version == 2) { "Mouth vowel v$version requires a shared v2 scaffold" }
         val preceding = activeBefore(instance).filter { item ->
@@ -57,19 +68,26 @@ internal object RigMouthVowelModifier {
         val baseId = instance.config.getValue("base").jsonPrimitive.content
         val base = requireNotNull(preceding.singleOrNull {
             it.id == baseId && it.type == "mouth/fitted" &&
-                (it.version in 1..2 || version == MouthVowelV4Algorithm.VERSION && it.version == 3)
+                (if (closedDrawing) it.version == 4 else it.version in 1..2 || version == MouthVowelV4Algorithm.VERSION && it.version == 3)
         }) { "Mouth vowel v$version requires a compatible fitted mouth on the same scaffold" }
+        val outlineVersion = when (version) {
+            MouthVowelV5Algorithm.VERSION -> 5
+            MouthVowelV3Algorithm.VERSION, MouthVowelV4Algorithm.VERSION -> 3
+            else -> null
+        }
         require(preceding.none { it.type.startsWith("mouth.") &&
-            !(version in MouthVowelV3Algorithm.VERSION..MouthVowelV4Algorithm.VERSION && it.type == "mouth.outline" && it.version == 3) }) {
+            !(it.type == "mouth.outline" && it.version == outlineVersion) }) {
             if (version == MouthVowelAlgorithm.VERSION) "Mouth vowel v2 requires a fitted mouth without preceding mouth modules. Use v1 with earlier mouth modules."
             else "Mouth vowel v$version supports only the fitted outline as a preceding mouth module."
         }
-        val (native, context) = RigFittedMouthModuleSource.context(this, scaffold, preceding, RigModules.MOUTH_VOWEL)
+        val (native, context) = RigFittedMouthModuleSource.context(this, scaffold, preceding, RigModules.MOUTH_VOWEL,
+            neutralScaffold = closedDrawing)
         val fitted = requireNotNull(context.fittedMouth(native)?.takeIf { it.source != null }) {
             "Mouth vowel v$version requires readable fitted mouth source artwork"
         }
-        require(!fitted.closedLine) {
-            "Mouth vowel v$version requires a mouth without a separate closed drawing. Use v1 for closed-drawing swaps."
+        require(fitted.closedLine == closedDrawing) {
+            if (closedDrawing) "Mouth vowel v$version requires a separate closed drawing."
+            else "Mouth vowel v$version requires a mouth without a separate closed drawing. Use v1 for closed-drawing swaps."
         }
         val sourceLayers = context.analysis.layers.associateBy { it.source.id.raw }
         val follows = linkedMapOf<String, MouthRig.Follow?>()

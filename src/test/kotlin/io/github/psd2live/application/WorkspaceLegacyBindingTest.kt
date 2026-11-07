@@ -1796,7 +1796,7 @@ class WorkspaceLegacyBindingTest {
         assertEquals(RigIrCompiler.compile(expected), RigIrCompiler.compile(current))
     }
 
-    @Test fun fittedMouthAndOutlineWithSeparateClosedDrawingMatchLockedVersionsAndWorkers(): Unit = runBlocking {
+    @Test fun fittedMouthOutlineAndVowelsWithSeparateClosedDrawingMatchLockedVersionsAndWorkers(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true, closedMouth = true)
         val choices = WorkspaceInitialPreset()
         val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
@@ -1853,6 +1853,32 @@ class WorkspaceLegacyBindingTest {
         }
         assertEquals(compiled, RigIrCompiler.compile(outlined, tileArt = true))
         assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(outlinedDocument), tileArt = true))
+        val vowelIndex = fittedOutline.instances.indexOfFirst { it.type == "mouth.vowel" }
+        val vowelArtifact = assertNotNull(BundledAlgorithmArtifacts.find("mouth.vowel", 5))
+        val vowelStack = fittedOutline.copy(instances = fittedOutline.instances.mapIndexed { i, entry ->
+            if (i == vowelIndex) entry.copy(version = 5, plugin = vowelArtifact.reference) else entry
+        })
+        val vowelDocument = document.copy(rigEdits = document.rigEdits.copy(modifierStack = vowelStack.toJson()))
+        val vowelPreview = WorkspacePreviewBuilder().build(vowelDocument)
+        val vowelEvaluation = assertNotNull(vowelPreview.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, vowelEvaluation.entries[vowelIndex].status)
+        val beforeVowels = reference[vowelIndex - 1]
+        val afterVowels = reference[vowelIndex]
+        val vowelMesh = vowelEvaluation.outputs[vowelIndex].meshes.single { it.name == "mouth-closed" }
+        assertEquals(beforeVowels.meshes.single { it.id == vowelMesh.id }.channels, vowelMesh.channels)
+        assertEquals(listOf("ParamA", "ParamI", "ParamU", "ParamE", "ParamO"), vowelMesh.shapes.map { it.parameter })
+        assertTrue(vowelMesh.shapes.all { it.shapes.filterNotNull().single().opacity == 0f })
+        assertTrue(vowelMesh.shapes.any { it.shapes.filterNotNull().single().deltas.shared().any { value -> value != 0f } })
+        for (stage in vowelIndex until stack.instances.size) {
+            val expected = reference[stage]
+            val output = vowelEvaluation.outputs[stage]
+            val changed = expected.meshes.zip(output.meshes).filter { (a, b) -> a != b }.joinToString { (a, b) ->
+                "${a.name} shapes=${a.shapes != b.shapes} channels=${a.channels != b.channels}"
+            }
+            assertTrue(expected == output, "${stack.instances[stage].type}: $changed")
+        }
+        assertEquals(compiled, RigIrCompiler.compile(vowelPreview, tileArt = true))
+        assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(vowelDocument), tileArt = true))
         val instance = candidate.instances[index]
         val definition = RigFittedMouthDefinition.closedDefinition(RigModifierSource.of(actual))
         val context = definition.authorContext(instance).withUpstream(candidate.instances.take(index).map {
@@ -1882,6 +1908,18 @@ class WorkspaceLegacyBindingTest {
             assertEquals(afterOutline, ModifierPluginWorkers.evaluate(outlineWorker, outlineWorker.manifest.algorithms.single(),
                 beforeOutline, outlineInstance, {}, store, context = outlineContext,
                 resolveRasters = { rig, rasters, checkpoint -> RigModifierRasterAssets.attach(rig, rasters, outlined.config, checkpoint) }))
+            val vowelInstance = vowelStack.instances[vowelIndex]
+            val vowelStaging = Files.createDirectory(directory.resolve("vowel-package"))
+            Files.write(vowelStaging.resolve("plugin.json"), vowelArtifact.bytes)
+            for (name in vowelArtifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(vowelArtifact.resource + name)).use { Files.copy(it, vowelStaging.resolve(name)) }
+            }
+            val vowelWorker = store.install(vowelStaging.toString())
+            assertEquals(vowelArtifact.reference, vowelWorker.reference)
+            val vowelContext = assertNotNull(vowelEvaluation.readAlgorithms[vowelInstance.id]).context
+            val vowelDefinition = RigMouthVowelModifier.closedDefinition(RigModifierSource.of(vowelPreview))
+            assertEquals(afterVowels, ModifierPluginWorkers.evaluate(vowelWorker, vowelWorker.manifest.algorithms.single(),
+                beforeVowels, vowelInstance, {}, store, context = vowelContext, declaredParameters = vowelDefinition.parameters(vowelInstance)))
         } finally {
             store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
             preferences.removeNode()

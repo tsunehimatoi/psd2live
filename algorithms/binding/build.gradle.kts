@@ -2894,6 +2894,40 @@ tasks.register("pluginMouthVowelV4") {
     }
 }
 
+val mouthVowelV5WorkerJar = registerIsolatedBindingWorker(
+    "mouthVowelV5", "mouth-vowel-v5", "worker-mouth-vowel-v5", "io.github.psd2live.algorithms.binding.MouthVowelV5Worker",
+)
+kotlin.target.compilations.named("mouthVowelV5") {
+    associateWith(kotlin.target.compilations.getByName("mouthVowel"))
+}
+mouthVowelV5WorkerJar.configure {
+    from(sourceSets["mouthVowel"].output)
+}
+
+tasks.register("pluginMouthVowelV5") {
+    dependsOn(mouthVowelV5WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-vowel-v5")
+    inputs.file(mouthVowelV5WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", project.version.toString())
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthVowelV5WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682e766f77656c.v5"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"${project.version}","name":"Mouth vowels with a closed drawing",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/vowel","aliases":["mouth.vowel"],"version":5,"name":"Mouth vowels with a closed drawing","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","mouth/fitted"],"contextVersion":2,
+               "reads":["canvas","mesh","parameter","hierarchy"],"writes":["mesh","parameter","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val mouthCaptureV3WorkerJar = registerIsolatedBindingWorker(
     "mouthCaptureV3", "mouth-capture-v3", "worker-mouth-capture-v3", "io.github.psd2live.algorithms.binding.MouthCaptureV3Worker",
 )
