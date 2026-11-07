@@ -92,6 +92,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "eyeGazeLidV4Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "eyeEmotionElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "eyeEmotionV3Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "eyeEmotionV4Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "eyeHighlightElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "eyeHighlightV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthCheekLidElements"))
@@ -678,6 +679,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginEyeEmotionV3")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-emotion-v3")) {
         into("algorithm-plugins/eye-emotion-v3")
+    }
+    dependsOn(":algorithms:binding:pluginEyeEmotionV4")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-emotion-v4")) {
+        into("algorithm-plugins/eye-emotion-v4")
     }
     dependsOn(":algorithms:binding:pluginEyeEmotion")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-emotion")) {
