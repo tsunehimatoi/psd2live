@@ -1,6 +1,7 @@
 package io.github.psd2live.application
 
 import io.github.psd2live.algorithms.binding.LegacyBodyV2Algorithm
+import io.github.psd2live.algorithms.binding.LegacyFaceV2Algorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.recipe.*
@@ -15,7 +16,7 @@ internal object WorkspacePresetInitialization {
 
     fun prepare(document: WorkspaceDocument, work: WorkspaceRasterWork,
                 choices: WorkspaceInitialPreset = WorkspaceInitialPreset(),
-                preferSourceBody: Boolean = false): Pair<WorkspaceDocument, RigPreviewModel> {
+                preferSourceBindings: Boolean = false): Pair<WorkspaceDocument, RigPreviewModel> {
         val config = document.config()
         var stack = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack))
         require(stack.instances.isEmpty()) { "Initialize presets only into an empty stack" }
@@ -47,8 +48,10 @@ internal object WorkspacePresetInitialization {
             put("targets", JsonArray(targets.map { buildJsonObject { put("kind", it.kind); put("id", it.id) } }))
         }, types).first
         val scaffold = stack.instances.singleOrNull { it.type == RigSourceModifiers.SCAFFOLD && it.version == 2 }
-        val bodyPlugin = if (preferSourceBody && scaffold != null)
-            BuiltinModifierPlugins.reference(LegacyBodyV2Algorithm.TYPE, LegacyBodyV2Algorithm.VERSION) else null
+        val sourceVersions = if (preferSourceBindings && scaffold != null) buildMap {
+            put(LegacyBodyV2Algorithm.TYPE, LegacyBodyV2Algorithm.VERSION)
+            if (!config.featureDisplacementEnabled) put(LegacyFaceV2Algorithm.TYPE, LegacyFaceV2Algorithm.VERSION)
+        } else emptyMap()
         stack = stack.copy(instances = stack.instances.map { entry ->
             val spec = RigLegacyBindings.find(entry.type)
             val settings = buildJsonObject {
@@ -74,9 +77,11 @@ internal object WorkspacePresetInitialization {
                 }
             }
             val configured = entry.copy(config = settings, presetGroup = group)
-            if (bodyPlugin != null && scaffold != null && entry.type == LegacyBodyV2Algorithm.TYPE && entry.version == 1 &&
-                settings["scaffold"] == JsonPrimitive(scaffold.id) && entry.targets.toSet() == scaffold.targets.toSet()) {
-                val independent = configured.copy(version = LegacyBodyV2Algorithm.VERSION, plugin = bodyPlugin)
+            val sourceVersion = sourceVersions[entry.type]
+            if (sourceVersion != null && scaffold != null && entry.version == 1 && settings["scaffold"] == JsonPrimitive(scaffold.id) &&
+                entry.targets.toSet() == scaffold.targets.toSet()) {
+                val plugin = BuiltinModifierPlugins.reference(entry.type, sourceVersion) ?: return@map configured
+                val independent = configured.copy(version = sourceVersion, plugin = plugin)
                 independent.takeIf(ModifierPluginCatalog::available) ?: configured
             } else configured
         })

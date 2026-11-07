@@ -3,6 +3,8 @@ package io.github.psd2live.application
 import io.github.psd2live.core.RigIrCompiler
 import io.github.psd2live.core.RigPreviewModel
 import io.github.psd2live.core.modifier.BuiltinModifierPlugins
+import io.github.psd2live.core.modifier.RigModifierStack
+import io.github.psd2live.core.recipe.RigRecipe
 import io.github.psd2live.project.WorkspaceRevisions
 import io.github.psd2live.project.rawConfig
 import io.github.psd2live.scenario.Characters
@@ -55,6 +57,28 @@ class WorkspaceSourceImporterTest {
             assertEquals(io.github.psd2live.core.RigIrCompiler.compile(installed.model),
                 io.github.psd2live.core.RigIrCompiler.compile(rebuilt))
         }
+    }
+
+    @Test fun newLegacyPresetUsesIndependentFaceWithoutChangingTheModel() = runBlocking<Unit> {
+        val original = Characters.head(physics = false)
+        val path = Files.createFile(directory.resolve("legacy-face.psd")).toAbsolutePath()
+        val builder = WorkspacePreviewBuilder()
+        val runtime = WorkspaceRuntime<RigPreviewModel>({ builder.build(it) })
+        val importer = WorkspaceSourceImporter(runtime, readPsd = { original.source })
+        val installed = importer.importPsd(path, null, runtime.state.value.state,
+            initialConfig = original.rawConfig().copy(recipe = RigRecipe.Legacy),
+            modifiers = WorkspaceInitialModifiers.CUSTOM,
+            preset = WorkspaceInitialPreset(headStrength = .7f, bodyStrength = 1.3f, clothing = false)).capture
+        val stack = RigModifierStack.fromJson(assertNotNull(installed.document.rigEdits.modifierStack))
+        val face = stack.instances.single { it.type == "face/legacy" }
+        assertEquals(2, face.version)
+        assertEquals(assertNotNull(BuiltinModifierPlugins.reference(face.type, 2)), face.plugin)
+        assertEquals(1, runtime.history().selections.size)
+        val legacy = face.copy(version = 1, plugin = assertNotNull(BuiltinModifierPlugins.reference(face.type, 1)))
+        val locked = stack.copy(instances = stack.instances.map { if (it.id == face.id) legacy else it })
+        val reference = installed.document.copy(rigEdits = installed.document.rigEdits.copy(modifierStack = locked.toJson()))
+        assertEquals(RigIrCompiler.compile(builder.build(reference), tileArt = true),
+            RigIrCompiler.compile(installed.model, tileArt = true))
     }
 
     @Test fun shortcutChoicesInstallIndependentModifiersAndReplayInOneHistoryNode() = runBlocking<Unit> {

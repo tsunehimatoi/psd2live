@@ -16,7 +16,7 @@ Fitted brows v2 is available through explicit version selection in the add panel
 
 Legacy brows v2 is selectable by version with a source-aware shared scaffold and compatible ordinary or fitted head turn. Use v1 for a reparented brow branch or fitted shapes that exceed the mesh budget.
 
-Legacy face v2 is also available by explicit version selection. It computes head turn from source measurements and supports the full target set of a source-aware shared v2 scaffold, with an optional legacy body v1 or v2 on that same scaffold. Recommended presets use legacy face v1.
+Legacy face v2 is also available by explicit version selection. It computes head turn from source measurements and supports the full target set of a source-aware shared v2 scaffold, with an optional legacy body v1 or v2 on that same scaffold. New source projects created with the legacy preset select v2 when its source and target requirements are met and the bundled package is available. Saved stacks and existing preset switches keep their version selection.
 
 Depth turn v2 is selectable by version. Its shell-turn mode requires a source-aware shared v2 scaffold and legacy face v1 or v2, with optional body v1 or v2. Fitted face and depth turn are mutually exclusive.
 

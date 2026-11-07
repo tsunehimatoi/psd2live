@@ -2898,7 +2898,7 @@ class WorkspaceLegacyBindingTest {
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
         val (initialized, model) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
-            WorkspaceInitialPreset(clothing = true), preferSourceBody = true)
+            WorkspaceInitialPreset(clothing = true), preferSourceBindings = true)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val skirt = stack.instances.single { it.type == "outfit.skirt" }
         assertEquals(1, skirt.version)
@@ -3002,7 +3002,7 @@ class WorkspaceLegacyBindingTest {
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
         val (initialized, model) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
-            WorkspaceInitialPreset(clothing = true), preferSourceBody = true)
+            WorkspaceInitialPreset(clothing = true), preferSourceBindings = true)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val clothing = stack.instances.filter { it.type in setOf("outfit.skirt", "outfit.ribbons") }
         assertEquals(2, clothing.size)

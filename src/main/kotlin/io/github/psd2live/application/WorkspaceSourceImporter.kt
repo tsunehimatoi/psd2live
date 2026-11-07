@@ -137,7 +137,7 @@ internal class WorkspaceSourceImporter(
             if (choices == null) build(document) else {
                 val prepared = runInterruptible(Dispatchers.Default) {
                     WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct.cancellable(context), choices,
-                        preferSourceBody = true)
+                        preferSourceBindings = true)
                 }
                 document = prepared.first
                 prepared.second
