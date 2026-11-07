@@ -42,33 +42,37 @@ class MouthDepthSourceTool {
         assertEquals(if (tongue) setOf("ArtMeshToothT", "ArtMeshTongue") else setOf("ArtMeshToothT"),
             changes.mapTo(hashSetOf()) { it.id })
         if (tongue) assertTrue(changes.single { it.id == "ArtMeshTongue" }.channels.keys.any { it.name == "MULTIPLY_COLOR" })
-        fun candidate(type: String, version: Int): WorkspaceDocument {
-            val artifact = assertNotNull(BundledAlgorithmArtifacts.find(type, version))
-            val modified = stack.copy(instances = stack.instances.map {
-                if (it.type == type) it.copy(version = version, plugin = artifact.reference) else it
+        fun candidate(vararg replacements: Pair<String, Int>): WorkspaceDocument {
+            val versions = replacements.toMap()
+            val modified = stack.copy(instances = stack.instances.map { entry ->
+                val version = versions[entry.type] ?: return@map entry
+                val artifact = assertNotNull(BundledAlgorithmArtifacts.find(entry.type, version))
+                entry.copy(version = version, plugin = artifact.reference)
             })
             return planned.copy(rigEdits = planned.rigEdits.copy(modifierStack = modified.toJson()))
         }
         for (version in listOf(3, 5)) {
-            val rejected = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(candidate(depth.type, version)) }
+            val rejected = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(candidate(depth.type to version)) }
             assertContains(rejected.message.orEmpty(), "requires a compatible fitted mouth")
         }
         if (tongue) {
-            val rejected = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(candidate("mouth.jaw", 8)) }
+            val rejected = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(candidate("mouth.jaw" to 8)) }
             assertContains(rejected.message.orEmpty(), "requires the shared open-mouth outline, vowel and capture chain")
         } else {
-            val rejected = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(candidate("mouth.spring", 9)) }
+            val rejected = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(candidate("mouth.spring" to 9)) }
             assertContains(rejected.message.orEmpty(), "requires the shared open-mouth source chain")
         }
         RigBuildProfile.reset()
         val recording = RigBuildProfile.recording
         val preview = try {
             RigBuildProfile.recording = true
-            WorkspacePreviewBuilder().build(candidate(depth.type, 6))
+            WorkspacePreviewBuilder().build(if (tongue) candidate(depth.type to 6)
+                else candidate(depth.type to 6, "mouth.spring" to 9))
         } finally {
             RigBuildProfile.recording = recording
         }
         assertTrue(RigBuildProfile.snapshot().keys.none { it.startsWith("modifier template consumer: mouth.interior-depth ->") })
+        if (!tongue) assertTrue(RigBuildProfile.snapshot().keys.none { it.startsWith("modifier template consumer: mouth.spring ->") })
         val actual = assertNotNull(preview.modifierEvaluation)
         for (entry in actual.entries.filter { it.instance.type in versions }) {
             assertEquals(ModifierStatus.ACTIVE, entry.status, entry.instance.type)
@@ -106,7 +110,32 @@ class MouthDepthSourceTool {
                 assertEquals(stack.instances.single { it.type == type }.plugin, provider.plugin)
             }
             equal(expected[index], ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(),
-                actual.outputs[index - 1], instance, {}, store, context = context), "installed JVM")
+                actual.outputs[index - 1], instance, {}, store, context = context), "installed depth JVM")
+            if (!tongue) {
+                val springIndex = stack.index(stack.instances.single { it.type == "mouth.spring" }.id)
+                assertTrue(springIndex > index)
+                val spring = actual.entries[springIndex].instance
+                val springArtifact = assertNotNull(BundledAlgorithmArtifacts.find(spring.type, 9))
+                assertEquals(springArtifact.reference, spring.plugin)
+                assertTrue(expected[springIndex].physics.groups.any { it !in expected[springIndex - 1].physics.groups &&
+                    it.outputs.any { output -> output.parameter == "ParamMouthSpring" && output.weight > 0f } })
+                BundledAlgorithmArtifacts.retain(store, listOf(artifact, springArtifact))
+                val springWorker = store.snapshot().single { it.reference == springArtifact.reference }
+                val springDefinition = RigMouthSpringModifier.sharedFrameDefinition(RigModifierSource.of(preview))
+                val springContext = springDefinition.authorContext(spring).withUpstream(actual.entries.take(springIndex)
+                    .filter { it.status == ModifierStatus.ACTIVE &&
+                        it.instance.type in springDefinition.requires + springDefinition.optionalUpstream }
+                    .map { it.instance.let { entry ->
+                        ModifierUpstreamCapability(entry.type, entry.type, entry.version, entry.targets, entry.id,
+                            entry.config, entry.outputAliases, entry.plugin)
+                    } })
+                val actualDepth = springContext.upstream.single { it.type == depth.type }
+                assertEquals(6, actualDepth.version)
+                assertEquals(artifact.reference, actualDepth.plugin)
+                equal(expected[springIndex], ModifierPluginWorkers.evaluate(springWorker, springWorker.manifest.algorithms.single(),
+                    actual.outputs[springIndex - 1], spring, {}, store, context = springContext,
+                    declaredParameters = springDefinition.parameters(spring)), "installed spring JVM")
+            }
         } finally {
             store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
             preferences.removeNode()

@@ -137,7 +137,11 @@ internal object RigMouthSpringModifier {
         require(prefix.any { it.id == instance.config.getValue("base").jsonPrimitive.content &&
             it.type == "mouth/fitted" && it.version == 6 }) { "Mouth spring v9 requires a shared fitted mouth v6" }
         val providers = setOf("mouth.outline", "mouth.vowel", "mouth.capture", "mouth.jaw", "mouth.cheek-lid")
-        require(prefix.none { it.type.startsWith("mouth.") && it.type !in providers }) {
+        val interiorDepth = prefix.filter { it.type == "mouth.interior-depth" }
+        require(prefix.none { it.type.startsWith("mouth.") && it.type !in providers && it.type != "mouth.interior-depth" } &&
+            (interiorDepth.isEmpty() || interiorDepth.singleOrNull()?.let { depth ->
+                depth.version == 6 && depth.config["base"] == instance.config["base"] && depth.targets.containsAll(instance.targets)
+            } == true)) {
             "Mouth spring v9 requires the shared open-mouth source chain"
         }
         val face = setOf(SemanticTag.FACE, SemanticTag.NOSE, SemanticTag.FACE_DETAIL)
