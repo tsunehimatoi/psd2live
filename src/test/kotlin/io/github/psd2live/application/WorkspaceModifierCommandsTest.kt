@@ -5,7 +5,9 @@ import io.github.psd2live.algorithms.binding.EyeFittedSourceAlgorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.sim.*
+import io.github.psd2live.format.compile.ExportOptions
 import io.github.psd2live.project.*
+import io.github.psd2live.targets.cubism.Cmo3Target
 import io.github.psd2live.targets.cubism.PuppetIr
 import io.github.psd2live.format.model.Deformer as IrDeformer
 import io.github.psd2live.format.model.Floats
@@ -14,6 +16,8 @@ import io.github.psd2live.format.model.LatticePoints
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
 import org.junit.jupiter.api.io.TempDir
+import org.umamo.format.cmo3.Cmo3
+import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.*
 
@@ -248,6 +252,24 @@ class WorkspaceModifierCommandsTest {
     private fun motion(name: String = "Sway") = MotionClip("template", name,
         curves = listOf(MotionCurve("ParamInput", listOf(MotionKey(0f, 0f, MotionInterpolation.LINEAR), MotionKey(1f, .5f)))))
     private fun physics() = RigPhysicsEdit("template", "Physics", listOf(PhysicsInput("ParamInput")), listOf(PhysicsOutput("ParamOutput")))
+
+    @Test fun replacingCmo3KeepsEvaluatedPhysicsAsOrdinaryContent(): Unit = runBlocking {
+        val f = fixture()
+        val incoming = Cmo3Target().convert(RigIrCompiler.compile(f.now.model, tileArt = true), ExportOptions("replacement"))
+        val path = Files.write(temp.resolve("replacement.cmo3"), Cmo3.write(incoming.model))
+        f.edit("modifier_add", add(f, "physics", physics().toJson(), "pendulum"))
+        val previous = f.now
+        val groups = PhysicsCatalog.active(previous.model)
+        assertEquals(1, groups.size)
+
+        val replaced = WorkspaceCmo3Importer(f.runtime).import(path, Cmo3ImportMode.REPLACE, previous.projectId,
+            previous.state, MutationAuthor.USER).capture
+
+        assertTrue(RigModifierStack.fromJson(requireNotNull(replaced.document.rigEdits.modifierStack)).instances.isEmpty())
+        assertEquals(groups, replaced.document.rigEdits.physicsEdits)
+        assertEquals(groups, PhysicsCatalog.active(replaced.model))
+    }
+
     private fun add(f: Fixture, type: String, config: JsonObject, id: String? = null, target: ModifierTarget = f.target) = buildJsonObject {
         put("type", type); put("version", 1); put("config", config)
         id?.let { put("id", it) }
