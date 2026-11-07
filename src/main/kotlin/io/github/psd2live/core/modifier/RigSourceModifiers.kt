@@ -196,14 +196,14 @@ internal class RigModifierSource(
         val lipLayers = MouthLipLayers.prepare(analysis, outlineConfig, meshCache).layers.mapNotNull {
             (it.source as? MouthLipLayer)?.let { lip -> (lip.ownerId to lip.side) to it }
         }.toMap()
-        val model = PuppetIr.toPuppet(rig)
+        val owners = rig.meshes.associateBy { it.id }
         val ribbons = instance.targets.flatMap { target ->
             checkpoint()
             val layer = layersByMesh.getValue(target.id)
             if (lipLayers.keys.none { it.first == layer }) return@flatMap emptyList()
             val native = template(relevantBefore(instance, target) + instance, provider(instance).config).model
             val canonical = primaryByLayer.getValue(layer)
-            val owner = model.drawables.single { it.id.raw == target.id }
+            val owner = owners.getValue(target.id)
             (0..1).mapNotNull { side ->
                 val lip = native.drawables.singleOrNull { it.id.raw == "${canonical}_lip_$side" } ?: return@mapNotNull null
                 val source = lipLayers.getValue(layer to side)
@@ -212,16 +212,16 @@ internal class RigModifierSource(
                 val asset = source.copy(source = object : org.umamo.format.art.SourceLayer by source.source {
                     override val id = org.umamo.format.art.LayerId(assetId)
                 })
-                val drawable = lip.copy(id = id, parentDeformerId = owner.parentDeformerId, maskedBy = owner.maskedBy,
-                    invertMask = owner.invertMask, isVisible = owner.isVisible, textureSourceId = null,
+                val drawable = lip.copy(id = id, parentDeformerId = owner.parent?.let(::DeformerId), maskedBy = owner.maskedBy.map(::DrawableId),
+                    invertMask = owner.invertMask, isVisible = owner.visible, textureSourceId = null,
                     drawOrder = (owner.drawOrder + 1f).coerceAtMost(1000f), atlasTileId = PuppetSourceAtlas.tileIdFor(assetId))
                 val paths = native.deformPaths.filter { it.drawableId == lip.id }.map { path ->
                     path.copy(id = instance.outputId("mouth-path:${target.id}:$side:${path.id}"), drawableId = id)
                 }
-                RigModifierRasterAssets.Ribbon(owner.id, drawable, asset, paths)
+                RigModifierRasterAssets.Ribbon(DrawableId(owner.id), drawable, asset, paths)
             }
         }
-        return RigModifierRasterAssets.attach(rig, model, ribbons, config)
+        return RigModifierRasterAssets.attachRibbons(rig, ribbons, config)
     }
 
     fun body(strength: Float, tuning: RigTuning = RigTuning(), checkpoint: () -> Unit): PuppetModel {

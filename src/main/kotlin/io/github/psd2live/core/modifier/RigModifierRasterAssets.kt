@@ -48,17 +48,19 @@ internal object RigModifierRasterAssets {
 
     data class Ribbon(val owner: DrawableId, val drawable: Drawable, val asset: ClassifiedLayer, val paths: List<DeformPath>)
 
-    fun attach(rig: RigIR, model: PuppetModel, ribbons: List<Ribbon>, config: PipelineConfig): RigIR {
+    fun attachRibbons(rig: RigIR, ribbons: List<Ribbon>, config: PipelineConfig): RigIR {
         if (ribbons.isEmpty()) return rig
-        val generated = PuppetIr.toIr(model.copy(drawables = ribbons.map { it.drawable }, deformPaths = ribbons.flatMap { it.paths }))
+        val generated = PuppetIr.toIr(PuppetModel(emptyList(), emptyList(), emptyList(), ribbons.map { it.drawable },
+            emptyList(), null, deformPaths = ribbons.flatMap { it.paths }))
         val meshes = generated.meshes.associateBy { it.id }
+        val paths = generated.authoring.paths.groupBy { it.mesh }
         val owners = rig.meshes.associateBy { it.id }
         val outputs = ribbons.map { ribbon ->
             val source = ribbon.asset.source
             ModifierRasterOutput(owners.getValue(ribbon.owner.raw), meshes.getValue(ribbon.drawable.id.raw),
                 io.github.psd2live.format.model.SourceLayer(source.id.raw, source.name, source.groupPath,
                     source.bounds.left, source.bounds.top, source.bounds.width, source.bounds.height, source.visible),
-                ModifierAlgorithmResource(source.raster.rgba), generated.authoring.paths.filter { it.mesh == ribbon.drawable.id.raw },
+                ModifierAlgorithmResource(source.raster.rgba), paths[ribbon.drawable.id.raw].orEmpty(),
                 ModifierRasterOutput.UvSpace.PAGE)
         }
         return attach(rig, outputs, config)
@@ -116,8 +118,11 @@ internal object RigModifierRasterAssets {
                 io.github.psd2live.format.model.TilePlacement(p.page + offset, origin[0], origin[1], p.scaleX, p.scaleY, p.rotation),
                 io.github.psd2live.format.model.SourceRef(sourceId, output.layer.key, true))
         }
+        val pages = RigBuildProfile.stage("modifier raster: encode pages") {
+            packed.pages.parallelStream().map { TexturePage(it.image.width, it.image.height, Bytes.wrap(it.png)) }.toList()
+        }
         val textures = rig.textures.copy(
-            pages = rig.textures.pages + packed.pages.map { TexturePage(it.image.width, it.image.height, Bytes.wrap(it.png)) },
+            pages = rig.textures.pages + pages,
             tilePages = rig.textures.tilePages + packed.pages.map { io.github.psd2live.format.model.PageSize(it.image.width, it.image.height) },
             tiles = rig.textures.tiles + tiles,
             bindings = rig.textures.bindings + meshes.associate { it.id to it.page },
