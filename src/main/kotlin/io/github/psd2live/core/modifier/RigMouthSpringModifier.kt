@@ -4,6 +4,7 @@ import io.github.psd2live.algorithms.binding.MouthSpringAlgorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV5Algorithm
+import io.github.psd2live.algorithms.binding.MouthSpringV6Algorithm
 import io.github.psd2live.core.PartRole
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.SemanticTag
@@ -50,6 +51,19 @@ internal object RigMouthSpringModifier {
             parameters = { MouthSpringV5Algorithm.parameters(capture(it)) }, plugin = tongueAlgorithm, authorContext = ::capture)
     }
 
+    private val closedAlgorithm = object : ReadingModifierAlgorithmPlugin by MouthSpringV6Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = MouthSpringV6Algorithm.optionalUpstream
+        override val canonicalOptInType = MouthSpringAlgorithm.TYPE
+    }
+
+    fun closedDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val contexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
+        fun capture(instance: RigModifierInstance) = contexts.getOrPut(instance) { requireNotNull(source).capture(instance, MouthSpringV6Algorithm.VERSION) }
+        return definition(source).copy(version = MouthSpringV6Algorithm.VERSION,
+            parameters = { MouthSpringV6Algorithm.parameters(capture(it)) }, plugin = closedAlgorithm, authorContext = ::capture)
+    }
+
     fun fullDefinition(source: RigModifierSource?): RigModifierDefinition {
         val contexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
         fun capture(instance: RigModifierInstance) = contexts.getOrPut(instance) { requireNotNull(source).capture(instance, MouthSpringV3Algorithm.VERSION) }
@@ -76,8 +90,9 @@ internal object RigMouthSpringModifier {
 
     private fun RigModifierSource.capture(instance: RigModifierInstance, version: Int = MouthSpringAlgorithm.VERSION): ModifierAlgorithmContext {
         val full = version >= MouthSpringV3Algorithm.VERSION
-        val sourceVersions = if (version >= MouthSpringV4Algorithm.VERSION) 1..3 else 1..2
-        val jawVersions = if (version == MouthSpringV5Algorithm.VERSION) 1..4 else sourceVersions
+        val closed = version == MouthSpringV6Algorithm.VERSION
+        val sourceVersions = if (closed) 4..4 else if (version >= MouthSpringV4Algorithm.VERSION) 1..3 else 1..2
+        val jawVersions = if (closed) 5..6 else if (version == MouthSpringV5Algorithm.VERSION) 1..4 else sourceVersions
         val scaffold = provider(instance)
         require(scaffold.version == 2) { "Mouth spring v$version requires a shared v2 scaffold" }
         val preceding = activeBefore(instance).filter { item ->
@@ -90,6 +105,7 @@ internal object RigMouthSpringModifier {
         val jaw = requireNotNull(preceding.singleOrNull { it.id == jawId && it.type == "mouth.jaw" && it.version in jawVersions &&
             it.config["base"] == JsonPrimitive(baseId) }) { "Mouth spring v$version requires a compatible jaw binding" }
         val optional = when (version) {
+            MouthSpringV6Algorithm.VERSION -> MouthSpringV6Algorithm.optionalUpstream
             MouthSpringV5Algorithm.VERSION -> MouthSpringV5Algorithm.optionalUpstream
             MouthSpringV4Algorithm.VERSION -> MouthSpringV4Algorithm.optionalUpstream
             MouthSpringV3Algorithm.VERSION -> MouthSpringV3Algorithm.optionalUpstream
@@ -99,8 +115,8 @@ internal object RigMouthSpringModifier {
             "Mouth spring v$version requires compatible source bindings. Use v1 after other mouth or face modules."
         }
         val (native, context) = RigFittedMouthModuleSource.context(this, scaffold, preceding, RigModules.MOUTH_SPRING)
-        val fitted = requireNotNull(context.fittedMouth(native)?.takeIf { it.source != null && !it.closedLine }) {
-            "Mouth spring v$version requires readable fitted artwork without a separate closed drawing. Use v1 for closed-drawing swaps."
+        val fitted = requireNotNull(context.fittedMouth(native)?.takeIf { it.source != null && it.closedLine == closed }) {
+            "Mouth spring v$version requires readable fitted artwork with a matching closed-drawing mode."
         }
         val mouth = requireNotNull(fitted.rig)
         val sourceLayers = context.analysis.layers.associateBy { it.source.id.raw }

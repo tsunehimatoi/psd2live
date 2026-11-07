@@ -1797,7 +1797,8 @@ class WorkspaceLegacyBindingTest {
         val defaults = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
         val config = defaults.copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()),
             recipe = defaults.recipe.copy(modules = defaults.recipe.modules +
-                ("mouth.jaw" to ModuleChoice(true, values = mapOf("share" to 22f)))))
+                mapOf("mouth.jaw" to ModuleChoice(true, values = mapOf("share" to 22f)),
+                    RigModules.MOUTH_SPRING.id to ModuleChoice(true))))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
         val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices, preferSourceBindings = true)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
@@ -1984,6 +1985,32 @@ class WorkspaceLegacyBindingTest {
         }
         assertEquals(compiled, RigIrCompiler.compile(jawTonguePreview, tileArt = true))
         assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(lockedJawTongue), tileArt = true))
+        val springIndex = jawTongueStack.instances.indexOfFirst { it.type == "mouth.spring" }
+        assertTrue(springIndex > jawIndex)
+        assertEquals(1, jawTongueStack.instances[springIndex].version)
+        val springBefore = reference[springIndex - 1]
+        val springAfter = reference[springIndex]
+        assertEquals(springBefore.meshes.single { it.name == "mouth-closed" }, springAfter.meshes.single { it.name == "mouth-closed" })
+        assertTrue(springAfter.meshes.single { it.name == "face" }.shapes.any { it.parameter == "ParamMouthSpring" })
+        assertNotEquals(springBefore.physics, springAfter.physics)
+        val springArtifact = assertNotNull(BundledAlgorithmArtifacts.find("mouth.spring", 6))
+        val springStack = jawTongueStack.copy(instances = jawTongueStack.instances.mapIndexed { i, entry ->
+            if (i == springIndex) entry.copy(version = 6, plugin = springArtifact.reference) else entry
+        })
+        val springDocument = document.copy(rigEdits = document.rigEdits.copy(modifierStack = springStack.toJson()))
+        val springPreview = WorkspacePreviewBuilder().build(springDocument)
+        val springEvaluation = assertNotNull(springPreview.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, springEvaluation.entries[springIndex].status)
+        for (stage in springIndex until stack.instances.size) {
+            val expected = reference[stage]
+            val output = springEvaluation.outputs[stage]
+            val meshes = expected.meshes.zip(output.meshes).filter { (a, b) -> a != b }.joinToString { (a, b) ->
+                "${a.name} shapes=${a.shapes != b.shapes} channels=${a.channels != b.channels}"
+            }
+            assertTrue(expected == output, "${stack.instances[stage].type}: $meshes")
+        }
+        assertEquals(compiled, RigIrCompiler.compile(springPreview, tileArt = true))
+        assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(springDocument), tileArt = true))
         val instance = candidate.instances[index]
         val definition = RigFittedMouthDefinition.closedDefinition(RigModifierSource.of(actual))
         val context = definition.authorContext(instance).withUpstream(candidate.instances.take(index).map {
@@ -2081,6 +2108,20 @@ class WorkspaceLegacyBindingTest {
             assertFailsWith<IllegalArgumentException> {
                 (jawTongueDefinition.plugin as ReadingModifierAlgorithmPlugin).changes(jawBefore, jawTongueInstance, mismatched) {}
             }
+            val springInstance = springStack.instances[springIndex]
+            val springStaging = Files.createDirectory(directory.resolve("spring-package"))
+            Files.write(springStaging.resolve("plugin.json"), springArtifact.bytes)
+            for (name in springArtifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(springArtifact.resource + name)).use { Files.copy(it, springStaging.resolve(name)) }
+            }
+            val springWorker = store.install(springStaging.toString())
+            assertEquals(springArtifact.reference, springWorker.reference)
+            val springContext = assertNotNull(springEvaluation.readAlgorithms[springInstance.id]).context
+            assertEquals(jawTongueArtifact.reference, springContext.upstream.single { it.type == "mouth.jaw" }.plugin)
+            assertEquals(tongueArtifact.reference, springContext.upstream.single { it.type == "mouth.tongue" }.plugin)
+            val springDefinition = RigMouthSpringModifier.closedDefinition(RigModifierSource.of(springPreview))
+            assertEquals(springAfter, ModifierPluginWorkers.evaluate(springWorker, springWorker.manifest.algorithms.single(),
+                springBefore, springInstance, {}, store, context = springContext, declaredParameters = springDefinition.parameters(springInstance)))
         } finally {
             store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
             preferences.removeNode()
