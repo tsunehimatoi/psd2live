@@ -26,9 +26,8 @@ internal data class RigModifierDefinition(
     val motionInputs: (RigModifierInstance) -> Set<String> = { emptySet() },
     val motionOutputs: (RigModifierInstance) -> Set<String> = { emptySet() },
     val provides: Set<String> = emptySet(),
-    val evaluate: (RigIR, RigModifierInstance, () -> Unit) -> RigIR,
+    val plugin: ModifierAlgorithmPlugin,
     val pluginReference: ModifierPluginReference? = null,
-    val plugin: ModifierAlgorithmPlugin = ModifierAlgorithmPlugin(evaluate),
     /** Null keeps source-aware algorithms on the conservative ordered-prefix cache. */
     val cacheReads: Set<String>? = null,
     /** Required for direct-output plugins; checked before any change is applied. */

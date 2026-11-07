@@ -71,7 +71,7 @@ internal object RigMouthSpringModifier {
         return legacy.copy(version = MouthSpringAlgorithm.VERSION,
             parameters = { MouthSpringAlgorithm.parameters(capture(it)) }, resolveParameter = { _, _, _ -> null },
             plugin = algorithm, upstreamInputs = true, changeWrites = MouthSpringAlgorithm.WRITES,
-            evaluate = { _, _, _ -> error("Mouth spring requires captured fitted-mouth inputs") }, authorContext = ::capture)
+            authorContext = ::capture)
     }
 
     private fun RigModifierSource.capture(instance: RigModifierInstance, version: Int = MouthSpringAlgorithm.VERSION): ModifierAlgorithmContext {

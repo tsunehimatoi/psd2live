@@ -22,7 +22,6 @@ internal object RigBrowFittedModifier {
                 io.github.psd2live.i18n.tr("model.parameter.browLY"), io.github.psd2live.i18n.tr("model.parameter.browRY")) },
             plugin = algorithm,
             resolveParameter = { _, _, _ -> null },
-            evaluate = { _, _, _ -> error("Fitted brow requires resolved modifier inputs") },
             changeWrites = setOf("mesh", "deformer", "parameter", "hierarchy"),
             upstreamInputs = true,
             authorContext = { requireNotNull(source).capture(it) },

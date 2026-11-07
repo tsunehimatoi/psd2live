@@ -27,7 +27,6 @@ internal object RigArmSwingModifier {
             version = if (modern) ArmSwingV3Algorithm.VERSION else ArmSwingAlgorithm.VERSION,
             parameters = { ArmSwingAlgorithm.parameters(captured(it)) },
             resolveParameter = { _, _, _ -> null },
-            evaluate = { _, _, _ -> error("Arm swing requires captured source inputs") },
             plugin = if (modern) modernAlgorithm else algorithm,
             changeWrites = if (modern) ArmSwingV3Algorithm.WRITES else ArmSwingAlgorithm.WRITES,
             composableKinds = legacy.composableKinds + "physics",

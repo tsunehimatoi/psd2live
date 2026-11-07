@@ -21,7 +21,6 @@ internal object RigLegacyFaceDefinition {
 
     fun definition(source: RigModifierSource?): RigModifierDefinition = RigLegacyBindings.definition(spec, source).copy(
         version = LegacyFaceV2Algorithm.VERSION, plugin = algorithm, upstreamInputs = true,
-        evaluate = { _, _, _ -> error("Legacy face v2 requires captured scaffold inputs") },
         parameters = { angles().map { Parameter(it.id.raw, it.name, it.min, it.max, it.default) } },
         changeWrites = LegacyFaceV2Algorithm.WRITES, resolveParameter = { _, _, _ -> null },
         authorContext = { requireNotNull(source).capture(it) },

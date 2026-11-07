@@ -34,7 +34,6 @@ internal object RigEyeEmotionModifier {
             version = if (modern) EyeEmotionV3Algorithm.VERSION else EyeEmotionAlgorithm.VERSION,
             parameters = { if (modern) EyeEmotionV3Algorithm.parameters(capture(it)) else EyeEmotionAlgorithm.parameters(capture(it)) },
             resolveParameter = { _, _, _ -> null },
-            evaluate = { _, _, _ -> error("Eye emotion requires captured source inputs") },
             plugin = if (modern) modernAlgorithm else algorithm,
             changeWrites = if (modern) EyeEmotionV3Algorithm.WRITES else EyeEmotionAlgorithm.WRITES,
             upstreamInputs = true,

@@ -26,7 +26,6 @@ internal object RigEyeSquashModifier {
         RigLegacyBindings.definition(RigLegacyBindings.spec(EyeSquashAlgorithm.TYPE), source).copy(
             version = if (modern) EyeSquashV3Algorithm.VERSION else EyeSquashAlgorithm.VERSION,
             parameters = { emptyList() },
-            evaluate = { _, _, _ -> error("Eye squash requires resolved modifier inputs") },
             plugin = if (modern) modernAlgorithm else algorithm,
             changeWrites = if (modern) EyeSquashV3Algorithm.WRITES else setOf("mesh"),
             upstreamInputs = true,

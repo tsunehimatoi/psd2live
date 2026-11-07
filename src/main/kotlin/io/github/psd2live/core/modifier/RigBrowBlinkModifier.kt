@@ -36,7 +36,6 @@ internal object RigBrowBlinkModifier {
             version = BrowBlinkAlgorithm.VERSION,
             parameters = { emptyList() },
             resolveParameter = { _, _, _ -> null },
-            evaluate = { _, _, _ -> error("Brow blink requires captured source inputs") },
             plugin = algorithm,
             changeWrites = BrowBlinkAlgorithm.WRITES,
             upstreamInputs = true,

@@ -30,7 +30,7 @@ internal object ModifierPluginCatalog {
                         ModifierPluginWorkers.evaluate(entry, algorithm, input, instance, checkpoint, store,
                             context = context, resolveRasters = resolveRasters, declaredParameters = adapter.parameters(native(instance)))
                 }
-                adapter.copy(type = type, pluginReference = entry.reference, plugin = worker, evaluate = worker::evaluate,
+                adapter.copy(type = type, pluginReference = entry.reference, plugin = worker,
                     parameters = { adapter.parameters(native(it)) },
                     authorContext = { adapter.authorContext(native(it)) },
                     validate = { rig, instance -> adapter.validate(rig, native(instance)) },
@@ -51,7 +51,7 @@ internal object ModifierPluginCatalog {
                 validate = { _, instance ->
                     require(instance.targets.all { it.kind in algorithm.targets }) { "Unsupported plugin target" }
                     ModifierPluginSchema.validate(instance.config, algorithm.configSchema)
-                }, evaluate = { rig, instance, checkpoint -> ModifierPluginWorkers.evaluate(entry, algorithm, rig, instance, checkpoint, store, resolveRasters = resolveRasters) },
+                },
                 pluginReference = entry.reference, plugin = worker, cacheReads = algorithm.reads + algorithm.writes, upstreamInputs = algorithm.contextVersion >= 2)
             }
         } }

@@ -51,7 +51,6 @@ internal object RigBrowLidModifier {
             version = BrowLidAlgorithm.VERSION,
             parameters = { emptyList() },
             resolveParameter = { _, _, _ -> null },
-            evaluate = { _, _, _ -> error("Brow and lid coupling requires captured source inputs") },
             plugin = algorithm,
             changeWrites = BrowLidAlgorithm.WRITES,
             upstreamInputs = true,

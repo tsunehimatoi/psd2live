@@ -42,7 +42,6 @@ internal object RigBrowShapeModifier {
             version = version,
             parameters = { BrowShapeAlgorithm.parameters(measurements(it)) },
             resolveParameter = { _, _, _ -> null },
-            evaluate = { _, _, _ -> error("Brow shape requires resolved modifier inputs") },
             plugin = algorithm,
             changeWrites = setOf("mesh", "parameter", "hierarchy"),
             upstreamInputs = true,

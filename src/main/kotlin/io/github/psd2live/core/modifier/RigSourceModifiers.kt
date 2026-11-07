@@ -81,9 +81,6 @@ internal class RigModifierSource(
         })
     }
 
-    fun skinClip(rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit): RigIR =
-        io.github.psd2live.algorithms.binding.SkinClipAlgorithm().evaluate(rig, instance, skinClipContext(instance), checkpoint)
-
     private val seeThroughCandidates by lazy {
         val layers = analysis.layers.associateBy { it.source.id.raw }
         // Coverage depends only on source pixels and semantics. Expand against the live model in the plugin.
@@ -114,9 +111,6 @@ internal class RigModifierSource(
             }
         }
     }
-
-    fun seeThrough(rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit): RigIR =
-        io.github.psd2live.algorithms.binding.SeeThroughAlgorithm().evaluate(rig, instance, seeThroughContext(instance), checkpoint)
 
     private val expressionLayers by lazy {
         analysis.layers.mapNotNull { layer ->
@@ -190,9 +184,6 @@ internal class RigModifierSource(
         }, resources = mapOf("parameters" to ModifierAlgorithmResource(io.github.psd2live.format.compile.RigIrBinary.encode(
             RigIR(io.github.psd2live.format.model.Canvas(1f, 1f),
                 if (requireUpstreamStandards) expressionSourceParameters(instance) else expressionParameters(instance))))))
-
-    fun expression(rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit): RigIR =
-        io.github.psd2live.algorithms.binding.ExpressionAlgorithm().evaluate(rig, instance, expressionContext(instance), checkpoint)
 
     fun addUpstreamExpressionInputs(rig: RigIR, instance: RigModifierInstance): RigIR {
         val preceding = activeBefore(instance).filter { RigLegacyBindings.find(it.type)?.expressionToggles == true }
@@ -735,7 +726,6 @@ internal object RigSourceModifiers {
                 val input = requireNotNull(source) { "Binding modifiers require the captured source artwork" }
                 require(instance.targets.all { input.hasMesh(it.id) }) { "A binding scaffold target has no source layer" }
             }, composableKinds = setOf("mesh", "part", "deformer", "hierarchy"),
-            evaluate = { rig, instance, checkpoint -> scaffold(rig, instance, requireNotNull(source), checkpoint) },
             plugin = io.github.psd2live.algorithms.binding.ScaffoldAlgorithm(),
             changeWrites = setOf("mesh", "part", "deformer", "hierarchy"),
             authorContext = { requireNotNull(source).scaffoldContext(it) })
@@ -746,9 +736,6 @@ internal object RigSourceModifiers {
         io.github.psd2live.algorithms.binding.ScaffoldBinding.deformerId(instance, mesh, canonical, shared)
     fun partId(instance: RigModifierInstance, mesh: String, canonical: String, shared: Boolean = instance.type == SCAFFOLD && instance.version >= 2) =
         io.github.psd2live.algorithms.binding.ScaffoldBinding.partId(instance, mesh, canonical, shared)
-
-    private fun scaffold(rig: RigIR, instance: RigModifierInstance, source: RigModifierSource, checkpoint: () -> Unit): RigIR =
-        io.github.psd2live.algorithms.binding.ScaffoldAlgorithm().evaluate(rig, instance, source.scaffoldContext(instance), checkpoint)
 
     internal fun pointsInParent(model: PuppetModel, sample: Drawable, points: FloatArray, parent: DeformerId, scratch: String): FloatArray =
         io.github.psd2live.algorithms.binding.BindingFrames.pointsInParent(model, sample, points, parent, scratch)

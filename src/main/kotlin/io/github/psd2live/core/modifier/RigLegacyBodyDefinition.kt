@@ -19,7 +19,7 @@ internal object RigLegacyBodyDefinition {
 
     fun definition(source: RigModifierSource?): RigModifierDefinition =
         RigLegacyBindings.definition(RigLegacyBindings.spec(LegacyBodyV2Algorithm.TYPE), source).copy(
-            version = LegacyBodyV2Algorithm.VERSION, plugin = algorithm, evaluate = algorithm::evaluate,
+            version = LegacyBodyV2Algorithm.VERSION, plugin = algorithm,
             parameters = { StandardParameters.all.filter { it.id in RigBodyModifier.parameters }.map {
                 Parameter(it.id.raw, it.name, it.min, it.max, it.default)
             } },

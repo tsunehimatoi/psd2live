@@ -33,7 +33,6 @@ internal object RigLegacyBrowDefinition {
                 BrowLegacyV2Algorithm.validateConfig(instance)
             },
             upstreamInputs = true, changeWrites = BrowLegacyV2Algorithm.WRITES,
-            evaluate = { _, _, _ -> error("Legacy brow v2 requires captured source measurements") },
             authorContext = { requireNotNull(source).capture(it) })
     }
 

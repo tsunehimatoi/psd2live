@@ -40,7 +40,6 @@ internal object RigEyeAftershockModifier {
                 else EyeAftershockAlgorithm.parameters(context)
             },
             resolveParameter = { _, _, _ -> null },
-            evaluate = { _, _, _ -> error("Blink aftershock requires captured source inputs") },
             plugin = algorithm,
             changeWrites = EyeAftershockAlgorithm.WRITES,
             upstreamInputs = true,

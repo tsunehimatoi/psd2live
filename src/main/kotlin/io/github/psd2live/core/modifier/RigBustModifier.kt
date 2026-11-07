@@ -25,7 +25,6 @@ internal object RigBustModifier {
                 RigBustBindingSource.validatePhysics(rig, instance, spec.parameters.map { it.raw }.takeIf { captured.applies }.orEmpty())
             },
             composableKinds = legacy.composableKinds + "physics",
-            evaluate = { _, _, _ -> error("Chest bounce requires resolved modifier inputs") },
             plugin = algorithm,
             changeWrites = BustBindingAlgorithm.WRITES,
             upstreamInputs = true,

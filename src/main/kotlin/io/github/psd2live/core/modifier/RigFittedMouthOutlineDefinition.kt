@@ -35,7 +35,6 @@ internal object RigFittedMouthOutlineDefinition {
         plugin = plugin,
         changeWrites = setOf("mesh", "deformer", "part", "hierarchy", "textures", "authoring"),
         composableKinds = setOf("mesh", "deformer", "part", "hierarchy"),
-        evaluate = { _, _, _ -> error("Fitted mouth outline requires captured source observations") },
         authorContext = { requireNotNull(source).capture(it) },
     )
 

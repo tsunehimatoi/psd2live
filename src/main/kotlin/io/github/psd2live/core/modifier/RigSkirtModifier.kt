@@ -25,7 +25,6 @@ internal object RigSkirtModifier {
             upstreamInputs = true,
             authorContext = { capture(requireNotNull(source), it) },
             changeWrites = SkirtAlgorithm.WRITES,
-            evaluate = { _, _, _ -> error("Skirt binding requires resolved modifier inputs") },
             plugin = algorithm,
         )
     }

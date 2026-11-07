@@ -14,7 +14,6 @@ internal object RigNeckModifier {
         RigLegacyBindings.definition(RigLegacyBindings.spec(NeckAlgorithm.TYPE), source).copy(
             version = NeckAlgorithm.VERSION,
             parameters = { emptyList() },
-            evaluate = { _, _, _ -> error("Neck tilt requires resolved modifier inputs") },
             plugin = algorithm,
             changeWrites = setOf("mesh", "relations"),
             upstreamInputs = true,

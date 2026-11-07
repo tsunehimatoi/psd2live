@@ -17,7 +17,6 @@ internal object RigLidFadeModifier {
         RigLegacyBindings.definition(RigLegacyBindings.spec(LidFadeAlgorithm.TYPE), source).copy(
             version = LidFadeAlgorithm.VERSION,
             parameters = { emptyList() },
-            evaluate = { _, _, _ -> error("Lid fade requires resolved modifier inputs") },
             plugin = algorithm,
             changeWrites = setOf("mesh"),
             upstreamInputs = true,

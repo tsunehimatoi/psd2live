@@ -28,7 +28,6 @@ internal object RigFittedMouthDefinition {
         }
         return legacy.copy(version = MouthFittedV2Algorithm.VERSION, parameters = { parameters(it) }, plugin = plugin, upstreamInputs = true,
             changeWrites = MouthFittedV2Algorithm.WRITES, composableKinds = MouthFittedV2Algorithm.COMPOSABLE, resolveParameter = { _, _, _ -> null },
-            evaluate = { _, _, _ -> error("Fitted mouth v2 requires captured scaffold inputs") },
             authorContext = { requireNotNull(source).capture(it) })
     }
 
@@ -44,7 +43,6 @@ internal object RigFittedMouthDefinition {
             parameters = { instance -> MouthFittedV2Algorithm.parameters(
                 tr("model.parameter.mouthForm"), tr("model.parameter.mouthOpen"), reach(instance).takeIf { it > 1.001f } ?: 1f) },
             changeWrites = MouthFittedV3Algorithm.WRITES, composableKinds = MouthFittedV3Algorithm.WRITES - "restPose" + "relations",
-            evaluate = { _, _, _ -> error("Fitted mouth v3 requires captured source head inputs") },
             authorContext = { RigFittedMouthModernSource.capture(requireNotNull(source), it) })
     }
 

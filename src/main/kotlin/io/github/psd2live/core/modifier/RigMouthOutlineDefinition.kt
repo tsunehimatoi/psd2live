@@ -26,7 +26,6 @@ internal object RigMouthOutlineDefinition {
             parameters = { emptyList() }, upstreamInputs = true, plugin = plugin,
             changeWrites = setOf("mesh", "part", "hierarchy", "textures", "authoring"),
             composableKinds = setOf("mesh", "part", "hierarchy"),
-            evaluate = { _, _, _ -> error("Mouth outline v2 requires captured legacy mouth inputs") },
             authorContext = { requireNotNull(source).captureOutline(it) })
     }
 

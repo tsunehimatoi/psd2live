@@ -12,7 +12,7 @@ class RigModifierStackTest {
     private fun entry(id: String, type: String, enabled: Boolean = true, targets: List<ModifierTarget> = listOf(target)) =
         RigModifierInstance(id, type, 1, targets, enabled)
     private fun transform(type: String, change: (Int) -> Int, requires: Set<String> = emptySet(), family: String? = null) =
-        RigModifierDefinition(type, 1, requires, family, composableKinds = setOf("part"), evaluate = { rig, instance, checkpoint ->
+        RigModifierDefinition(type, 1, requires, family, composableKinds = setOf("part"), plugin = ModifierAlgorithmPlugin { rig, instance, checkpoint ->
             checkpoint()
             rig.copy(parts = rig.parts.map { if (ModifierTarget("part", it.id) in instance.targets) it.copy(drawOrder = change(it.drawOrder)) else it })
         })
@@ -23,7 +23,7 @@ class RigModifierStackTest {
 
     @Test fun cachedPrefixesMatchColdEvaluationAndDoNotPublishFailures() {
         val calls = ArrayList<String>()
-        val counted = RigModifierDefinition("counted", 1, composableKinds = setOf("part"), evaluate = { rig, instance, _ ->
+        val counted = RigModifierDefinition("counted", 1, composableKinds = setOf("part"), plugin = ModifierAlgorithmPlugin { rig, instance, _ ->
             calls += instance.id
             require(instance.config["fail"]?.jsonPrimitive?.boolean != true)
             rig.copy(parts = rig.parts.map { it.copy(drawOrder = it.drawOrder + 1) })
@@ -63,9 +63,9 @@ class RigModifierStackTest {
         val motionId = provider.outputId("motion")
         val clip = io.github.psd2live.format.model.Clip(motionId, "Training", "Idle", "training", 1f, 30f, true, curves = emptyList())
         val producer = RigModifierDefinition("clip", 1, motionOutputs = { setOf(it.outputId("motion")) },
-            evaluate = { rig, _, _ -> rig.copy(clips = rig.clips + clip) })
+            plugin = ModifierAlgorithmPlugin { rig, _, _ -> rig.copy(clips = rig.clips + clip) })
         val consumer = RigModifierDefinition("train", 1, motionInputs = { setOf(motionId) },
-            evaluate = { rig, _, _ -> rig.copy(parts = rig.parts.map { it.copy(drawOrder = it.drawOrder + 1) }) })
+            plugin = ModifierAlgorithmPlugin { rig, _, _ -> rig.copy(parts = rig.parts.map { it.copy(drawOrder = it.drawOrder + 1) }) })
         val engine = RigModifierEvaluator(RigModifierRegistry(listOf(producer, consumer)))
         val stack = RigModifierStack(listOf(provider, entry("simulation", "train")))
         val expected = engine.evaluate(authored, stack)
@@ -202,7 +202,7 @@ class RigModifierStackTest {
         val output = mesh.copy(offsets = KeyGrid(widened, listOf(
             KeyCell(Ints.values(0, 0), delta), KeyCell(Ints.values(0, 1), delta), KeyCell(Ints.values(1, 1), delta),
         )), channels = mapOf(Channel.OPACITY to opacity))
-        val extend = RigModifierDefinition("extend", 1, evaluate = { rig, _, _ -> rig.copy(meshes = listOf(output)) })
+        val extend = RigModifierDefinition("extend", 1, plugin = ModifierAlgorithmPlugin { rig, _, _ -> rig.copy(meshes = listOf(output)) })
         val result = RigModifierEvaluator(RigModifierRegistry(listOf(extend))).evaluate(authored.copy(meshes = listOf(mesh)),
             RigModifierStack(listOf(entry("extend", "extend", targets = listOf(ModifierTarget("mesh", mesh.id))))))
         assertEquals(listOf(
@@ -274,7 +274,7 @@ class RigModifierStackTest {
 
     @Test fun parameterDefinitionsCanBeSharedButIncompatibleDefinitionsFail() {
         val parameter = Parameter("ParamShared", "Shared", -1f, 1f, 0f)
-        val definition = RigModifierDefinition("parameter", 1, parameters = { listOf(parameter) }, evaluate = { rig, _, _ ->
+        val definition = RigModifierDefinition("parameter", 1, parameters = { listOf(parameter) }, plugin = ModifierAlgorithmPlugin { rig, _, _ ->
             if (rig.parameters.any { it.id == parameter.id }) rig else rig.copy(parameters = rig.parameters + parameter)
         })
         val engine = RigModifierEvaluator(RigModifierRegistry(listOf(definition)))
@@ -292,7 +292,7 @@ class RigModifierStackTest {
         val definition = RigModifierDefinition("extend", 1, parameters = { listOf(extended) },
             composableKinds = setOf("parameter"),
             resolveParameter = { _, before, desired -> desired.takeIf { before.copy(max = desired.max) == desired } },
-            evaluate = { rig, _, _ -> rig.copy(parameters = listOf(extended)) })
+            plugin = ModifierAlgorithmPlugin { rig, _, _ -> rig.copy(parameters = listOf(extended)) })
         val engine = RigModifierEvaluator(RigModifierRegistry(listOf(definition))) { rig, _, commands ->
             ModifierOverrideResult(if (commands.isEmpty()) rig else rig.copy(parameters = listOf(extended.copy(default = .5f))))
         }
@@ -311,7 +311,7 @@ class RigModifierStackTest {
 
     @Test fun adaptersCannotSilentlyChangeSharedParameterDefinitions() {
         val parameter = Parameter("P", "P", 0f, 1f, 0f)
-        val definition = RigModifierDefinition("bad", 1, evaluate = { rig, _, _ -> rig.copy(parameters = listOf(parameter.copy(max = 2f))) })
+        val definition = RigModifierDefinition("bad", 1, plugin = ModifierAlgorithmPlugin { rig, _, _ -> rig.copy(parameters = listOf(parameter.copy(max = 2f))) })
         val engine = RigModifierEvaluator(RigModifierRegistry(listOf(definition)))
         assertFailsWith<IllegalArgumentException> { engine.evaluate(authored.copy(parameters = listOf(parameter)), RigModifierStack(listOf(entry("a", "bad")))) }
     }
@@ -345,7 +345,7 @@ class RigModifierStackTest {
     }
 
     @Test fun incompatibleWritesAreRejectedAndCompositionRequiresBothProvidersToOptIn() {
-        val replace = RigModifierDefinition("replace", 1, evaluate = { rig, _, _ ->
+        val replace = RigModifierDefinition("replace", 1, plugin = ModifierAlgorithmPlugin { rig, _, _ ->
             rig.copy(parts = rig.parts.map { it.copy(name = "Replaced") })
         })
         val engine = RigModifierEvaluator(RigModifierRegistry(listOf(add, replace)))
@@ -373,7 +373,7 @@ class RigModifierStackTest {
         fun mesh(id: String) = io.github.psd2live.format.model.Mesh(id, id, null, geometry = null, offsets = null)
         val input = authored.copy(meshes = listOf(mesh("overlay"), mesh("face"), mesh("neck")))
         fun masks(type: String, sources: List<String>, inverted: Boolean = false) = RigModifierDefinition(type, 1,
-            composableKinds = setOf("mesh", "relations"), evaluate = { rig, _, _ ->
+            composableKinds = setOf("mesh", "relations"), plugin = ModifierAlgorithmPlugin { rig, _, _ ->
                 rig.copy(meshes = rig.meshes.map { if (it.id == "overlay") it.copy(maskedBy = sources, invertMask = inverted) else it })
             })
         val engine = RigModifierEvaluator(RigModifierRegistry(listOf(masks("faceMask", listOf("face"), true),
@@ -399,8 +399,7 @@ class RigModifierStackTest {
                                  checkpoint: () -> Unit) = ModifierModelChanges(parts = ModifierObjectChanges(
                 updated = listOf(ModifierObjectUpdate(input.parts.first(), input.parts.first().copy(drawOrder = 123)))))
         }
-        val definition = RigModifierDefinition("direct", 1, evaluate = algorithm::evaluate,
-            plugin = algorithm, changeWrites = setOf("physics"))
+        val definition = RigModifierDefinition("direct", 1, plugin = algorithm, changeWrites = setOf("physics"))
         val engine = RigModifierEvaluator(RigModifierRegistry(listOf(definition)))
         val stack = RigModifierStack(listOf(entry("direct1", "direct")))
         val failure = assertFailsWith<IllegalArgumentException> { engine.evaluate(authored, stack) }
@@ -425,8 +424,8 @@ class RigModifierStackTest {
             }
         }
         val engine = RigModifierEvaluator(RigModifierRegistry(listOf(
-            RigModifierDefinition("physics", 1, evaluate = physics::evaluate, plugin = physics, changeWrites = setOf("physics")),
-            RigModifierDefinition("motion", 1, evaluate = motion::evaluate, plugin = motion, changeWrites = setOf("motion")),
+            RigModifierDefinition("physics", 1, plugin = physics, changeWrites = setOf("physics")),
+            RigModifierDefinition("motion", 1, plugin = motion, changeWrites = setOf("motion")),
         )))
         val input = authored.copy(physics = Physics(fps = 30f))
         val result = engine.evaluate(input, RigModifierStack(listOf(entry("a", "physics"), entry("b", "motion"))))
@@ -447,11 +446,11 @@ class RigModifierStackTest {
                     listOf(ModifierObjectUpdate(part, part.copy(drawOrder = part.drawOrder + 1)))))
             }
         }
-        val upstream = RigModifierDefinition("upstream", 1, composableKinds = setOf("part"), evaluate = { rig, instance, _ ->
+        val upstream = RigModifierDefinition("upstream", 1, composableKinds = setOf("part"), plugin = ModifierAlgorithmPlugin { rig, instance, _ ->
             rig.copy(parts = rig.parts.map { if (it.id == instance.targets.single().id)
                 it.copy(drawOrder = instance.config.getValue("order").jsonPrimitive.content.toInt()) else it })
         })
-        val direct = RigModifierDefinition("direct", 1, evaluate = algorithm::evaluate, plugin = algorithm,
+        val direct = RigModifierDefinition("direct", 1, plugin = algorithm,
             composableKinds = setOf("part"), changeWrites = setOf("part"))
         val engine = RigModifierEvaluator(RigModifierRegistry(listOf(upstream, direct)))
         val cache = RigModifierEvaluationCache()
@@ -481,7 +480,7 @@ class RigModifierStackTest {
     @Test fun resolvedCapabilitiesInvalidateReadsAndSurviveApplyingTheirProvider() {
         val observed = mutableListOf<ModifierUpstreamCapability>()
         val provider = RigModifierDefinition("provider", 3, provides = setOf("shape"), appliedConfig = { it.config },
-            evaluate = { rig, _, _ -> rig })
+            plugin = ModifierAlgorithmPlugin { rig, _, _ -> rig })
         val algorithm = object : ReadingModifierAlgorithmPlugin {
             override fun changes(input: ModifierEvaluationInput, instance: RigModifierInstance, checkpoint: () -> Unit): ModifierModelChanges {
                 val dependency = input.providers("shape").single()
@@ -492,7 +491,7 @@ class RigModifierStackTest {
             }
         }
         val consumer = RigModifierDefinition("consumer", 1, requires = setOf("shape"), providers = { mapOf("shape" to "source") },
-            evaluate = algorithm::evaluate, plugin = algorithm, changeWrites = setOf("part"))
+            plugin = algorithm, changeWrites = setOf("part"))
         val engine = RigModifierEvaluator(RigModifierRegistry(listOf(provider, consumer)))
         fun stack(order: Int) = RigModifierStack(listOf(
             RigModifierInstance("source", "provider", 3, listOf(target), config = buildJsonObject { put("order", order) },
@@ -514,8 +513,8 @@ class RigModifierStackTest {
         assertEquals(pinned, RigModifierStack.fromJson(persisted.toJson()).appliedCapabilities.single().plugin)
     }
     @Test fun capabilityAliasesParticipateInDependencyCycleValidation() {
-        val a = RigModifierDefinition("a", 1, provides = setOf("cap-a"), requires = setOf("cap-b"), evaluate = { rig, _, _ -> rig })
-        val b = RigModifierDefinition("b", 1, provides = setOf("cap-b"), requires = setOf("cap-a"), evaluate = { rig, _, _ -> rig })
+        val a = RigModifierDefinition("a", 1, provides = setOf("cap-a"), requires = setOf("cap-b"), plugin = ModifierAlgorithmPlugin { rig, _, _ -> rig })
+        val b = RigModifierDefinition("b", 1, provides = setOf("cap-b"), requires = setOf("cap-a"), plugin = ModifierAlgorithmPlugin { rig, _, _ -> rig })
         assertFailsWith<IllegalArgumentException> { RigModifierRegistry(listOf(a, b)) }
         RigModifierRegistry(listOf(a, b.copy(requires = emptySet())))
     }

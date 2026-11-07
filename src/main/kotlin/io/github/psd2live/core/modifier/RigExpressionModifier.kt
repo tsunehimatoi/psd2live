@@ -12,7 +12,6 @@ internal object RigExpressionModifier {
             version = ExpressionV2Algorithm.VERSION,
             parameters = { requireNotNull(source).expressionSourceParameters(it) },
             resolveParameter = { _, _, _ -> null },
-            evaluate = { _, _, _ -> error("Expressions v2 require captured layer inputs") },
             plugin = plugin,
             authorContext = { requireNotNull(source).expressionContext(it, requireUpstreamStandards = true) },
         )

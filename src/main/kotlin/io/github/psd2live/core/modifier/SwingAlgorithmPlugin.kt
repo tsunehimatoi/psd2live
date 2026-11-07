@@ -10,5 +10,5 @@ internal object SwingAlgorithmPlugin {
         val source = RigSwingEdit.fromJson(instance.config)
         require(!source.baked) { "A baked swing is ordinary content" }
         require(source.targets == instance.targets.map { it.id }) { "Swing targets must match the captured modifier targets" }
-    }, composableKinds = setOf("deformer", "mesh", "hierarchy"), evaluate = implementation::evaluate, plugin = implementation)
+    }, composableKinds = setOf("deformer", "mesh", "hierarchy"), plugin = implementation)
 }

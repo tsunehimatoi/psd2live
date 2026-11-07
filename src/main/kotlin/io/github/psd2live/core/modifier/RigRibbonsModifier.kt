@@ -24,7 +24,6 @@ internal object RigRibbonsModifier {
             upstreamInputs = true,
             authorContext = { capture(requireNotNull(source), it) },
             changeWrites = RibbonsAlgorithm.WRITES,
-            evaluate = { _, _, _ -> error("Ribbon binding requires resolved modifier inputs") },
             plugin = algorithm,
         )
 

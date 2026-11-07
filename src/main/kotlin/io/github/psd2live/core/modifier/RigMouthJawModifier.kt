@@ -45,7 +45,6 @@ internal object RigMouthJawModifier {
         RigLegacyBindings.definition(RigLegacyBindings.spec(MouthJawAlgorithm.TYPE), source).copy(
             version = version, parameters = { emptyList() }, resolveParameter = { _, _, _ -> null },
             plugin = algorithm, upstreamInputs = true, changeWrites = setOf("mesh"),
-            evaluate = { _, _, _ -> error("Mouth jaw requires captured source measurements") },
             authorContext = { requireNotNull(source).capture(it, version) },
         )
 

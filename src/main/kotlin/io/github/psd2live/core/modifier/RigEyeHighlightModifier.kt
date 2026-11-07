@@ -37,7 +37,6 @@ internal object RigEyeHighlightModifier {
             version = if (modern) EyeHighlightV3Algorithm.VERSION else EyeHighlightAlgorithm.VERSION,
             parameters = { emptyList() },
             resolveParameter = { _, _, _ -> null },
-            evaluate = { _, _, _ -> error("Eye highlight requires resolved modifier inputs") },
             plugin = if (modern) modernAlgorithm else algorithm,
             changeWrites = if (modern) EyeHighlightV3Algorithm.WRITES else setOf("mesh"),
             upstreamInputs = true,

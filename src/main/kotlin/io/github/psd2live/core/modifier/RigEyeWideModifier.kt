@@ -42,7 +42,6 @@ internal object RigEyeWideModifier {
                     Parameter(it.id.raw, it.name, it.min, 2f, it.default)
                 }
             },
-            evaluate = { _, _, _ -> error("Eye widening requires captured source inputs") },
             plugin = algorithm,
             changeWrites = setOf("mesh", "parameter"),
             upstreamInputs = true,

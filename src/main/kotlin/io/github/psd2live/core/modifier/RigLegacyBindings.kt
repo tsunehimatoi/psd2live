@@ -102,14 +102,6 @@ internal object RigLegacyBindings {
             version = io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm.VERSION,
             parameters = { io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm.parameters(
                 io.github.psd2live.i18n.tr("model.parameter.mouthForm"), io.github.psd2live.i18n.tr("model.parameter.mouthOpen")) },
-            evaluate = { rig, instance, checkpoint ->
-                val capture = requireNotNull(source)
-                val provider = capture.provider(instance)
-                val context = capture.legacyMouthContext(instance).withUpstream(listOf(ModifierUpstreamCapability(
-                    provider.type, provider.type, provider.version, provider.targets, provider.id, provider.config,
-                    provider.outputAliases, provider.plugin)))
-                algorithm.evaluate(rig, instance, context, checkpoint)
-            },
             plugin = algorithm,
             authorContext = { requireNotNull(source).legacyMouthContext(it) },
             changeWrites = setOf("mesh", "parameter", "hierarchy", "restPose"),
@@ -117,17 +109,8 @@ internal object RigLegacyBindings {
         )
     }
 
-    fun definition(spec: Spec, source: RigModifierSource?): RigModifierDefinition {
-        val evaluate: (io.github.psd2live.format.model.RigIR, RigModifierInstance, () -> Unit) -> io.github.psd2live.format.model.RigIR = { rig, instance, checkpoint ->
-            if (spec.skinClip) requireNotNull(source).skinClip(rig, instance, checkpoint)
-            else if (spec.seeThrough) requireNotNull(source).seeThrough(rig, instance, checkpoint)
-            else if (spec.expressionToggles) requireNotNull(source).expression(rig, instance, checkpoint)
-            else {
-                val bindings = RigSourceBinding.apply(rig, instance, requireNotNull(source), checkpoint)
-                if (spec.mouthOutline) source.outline(bindings, instance, checkpoint) else bindings
-            }
-        }
-        return RigModifierDefinition(spec.type, spec.version,
+    fun definition(spec: Spec, source: RigModifierSource?): RigModifierDefinition =
+        RigModifierDefinition(spec.type, spec.version,
         requires = spec.requires, provides = if (spec.type == FITTED_FACE) setOf("face/legacy") else emptySet(), exclusiveFamily = if (spec.isBase) "base:${spec.area}" else if (spec.chainKinds.isNotEmpty()) "chain:${spec.type}" else if (spec.expressionToggles || spec.mouthOutline) spec.type else null,
         providers = { instance -> providers(instance) },
         appliedConfig = { it.config }, resolveParameter = { instance, before, declared -> requireNotNull(source).resolveParameter(instance, before, declared) },
@@ -147,13 +130,15 @@ internal object RigLegacyBindings {
             requireNotNull(source).provider(instance)
         }, composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter") +
             if (spec.expressionToggles || spec.chainKinds.isNotEmpty()) setOf("physics") else emptySet(),
-        evaluate = evaluate,
         changeWrites = if (spec.skinClip) setOf("mesh") else null,
         plugin = when {
             spec.expressionToggles -> io.github.psd2live.algorithms.binding.ExpressionAlgorithm()
             spec.seeThrough -> io.github.psd2live.algorithms.binding.SeeThroughAlgorithm()
             spec.skinClip -> io.github.psd2live.algorithms.binding.SkinClipAlgorithm()
-            else -> ModifierAlgorithmPlugin(evaluate)
+            else -> ModifierAlgorithmPlugin { rig, instance, checkpoint ->
+                val bindings = RigSourceBinding.apply(rig, instance, requireNotNull(source), checkpoint)
+                if (spec.mouthOutline) source.outline(bindings, instance, checkpoint) else bindings
+            }
         },
         authorContext = { when {
             spec.expressionToggles -> requireNotNull(source).expressionContext(it)
@@ -162,5 +147,4 @@ internal object RigLegacyBindings {
             else -> ModifierAlgorithmContext.Empty
         } },
         )
-    }
 }

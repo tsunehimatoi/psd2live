@@ -23,7 +23,6 @@ internal object RigCreatureModifier {
             upstreamInputs = true,
             authorContext = { capture(requireNotNull(source), it) },
             changeWrites = CreatureAlgorithm.WRITES,
-            evaluate = { _, _, _ -> error("Creature binding requires resolved modifier inputs") },
             plugin = algorithm,
         )
 

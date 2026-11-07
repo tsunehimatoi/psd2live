@@ -25,7 +25,6 @@ internal object RigDepthTurnDefinition {
         RigLegacyBindings.definition(RigLegacyBindings.spec(DepthTurnV2Algorithm.TYPE), source).copy(
             version = DepthTurnV2Algorithm.VERSION,
             parameters = { emptyList() },
-            evaluate = { _, _, _ -> error("Depth turn v2 requires captured source inputs") },
             plugin = algorithm,
             changeWrites = DepthTurnV2Algorithm.WRITES,
             upstreamInputs = true,

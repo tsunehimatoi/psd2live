@@ -42,7 +42,7 @@ internal object BuiltinModifierPlugins {
         val legacy = RigLegacyBindings.definition(RigLegacyBindings.spec("hair/chains"), source)
         val algorithm = HairChainsAlgorithm()
         return legacy.copy(version = 2, parameters = { emptyList() }, upstreamInputs = true,
-            changeWrites = HairChainsAlgorithm.WRITES, evaluate = algorithm::evaluate, plugin = algorithm,
+            changeWrites = HairChainsAlgorithm.WRITES, plugin = algorithm,
             authorContext = { requireNotNull(source).hairChainsContext(it) })
     }
 

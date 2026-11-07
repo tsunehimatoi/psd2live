@@ -112,7 +112,7 @@ class PackagedPhysicsPluginTool {
         for (revision in 1..2) {
             val definition = RigModifierDefinition("rig.scaffold", revision, exclusiveFamily = "rig.scaffold",
                 composableKinds = setOf("mesh", "part", "deformer", "hierarchy"),
-                evaluate = plugin::evaluate, plugin = plugin, authorContext = { context })
+                plugin = plugin, authorContext = { context })
             verifyPackage("rig.scaffold", definition, JsonObject(emptyMap()), "binding", "plugin-scaffold-$revision", input,
                 verifyScaffoldReads = true)
         }
@@ -136,7 +136,7 @@ class PackagedPhysicsPluginTool {
         for (revision in 1..2) {
             val definition = RigModifierDefinition("rig.scaffold", revision, exclusiveFamily = "rig.scaffold",
                 composableKinds = setOf("mesh", "part", "deformer", "hierarchy"),
-                evaluate = plugin::evaluate, plugin = plugin, authorContext = { context })
+                plugin = plugin, authorContext = { context })
             verifyPackage("rig.scaffold", definition, JsonObject(emptyMap()), "binding", "plugin-scaffold-$revision", input)
         }
     }
@@ -184,7 +184,7 @@ class PackagedPhysicsPluginTool {
         val definition = RigModifierDefinition("expression.toggles", 1, requires = setOf("rig.scaffold"),
             exclusiveFamily = "expression.toggles", parameters = { parameters },
             composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter", "physics"),
-            evaluate = plugin::evaluate, plugin = plugin, authorContext = { context })
+            plugin = plugin, authorContext = { context })
         verifyPackage("expression.toggles", definition, JsonObject(emptyMap()), "binding")
     }
 
@@ -203,7 +203,7 @@ class PackagedPhysicsPluginTool {
             val type = "$area.see-through"
             val definition = RigModifierDefinition(type, 1, requires = setOf("rig.scaffold"),
                 composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter"),
-                evaluate = plugin::evaluate, plugin = plugin, authorContext = { context })
+                plugin = plugin, authorContext = { context })
             val base = testInput()
             val input = base.copy(meshes = base.meshes + base.meshes.single().copy(id = "bang", drawOrder = 600f),
                 rootChildren = listOf(ChildRef.MeshRef("body"), ChildRef.MeshRef("bang")))
@@ -222,7 +222,7 @@ class PackagedPhysicsPluginTool {
         })
         val definition = RigModifierDefinition("face.skin-clip", 1, requires = setOf("rig.scaffold"),
             composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter"),
-            evaluate = plugin::evaluate, plugin = plugin, authorContext = { context })
+            plugin = plugin, authorContext = { context })
         val base = testInput()
         verifyPackage("face.skin-clip", definition, JsonObject(emptyMap()), "binding", "plugin-skin",
             base.copy(meshes = base.meshes + base.meshes.single().copy(id = "face")))
@@ -294,7 +294,7 @@ class PackagedPhysicsPluginTool {
                     io.github.psd2live.targets.cubism.PuppetIr.toIr(RigSimulationWeights.apply(model, config)))
                 assertEquals(1, io.github.psd2live.targets.cubism.PuppetIr.toPuppet(expected).vertexGroups.size)
             }
-            val prerequisites = definition.requires.map { RigModifierDefinition(it, 1, evaluate = { rig, _, _ -> rig }) }
+            val prerequisites = definition.requires.map { RigModifierDefinition(it, 1, plugin = ModifierAlgorithmPlugin { rig, _, _ -> rig }) }
             fun registryFor(packages: ModifierPluginStore) = RigModifierRegistry(
                 prerequisites + listOf(definition) + ModifierPluginCatalog.definitions(packages, listOf(definition)))
             val registry = registryFor(store)

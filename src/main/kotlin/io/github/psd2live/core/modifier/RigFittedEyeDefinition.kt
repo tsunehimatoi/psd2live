@@ -14,7 +14,6 @@ internal object RigFittedEyeDefinition {
             override val canonicalOptInType = EyeFittedSourceAlgorithm.TYPE
         }
         return standalone.copy(version = EyeFittedV4Algorithm.VERSION,
-            evaluate = { _, _, _ -> error("Fitted eye v4 requires captured scaffold inputs") },
             plugin = algorithm, authorContext = { instance ->
                 val owner = requireNotNull(source)
                 RigFittedEyeHeadSource.capture(owner, instance) ?: RigFittedEyeSource.captureTransition(owner, instance)
@@ -27,7 +26,6 @@ internal object RigFittedEyeDefinition {
             override val canonicalOptInType = EyeFittedSourceAlgorithm.TYPE
         }
         return definition(source).copy(version = EyeFittedV5Algorithm.VERSION, requires = EyeFittedV5Algorithm.REQUIRES,
-            evaluate = { _, _, _ -> error("Fitted eye v5 requires captured scaffold inputs") },
             plugin = algorithm, authorContext = { instance ->
                 requireNotNull(RigFittedEyeHeadSource.capture(requireNotNull(source), instance, modern = true)) {
                     "Fitted eye v5 requires a preceding fitted face"
@@ -44,7 +42,6 @@ internal object RigFittedEyeDefinition {
         return legacy.copy(version = EyeFittedAlgorithm.VERSION,
             resolveParameter = { _, _, _ -> null },
             parameters = { EyeFittedAlgorithm.parameters(RigFittedEyeSource.parameterNames()) },
-            evaluate = { _, _, _ -> error("Fitted eye v3 requires captured scaffold inputs") },
             plugin = algorithm, upstreamInputs = true, changeWrites = EyeFittedSourceAlgorithm.WRITES,
             authorContext = { RigFittedEyeSource.captureTransition(requireNotNull(source), it) })
     }

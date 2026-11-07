@@ -37,7 +37,6 @@ internal object RigMouthDepthModifier {
             plugin = algorithm,
             upstreamInputs = true,
             changeWrites = setOf("mesh", "deformer"),
-            evaluate = { _, _, _ -> error("Mouth interior depth requires captured source inputs") },
             authorContext = { requireNotNull(source).capture(it, version) },
         )
 

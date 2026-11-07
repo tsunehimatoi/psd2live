@@ -26,7 +26,6 @@ internal object RigFittedFaceDefinition {
         }
         return legacy.copy(version = FittedFaceV2Algorithm.VERSION,
             parameters = { angles().map { io.github.psd2live.format.model.Parameter(it.id.raw, it.name, it.min, it.max, it.default) } },
-            evaluate = { _, _, _ -> error("Fitted face v2 requires captured scaffold inputs") },
             plugin = algorithm, upstreamInputs = true, changeWrites = FittedFaceV2Algorithm.WRITES,
             composableKinds = FittedFaceV2Algorithm.WRITES, resolveParameter = { _, _, _ -> null },
             authorContext = { requireNotNull(source).capture(it) })
@@ -39,7 +38,6 @@ internal object RigFittedFaceDefinition {
             override val canonicalOptInType = FittedFaceV2Algorithm.TYPE
         }
         return definition(source).copy(version = FittedFaceV3Algorithm.VERSION, plugin = algorithm,
-            evaluate = { _, _, _ -> error("Fitted face v3 requires captured scaffold and body inputs") },
             authorContext = { requireNotNull(source).capture(it, afterBody = true) })
     }
 

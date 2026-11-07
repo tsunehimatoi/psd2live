@@ -45,7 +45,6 @@ internal object RigGloomModifier {
                     "Gloom targets must have captured source layers"
                 }
             },
-            evaluate = { _, _, _ -> error("Gloom requires resolved modifier inputs") },
             plugin = algorithm,
             changeWrites = GloomBindingAlgorithm.WRITES,
             upstreamInputs = true,

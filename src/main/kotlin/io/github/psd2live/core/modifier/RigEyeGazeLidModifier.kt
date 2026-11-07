@@ -28,7 +28,6 @@ internal object RigEyeGazeLidModifier {
             version = if (modern) EyeGazeLidV3Algorithm.VERSION else EyeGazeLidAlgorithm.VERSION,
             parameters = { emptyList() },
             resolveParameter = { _, _, _ -> null },
-            evaluate = { _, _, _ -> error("Lid gaze requires captured source inputs") },
             plugin = if (modern) modernAlgorithm else algorithm,
             changeWrites = EyeGazeLidAlgorithm.WRITES,
             upstreamInputs = true,

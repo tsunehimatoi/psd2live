@@ -26,7 +26,6 @@ internal object RigCheekModifier {
             plugin = algorithm,
             upstreamInputs = true,
             changeWrites = setOf("mesh", "parameter", "hierarchy"),
-            evaluate = { _, _, _ -> error("Cheek requires captured source measurements") },
             authorContext = { requireNotNull(source).capture(it) },
         )
 

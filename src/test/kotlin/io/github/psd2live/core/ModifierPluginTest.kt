@@ -106,7 +106,6 @@ class ModifierPluginTest {
             original.copy(id = id, algorithms = listOf(algorithm))))
         val incompatible = store.install(path.toString())
         val adapter = RigModifierDefinition("physics", 1, requires = setOf("rig.scaffold"),
-            evaluate = { _, _, _ -> error("must not execute captured adapter") },
             plugin = object : ContextualModifierAlgorithmPlugin {
                 override fun evaluate(input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext,
                                       checkpoint: () -> Unit): RigIR = error("must not execute captured adapter")
@@ -127,7 +126,7 @@ class ModifierPluginTest {
             assertTrue(failure.message.orEmpty().contains("$id@${incompatible.reference.version}"))
             assertFailsWith<IllegalArgumentException> { definition.parameters(instance) }
             assertFailsWith<IllegalArgumentException> { definition.validate(input, instance) }
-            assertFailsWith<IllegalArgumentException> { definition.evaluate(input, instance) {} }
+            assertFailsWith<IllegalArgumentException> { definition.plugin.evaluate(input, instance) {} }
         }
     }
 
@@ -315,7 +314,7 @@ class ModifierPluginTest {
 
     @Test fun pinnedPackageCannotResolveToAnotherBuild() {
         val reference = ModifierPluginReference("test-plugin", "1", "a".repeat(64))
-        val definition = RigModifierDefinition("test-plugin/fade", 1, evaluate = { rig, _, _ -> rig }, pluginReference = reference)
+        val definition = RigModifierDefinition("test-plugin/fade", 1, plugin = ModifierAlgorithmPlugin { rig, _, _ -> rig }, pluginReference = reference)
         val registry = RigModifierRegistry(listOf(definition))
         val instance = RigModifierInstance("m1", definition.type, 1, listOf(ModifierTarget("mesh", "body")), plugin = reference.copy(digest = "b".repeat(64)))
         assertFailsWith<IllegalArgumentException> { registry.definition(instance) }
@@ -375,10 +374,10 @@ class ModifierPluginTest {
 
     @Test fun componentCacheReusesIndependentAlgorithmWithoutErasingUpstreamChanges() {
         var calls = 0
-        val first = RigModifierDefinition("input", 1, evaluate = { rig, instance, _ ->
+        val first = RigModifierDefinition("input", 1, plugin = ModifierAlgorithmPlugin { rig, instance, _ ->
             rig.copy(clips = listOf(Clip("clip", instance.config.getValue("name").jsonPrimitive.content, "Idle", "clip", 1f, 30f, false, null, null, emptyList(), emptyList())))
         })
-        val second = RigModifierDefinition("part", 1, cacheReads = setOf("part"), evaluate = { rig, _, _ ->
+        val second = RigModifierDefinition("part", 1, cacheReads = setOf("part"), plugin = ModifierAlgorithmPlugin { rig, _, _ ->
             calls++; rig.copy(parts = rig.parts.map { it.copy(drawOrder = it.drawOrder + 1) })
         })
         val rig = RigIR(Canvas(1f, 1f), emptyList(), parts = listOf(Part("body", "Body", emptyList())))
@@ -402,7 +401,7 @@ class ModifierPluginTest {
                 return input.copy(meshes = input.meshes.map { it.copy(opacity = context.resources.getValue("opacity").read()[0] / 10f) })
             }
         }
-        val definition = RigModifierDefinition("source", 1, evaluate = plugin::evaluate, plugin = plugin,
+        val definition = RigModifierDefinition("source", 1, plugin = plugin,
             cacheReads = setOf("mesh"), authorContext = { source })
         val evaluator = RigModifierEvaluator(RigModifierRegistry(listOf(definition)))
         val rig = RigIR(Canvas(1f, 1f), emptyList(), meshes = listOf(Mesh("body", "Body", null, geometry = null, offsets = null)))
@@ -422,11 +421,11 @@ class ModifierPluginTest {
     @Test fun capturedAuthorInputsAreReusedOnlyWithinTheSameSourceAndPrefix() {
         var captures = 0
         var opacity = 1
-        val source = RigModifierDefinition("source", 1, evaluate = { rig, _, _ -> rig }, authorContext = {
+        val source = RigModifierDefinition("source", 1, plugin = ModifierAlgorithmPlugin { rig, _, _ -> rig }, authorContext = {
             captures++
             ModifierAlgorithmContext(resources = mapOf("opacity" to ModifierAlgorithmResource(byteArrayOf(opacity.toByte()))))
         })
-        val suffix = RigModifierDefinition("suffix", 1, evaluate = { rig, _, _ -> rig })
+        val suffix = RigModifierDefinition("suffix", 1, plugin = ModifierAlgorithmPlugin { rig, _, _ -> rig })
         val evaluator = RigModifierEvaluator(RigModifierRegistry(listOf(source, suffix)))
         val rig = RigIR(Canvas(1f, 1f), emptyList(), meshes = listOf(Mesh("body", "Body", null, geometry = null, offsets = null)))
         val targets = listOf(ModifierTarget("mesh", "body"))

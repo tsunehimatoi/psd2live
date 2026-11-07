@@ -9,5 +9,5 @@ internal object SimulationAlgorithmPlugin {
     val definition = RigModifierDefinition("simulation", 1,
         motionInputs = { RigSimEdit.fromJson(it.config).trainingClips.keys }, validate = { _, instance ->
         require(instance.targets.all { it.kind == "mesh" }) { "A simulation modifier targets meshes" }
-    }, composableKinds = setOf("mesh", "hierarchy"), evaluate = implementation::evaluate, plugin = implementation)
+    }, composableKinds = setOf("mesh", "hierarchy"), plugin = implementation)
 }

@@ -34,7 +34,7 @@ internal object RigMouthCaptureModifier {
         return legacy.copy(version = version,
             parameters = { MouthCaptureAlgorithm.parameters(capture(it)) }, resolveParameter = { _, _, _ -> null },
             plugin = algorithm, upstreamInputs = true, changeWrites = MouthCaptureAlgorithm.WRITES,
-            evaluate = { _, _, _ -> error("Mouth capture requires captured fitted-mouth inputs") }, authorContext = ::capture)
+            authorContext = ::capture)
     }
 
     private fun RigModifierSource.capture(instance: RigModifierInstance, version: Int): ModifierAlgorithmContext {

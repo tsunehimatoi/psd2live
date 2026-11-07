@@ -61,7 +61,6 @@ internal object RigMouthCheekLidModifier {
             version = MouthCheekLidAlgorithm.VERSION,
             parameters = { emptyList() },
             resolveParameter = { _, _, _ -> null },
-            evaluate = { _, _, _ -> error("Cheek and lid coupling requires captured lid inputs") },
             plugin = algorithm,
             changeWrites = MouthCheekLidAlgorithm.WRITES,
             upstreamInputs = true,

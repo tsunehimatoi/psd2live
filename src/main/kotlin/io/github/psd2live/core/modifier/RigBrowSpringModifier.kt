@@ -68,7 +68,6 @@ internal object RigBrowSpringModifier {
             version = BrowSpringAlgorithm.VERSION,
             parameters = { BrowSpringAlgorithm.parameters(capture(it)) },
             resolveParameter = { _, _, _ -> null },
-            evaluate = { _, _, _ -> error("Brow spring requires captured source inputs") },
             plugin = algorithm,
             changeWrites = BrowSpringAlgorithm.writes,
             upstreamInputs = true,

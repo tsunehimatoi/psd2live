@@ -38,9 +38,6 @@ internal object RigHairLegacySource {
             plugin = algorithm,
             authorContext = { requireNotNull(source).hairLegacyContext(it) },
             changeWrites = setOf("mesh", "deformer", "parameter", "hierarchy"),
-            evaluate = { rig, instance, checkpoint ->
-                algorithm.evaluate(rig, instance, requireNotNull(source).hairLegacyContext(instance), checkpoint)
-            },
         )
     }
 

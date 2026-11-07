@@ -39,7 +39,6 @@ internal object RigEyeSmileModifier {
             version = EyeSmileAlgorithm.VERSION,
             parameters = { EyeSmileAlgorithm.parameters(parameterNames()) },
             resolveParameter = { _, _, _ -> null },
-            evaluate = { _, _, _ -> error("Eye smile requires captured source inputs") },
             plugin = algorithm,
             changeWrites = EyeSmileAlgorithm.WRITES,
             upstreamInputs = true,

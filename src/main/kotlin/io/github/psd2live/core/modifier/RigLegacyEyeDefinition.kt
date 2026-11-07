@@ -27,7 +27,6 @@ internal object RigLegacyEyeDefinition {
     fun definition(source: RigModifierSource?): RigModifierDefinition = RigLegacyBindings.definition(spec, source).copy(
         version = EyeLegacySourceAlgorithm.VERSION,
         parameters = { EyeFittedAlgorithm.parameters(parameterNames()) },
-        evaluate = { _, _, _ -> error("Legacy eye v2 requires captured scaffold inputs") },
         plugin = algorithm, upstreamInputs = true, changeWrites = EyeLegacySourceAlgorithm.WRITES,
         authorContext = { capture(requireNotNull(source), it) },
     )
