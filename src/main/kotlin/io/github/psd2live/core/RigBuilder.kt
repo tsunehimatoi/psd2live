@@ -1069,6 +1069,14 @@ object RigBuilder {
 			buildWithContext(inputAnalysis, atlas, config, meshCache, context, ids, onBindingInput)
 		}
 
+	/** Trace and bind ordinary source meshes without assembling a semantic rig. */
+	internal fun buildMaterials(input: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig,
+	                            meshCache: PreviewMeshCache): BuiltRig = RigBuildProfile.stage("build: ordinary materials") {
+		require(config.meshOnly && !config.generateDeformers && config.rigEdits == RigEditOverlay.Empty)
+		val context = rigContext(input, config, meshCache)
+		buildWithContext(input, atlas, config, meshCache, context, emptyMap(), materialsOnly = true)
+	}
+
     internal data class ScaffoldSourceInputs(val frames: kotlinx.serialization.json.JsonObject,
                                               val branches: kotlinx.serialization.json.JsonObject,
                                               val torso: TorsoFrame,
@@ -1560,6 +1568,7 @@ object RigBuilder {
 		context: RigContext,
 		stableDrawableIds: Map<String, DrawableId>,
         onBindingInput: ((() -> PuppetModel) -> Unit)? = null,
+		materialsOnly: Boolean = false,
 	): BuiltRig {
         val generatedLips = generatedMouthLips(inputAnalysis)
 		val analysis = context.analysis
@@ -1589,7 +1598,7 @@ object RigBuilder {
 		val baseLayers = if (!v2) analysis.layers
 			else analysis.layers.filterNot { resolution.isPartLayer(it.source.id.raw) } + passengers.filterNot { resolution.isPartLayer(it.source.id.raw) }
 		// The face lean rewrites each warp's own grid and nothing else, so it commutes with the re-parenting below.
-		val leaned = faceTurnAndLean(context, config, stages)
+		val leaned = if (materialsOnly) emptyList() else faceTurnAndLean(context, config, stages)
 
 		val deformers = if (config.parentOverrides.isEmpty()) leaned else {
 			val deformerById = rawDeformers.associateBy { it.id.raw }
@@ -1614,18 +1623,23 @@ object RigBuilder {
 		val layerIdByDrawable = linkedMapOf<String, String>()
         val lipOwnerById = mutableMapOf<DrawableId, DrawableId>()
 		val classifiedByDrawable = mutableMapOf<DrawableId, ClassifiedLayer>()
-        val expressionLayers = analysis.layers.mapNotNull { layer ->
-            val override = config.layerOverrides[layer.source.id.raw]
-            val type = override?.type ?: layer.semantic.type
-            val parameter = (override?.parameter ?: layer.semantic.parameter).trim()
-            if (type == LayerType.PRESET || parameter.isBlank()) null else
-                io.github.psd2live.algorithms.binding.ExpressionChannels.Layer(parameter,
-                    if (type == LayerType.SWITCH) override?.switchId ?: layer.semantic.switchId else null)
+		// The finished model can later make copies of brows and eye parts covered by the bangs.
+		fun seeThrough(puppet: PuppetModel) = SeeThroughLayers.candidates(puppet, config.alphaThreshold) { id ->
+			classifiedByDrawable[id]?.takeIf { inferredGroup(it, analysis.anchors) == LayerGroup.HEAD }
+		}
+        val expressions by lazy(LazyThreadSafetyMode.NONE) {
+            val layers = analysis.layers.mapNotNull { layer ->
+                val override = config.layerOverrides[layer.source.id.raw]
+                val type = override?.type ?: layer.semantic.type
+                val parameter = (override?.parameter ?: layer.semantic.parameter).trim()
+                if (type == LayerType.PRESET || parameter.isBlank()) null else
+                    io.github.psd2live.algorithms.binding.ExpressionChannels.Layer(parameter,
+                        if (type == LayerType.SWITCH) override?.switchId ?: layer.semantic.switchId else null)
+            }
+            io.github.psd2live.algorithms.binding.ExpressionChannels.catalog(layers,
+                io.github.psd2live.core.recipe.RigModules.builds(io.github.psd2live.core.recipe.RigModules.EXPRESSION_TOGGLES,
+                    config, io.github.psd2live.core.recipe.RecipeSubject.of(analysis)))
         }
-        val expressions = io.github.psd2live.algorithms.binding.ExpressionChannels.catalog(expressionLayers,
-            io.github.psd2live.core.recipe.RigModules.builds(io.github.psd2live.core.recipe.RigModules.EXPRESSION_TOGGLES, config, io.github.psd2live.core.recipe.RecipeSubject.of(analysis)))
-        val customParams = expressions.parameters
-        val switchParamKeys = expressions.switchKeys
 
 		val builtDeformPaths = mutableListOf<DeformPath>()
 		// Expressions change channels during assembly, not mesh geometry or lip ribbons.
@@ -1637,10 +1651,11 @@ object RigBuilder {
 		val orderedLayers = orderMouthLayers(baseLayers.sortedBy { it.source.order })
 		val orderStep = generatedOrderStep(config.drawOrderStep, orderedLayers.size)
 		// A passenger keys a toggle or switch only while the resolved layers still need its parameter.
-		val generatedChains = hairChains(context.analysis, context.faceRig, config)
-			.filter { chain -> context.deformers.any { it.id.raw == chain.warpId } }
-		val moduleParams = moduleParameters(context, config, generatedChains)
-		val knownParameters = if (!v2) emptySet() else (standardParameters(context, config) + moduleParams + customParams).mapTo(HashSet()) { it.id }
+		val generatedChains by lazy(LazyThreadSafetyMode.NONE) {
+			hairChains(context.analysis, context.faceRig, config).filter { chain -> context.deformers.any { it.id.raw == chain.warpId } }
+		}
+		val moduleParams by lazy(LazyThreadSafetyMode.NONE) { moduleParameters(context, config, generatedChains) }
+		val knownParameters = if (!v2) emptySet() else (standardParameters(context, config) + moduleParams + expressions.parameters).mapTo(HashSet()) { it.id }
 		val ghostIds = LinkedHashSet<DrawableId>()
 		for ((drawIndex, layer) in orderedLayers.withIndex()) {
 			val placement = atlas.placementByLayerId[layer.source.id.raw]
@@ -1661,7 +1676,7 @@ object RigBuilder {
 			reservedDrawableIds += id
 			val seed = seeds[layer.source.id.raw]
 			val parts = if (seed != null) {
-				val (drawable, bounds) = pinnedPart(seed, layer, context, config, shouldBuildDeformers, switchParamKeys, stages,
+				val (drawable, bounds) = pinnedPart(seed, layer, context, config, shouldBuildDeformers, expressions.switchKeys, stages,
 					0f, placement.page)
 				val pinned = requireNotNull(drawable.mesh)
 				val offsets = FloatArray(pinned.uvs.size) { index -> pinned.uvs[index] -
@@ -1684,8 +1699,8 @@ object RigBuilder {
 			builtDeformPaths.addAll(parts.mouthPaths)
 			val override = config.layerOverrides[layer.source.id.raw]
 			val classification = override?.type ?: layer.semantic.type
-			val channelGrids = if (config.meshOnly && classification == LayerType.PRESET) ChannelGrids.Empty
-				else withEyeOpacity(channelStage(layer, override, switchParamKeys, config.rigTuning, context.hasClosedMouth, stages, eyeSwap(context, config, layer), mouthSwap(context, config, layer), eyeOpenMax(context, config), context.fittedMouth(config)?.let { it.rig?.fit?.layered != null && it.covers(layer) } == true),
+			val channelGrids = if (materialsOnly || config.meshOnly && classification == LayerType.PRESET) ChannelGrids.Empty
+				else withEyeOpacity(channelStage(layer, override, expressions.switchKeys, config.rigTuning, context.hasClosedMouth, stages, eyeSwap(context, config, layer), mouthSwap(context, config, layer), eyeOpenMax(context, config), context.fittedMouth(config)?.let { it.rig?.fit?.layered != null && it.covers(layer) } == true),
 				context, config, layer)
 					.let { withMoodChannels(it, context, config, layer) }.let { withMouthShading(it, context, config, layer) }.let { grids ->
 					if (v2 && resolution.isStubLayer(layer.source.id.raw) &&
@@ -1699,7 +1714,7 @@ object RigBuilder {
 				blendMode = blendMode(layer.source.blend),
 				maskedBy = emptyList(),
 				mesh = parts.mesh,
-				geometryGrid = parts.geometryGrid,
+				geometryGrid = parts.geometryGrid.takeUnless { materialsOnly },
 				channelGrids = channelGrids,
 				// Cubism Editor stores draw order as an integer. Keeping this integral also makes
 				// fresh CMO3 conversion lossless instead of reporting one advisory per drawable; the gap
@@ -1736,6 +1751,17 @@ object RigBuilder {
 			layerIdByDrawable[id.raw] = layer.source.id.raw
 		}
 
+		if (materialsOnly) {
+			val source = analysis.source
+			val material = PuppetModel(emptyList(), emptyList(), emptyList(), drawables, emptyList(), null,
+				canvasWidth = source.widthPx.toFloat(), canvasHeight = source.heightPx.toFloat(),
+				worldOriginX = source.widthPx * 0.5f, worldOriginY = -source.heightPx * 0.5f, runtimeTarget = config.runtimeTarget)
+			val bound = UvBinding.bind(material, inputAnalysis, atlas) { classifiedByDrawable[it.id] }.puppet
+			val center = faceRig.coordinateSpace.toCanvas(faceRig.centerX, faceRig.centerY)
+			return BuiltRig(bound, pageByDrawable, sourceBoundsByDrawable, layerIdByDrawable, center.first, center.second,
+				faceRig.radiusX, faceRig.radiusY, warnings, faceRig.initialAngleZ, seeThrough = seeThrough(bound))
+		}
+
 		// The parts, after every layer of the base: ids from their records, draw order from the drawable they replace.
 		val partDrawables = ArrayList<Drawable>()
 		val deferredParts = LinkedHashSet<DrawableId>()
@@ -1759,7 +1785,7 @@ object RigBuilder {
 			val order = config.drawOrderOverrides[part.layerId] ?: config.drawOrderOverrides[part.drawableId.raw]
 				?: (drawables.firstOrNull { it.id == standIn } ?: partDrawables.firstOrNull { it.id == standIn })?.drawOrder
 				?: org.umamo.runtime.model.DEFAULT_DRAW_ORDER.toFloat()
-			val built = pinnedPart(part, layer, context, config, shouldBuildDeformers, switchParamKeys, stages, order,
+			val built = pinnedPart(part, layer, context, config, shouldBuildDeformers, expressions.switchKeys, stages, order,
 				atlas.placementByLayerId.getValue(part.layerId).page, mouthApertures[part.recordIndex], part.drawableId in resolution.ribbonParts)
 			partDrawables += built.first
 			if (part.parent != null) deferredParts += part.drawableId
@@ -1907,7 +1933,7 @@ object RigBuilder {
 		val partSlots = LinkedHashMap<DrawableId, PartId>()
 		for (part in maskedParts) partSlots[part.id] = scaffoldSlot(classifiedByDrawable.getValue(part.id), analysis.anchors).id
 		val standardIds = (StandardParameters.all + moduleParams).map { it.id }.toSet()
-		val uniqueCustomParams = customParams.filter { it.id !in standardIds }
+		val uniqueCustomParams = expressions.parameters.filter { it.id !in standardIds }
 		val parameterTree = parameterTree(uniqueCustomParams, moduleParams)
 		// Geometry is generated against the art alone: tiles without placements, offsets for uvs.
 		val (unboundAtlas, artSources) = UvBinding.unboundAtlas(inputAnalysis,
@@ -1943,10 +1969,6 @@ object RigBuilder {
 		val canvasSkinned = skeleton?.let { SkeletonCanvasSkin.placedByRecords(config.rigEdits) }.orEmpty()
 		val faceCenterCanvas = faceRig.coordinateSpace.toCanvas(faceRig.centerX, faceRig.centerY)
 		var skeletonKey: String? = null
-		// The brows and eye parts the bangs cover, recorded whatever the settings: the finished rig makes the copies.
-		fun seeThrough(puppet: PuppetModel) = SeeThroughLayers.candidates(puppet, config.alphaThreshold) { id ->
-			classifiedByDrawable[id]?.takeIf { inferredGroup(it, analysis.anchors) == LayerGroup.HEAD }
-		}
         onBindingInput?.let { capture ->
             require(!v2 && skeleton == null) { "Binding input capture requires an ordinary generated template" }
             val input by lazy(LazyThreadSafetyMode.NONE) {

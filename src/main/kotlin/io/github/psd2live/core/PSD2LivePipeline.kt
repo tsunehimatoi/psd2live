@@ -230,7 +230,7 @@ class PSD2LivePipeline {
 	private fun generateWithAtlasEncoding(inputs: GenerationInputs, config: PipelineConfig,
 	                                      progress: ProgressListener): GeneratedBase {
 		val pages = inputs.atlas.pages.filterNot { it.hasCanonicalPng }
-		if (pages.isEmpty()) return generatedBase(inputs, config, progress)
+		if (pages.isEmpty()) return generatedBase(inputs, config, progress, materialsOnly = true)
 		// A fresh ordinary source uses this same atlas for the modifier IR. Mesh generation only needs its layout.
 		val encoding = FutureTask {
 			RigBuildProfile.stage("modifier author: encode atlas pages") {
@@ -239,7 +239,7 @@ class PSD2LivePipeline {
 		}
 		Thread.ofVirtual().name("psd2live-author-atlas").start(encoding)
 		try {
-			val base = generatedBase(inputs, config, progress)
+			val base = generatedBase(inputs, config, progress, materialsOnly = true)
 			RigBuildProfile.stage("modifier author: wait for atlas pages") {
 				try { encoding.get() }
 				catch (failure: ExecutionException) { throw failure.cause ?: failure }
@@ -250,14 +250,18 @@ class PSD2LivePipeline {
 		}
 	}
 
-	private fun generatedBase(inputs: GenerationInputs, config: PipelineConfig, progress: ProgressListener): GeneratedBase {
+	private fun generatedBase(inputs: GenerationInputs, config: PipelineConfig, progress: ProgressListener,
+	                          materialsOnly: Boolean = false): GeneratedBase {
 		val baselineConfig = inputs.baselineConfig
 		val analyses = inputs.analyses
 		val generationConfig = inputs.generationConfig
 		val atlas = inputs.atlas
 		val visible = inputs.visible
 		if (config.generationSource == null) {
-			val generated = withoutCreatedMeshes(RigBuilder.build(analyses.geometry, atlas, generationConfig, meshCache), config)
+			val base = if (materialsOnly && !generationConfig.deferRig && generationConfig.rigPendingLayerIds.isEmpty())
+				RigBuilder.buildMaterials(analyses.geometry, atlas, generationConfig, meshCache)
+			else RigBuilder.build(analyses.geometry, atlas, generationConfig, meshCache)
+			val generated = withoutCreatedMeshes(base, config)
 			if (analyses.geometry === analyses.textures) return GeneratedBase(visible, atlas, generated)
 			// Creation records replace their geometry with transparent stand-ins. Their texture inventory must
 			// still describe the current rasters, or replay binds the new meshes to a transparent 1 x 1 tile.

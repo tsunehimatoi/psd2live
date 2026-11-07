@@ -1,13 +1,17 @@
 package io.github.psd2live.application
 
+import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.RigIrCompiler
 import io.github.psd2live.core.RigPreviewModel
 import io.github.psd2live.core.modifier.BuiltinModifierPlugins
+import io.github.psd2live.core.modifier.RigModifierPipeline
 import io.github.psd2live.core.modifier.RigModifierStack
+import io.github.psd2live.core.modifier.RigOrdinaryMaterials
 import io.github.psd2live.core.recipe.RigRecipe
 import io.github.psd2live.project.WorkspaceRevisions
 import io.github.psd2live.project.rawConfig
 import io.github.psd2live.scenario.Characters
+import io.github.psd2live.targets.cubism.PuppetIr
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
 import org.junit.jupiter.api.io.TempDir
@@ -40,6 +44,11 @@ class WorkspaceSourceImporterTest {
             if (mode == WorkspaceInitialModifiers.EMPTY) {
                 assertTrue(stack.instances.isEmpty())
                 assertTrue(installed.model.rig.puppet.deformers.isEmpty())
+                val model = installed.model
+                val config = RigModifierPipeline.ordinaryConfig(model.config).copy(meshOnly = true)
+                val previous = RigOrdinaryMaterials.of(RigBuilder.build(model.analysis, model.atlas, config), model.analysis)
+                assertEquals(PuppetIr.toIr(previous.puppet), PuppetIr.toIr(model.baseRig.puppet))
+                assertEquals(previous.seeThrough, model.baseRig.seeThrough)
             } else {
                 assertTrue(stack.instances.all { it.presetGroup == "modern" })
                 assertTrue(stack.instances.any { it.type == "face/fitted" })
