@@ -3105,6 +3105,42 @@ tasks.register("pluginMouthCheekLidV5") {
     }
 }
 
+val mouthCheekLidV6WorkerJar = registerIsolatedBindingWorker(
+    "mouthCheekLidV6", "mouth-cheek-lid-v6", "worker-mouth-cheek-lid-v6", "io.github.psd2live.algorithms.binding.MouthCheekLidV6Worker",
+)
+
+kotlin.target.compilations.named("mouthCheekLidV6") {
+    associateWith(kotlin.target.compilations.getByName("eyeSmile"))
+}
+mouthCheekLidV6WorkerJar.configure {
+    from(sourceSets["eyeSmile"].output) { include("**/EyeSmileInputs*.class") }
+}
+
+tasks.register("pluginMouthCheekLidV6") {
+    dependsOn(mouthCheekLidV6WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-cheek-lid-v6")
+    val packageVersion = project.version.toString()
+    inputs.file(mouthCheekLidV6WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthCheekLidV6WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682e636865656b2d6c6964.v6"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Cheeks lift lids",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/coupling","aliases":["mouth.cheek-lid"],"version":6,"name":"Cheeks lift lids","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","mouth/fitted","eye/fitted"],"contextVersion":2,
+               "reads":["mesh","parameter","canvas","deformer"],"writes":["mesh","deformer"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val mouthTongueV3WorkerJar = registerIsolatedBindingWorker(
     "mouthTongueV3", "mouth-tongue-v3", "worker-mouth-tongue-v3", "io.github.psd2live.algorithms.binding.MouthTongueV3Worker",
 )

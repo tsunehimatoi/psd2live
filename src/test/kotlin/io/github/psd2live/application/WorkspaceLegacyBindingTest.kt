@@ -2129,6 +2129,69 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun closedMouthCheekLidsMatchTheHistoricalStageAndInstalledWorker(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true, closedMouth = true)
+        val choices = WorkspaceInitialPreset()
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val versions = mapOf("mouth/fitted" to 4, "mouth.outline" to 5, "mouth.vowel" to 5,
+            "mouth.capture" to 4, "mouth.tongue" to 4, "mouth.jaw" to 6,
+            "face/fitted" to 3, "eye/fitted" to 5, "eye.smile" to 3, "eye.wide" to 3,
+            "eye.gaze-lid" to 3, "eye.emotion" to 3, "eye.lid-fade" to 3, "eye.highlight" to 3,
+            "eye.aftershock" to 4, "eye.squash" to 4)
+        val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
+            choices, preferSourceBindings = true, requestedVersions = versions)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val locked = stack.instances.single { it.type == "mouth.cheek-lid" }
+        assertEquals(1, locked.version)
+        val index = stack.index(locked.id)
+        assertTrue(versions.keys.filter { it.startsWith("mouth") }.all { type -> stack.instances.take(index).any { it.type == type } })
+        val expected = assertNotNull(baseline.modifierEvaluation).outputs
+        val before = expected[index - 1]
+        assertTrue(expected[index].meshes.any { mesh -> mesh != before.meshes.single { it.id == mesh.id } })
+        fun candidate(instance: RigModifierInstance) = initialized.copy(rigEdits = initialized.rigEdits.copy(
+            modifierStack = stack.copy(instances = stack.instances.map { if (it.id == instance.id) instance else it }).toJson()))
+        val old = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 5))
+        assertContains(assertFailsWith<IllegalArgumentException> {
+            WorkspacePreviewBuilder().build(candidate(locked.copy(version = 5, plugin = old.reference)))
+        }.message.orEmpty(), "requires a compatible fitted mouth")
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 6))
+        val independent = locked.copy(version = 6, plugin = artifact.reference)
+        val enabled = RigStageCache.enabled
+        RigStageCache.enabled = false
+        val actual = try { WorkspacePreviewBuilder().build(candidate(independent)) } finally { RigStageCache.enabled = enabled }
+        val evaluation = assertNotNull(actual.modifierEvaluation)
+        assertFaceEquals(before, evaluation.outputs[index - 1])
+        assertFaceEquals(expected[index], evaluation.outputs[index])
+        assertFaceEquals(RigIrCompiler.compile(baseline, tileArt = true), RigIrCompiler.compile(actual, tileArt = true))
+
+        val directory = Files.createTempDirectory("closed-cheek-lid-")
+        val preferences = Preferences.userRoot().node("closed-cheek-lid/" + UUID.randomUUID())
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+            val installed = store.snapshot().single()
+            val reading = assertNotNull(evaluation.readAlgorithms[independent.id])
+            val context = reading.context
+            val mouth = context.upstream.single { it.capability == "mouth/fitted" }
+            assertEquals(4, mouth.version)
+            assertEquals(BuiltinModifierPlugins.reference(mouth.type, 4), mouth.plugin)
+            assertTrue(reading.reads.keys.none { it.section in setOf("mesh", "deformer") && it.id == null })
+            val forged = context.withUpstream(context.upstream.map { if (it == mouth) it.copy(version = 3) else it })
+            val plugin = RigMouthCheekLidModifier.closedDefinition(RigModifierSource.of(actual)).plugin as ReadingModifierAlgorithmPlugin
+            assertContains(assertFailsWith<IllegalArgumentException> {
+                plugin.changes(before, independent, forged) {}
+            }.message.orEmpty(), "requires fitted mouth v4")
+            assertFaceEquals(expected[index], ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(),
+                before, independent, {}, store, context = context))
+        } finally {
+            ModifierPluginWorkers.stop(artifact.reference)
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
     @Test fun fittedVowelsReplayAfterIndependentOutline(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
         val choices = WorkspaceInitialPreset()
