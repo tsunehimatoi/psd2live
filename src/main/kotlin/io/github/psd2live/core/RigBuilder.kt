@@ -3519,6 +3519,27 @@ object RigBuilder {
 		return native.copy(blendShapes = neutralized(parts.blendShapes, native))
 	}
 
+    /** Source meshes and frames needed by clothing attachment residuals. */
+    internal fun ribbonBindingSource(analysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig,
+                                     cache: PreviewMeshCache, ids: Map<String, DrawableId>): Pair<PuppetModel, List<io.github.psd2live.core.fit.HairChain>> {
+        val prepared = if (config.mouthOutlineEnabled) MouthLipLayers.prepare(analysis, config, cache) else analysis
+        val context = rigContext(prepared, config, cache)
+        val layers = context.analysis.layers.associateBy { it.source.id.raw }
+        val deformers = faceTurnAndLean(context, config, stagesOf(cache))
+        val chains = hairChains(context.analysis, context.faceRig, config)
+            .filter { chain -> context.deformers.any { it.id.raw == chain.warpId } }
+        val meshes = ids.map { (layerId, meshId) ->
+            val layer = layers.getValue(layerId)
+            val seed = Drawable(meshId, layer.source.name, null, BlendMode.Normal, emptyList(), null, null, opacity = layer.source.opacity)
+            meshLoweringSource(layer, context, config, atlas, cache, seed)
+        }
+        val model = PuppetModel(parameters = standardParameters(context, config) + moduleParameters(context, config, chains),
+            parts = emptyList(), deformers = deformers, drawables = meshes, rootChildren = emptyList(), rootPartId = null,
+            canvasWidth = analysis.source.widthPx.toFloat(), canvasHeight = analysis.source.heightPx.toFloat(),
+            worldOriginX = analysis.source.widthPx * .5f, worldOriginY = -analysis.source.heightPx * .5f)
+        return CubismBlendShapes.lawful(withoutLegacyHairSway(model, config)) to chains
+    }
+
 	/** Projects the closed-mouth fallback's source meshes and arm frames without building the complete rig. */
 	internal fun closedMouthShellProjection(context: RigContext, config: PipelineConfig, atlas: PackedAtlas,
 	                                      cache: PreviewMeshCache, material: PuppetModel,

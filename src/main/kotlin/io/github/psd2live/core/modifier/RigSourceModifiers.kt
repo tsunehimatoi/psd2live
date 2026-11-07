@@ -30,13 +30,9 @@ internal class RigModifierSource(
     private val parameterDefinitions = java.util.IdentityHashMap<PuppetModel, List<io.github.psd2live.format.model.Parameter>>()
     internal val primaryByLayer = layersByMesh.entries.sortedBy { it.key in copiedMeshes }.groupBy { it.value }.mapValues { it.value.first().key }
     private val projections = java.util.IdentityHashMap<PuppetModel, MutableMap<String, PuppetModel>>()
-    private fun generated(strength: Float, tuning: RigTuning, headStrength: Float,
-                          recipe: RigRecipe, outline: RigModifierInstance?,
-                          featureDisplacement: Boolean, frontHairSway: Boolean, backHairSway: Boolean): BuiltRig {
+    private fun generated(native: PipelineConfig): BuiltRig {
         RigBuildProfile.count("modifier legacy rig builds")
-        val native = generationConfig(strength, tuning, headStrength, recipe, outline,
-            featureDisplacement, frontHairSway, backHairSway)
-        if (outline == null) return RigBuilder.build(analysis, atlas, native, meshCache)
+        if (!native.mouthOutlineEnabled) return RigBuilder.build(analysis, atlas, native, meshCache)
         val prepared = MouthLipLayers.prepare(analysis, native, meshCache)
         val lips = prepared.layers.filter { it.source is MouthLipLayer }
         val pack = { RigBuildProfile.stage("source artwork: outline atlas") { RigModifierRasterAssets.append(atlas, lips, native) } }
@@ -367,11 +363,22 @@ internal class RigModifierSource(
     }
 
     private fun buildTemplate(instances: List<RigModifierInstance>, scaffold: JsonObject, state: Map<String, RigModifierInstance>): Template {
+        val kept = state.keys.flatMapTo(HashSet()) { RigLegacyBindings.spec(it).parameters }
+        val byArea = instances.filter { RigLegacyBindings.spec(it.type).isBase }.associateBy { RigLegacyBindings.spec(it.type).area }
+        val native = RigBuildProfile.stage("modifier legacy template: ${instances.last().type}") {
+            generated(nativeBindingConfig(instances, scaffold))
+        }
+        val chains = native.generatedChains.filter { chain -> instances.any { chain.kind in RigModifierChains.kinds(it.type) } }
+            .map { RigModifierChains.Binding(it) }
+        return finishTemplate(native.puppet, chains, kept, byArea.keys)
+    }
+
+    private fun nativeBindingConfig(instances: List<RigModifierInstance>, scaffold: JsonObject): PipelineConfig {
+        val state = instances.associateBy { it.type }
         var tuning = RigTuning()
         for (spec in RigLegacyBindings.specs) state[spec.type]?.let { tuning = RigLegacyBindings.tuning(it, tuning) }
         val bodyStrength = state["body/legacy"]?.let(RigLegacyBindings::strength) ?: 1f
         val headStrength = (state[RigLegacyBindings.FITTED_FACE] ?: state["face/legacy"])?.let(RigLegacyBindings::strength) ?: 1f
-        val kept = state.keys.flatMapTo(HashSet()) { RigLegacyBindings.spec(it).parameters }
         val byArea = instances.filter { RigLegacyBindings.spec(it.type).isBase }.associateBy { RigLegacyBindings.spec(it.type).area }
         val recipe = if (instances.none { !it.type.endsWith("/legacy") }) RigRecipe.Legacy else RigRecipe(true,
             bases = RigModules.areas.associate { area ->
@@ -385,13 +392,35 @@ internal class RigModifierSource(
         val outline = state[RigModules.MOUTH_OUTLINE.id]
         val corrections = io.github.psd2live.project.WorkspaceSettingsCodec.decodeRecipe(scaffold["corrections"])
         val correctedRecipe = recipe.copy(moves = corrections.moves, eyeParts = corrections.eyeParts)
-        val native = RigBuildProfile.stage("modifier legacy template: ${instances.last().type}") {
-            generated(bodyStrength, tuning, headStrength, correctedRecipe, outline, scaffold["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
-                scaffold["frontHairSway"]?.jsonPrimitive?.boolean ?: true, scaffold["backHairSway"]?.jsonPrimitive?.boolean ?: true)
+        return generationConfig(bodyStrength, tuning, headStrength, correctedRecipe, outline,
+            scaffold["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
+            scaffold["frontHairSway"]?.jsonPrimitive?.boolean ?: true, scaffold["backHairSway"]?.jsonPrimitive?.boolean ?: true)
+    }
+
+    fun ribbonProjection(instance: RigModifierInstance, targets: List<ModifierTarget>, active: Boolean): List<Pair<PuppetModel, PuppetModel>> {
+        val scaffold = provider(instance)
+        return targets.groupBy { relevantBefore(instance, it) }.flatMap { (preceding, selected) ->
+            val items = if (active) preceding + instance else preceding
+            val config = nativeBindingConfig(items, scaffold.config)
+            val sources = selected.associate { target -> layersByMesh.getValue(target.id) to DrawableId(target.id) }
+            require(sources.size == selected.size) { "Ribbon source requires one mesh per drawing" }
+            val (native, generatedChains) = RigBuilder.ribbonBindingSource(analysis, atlas, config, meshCache, sources)
+            val chains = generatedChains.filter { chain -> items.any { chain.kind in RigModifierChains.kinds(it.type) } }
+                .map(RigModifierChains::Binding)
+            val kept = items.flatMapTo(hashSetOf()) { RigLegacyBindings.spec(it.type).parameters } + chains.flatMap { it.native.parameters }
+            val normalized = RigModifierChains.normalize(restricted(native, kept), chains)
+            val cache = HashMap<List<RigModifierChains.Owned>, RigModifierChains.Projection>()
+            selected.map { target ->
+                val projected = RigModifierChains.projection(normalized, target, items, chains, cache, ::restricted).model
+                val mesh = projected.drawables.single { it.id.raw == target.id }
+                fun scoped(model: PuppetModel): PuppetModel {
+                    val frames = model.deformers.associateBy { it.id }
+                    val branch = generateSequence(model.drawables.single { it.id == mesh.id }.parentDeformerId) { frames.getValue(it).parent }.toSet()
+                    return model.copy(drawables = model.drawables.filter { it.id == mesh.id }, deformers = model.deformers.filter { it.id in branch })
+                }
+                scoped(projected) to scoped(static(projected))
+            }
         }
-        val chains = native.generatedChains.filter { chain -> instances.any { chain.kind in RigModifierChains.kinds(it.type) } }
-            .map { RigModifierChains.Binding(it) }
-        return finishTemplate(native.puppet, chains, kept, byArea.keys)
     }
 
     private val neutralModels = HashMap<JsonObject, PuppetModel>()

@@ -3,6 +3,7 @@ package io.github.psd2live.core.modifier
 import io.github.psd2live.algorithms.binding.ChainKind
 import io.github.psd2live.algorithms.binding.RibbonsAlgorithm
 import io.github.psd2live.algorithms.binding.RibbonsInputs
+import io.github.psd2live.algorithms.binding.RibbonsResidualAlgorithm
 import io.github.psd2live.algorithms.binding.ScaffoldPairs
 import io.github.psd2live.algorithms.binding.ScaffoldParts
 import io.github.psd2live.core.*
@@ -11,6 +12,8 @@ import io.github.psd2live.core.recipe.RecipeSubject
 import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.i18n.tr
 import org.umamo.runtime.model.ParameterId
+import io.github.psd2live.format.compile.RigIrBinary
+import io.github.psd2live.targets.cubism.PuppetIr
 
 internal object RigRibbonsModifier {
     private val algorithm = object : ReadingModifierAlgorithmPlugin by RibbonsAlgorithm(), ModifierVersionSelection {
@@ -26,6 +29,31 @@ internal object RigRibbonsModifier {
             changeWrites = RibbonsAlgorithm.WRITES,
             plugin = algorithm,
         )
+
+    fun residualDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val worker = object : ReadingModifierAlgorithmPlugin by RibbonsResidualAlgorithm(),
+            ModifierVersionSelection, ModifierOptionalUpstream {
+            override val optionalUpstream = RibbonsResidualAlgorithm.PROFILE.keys
+            override val canonicalOptInType = RibbonsAlgorithm.TYPE
+        }
+        return definition(source).copy(version = RibbonsResidualAlgorithm.VERSION, plugin = worker,
+            authorContext = { captureResidual(requireNotNull(source), it) })
+    }
+
+    private fun captureResidual(source: RigModifierSource, instance: RigModifierInstance): ModifierAlgorithmContext {
+        val base = capture(source, instance)
+        val affected = RibbonsInputs.decode(base).layers.flatMap { it.meshes }.toSet()
+        val targets = instance.targets.filter { it.id in affected }
+        val resources = base.resources.toMutableMap()
+        for ((suffix, active) in listOf("before" to false, "after" to true)) {
+            for ((native, static) in source.ribbonProjection(instance, targets, active)) {
+                val id = native.drawables.single().id.raw
+                resources["ribbon/$id/$suffix"] = ModifierAlgorithmResource(RigIrBinary.encode(PuppetIr.toIr(native)))
+                resources["ribbon/$id/$suffix-static"] = ModifierAlgorithmResource(RigIrBinary.encode(PuppetIr.toIr(static)))
+            }
+        }
+        return ModifierAlgorithmContext(base.values, resources)
+    }
 
     fun capture(source: RigModifierSource, instance: RigModifierInstance): ModifierAlgorithmContext {
         val targets = instance.targets.mapTo(hashSetOf()) { it.id }
