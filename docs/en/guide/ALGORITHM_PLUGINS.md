@@ -28,6 +28,8 @@ Brow shape v2 is selectable by version with a shared v2 scaffold and compatible 
 
 Brow spring v2 adds rebound shapes and physics. It requires shared scaffold v2, fitted brows v1 or v2, and fitted eyes v2 when fitted eyes are present. Use v1 with edited brow geometry or keyforms, or when a lid or brow coupling already precedes it.
 
+Brow spring v3 is selectable after compatible brow blink and brow-lid coupling. It adds rebound shapes and physics while preserving the preceding brow frame and carriers. Use v1 with edited source frames or if the preceding carrier cannot be reproduced.
+
 Brow blink v2 links brow motion to blinking, widening and smiling. It requires a shared v2 scaffold and compatible fitted brows with their original height and angle grids. Use v1 if the brow topology or those keyforms have been edited.
 
 Brow-lid coupling v2 and v3 are selectable by version. Both require a shared v2 scaffold, fitted eyes v2 and compatible fitted brows. v3 supports fitted head turn and preceding gaze coupling while preserving existing deformer IDs. Use v1 for edited eye topology or parent frames, earlier cheek-lid or brow-lid coupling, or a separate depth-turn modifier.

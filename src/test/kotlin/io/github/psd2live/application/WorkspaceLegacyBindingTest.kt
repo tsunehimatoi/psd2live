@@ -3328,6 +3328,68 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun independentBrowSpringComposesWithBlinkAndLidCouplingInFullModernPreset(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
+        val config = WorkspacePresetBaseline.configure(art.config(), "modern")
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config))
+        val (initialized, expected) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
+            preferSourceBindings = true)
+        val builder = WorkspacePreviewBuilder()
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val spring = stack.instances.single { it.type == "brow.spring" }
+        assertEquals(1, spring.version)
+        val versions = mapOf("brow.blink" to 2, "brow.lid-coupling" to 3, "brow.spring" to 3)
+        val index = stack.index(spring.id)
+        assertTrue((versions.keys - spring.type).all { type -> stack.instances.take(index).any { it.type == type } })
+        suspend fun preview(candidate: RigModifierStack) = builder.build(initialized.copy(
+            rigEdits = initialized.rigEdits.copy(modifierStack = candidate.toJson()),
+        ))
+        val upgraded = stack.copy(instances = stack.instances.map { item ->
+            versions[item.type]?.let { item.copy(version = it, plugin = assertNotNull(BuiltinModifierPlugins.reference(item.type, it))) } ?: item
+        })
+        val current = preview(upgraded)
+        val old = assertNotNull(expected.modifierEvaluation).outputs
+        val actual = assertNotNull(current.modifierEvaluation).outputs
+        assertTrue(old[index].meshes.any { mesh -> mesh.shapes.any { it.parameter == "ParamBrowLSpring" } })
+        for ((before, after) in old[index].meshes.zip(actual[index].meshes)) assertEquals(before, after, before.id)
+        assertEquals(old[index], actual[index])
+        assertEquals(old.last(), actual.last())
+        assertEquals(RigIrCompiler.compile(expected), RigIrCompiler.compile(current))
+
+        val instance = upgraded.instances[index]
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(spring.type, instance.version))
+        val directory = Files.createTempDirectory("brow-spring-v3-package-")
+        val preferences = Preferences.userRoot().node("brow-spring-v3/${UUID.randomUUID()}")
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            for (name in artifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val definition = RigBrowSpringModifier.composedDefinition(RigModifierSource.of(current))
+            val providers = upgraded.instances.take(index).filter { it.type in definition.requires + definition.optionalUpstream }.map {
+                ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+            }
+            repeat(2) {
+                val installed = store.install(staging.toString())
+                assertEquals(artifact.reference, installed.reference)
+                val worker = ModifierPluginCatalog.definitions(store, captured = listOf(definition))
+                    .single { it.type == installed.manifest.algorithms.single().type }
+                val external = instance.copy(type = worker.type)
+                val context = worker.authorContext(external).withUpstream(providers)
+                assertEquals(actual[index], (worker.plugin as ContextualModifierAlgorithmPlugin)
+                    .evaluate(actual[index - 1], external, context) {})
+                ModifierPluginWorkers.stop(installed.reference)
+                store.uninstall(installed.reference)
+            }
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
     private suspend fun verifyBrowSpringWorker(fixture: Fixture) {
         val evaluated = assertNotNull(fixture.now.model.modifierEvaluation).outputs
         val before = evaluated[evaluated.lastIndex - 1]
