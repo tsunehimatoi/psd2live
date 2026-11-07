@@ -40,6 +40,8 @@ Eye emotion v2 adds fitted anger, sadness and squint shapes. It requires a share
 
 Mouth vowels v2 adds the five standard vowel parameters and their fitted shapes. It requires a shared source scaffold and a compatible fitted mouth. Use v1 with a separate closed-mouth drawing, preceding mouth modules or edited mouth topology or frames.
 
+Mouth capture v2 adds mouth-tracking keyforms using the original mesh and a compatible fitted mouth. It can follow an outline or vowel modifier. Use v1 for separate closed-mouth drawings, edited or lowered meshes, or other preceding mouth modules.
+
 Skirt sway v2 is selectable for topwear or bottomwear attached under the torso. It uses a shared source frame and preserves the existing skirt mesh, physics and simulation bindings in compatible presets.
 
 Arm swing v2 is selectable for the original hanging-arm frames of a shared v2 scaffold, with body and face bindings on that scaffold. Use v1 if an arm has been reparented or its neutral lattice edited.

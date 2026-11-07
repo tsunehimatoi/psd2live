@@ -1508,3 +1508,32 @@ tasks.register("pluginCreature") {
         """.trimIndent())
     }
 }
+
+val mouthCaptureWorkerJar = registerIsolatedBindingWorker(
+    "mouthCapture", "mouth-capture", "worker-mouth-capture", "io.github.psd2live.algorithms.binding.MouthCaptureWorker",
+)
+
+tasks.register("pluginMouthCapture") {
+    dependsOn(mouthCaptureWorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-capture")
+    val packageVersion = project.version.toString()
+    inputs.file(mouthCaptureWorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthCaptureWorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682e63617074757265.v2"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Mouth capture",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/capture","aliases":["mouth.capture"],"version":2,"name":"Mouth capture","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","mouth/fitted"],"contextVersion":2,
+               "reads":["mesh","parameter","hierarchy"],"writes":["mesh","parameter","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
