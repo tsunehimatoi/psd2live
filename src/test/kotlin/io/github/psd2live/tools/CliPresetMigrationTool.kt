@@ -1,5 +1,6 @@
 package io.github.psd2live.tools
 
+import io.github.psd2live.algorithms.binding.ScaffoldParts
 import io.github.psd2live.application.WorkspaceInitialPreset
 import io.github.psd2live.application.WorkspacePresetInitialization
 import io.github.psd2live.application.WorkspacePreviewBuilder
@@ -47,6 +48,7 @@ class CliPresetMigrationTool {
                 .map { chain -> "physics:chain:${chain.key}:${chain.suffix(rule.outputs.first().parameter)}" to rule.id }
         }.toMap()
         val layerByMesh = independent.baseRig.layerIdByDrawableId
+        val sharedParts = ScaffoldParts.build(emptyList()) { it }.parts.associate { "shared/part:${it.id.raw}" to it.id.raw }
         val ids = evaluated.deformers.map { it.id } + evaluated.parts.map { it.id } + evaluated.parameters.map { it.id } +
             evaluated.meshes.map { it.id } + evaluated.physics.groups.map { it.id } + evaluated.clips.map { it.id }
         val renamed = stack.copy(instances = stack.instances.map { instance ->
@@ -55,17 +57,27 @@ class CliPresetMigrationTool {
                 nativeName(instance, local, chainWarps, chainParameters, chainRules)?.let { local to it }
             }.toMap()
             val rasterAliases = if (instance.type == "mouth.outline") mouthRasters(names, layerByMesh) else emptyMap()
-            instance.copy(outputAliases = instance.outputAliases + aliases + rasterAliases)
+            val partAliases = if (instance.type == "rig.scaffold") sharedParts else emptyMap()
+            instance.copy(outputAliases = instance.outputAliases + aliases + rasterAliases + partAliases)
         })
         val candidate = WorkspacePreviewBuilder().build(initialized.copy(
             rigEdits = initialized.rigEdits.copy(modifierStack = renamed.toJson())))
         val expected = RigIrCompiler.compile(native, tileArt = true)
         val before = RigIrCompiler.compile(independent, tileArt = true)
         val after = RigIrCompiler.compile(candidate, tileArt = true)
+        // Keep the evaluated geometry and generated pixels, then try the raw export's shared atlas layout.
+        val repackedAtlas = AtlasLayout.pack(candidate.analysis.layers, config)
+        val repacked = RigLayerDeletion.rebind(candidate.rig, candidate.analysis, candidate.atlas,
+            candidate.analysis, repackedAtlas)
         output("cli-preset-migration").resolve("report.txt").writeText(buildString {
             appendLine("Names follow the source measurement. The native build is used only as the comparison baseline.")
             compare("instance IDs", expected, before)
             compare("historical names", expected, after)
+            if (repacked != null) {
+                appendLine("  shared atlas placement differences = " +
+                    repackedAtlas.placementByLayerId.keys.filter { repackedAtlas.placementByLayerId[it] != native.atlas.placementByLayerId[it] })
+                compare("shared atlas", expected, RigIrCompiler.compile(candidate.copy(rig = repacked, atlas = repackedAtlas), tileArt = true))
+            } else appendLine("Shared atlas comparison unavailable: a mesh has no matching source tile.")
         })
     }
 
@@ -123,5 +135,8 @@ class CliPresetMigrationTool {
         meshDifferences("positions") { it.geometry?.positions }
         meshDifferences("deformer assignment") { it.parent }
         meshDifferences("texture assignment") { Triple(it.textureSource, it.page, it.tile) }
+        val tiles = expected.textures.tileArt.associateBy { it.tile }
+        val pixels = actual.textures.tileArt.filter { it.tile in tiles && tiles[it.tile] != it }.map { it.tile }
+        appendLine("  tile pixel differences = $pixels")
     }
 }
