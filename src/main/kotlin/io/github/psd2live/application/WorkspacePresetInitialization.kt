@@ -49,6 +49,7 @@ import io.github.psd2live.algorithms.binding.MouthTongueV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV6Algorithm
 import io.github.psd2live.algorithms.binding.RibbonsResidualAlgorithm
+import io.github.psd2live.algorithms.binding.RibbonsV4Algorithm
 import io.github.psd2live.algorithms.binding.SkirtAlgorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
@@ -239,8 +240,17 @@ internal object WorkspacePresetInitialization {
             stack = stack.copy(instances = stack.instances.mapIndexed { index, entry ->
                 val upstream = stack.instances.take(index)
                 val (version, profile) = when {
-                    entry.type == RigModules.OUTFIT_RIBBONS.id && entry.version == 1 ->
-                        RibbonsResidualAlgorithm.VERSION to RibbonsResidualAlgorithm.PROFILE
+                    entry.type == RigModules.OUTFIT_RIBBONS.id && entry.version == 1 -> {
+                        val mouth = upstream.singleOrNull { it.type == RigModules.MOUTH_FITTED.id }?.version
+                        val skirt = upstream.singleOrNull { it.type == RigModules.OUTFIT_SKIRT.id }?.version
+                        when {
+                            mouth == MouthFittedV3Algorithm.VERSION && skirt == SkirtAlgorithm.VERSION ->
+                                RibbonsV4Algorithm.VERSION to (RibbonsResidualAlgorithm.PROFILE + (RigModules.MOUTH_FITTED.id to mouth))
+                            mouth == MouthFittedV4Algorithm.VERSION && skirt == null ->
+                                RibbonsV4Algorithm.VERSION to (RibbonsResidualAlgorithm.PROFILE - RigModules.OUTFIT_SKIRT.id)
+                            else -> RibbonsResidualAlgorithm.VERSION to RibbonsResidualAlgorithm.PROFILE
+                        }
+                    }
                     entry.type == RigModules.OUTFIT_CREATURE.id && entry.version == 1 ->
                         CreatureResidualAlgorithm.VERSION to CreatureResidualAlgorithm.PROFILE
                     entry.type == RigModules.BODY_BUST.id && entry.version == 2 && completeEyePair -> {

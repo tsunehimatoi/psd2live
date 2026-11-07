@@ -7092,12 +7092,13 @@ class WorkspaceLegacyBindingTest {
         val source = art.copy(source = raster, settings = WorkspaceSettingsCodec.encode(config))
         val (initialized, prepared) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
         val fresh = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        assertEquals(4, fresh.instances.single { it.type == "outfit.ribbons" }.version)
         val stack = fresh.copy(instances = fresh.instances.map { entry ->
-            if (entry.type != "outfit.ribbons" || entry.version == 1) entry
+            if (entry.type != "outfit.ribbons") entry
             else entry.copy(version = 1, plugin = assertNotNull(BuiltinModifierPlugins.reference(entry.type, 1)))
         })
         fun documentFor(replay: RigModifierStack) = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = replay.toJson()))
-        val baseline = if (fresh == stack) prepared else WorkspacePreviewBuilder().build(documentFor(stack))
+        val baseline = WorkspacePreviewBuilder().build(documentFor(stack))
         fun version(type: String) = stack.instances.singleOrNull { it.type == type }?.version
         assertEquals(3, version("face/fitted"))
         assertEquals(5, version("eye/fitted"))
@@ -7128,9 +7129,9 @@ class WorkspaceLegacyBindingTest {
         assertEquals(ModifierStatus.ACTIVE, actual.entries[index].status)
         assertFaceEquals(after, actual.outputs[index])
         assertEquals(candidate, WorkspaceModifierSimulation.prepare(updated, candidate, WorkspaceRasterWork.Direct, allowRebake = false))
-        val complete = WorkspacePreviewBuilder().build(updated)
-        assertTrue(expected.outputs == assertNotNull(complete.modifierEvaluation).outputs)
-        assertTrue(RigIrCompiler.compile(baseline, tileArt = true) == RigIrCompiler.compile(complete, tileArt = true))
+        assertEquals(fresh, candidate)
+        assertTrue(expected.outputs == assertNotNull(prepared.modifierEvaluation).outputs)
+        assertTrue(RigIrCompiler.compile(baseline, tileArt = true) == RigIrCompiler.compile(prepared, tileArt = true))
         val directory = Files.createTempDirectory("ribbons-v4")
         val preferences = Preferences.userRoot().node("ribbons-v4/" + UUID.randomUUID())
         val store = ModifierPluginStore(directory.resolve("installed"), preferences)
