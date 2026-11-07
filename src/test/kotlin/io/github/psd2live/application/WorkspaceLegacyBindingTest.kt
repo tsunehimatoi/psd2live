@@ -743,6 +743,31 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun modernPresetUsesIndependentClosedMouthBindings(): Unit = runBlocking {
+        val choices = WorkspaceInitialPreset(clothing = false)
+        for (interior in listOf(false, true)) {
+            val art = document(eyeDetails = true, mouthDetails = interior, pairedBrows = true,
+                bilateralEyes = true, closedMouth = true)
+            val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+                .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+            val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+            val (initialized, actual) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+            val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+            val versions = mapOf("mouth/fitted" to 4, "mouth.outline" to 5, "mouth.vowel" to 5, "mouth.capture" to 4,
+                "mouth.cheek-lid" to 6, "mouth.jaw" to if (interior) 6 else 5, "mouth.spring" to if (interior) 7 else 6) +
+                if (interior) mapOf("mouth.tongue" to 4, "mouth.interior-depth" to 4) else emptyMap()
+            assertEquals(versions, stack.instances.filter { it.type == "mouth/fitted" || it.type.startsWith("mouth.") }
+                .associate { it.type to it.version })
+            val locked = stack.copy(instances = stack.instances.map { instance ->
+                if (instance.type in versions) instance.copy(version = 1,
+                    plugin = assertNotNull(BuiltinModifierPlugins.reference(instance.type, 1))) else instance
+            })
+            val reference = WorkspacePreviewBuilder().build(initialized.copy(
+                rigEdits = initialized.rigEdits.copy(modifierStack = locked.toJson())))
+            assertFaceEquals(RigIrCompiler.compile(reference, tileArt = true), RigIrCompiler.compile(actual, tileArt = true))
+        }
+    }
+
     @Test fun closedMouthDepthAndSpringMatchLockedVersionsAndInstalledWorkers(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true, closedMouth = true)
         val choices = WorkspaceInitialPreset()

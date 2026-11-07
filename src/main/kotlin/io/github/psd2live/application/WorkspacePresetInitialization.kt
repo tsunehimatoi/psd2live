@@ -20,8 +20,19 @@ import io.github.psd2live.algorithms.binding.FittedFaceV3Algorithm
 import io.github.psd2live.algorithms.binding.GloomCarrierAlgorithm
 import io.github.psd2live.algorithms.binding.LegacyBodyV2Algorithm
 import io.github.psd2live.algorithms.binding.LegacyFaceV2Algorithm
+import io.github.psd2live.algorithms.binding.MouthCaptureV4Algorithm
+import io.github.psd2live.algorithms.binding.MouthCheekLidV6Algorithm
+import io.github.psd2live.algorithms.binding.MouthDepthV4Algorithm
+import io.github.psd2live.algorithms.binding.MouthFittedV4Algorithm
+import io.github.psd2live.algorithms.binding.MouthJawV5Algorithm
+import io.github.psd2live.algorithms.binding.MouthJawV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV4Algorithm
+import io.github.psd2live.algorithms.binding.MouthOutlineV5Algorithm
+import io.github.psd2live.algorithms.binding.MouthSpringV6Algorithm
+import io.github.psd2live.algorithms.binding.MouthSpringV7Algorithm
+import io.github.psd2live.algorithms.binding.MouthTongueV4Algorithm
+import io.github.psd2live.algorithms.binding.MouthVowelV5Algorithm
 import io.github.psd2live.algorithms.binding.SkirtAlgorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
@@ -130,7 +141,9 @@ internal object WorkspacePresetInitialization {
                     packages(browVersions.filterKeys { type -> stack.instances.any { it.type == type } })
                 } else emptyMap()
                 val extensions = if (lids.size == plannedLids.size && (!subject.has(SemanticTag.EYEBROW) || brows.isNotEmpty())) {
-                    packages(mapOf(RigModules.BODY_ARMS.id to ArmSwingV3Algorithm.VERSION)) +
+                    val mouth = if (completeEyePair && subject.has(SemanticTag.MOUTH_CLOSE) &&
+                        supportsClosedMouth(model.analysis, config)) packages(closedMouthVersions(types)) else emptyMap()
+                    mouth + packages(mapOf(RigModules.BODY_ARMS.id to ArmSwingV3Algorithm.VERSION)) +
                         packages(mapOf(RigModules.EXPRESSION_GLOOM.id to GloomCarrierAlgorithm.VERSION))
                 } else emptyMap()
                 headAndEye + lids + brows + extensions
@@ -253,6 +266,27 @@ internal object WorkspacePresetInitialization {
         config.rigEdits.copy(modifierStack = null) == RigEditOverlay.Empty &&
             config.meshOverrides.isEmpty() && config.parentOverrides.isEmpty() &&
             !config.deferRig && config.rigPendingLayerIds.isEmpty()
+
+    private fun closedMouthVersions(types: List<String>): Map<String, Int> = mapOf(
+        RigModules.MOUTH_FITTED.id to MouthFittedV4Algorithm.VERSION,
+        RigModules.MOUTH_OUTLINE.id to MouthOutlineV5Algorithm.VERSION,
+        RigModules.MOUTH_VOWEL.id to MouthVowelV5Algorithm.VERSION,
+        RigModules.MOUTH_CAPTURE.id to MouthCaptureV4Algorithm.VERSION,
+        RigModules.MOUTH_TONGUE.id to MouthTongueV4Algorithm.VERSION,
+        RigModules.MOUTH_JAW.id to if (RigModules.MOUTH_TONGUE.id in types) MouthJawV6Algorithm.VERSION else MouthJawV5Algorithm.VERSION,
+        RigModules.MOUTH_CHEEK_LID.id to MouthCheekLidV6Algorithm.VERSION,
+        RigModules.MOUTH_DEPTH.id to MouthDepthV4Algorithm.VERSION,
+        RigModules.MOUTH_SPRING.id to if (RigModules.MOUTH_DEPTH.id in types) MouthSpringV7Algorithm.VERSION else MouthSpringV6Algorithm.VERSION,
+    ).filterKeys { it in types }
+
+    private fun supportsClosedMouth(analysis: PipelineAnalysis, config: PipelineConfig): Boolean {
+        if (config.mouthOutlineEnabled && !supportsClassicOutline(analysis, config)) return false
+        val measurement = config.copy(generateDeformers = false)
+        val context = RigBuilder.rigContext(analysis, measurement)
+        val mouth = context.fittedMouth(measurement) ?: return false
+        return mouth.source != null && mouth.closedLine && !mouth.layered && mouth.rig?.fit?.layered == null &&
+            context.faceTurn(measurement) != null
+    }
 
     private fun supportsClassicOutline(analysis: PipelineAnalysis, config: PipelineConfig): Boolean {
         if (!freshSource(config)) return false
