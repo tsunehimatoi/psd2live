@@ -6422,6 +6422,70 @@ class WorkspaceLegacyBindingTest {
         assertEquals(before, fixture.now)
     }
 
+    @Test fun chestBounceV3PreservesFittedModernSource(): Unit = runBlocking {
+        for (closed in listOf(false, true)) {
+            val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true,
+                pairedBrows = true, bilateralEyes = true, chestDetail = true, closedMouth = closed, ribbonDetails = true)
+            val choices = WorkspaceInitialPreset(clothing = true)
+            val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+                .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+            val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+            val (initialized, _) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+            val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+            val bust = stack.instances.single { it.type == "body.bust" }
+            val index = stack.index(bust.id)
+            val artifact = assertNotNull(BundledAlgorithmArtifacts.find(bust.type, 3))
+            val selected = bust.copy(version = 3, plugin = artifact.reference)
+            val legacy = bust.copy(version = 1, plugin = assertNotNull(BuiltinModifierPlugins.reference(bust.type, 1)))
+            fun document(instance: RigModifierInstance): WorkspaceDocument = initialized.copy(
+                rigEdits = initialized.rigEdits.copy(modifierStack = stack.copy(instances = stack.instances.map {
+                    if (it.id == bust.id) instance else it
+                }).toJson()))
+            val builder = WorkspacePreviewBuilder()
+            val baseline = builder.build(document(legacy))
+            val expected = assertNotNull(baseline.modifierEvaluation).outputs
+            assertTrue(expected[index].meshes.single { it.name == "chest-panel" }.shapes.any { it.parameter == "ParamBustY" })
+            val output = RigIrCompiler.compile(baseline, tileArt = true)
+            val upgraded = document(selected)
+            fun verify(model: RigPreviewModel) {
+                val evaluation = assertNotNull(model.modifierEvaluation)
+                assertEquals(ModifierStatus.ACTIVE, evaluation.entries[index].status)
+                for (stage in index - 1 until stack.instances.size) {
+                    val lhs = expected[stage]
+                    val rhs = evaluation.outputs[stage]
+                    val meshes = lhs.meshes.zip(rhs.meshes).filter { (a, b) -> a != b }.map { it.first.name }
+                    assertTrue(lhs == rhs, "closed=$closed ${stack.instances[stage].type}: $meshes")
+                }
+                assertFaceEquals(output, RigIrCompiler.compile(model, tileArt = true))
+            }
+            val actual = builder.build(upgraded).also(::verify)
+            val cache = RigStageCache.enabled
+            try {
+                RigStageCache.enabled = false
+                verify(PSD2LivePipeline().buildPreview(upgraded.source, upgraded.config()))
+            } finally {
+                RigStageCache.enabled = cache
+            }
+            val directory = Files.createTempDirectory("bust-fitted-source")
+            val preferences = Preferences.userRoot().node("bust-fitted-source/" + UUID.randomUUID())
+            val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+            try {
+                BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+                val plugin = store.snapshot().single()
+                val evaluation = assertNotNull(actual.modifierEvaluation)
+                val context = assertNotNull(evaluation.readAlgorithms[selected.id]).context
+                assertTrue("bustBefore" in context.resources && "bustAfter" in context.resources)
+                val definition = RigBustModifier.fittedDefinition(RigModifierSource.of(actual))
+                assertFaceEquals(expected[index], ModifierPluginWorkers.evaluate(plugin, plugin.manifest.algorithms.single(),
+                    evaluation.outputs[index - 1], selected, {}, store, context = context,
+                    declaredParameters = definition.parameters(selected)))
+            } finally {
+                ModifierPluginWorkers.stop(artifact.reference)
+                preferences.removeNode()
+                ModifierPluginStore.deleteTree(directory)
+            }
+        }
+    }
     @Test fun chestBounceV2MatchesLegacyWorkerAndAppliedOutput(): Unit = runBlocking<Unit> {
         suspend fun fixture(version: Int): Fixture {
             val f = Fixture(document(outfitDetails = true, chestDetail = true)); f.install()

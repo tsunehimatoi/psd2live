@@ -653,6 +653,37 @@ tasks.register("pluginBust") {
     }
 }
 
+val bustV3WorkerJar = registerIsolatedBindingWorker(
+    "bustV3", "body-bust-v3", "worker-body-bust-v3", "io.github.psd2live.algorithms.binding.BustBindingV3Worker",
+)
+bustV3WorkerJar.configure {
+    from(sourceSets.main.get().output) { include(bustWorkerClasses) }
+}
+tasks.register("pluginBustV3") {
+    dependsOn(bustV3WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-bust-v3")
+    val packageVersion = project.version.toString()
+    inputs.file(bustV3WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        bustV3WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.626f64792e62757374.v3"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Chest bounce",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/bust","aliases":["body.bust"],"version":3,"name":"Chest bounce","category":"body",
+               "targets":["mesh"],"requires":["rig.scaffold","body/legacy","face/legacy"],"contextVersion":2,
+               "reads":["canvas","mesh","deformer","parameter","hierarchy","physics","textures","authoring"],"writes":["mesh","parameter","hierarchy","physics"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter","physics"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val hairLegacyWorkerJar by tasks.registering(Jar::class) {
     dependsOn(workerJar)
     archiveClassifier.set("hair-legacy-worker")

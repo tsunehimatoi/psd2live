@@ -115,6 +115,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "armSwingElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "armSwingV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "armSwingV4Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "bustV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "faceLegacyV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLegacyV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthFittedV2Elements"))
@@ -334,6 +335,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginBust")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-bust")) {
         into("algorithm-plugins/body-bust")
+    }
+    dependsOn(":algorithms:binding:pluginBustV3")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-bust-v3")) {
+        into("algorithm-plugins/body-bust-v3")
     }
     dependsOn(":algorithms:binding:pluginSkirt")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-outfit-skirt")) {
