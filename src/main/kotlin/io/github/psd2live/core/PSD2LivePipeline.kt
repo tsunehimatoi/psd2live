@@ -724,9 +724,9 @@ class PSD2LivePipeline {
 	/**
 	 * The moc3 runtime bundle of [rig]. [validate] reads the manifest and every sidecar back: files written for
 	 * the user always are, while the editor's preview bundles - the same compile, rebuilt on every edit and only
-	 * loaded by the preview - skip it unless [validatesPreviewBundles]. A [preview] bundle carries the pages'
-	 * strip-encoded PNGs ([AtlasPage.previewPng]), which re-encode only changed rows; files written for the user
-	 * carry the canonical encoding, and no pose3.
+	 * loaded by the preview - skip it unless [validatesPreviewBundles]. Legacy previews use strip-encoded PNGs
+	 * ([AtlasPage.previewPng]) to re-encode only changed rows. Modifier evaluation already needs canonical pages,
+	 * so its preview reuses those bytes. Written bundles also carry canonical pages.
 	 */
 	internal fun previewBundle(analysis: PipelineAnalysis, atlas: PackedAtlas, rig: BuiltRig, config: PipelineConfig,
 	                           defer: Boolean = deferRuntimeBundles): CubismRuntimeBundle {
@@ -743,7 +743,8 @@ class PSD2LivePipeline {
 		validate: Boolean = validatesPreviewBundles(),
 		preview: Boolean = true,
 	): Pair<CubismRuntimeBundle, org.umamo.interop.ExportReport> {
-		val compiled = RigIrCompiler.compile(analysis, if (preview) atlas.forPreview() else atlas, rig, config)
+		val textures = if (preview && rig.modifierOutput == null) atlas.forPreview() else atlas
+		val compiled = RigIrCompiler.compile(analysis, textures, rig, config)
 		// The Cubism SDK applies a pose3 as it loads, hiding every part of a group but the first; the editor shows and
 		// edits all of them, so only written bundles carry the pose.
 		val ir = if (preview) compiled.copy(advanced = compiled.advanced.copy(pose = null)) else compiled

@@ -99,6 +99,8 @@ class RigModifierPipelineTest {
         assertTrue(report.all { it.jsonObject.getValue("status").jsonPrimitive.content == "active" })
         val cold = PSD2LivePipeline().buildPreview(document.source, document.config())
         assertEquals(expected, RigIrCompiler.compile(cold))
+        val previewTexture = preview.runtimeBundle.assets.single { it.path.endsWith(".png") }
+        assertContentEquals(expected.textures.pages.single().png.toArray(), previewTexture.bytes)
         assertTrue(preview.runtimeBundle.assets.any { it.path.endsWith(".physics3.json") })
         assertTrue(preview.runtimeBundle.assets.any { it.path.endsWith(".motion3.json") })
         val physicsAsset = preview.runtimeBundle.assets.single { it.path.endsWith(".physics3.json") }
