@@ -1,8 +1,11 @@
 package io.github.psd2live.application
 
+import io.github.psd2live.algorithms.binding.BrowBlinkV3Algorithm
 import io.github.psd2live.algorithms.binding.BrowFittedV3Binding
 import io.github.psd2live.algorithms.binding.BrowLegacyV2Algorithm
 import io.github.psd2live.algorithms.binding.BrowLidV5Algorithm
+import io.github.psd2live.algorithms.binding.BrowShapeV3Algorithm
+import io.github.psd2live.algorithms.binding.BrowSpringV4Algorithm
 import io.github.psd2live.algorithms.binding.EyeAftershockV4Algorithm
 import io.github.psd2live.algorithms.binding.EyeEmotionV3Algorithm
 import io.github.psd2live.algorithms.binding.EyeFittedV5Algorithm
@@ -114,11 +117,15 @@ internal object WorkspacePresetInitialization {
                     RigModules.EYE_SQUASH.id to EyeSquashV4Algorithm.VERSION)
                 val plannedLids = lidVersions.filterKeys { type -> stack.instances.any { it.type == type } }
                 val lids = packages(plannedLids)
-                val sidedBrows = if (lids.size == plannedLids.size && subject.sides(SemanticTag.EYEBROW).size == 1) {
-                    packages(mapOf(RigModules.BROW_FITTED.id to BrowFittedV3Binding.VERSION,
-                        BrowLidV5Algorithm.TYPE to BrowLidV5Algorithm.VERSION))
+                val brows = if (lids.isNotEmpty() && subject.has(SemanticTag.EYEBROW)) {
+                    val browVersions = mapOf(RigModules.BROW_FITTED.id to BrowFittedV3Binding.VERSION,
+                        RigModules.BROW_SHAPE.id to BrowShapeV3Algorithm.VERSION,
+                        RigModules.BROW_LID.id to BrowLidV5Algorithm.VERSION,
+                        RigModules.BROW_BLINK.id to BrowBlinkV3Algorithm.VERSION,
+                        RigModules.BROW_SPRING.id to BrowSpringV4Algorithm.VERSION)
+                    packages(browVersions.filterKeys { type -> stack.instances.any { it.type == type } })
                 } else emptyMap()
-                headAndEye + lids + sidedBrows
+                headAndEye + lids + brows
             }
         } else emptyMap()
         val sourceVersions = if (preferSourceBindings && scaffold != null) buildMap {

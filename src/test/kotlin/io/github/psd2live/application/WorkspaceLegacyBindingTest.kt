@@ -3954,9 +3954,8 @@ class WorkspaceLegacyBindingTest {
         val instance = stack.instances.single { it.type == "brow.lid-coupling" }
         assertEquals(5, instance.version)
         val index = stack.index(instance.id)
-        val legacyBlink = stack.instances[index + 1]
-        assertEquals("brow.blink", legacyBlink.type, legacyBlink.id)
-        assertEquals(1, legacyBlink.version)
+        val browVersions = mapOf("brow/fitted" to 3, "brow.shape" to 3, "brow.blink" to 3, "brow.spring" to 4)
+        assertEquals(browVersions, stack.instances.filter { it.type in browVersions }.associate { it.type to it.version })
         val evaluation = assertNotNull(actual.modifierEvaluation)
         val before = evaluation.outputs[index - 1]
         val after = evaluation.outputs[index]
@@ -3971,9 +3970,10 @@ class WorkspaceLegacyBindingTest {
         val left = actual.rig.ownLayerIdByDrawableId.entries.single { it.value == "lash" }.key
         assertNotEquals(before.meshes.single { it.id == left }, after.meshes.single { it.id == left })
 
-        val modernBrows = mapOf("brow.shape" to 3, "brow.blink" to 3, "brow.spring" to 4)
-        val (_, independentBrows) = prepare(versions + modernBrows + ("brow.lid-coupling" to 5))
-        assertFaceEquals(RigIrCompiler.compile(actual), RigIrCompiler.compile(independentBrows))
+        val (historical, legacyBrows) = prepare(versions + ("brow.lid-coupling" to 5))
+        val legacyStack = RigModifierStack.fromJson(historical.rigEdits.modifierStack!!)
+        assertEquals(1, legacyStack.instances.single { it.type == "brow.blink" }.version)
+        assertFaceEquals(RigIrCompiler.compile(legacyBrows), RigIrCompiler.compile(actual))
 
         val artifact = assertNotNull(BundledAlgorithmArtifacts.find(instance.type, 5))
         val directory = Files.createTempDirectory("brow-lid-single-brow-")
