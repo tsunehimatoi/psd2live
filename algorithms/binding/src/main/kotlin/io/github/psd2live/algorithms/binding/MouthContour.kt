@@ -2,6 +2,7 @@ package io.github.psd2live.algorithms.binding
 
 import kotlin.math.*
 
+@kotlinx.serialization.Serializable
 data class MouthColumn(
     val top: Pair<Float, Float>,
     val bottom: Pair<Float, Float>,
@@ -15,6 +16,32 @@ data class MouthColumn(
 object MouthContour {
     const val DEFAULT_SEGMENTS = 24
 
+    data class Contour(val positions: FloatArray, val triangles: IntArray)
+
+    /** The legacy fill resamples the scaffold rim, then the ribbon follows that resampled fill. */
+    fun ownerContour(positions: FloatArray, triangles: IntArray): Contour? {
+        val columns = uniformColumns(positions, triangles)
+        if (columns.size < 2) return null
+        val strip = FloatArray(columns.size * 6)
+        for ((index, column) in columns.withIndex()) {
+            val narrow = column.bottomY - column.topY < .5f
+            val mid = (column.topY + column.bottomY) * .5f
+            val top = if (narrow) mid - .25f else column.topY
+            val bottom = if (narrow) mid + .25f else column.bottomY
+            for (row in 0..2) {
+                val offset = index * 6 + row * 2
+                strip[offset] = column.x
+                strip[offset + 1] = top + (bottom - top) * row / 2f
+            }
+        }
+        val stripTriangles = (0 until columns.lastIndex).flatMap { index ->
+            (0..1).flatMap { row ->
+                val a = index * 3 + row
+                listOf(a, a + 1, a + 3, a + 1, a + 4, a + 3)
+            }
+        }.toIntArray()
+        return Contour(strip, stripTriangles)
+    }
     /** Samples a piecewise linear 2D polyline uniformly by cumulative arc length. */
     fun sampleCurveByArcLength(curve: List<Pair<Float, Float>>, count: Int): List<Pair<Float, Float>> {
         if (curve.isEmpty()) return emptyList()

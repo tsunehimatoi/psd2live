@@ -2,7 +2,6 @@ package io.github.psd2live.core
 
 import io.github.psd2live.i18n.tr
 import org.umamo.format.art.*
-import org.umamo.runtime.model.DrawableMesh
 import kotlin.math.*
 
 /** Regenerated assets have stable independent IDs, so selection, visibility and mesh edits persist. */
@@ -66,44 +65,45 @@ internal object MouthLipLayers {
             if (owner.source.id.raw in config.rigPendingLayerIds || owner.source.id.raw in depthFronts || resolution.isPartLayer(owner.source.id.raw) || owner.semantic.tag !in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) || owner.opaquePixels == 0) listOf(owner)
             else {
                 val rgb = config.mouthColor ?: perimeterColor(owner.source.raster, config.alphaThreshold)
-                val adaptive = AdaptiveMeshGenerator.generate(
-                    width = owner.source.raster.width,
-                    height = owner.source.raster.height,
-                    rgba = owner.source.raster.rgba,
-                    alphaThreshold = config.alphaThreshold,
-                    spacing = max(6f, config.meshMaxEdgeDistance * 0.45f),
-                    interiorSpacing = max(12f, config.meshInteriorDensity * 0.45f),
-                    outerMargin = 0f,
-                    // Lip strokes are too thin for contour row bands.
-                    edgeMode = MeshEdgeMode.SINGLE,
-                    fillAlgorithm = config.meshOverrides[owner.source.id.raw]?.fillAlgorithm ?: config.meshFillAlgorithm,
-                    suppressBoundaryDiagonals = config.meshOverrides[owner.source.id.raw]?.suppressBoundaryDiagonals
-                        ?: config.meshSuppressBoundaryDiagonals,
-                    fillParameters = config.meshOverrides[owner.source.id.raw]?.fillParameters ?: config.meshFillParameters,
-                    unitScale = unitScale,
-                )
-                val lips = if (adaptive != null) {
-                    val rigPositions = FloatArray(adaptive.positions.size)
-                    for (i in adaptive.positions.indices step 2) {
-                        val canvasX = owner.source.bounds.left + adaptive.positions[i]
-                        val canvasY = owner.source.bounds.top + adaptive.positions[i + 1]
-                        val rig = headSpace.toAligned(canvasX, canvasY)
-                        rigPositions[i] = rig.first
-                        rigPositions[i + 1] = rig.second
-                    }
-                    val meshData = MeshData(DrawableMesh(rigPositions, FloatArray(0), adaptive.indices), rigPositions)
-                    val columns = MouthContour.uniformColumns(meshData, MouthContour.DEFAULT_SEGMENTS)
-                    if (columns.size >= 2) {
-                        (0..1).mapNotNull { side ->
-                            val lipLayer = createLipLayer(owner, side, rgb, columns, config.mouthThickness, headSpace)
-                            if (lipLayer.source.id.raw in config.deletedLayerIds) null else lipLayer
-                        }
-                    } else emptyList()
-                } else emptyList()
+                val columns = trace(owner, config, unitScale, headSpace)
+                val lips = if (columns.size < 2) emptyList() else (0..1).mapNotNull { side ->
+                    createLipLayer(owner, side, rgb, columns, config.mouthThickness, headSpace)
+                        .takeUnless { it.source.id.raw in config.deletedLayerIds }
+                }
                 lips + owner
             }
         }
         return input.copy(layers = layers)
+    }
+
+    /** Dense raster contour used to paint the ribbon, distinct from scaffold topology. */
+    internal fun trace(owner: ClassifiedLayer, config: PipelineConfig, unitScale: Float,
+                       headSpace: HeadCoordinateSpace): List<MouthColumn> {
+        val adaptive = AdaptiveMeshGenerator.generate(
+            width = owner.source.raster.width,
+            height = owner.source.raster.height,
+            rgba = owner.source.raster.rgba,
+            alphaThreshold = config.alphaThreshold,
+            spacing = max(6f, config.meshMaxEdgeDistance * 0.45f),
+            interiorSpacing = max(12f, config.meshInteriorDensity * 0.45f),
+            outerMargin = 0f,
+            // Lip strokes are too thin for contour row bands.
+            edgeMode = MeshEdgeMode.SINGLE,
+            fillAlgorithm = config.meshOverrides[owner.source.id.raw]?.fillAlgorithm ?: config.meshFillAlgorithm,
+            suppressBoundaryDiagonals = config.meshOverrides[owner.source.id.raw]?.suppressBoundaryDiagonals
+                ?: config.meshSuppressBoundaryDiagonals,
+            fillParameters = config.meshOverrides[owner.source.id.raw]?.fillParameters ?: config.meshFillParameters,
+            unitScale = unitScale,
+        )
+        if (adaptive == null) return emptyList()
+        val positions = FloatArray(adaptive.positions.size)
+        for (i in positions.indices step 2) {
+            val (x, y) = headSpace.toAligned(owner.source.bounds.left + adaptive.positions[i],
+                owner.source.bounds.top + adaptive.positions[i + 1])
+            positions[i] = x
+            positions[i + 1] = y
+        }
+        return io.github.psd2live.algorithms.binding.MouthContour.uniformColumns(positions, adaptive.indices)
     }
 
     private fun createLipLayer(

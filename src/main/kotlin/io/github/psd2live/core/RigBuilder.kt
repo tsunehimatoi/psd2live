@@ -3147,6 +3147,15 @@ object RigBuilder {
 		return Deformer.Warp(id, name, parent, part, rows, 3, true, grid)
 	}
 
+	/** Raw mouth topology for the outline binding, before replacing the opening with shared columns. */
+	internal fun mouthOutlineSourceMesh(
+		layer: ClassifiedLayer,
+		alignment: HeadCoordinateSpace?,
+		config: PipelineConfig,
+		cache: PreviewMeshCache?,
+		unitScale: Float,
+	): MeshData = buildGridMesh(layer, Bounds(0f, 0f, 1f, 1f), alignment, config, cache, unitScale)
+
 	private fun buildGridMesh(
 		layer: ClassifiedLayer,
 		parentFrame: Bounds,
@@ -3832,32 +3841,22 @@ object RigBuilder {
     // Shared columns guarantee that the fill and both lip ribbons interpolate identical curves.
     private fun mouthContourMesh(data: MeshData, layer: ClassifiedLayer, frame: Bounds,
                                  space: HeadCoordinateSpace?): MeshData {
-        val columns = MouthContour.uniformColumns(data, MouthContour.DEFAULT_SEGMENTS)
-        if (columns.size < 2) return data
-        val positions = FloatArray(columns.size * 6)
-        val rig = FloatArray(positions.size)
-        val uvs = FloatArray(positions.size)
+        val contour = io.github.psd2live.algorithms.binding.MouthContour.ownerContour(data.rigPositions, data.mesh.indices) ?: return data
+        val rig = contour.positions
+        val positions = FloatArray(rig.size)
+        val uvs = FloatArray(rig.size)
         val width = max(1, layer.source.raster.width).toFloat()
         val height = max(1, layer.source.raster.height).toFloat()
-        for ((i, col) in columns.withIndex()) {
-            val topY = if (col.bottomY - col.topY < 0.5f) (col.topY + col.bottomY) * 0.5f - 0.25f else col.topY
-            val botY = if (col.bottomY - col.topY < 0.5f) (col.topY + col.bottomY) * 0.5f + 0.25f else col.bottomY
-            for (row in 0..2) {
-                val j = i * 6 + row * 2
-                val y = topY + (botY - topY) * row / 2f
-                rig[j] = col.x; rig[j + 1] = y
-                positions[j] = normalizeX(col.x, frame); positions[j + 1] = normalizeY(y, frame)
-                val canvas = space?.toCanvas(col.x, y) ?: (col.x to y)
-                val localX = (canvas.first - layer.source.bounds.left).coerceIn(0f, width)
-                val localY = (canvas.second - layer.source.bounds.top).coerceIn(0f, height)
-                uvs[j] = localX
-                uvs[j + 1] = localY
-            }
+        for (i in rig.indices step 2) {
+            val x = rig[i]
+            val y = rig[i + 1]
+            positions[i] = normalizeX(x, frame)
+            positions[i + 1] = normalizeY(y, frame)
+            val canvas = space?.toCanvas(x, y) ?: (x to y)
+            uvs[i] = (canvas.first - layer.source.bounds.left).coerceIn(0f, width)
+            uvs[i + 1] = (canvas.second - layer.source.bounds.top).coerceIn(0f, height)
         }
-        val indices = (0 until columns.lastIndex).flatMap { i -> (0..1).flatMap { row ->
-            val a = i * 3 + row; listOf(a, a + 1, a + 3, a + 1, a + 4, a + 3)
-        }}.toIntArray()
-        return MeshData(DrawableMesh(positions, uvs, indices), rig)
+        return MeshData(DrawableMesh(positions, uvs, contour.triangles), rig)
     }
 
     private fun mouthAxes(): List<KeyformAxis> = listOf(

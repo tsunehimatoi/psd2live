@@ -2,9 +2,9 @@ import java.util.HexFormat
 import java.security.MessageDigest
 
 // Binding kernels use the GPL engine; they are separate from the MIT API/format modules.
-plugins { `java-library`; kotlin("jvm") }
+plugins { `java-library`; kotlin("jvm"); kotlin("plugin.serialization") }
 group = "io.github.psd2live.algorithms"
-version = "1.0.54"
+version = "1.0.55"
 kotlin { jvmToolchain(21) }
 dependencies {
     api(project(":umamo"))
@@ -81,6 +81,7 @@ for ((type, area, taskName) in listOf(
     Triple("eye.see-through", "eye", "pluginEyeSeeThrough"),
     Triple("brow.see-through", "brow", "pluginBrowSeeThrough"),
     Triple("face.skin-clip", "skin", "pluginSkinClip"),
+    Triple("mouth.outline", "mouth-outline", "pluginMouthOutline"),
 )) {
     tasks.register(taskName) {
         dependsOn(workerJar)
@@ -93,16 +94,30 @@ for ((type, area, taskName) in listOf(
             val payload = directory.resolve("algorithm.jar")
             workerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
             val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
-            val entrypoint = if (area == "skin") "clip" else "visibility"
-            val title = if (area == "skin") "Skin clipping" else "$area through bangs"
-            val writes = if (area == "skin") """["mesh","relations"]""" else """["*"]"""
+            val entrypoint = when (area) {
+                "skin" -> "clip"
+                "mouth-outline" -> "outline"
+                else -> "visibility"
+            }
+            val title = when (area) {
+                "skin" -> "Skin clipping"
+                "mouth-outline" -> "Mouth outline"
+                else -> "$area through bangs"
+            }
+            val writes = when (area) {
+                "skin" -> """["mesh","relations"]"""
+                "mouth-outline" -> """["mesh","part","hierarchy","textures","authoring","relations"]"""
+                else -> """["*"]"""
+            }
+            val category = if (area == "mouth-outline") "mouth" else area
+            val sourceContext = if (area == "mouth-outline") """"contextVersion":2,"exclusiveFamily":"mouth.outline",""" else ""
             val id = "builtin." + HexFormat.of().formatHex(type.toByteArray(Charsets.UTF_8)) + ".v1"
             directory.resolve("plugin.json").writeText("""
                 {"protocol":1,"id":"$id","version":"${project.version}","name":"$title",
                  "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
-                 "algorithms":[{"type":"$id/$entrypoint","aliases":["$type"],"version":1,"name":"$title","category":"$area",
+                 "algorithms":[{"type":"$id/$entrypoint","aliases":["$type"],"version":1,"name":"$title","category":"$category",
                    "targets":["mesh"],"requires":["rig.scaffold"],"reads":["*"],"writes":$writes,
-                   "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+                   ${sourceContext}"composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
                    "configSchema":{"type":"object"},"defaults":{}}]}
             """.trimIndent())
         }

@@ -98,6 +98,7 @@ data class MouthFittedInputs(
     }
 
     /** Immutable provider identity and the raw values from which its depth turn was constructed. */
+    @kotlinx.serialization.Serializable
     data class Head(
         val provider: String,
         val centerX: Float,

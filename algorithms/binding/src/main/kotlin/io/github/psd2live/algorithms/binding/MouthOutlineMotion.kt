@@ -23,6 +23,7 @@ class MouthOutlineMotion(
         require(this.curve.zipWithNext().all { (a, b) -> b.first - a.first >= 0.005f })
     }
 
+    @kotlinx.serialization.Serializable
     data class Tuning(
         val closedNarrow: Float = 8f,
         val formWiden: Float = 7f,

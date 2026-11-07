@@ -22,6 +22,8 @@ object ExpressionWorker {
         algorithms[bodyId to 1] = LegacyBodyAlgorithm()
         val depthId = "builtin." + java.util.HexFormat.of().formatHex("face.depth-turn".encodeToByteArray()) + ".v1/turn"
         algorithms[depthId to 1] = DepthTurnAlgorithm()
+        val outlineId = "builtin." + java.util.HexFormat.of().formatHex("mouth.outline".encodeToByteArray()) + ".v1/outline"
+        algorithms[outlineId to 1] = MouthOutlineAlgorithm()
         val browId = "builtin." + java.util.HexFormat.of().formatHex("brow/fitted".encodeToByteArray()) + ".v1/binding"
         algorithms[browId to 1] = BrowFittedAlgorithm()
         val cheekId = "builtin." + java.util.HexFormat.of().formatHex("expression.cheek".encodeToByteArray()) + ".v1/color"
