@@ -694,8 +694,8 @@ class PSD2LivePipeline {
 		// Umamo's conversion preserves that mixed-space invariant exactly.
 		// Evaluating the mouth at MOUTH_OPEN=1.0f keeps the base mesh in its initial open state matching
 		// the authored PSD layer artwork and atlas UV coordinates, avoiding singular affine transforms in CMO3.
-		val cleaned = io.github.psd2live.core.interior.InteriorLifecycle.exportModel(rig.puppet, config.rigEdits,
-			PhysicsCatalog.active(analysis, config, rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }, rig.puppet))
+		val physics = PhysicsCatalog.active(model)
+		val cleaned = io.github.psd2live.core.interior.InteriorLifecycle.exportModel(rig.puppet, config.rigEdits, physics)
 		val idWarnings = RigIdCheck.checked(generatedLabel, cleaned)
 		val restPose = rig.modifierOutput?.restPose?.mapKeys { org.umamo.runtime.model.ParameterId(it.key) }
             ?: if (imported) emptyMap() else mapOf(StandardParameters.MOUTH_OPEN to 1.0f)
@@ -745,7 +745,7 @@ class PSD2LivePipeline {
 		progress.update(tr("progress.exportCmo3"), 0.91)
 
 		if (config.exportJson) {
-			val report = projectReport(baseName, analysis, rig.copy(puppet = cleaned), atlas, config, warnings)
+			val report = projectReport(baseName, analysis, rig.copy(puppet = cleaned), atlas, config, physics.map { it.id }, warnings)
 			Json.parseToJsonElement(report)
 			files += writeContained(outputRoot, "$baseName.psd2live.json", report.encodeToByteArray())
 		}
@@ -866,6 +866,7 @@ class PSD2LivePipeline {
 		rig: BuiltRig,
 		atlas: PackedAtlas,
 		config: PipelineConfig,
+		physicsIds: List<String>,
 		warnings: List<String>,
 	): String {
 		fun quote(value: String): String = buildString {
@@ -883,7 +884,7 @@ class PSD2LivePipeline {
 		val layers = analysis.layers.joinToString(",\n") { layer ->
 			"    {\"source\":${quote(layer.source.name)},\"type\":${quote(layer.semantic.type.name.lowercase())},\"tag\":${quote(layer.semantic.tag.canonicalName)},\"side\":${quote(layer.semantic.side.name)},\"parameter\":${quote(layer.semantic.parameter)},\"switchId\":${layer.semantic.switchId},\"drawable\":${quote(rig.puppet.drawables.firstOrNull { it.name == layer.source.name }?.id?.raw ?: "")}}"
 		}
-		val physicsIds = PhysicsCatalog.active(analysis, config, rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }, rig.puppet).map { it.id }
+		val physicsEnabled = if (config.rigEdits.modifierStack == null) config.generatePhysics && !config.meshOnly else physicsIds.isNotEmpty()
 		val useFrontHair = PhysicsGenerator.FRONT_HAIR_ID in physicsIds
 		val useBackHair = PhysicsGenerator.BACK_HAIR_ID in physicsIds
 		val useEyeJelly = PhysicsGenerator.EYE_JELLY_ID in physicsIds
@@ -900,7 +901,7 @@ class PSD2LivePipeline {
 		  "config": {"atlasSize":${config.atlasSize},"meshSpacing":${config.meshSpacing},"headTurnStrength":${config.headTurnStrength},"bodyStrength":${config.bodyStrength},"meshOnly":${config.meshOnly},"generateDeformers":${config.generateDeformers},"exportMotions":${config.exportMotions}},
 		  "faceRig": {"algorithm":"perspective-parallelogram-nine-pose-v2","angleX":[-45,0,45],"angleY":[-30,0,30],"initialAngleZ":${rig.initialHeadAngleZ},"centerX":${rig.faceCenterX},"centerY":${rig.faceCenterY},"radiusX":${rig.faceRadiusX},"radiusY":${rig.faceRadiusY}},
 		  "deformerHierarchy": {"head":"DeformHeadContainer","face":"DeformFaceNinePose","frontHair":["DeformHairFrontFollow","DeformHairFrontPhysics"],"backHair":["DeformHairBackFollow","DeformHairBackPhysics"]},
-		  "physics": {"enabled":${config.generatePhysics && !config.meshOnly},"frontHair":$useFrontHair,"backHair":$useBackHair,"eyeJelly":$useEyeJelly,"groups":[${physicsIds.joinToString(",") { quote(it) }}]},
+		  "physics": {"enabled":$physicsEnabled,"frontHair":$useFrontHair,"backHair":$useBackHair,"eyeJelly":$useEyeJelly,"groups":[${physicsIds.joinToString(",") { quote(it) }}]},
 		  "summary": {"layers":${analysis.layers.size},"drawables":${rig.puppet.drawables.size},"deformers":${rig.puppet.deformers.size},"parameters":${rig.puppet.parameters.size},"atlasPages":${atlas.pages.size}},
 		  "layers": [
 		$layers
