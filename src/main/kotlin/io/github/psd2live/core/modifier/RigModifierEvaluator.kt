@@ -298,8 +298,9 @@ internal class RigModifierEvaluator(
                 }
                 writers[key] = instance.id to definition
             }
+            val keyforms = io.github.psd2live.core.RigBuildProfile.stage("modifier keyform ownership") { ownedKeyforms(before, generated) }
             entries += ModifierEvaluation(instance, ModifierStatus.ACTIVE, contributions = contributions,
-                ownedKeyforms = ownedKeyforms(before, generated), overrideIssues = overridden.issues)
+                ownedKeyforms = keyforms, overrideIssues = overridden.issues)
             available += instance.capability(definition.appliedConfig(instance), definition.provides)
             outputs += current
         }
@@ -395,41 +396,48 @@ internal class RigModifierEvaluator(
     }
 
     private fun ownedKeyforms(before: RigIR, after: RigIR): List<ModifierKeyform> = buildList {
-        fun <F> addedCells(kind: String, id: String, previous: io.github.psd2live.format.model.KeyGrid<F>?,
-                           next: io.github.psd2live.format.model.KeyGrid<F>?, channel: String? = null) {
-            if (previous == null || next == null || previous.axes.isEmpty() ||
-                previous.axes.map { it.parameter }.toSet() != next.axes.map { it.parameter }.toSet()) return
-            val old = previous.axes.associateBy { it.parameter }
+        fun <F> forms(kind: String, id: String, previous: io.github.psd2live.format.model.KeyGrid<F>?,
+                      next: io.github.psd2live.format.model.KeyGrid<F>?, channel: String? = null) {
+            if (next == null || previous?.axes == next.axes) return
+            val old = previous?.axes.orEmpty().associateBy { it.parameter }
+            if (old.keys != next.axes.mapTo(HashSet()) { it.parameter }) {
+                next.axes.filter { it.parameter !in old }.forEach { add(ModifierKeyform(kind, id, it.parameter, channel)) }
+                return
+            }
+            val addedIndices = next.axes.map { axis ->
+                val previousKeys = old.getValue(axis.parameter).keys
+                BooleanArray(axis.keys.size) { key ->
+                    (0 until previousKeys.size).none { previousKeys[it] == axis.keys[key] }
+                }
+            }
+            if (addedIndices.none { keys -> keys.any { it } }) return
             for (cell in next.cells) {
+                val changed = addedIndices.indices.firstOrNull { addedIndices[it][cell.coordinate[it]] } ?: continue
                 val key = next.axes.mapIndexed { index, axis -> axis.parameter to axis.keys[cell.coordinate[index]] }.toMap()
-                val changed = key.entries.firstOrNull { (parameter, value) -> old.getValue(parameter).keys.toArray().none { it == value } } ?: continue
-                add(ModifierKeyform(kind, id, changed.key, channel, key))
+                add(ModifierKeyform(kind, id, next.axes[changed].parameter, channel, key))
             }
         }
         fun channels(kind: String, id: String, previous: io.github.psd2live.format.model.Channels, next: io.github.psd2live.format.model.Channels) {
-            for ((channel, grid) in next) {
-                addedCells(kind, id, previous[channel], grid, channel.name.lowercase())
-                val existing = previous[channel]?.axes.orEmpty().mapTo(HashSet()) { it.parameter }
-                grid.axes.filter { it.parameter !in existing }.forEach { add(ModifierKeyform(kind, id, it.parameter, channel.name.lowercase())) }
+            if (previous === next) return
+            for ((channel, grid) in next) forms(kind, id, previous[channel], grid, channel.name.lowercase())
+        }
+        if (before.deformers !== after.deformers) {
+            val warps = before.deformers.filterIsInstance<Deformer.Warp>().associateBy { it.id }
+            for (warp in after.deformers.filterIsInstance<Deformer.Warp>()) {
+                val previous = warps[warp.id]
+                if (previous === warp) continue
+                forms("warp", warp.id, previous?.lattice, warp.lattice)
+                channels("warp", warp.id, previous?.channels.orEmpty(), warp.channels)
             }
         }
-        val warps = before.deformers.filterIsInstance<Deformer.Warp>().associateBy { it.id }
-        for (warp in after.deformers.filterIsInstance<Deformer.Warp>()) {
-            addedCells("warp", warp.id, warps[warp.id]?.lattice, warp.lattice)
-            val previous = warps[warp.id]?.lattice?.axes.orEmpty().mapTo(HashSet()) { it.parameter }
-            warp.lattice?.axes.orEmpty().filter { it.parameter !in previous }.forEach {
-                add(ModifierKeyform("warp", warp.id, it.parameter))
+        if (before.meshes !== after.meshes) {
+            val meshes = before.meshes.associateBy { it.id }
+            for (mesh in after.meshes) {
+                val previous = meshes[mesh.id]
+                if (previous === mesh) continue
+                forms("mesh", mesh.id, previous?.offsets, mesh.offsets)
+                channels("mesh", mesh.id, previous?.channels.orEmpty(), mesh.channels)
             }
-            channels("warp", warp.id, warps[warp.id]?.channels.orEmpty(), warp.channels)
-        }
-        val meshes = before.meshes.associateBy { it.id }
-        for (mesh in after.meshes) {
-            addedCells("mesh", mesh.id, meshes[mesh.id]?.offsets, mesh.offsets)
-            val previous = meshes[mesh.id]?.offsets?.axes.orEmpty().mapTo(HashSet()) { it.parameter }
-            mesh.offsets?.axes.orEmpty().filter { it.parameter !in previous }.forEach {
-                add(ModifierKeyform("mesh", mesh.id, it.parameter))
-            }
-            channels("mesh", mesh.id, meshes[mesh.id]?.channels.orEmpty(), mesh.channels)
         }
     }
 

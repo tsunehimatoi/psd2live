@@ -1,10 +1,7 @@
 package io.github.psd2live.core
 
 import io.github.psd2live.core.modifier.*
-import io.github.psd2live.format.model.Canvas
-import io.github.psd2live.format.model.Parameter
-import io.github.psd2live.format.model.Part
-import io.github.psd2live.format.model.RigIR
+import io.github.psd2live.format.model.*
 import kotlinx.serialization.json.*
 import kotlin.test.*
 
@@ -192,6 +189,27 @@ class RigModifierStackTest {
 
         val historical = applied.stack.copy(appliedCapabilities = applied.stack.appliedCapabilities.map { it.copy(provides = null) })
         assertEquals(expected.rig, engine.evaluate(applied.authored, RigModifierStack.fromJson(historical.toJson())).rig)
+    }
+
+    @Test fun keyformOwnershipRecordsOnlyNewKeysAndAxes() {
+        val original = listOf(KeyAxis("x", Floats.values(0f)), KeyAxis("y", Floats.values(0f)))
+        val widened = listOf(KeyAxis("x", Floats.values(0f, 1f)), KeyAxis("y", Floats.values(0f, 2f)))
+        val delta = MeshOffsets(Floats.Empty)
+        val mesh = Mesh("mesh", "Mesh", null, geometry = null,
+            offsets = KeyGrid(original, listOf(KeyCell(Ints.values(0, 0), delta))))
+        val opacity = KeyGrid<ChannelValue>(listOf(KeyAxis("y", Floats.values(0f))),
+            listOf(KeyCell(Ints.values(0), ChannelValue.Scalar(1f))))
+        val output = mesh.copy(offsets = KeyGrid(widened, listOf(
+            KeyCell(Ints.values(0, 0), delta), KeyCell(Ints.values(0, 1), delta), KeyCell(Ints.values(1, 1), delta),
+        )), channels = mapOf(Channel.OPACITY to opacity))
+        val extend = RigModifierDefinition("extend", 1, evaluate = { rig, _, _ -> rig.copy(meshes = listOf(output)) })
+        val result = RigModifierEvaluator(RigModifierRegistry(listOf(extend))).evaluate(authored.copy(meshes = listOf(mesh)),
+            RigModifierStack(listOf(entry("extend", "extend", targets = listOf(ModifierTarget("mesh", mesh.id))))))
+        assertEquals(listOf(
+            ModifierKeyform("mesh", mesh.id, "y", key = mapOf("x" to 0f, "y" to 2f)),
+            ModifierKeyform("mesh", mesh.id, "x", key = mapOf("x" to 1f, "y" to 2f)),
+            ModifierKeyform("mesh", mesh.id, "y", channel = "opacity"),
+        ), result.entries.single().ownedKeyforms)
     }
 
     @Test fun registryRejectsCyclesUnknownDependenciesAndDuplicateVersions() {
