@@ -46,15 +46,18 @@ class PSD2LivePipeline {
         current.modifierBaseSnapshot?.let { modifierBase = it }
     }
 	private val generatedGeometry = GeneratedGeometryCache()
-	fun inspect(psd: Path, config: PipelineConfig = PipelineConfig()): PipelineAnalysis {
+	fun inspect(psd: Path, config: PipelineConfig = PipelineConfig()): PipelineAnalysis =
+		RigGenerationSource.analyze(readPsd(psd), config)
+
+	private fun readPsd(psd: Path): SourceArt {
 		require(Files.isRegularFile(psd)) { tr("error.psdMissing", psd) }
 		val bytes = Files.readAllBytes(psd)
 		require(PsdReader.matches(bytes)) { tr("error.invalidPsd", psd) }
-		return RigGenerationSource.analyze(PsdReader.read(bytes), config)
+		return PsdReader.read(bytes)
 	}
 
 	fun buildPreview(psd: Path, config: PipelineConfig = PipelineConfig()): RigPreviewModel =
-		buildPreview(inspect(psd, config), config)
+		buildPreview(readPsd(psd), config)
 
 	/**
 	 * The preview of [source] under [config]. [previousAtlas] - the atlas of the model a commit starts from - only
@@ -65,8 +68,14 @@ class PSD2LivePipeline {
 		config: PipelineConfig = PipelineConfig(),
 		progress: ProgressListener = ProgressListener { _, _ -> },
 		previousAtlas: PackedAtlas? = null,
-	): RigPreviewModel = buildPreview(if (config.rigEdits.importedCmo3 != null) Cmo3ModelImport.analysis(source, config)
-		else RigBuildProfile.stage("pipeline: analyze") { RigGenerationSource.analyze(source, config) }, config, progress, previousAtlas)
+	): RigPreviewModel {
+		if (config.rigEdits.modifierStack != null) {
+			return io.github.psd2live.core.modifier.RigModifierPipeline.build(this, source, config, progress, previousAtlas)
+		}
+		val analysis = if (config.rigEdits.importedCmo3 != null) Cmo3ModelImport.analysis(source, config)
+			else RigBuildProfile.stage("pipeline: analyze") { RigGenerationSource.analyze(source, config) }
+		return buildPreviewInputs(analysis, config, progress, previousAtlas, ordinaryMaterials = false)
+	}
 
 	fun buildPreview(
 		analysis: PipelineAnalysis,
@@ -85,7 +94,7 @@ class PSD2LivePipeline {
     private fun buildPreviewInputs(analysis: PipelineAnalysis, config: PipelineConfig, progress: ProgressListener,
                                    previousAtlas: PackedAtlas?, ordinaryMaterials: Boolean): RigPreviewModel {
         if (config.rigEdits.modifierStack != null) {
-            return io.github.psd2live.core.modifier.RigModifierPipeline.build(this, analysis, config, progress, previousAtlas)
+            return io.github.psd2live.core.modifier.RigModifierPipeline.build(this, analysis.source, config, progress, previousAtlas)
         }
         if (RigLayerDeletion.deferred(config)) {
             val generation = RigLayerDeletion.generationConfig(config)

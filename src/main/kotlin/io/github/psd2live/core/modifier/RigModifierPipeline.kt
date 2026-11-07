@@ -7,6 +7,7 @@ import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.format.model.TileArt
 import io.github.psd2live.targets.cubism.PuppetIr
 import java.util.concurrent.CancellationException
+import org.umamo.format.art.SourceArt
 import org.umamo.runtime.model.PuppetModel
 
 internal data class ModifierBaseSnapshot(val key: List<Any>, val model: RigPreviewModel, val input: RigIR)
@@ -52,7 +53,7 @@ internal object RigModifierPipeline {
         motionBasic = false, motionSkeleton = false,
     )
 
-    fun build(pipeline: PSD2LivePipeline, analysis: PipelineAnalysis, config: PipelineConfig,
+    fun build(pipeline: PSD2LivePipeline, artwork: SourceArt, config: PipelineConfig,
               progress: ProgressListener, previousAtlas: PackedAtlas?): RigPreviewModel {
         val stack = RigModifierStack.fromJson(requireNotNull(config.rigEdits.modifierStack))
         require(config.rigEdits.swingEdits.isEmpty() && config.rigEdits.simEdits.isEmpty() && config.rigEdits.interiorEffects.isEmpty()) {
@@ -60,16 +61,16 @@ internal object RigModifierPipeline {
         }
         val ordinary = ordinaryConfig(config)
         // Mesh-only is a construction input here, not an export gate on the ordinary authored content.
-        val baseKey = listOf(analysis.source, ordinary, config.meshOnly && stack.instances.none { it.enabled } && stack.appliedCapabilities.isEmpty(), pipeline.deferRuntimeBundles, io.github.psd2live.i18n.I18n.currentLanguage)
+        val baseKey = listOf(artwork, ordinary, config.meshOnly && stack.instances.none { it.enabled } && stack.appliedCapabilities.isEmpty(), pipeline.deferRuntimeBundles, io.github.psd2live.i18n.I18n.currentLanguage)
         val retained = pipeline.modifierBase?.takeIf { it.key == baseKey }
         val base = retained?.model ?: RigBuildProfile.stage("modifier author input") {
-            pipeline.buildOrdinaryPreview(analysis.source, ordinary.copy(meshOnly = true),
+            pipeline.buildOrdinaryPreview(artwork, ordinary.copy(meshOnly = true),
                 ProgressListener { message, fraction -> progress.update(message, fraction * .8) }, previousAtlas)
         }
         if (retained != null) RigBuildProfile.count("modifier author input cache hits")
         val input = retained?.input ?: compileOrdinary(base.analysis, base.atlas, base.rig, config)
         val source = RigModifierSource(base.analysis, base.atlas, config, base.rig.layerIdByDrawableId, base.rig.copiedDrawableIds, base.baseRig.puppet, pipeline.meshCache)
-        val context = listOf(analysis.source, config.copy(rigEdits = config.rigEdits.copy(modifierStack = null)),
+        val context = listOf(artwork, config.copy(rigEdits = config.rigEdits.copy(modifierStack = null)),
             io.github.psd2live.i18n.I18n.currentLanguage)
         val result = RigModifierAlgorithms.evaluator(source).evaluate(input, stack, pipeline.modifierCache, context) {
             if (Thread.currentThread().isInterrupted) throw CancellationException("Modifier evaluation cancelled")
