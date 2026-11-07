@@ -34,6 +34,8 @@
 
 眼部睁大 v2 可按版本选用。它从源眼部测量和拟合眼绑定扩展开眼关键形与透明度。高光、眨眼带眉或睑耦合已在前面时，请继续使用 v1。
 
+眉形 v2 可按版本选用，需要共享脚手架 v2 和兼容的拟合眉。请先添加眉形，再添加其他眉部运动。已修改眉高关键形、拓扑或父框架时可继续使用 v1。
+
 ## 安装与卸载
 
 绑定结构提供算法修订 1／2 的独立包：运行 `./gradlew :algorithms:binding:pluginScaffold1 :algorithms:binding:pluginScaffold2`，输出为 `algorithms/binding/build/plugin-scaffold-1` 和 `plugin-scaffold-2`。包 ID 为 `builtin.7269672e73636166666f6c64.v1`／`.v2`，入口为包命名空间下的 `/structure`，稳定别名为 `rig.scaffold`。两种修订分别固定历史逐目标层级和共享层级语义。

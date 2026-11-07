@@ -270,6 +270,126 @@ class WorkspaceLegacyBindingTest {
         assertEquals(compiled, RigIrCompiler.compile(f.now.model))
     }
 
+    @Test fun browShapeWorkerMatchesLockedBindingAndReopensWithItsHistory(): Unit = runBlocking {
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find("brow.shape", 2))
+        for (head in listOf("face/legacy", "face/fitted")) {
+            val f = Fixture(document(pairedBrows = head == "face/fitted"))
+            f.install()
+            f.group(listOf("body/legacy", head, "eye/fitted"))
+            f.edit("modifier_add", JsonObject(f.addition("brow/fitted", "brow", config = buildJsonObject {
+                put("scaffold", "structure")
+                putJsonObject("values") { put("lift", 67f) }
+            }) + ("version" to JsonPrimitive(if (head == "face/legacy") 1 else 2))))
+            val addition = f.addition("brow.shape", "shape", config = buildJsonObject {
+                put("scaffold", "structure")
+                put("base", "brow")
+                putJsonObject("values") { put("strength", 138f) }
+            })
+            val before = f.now
+            val reference = Fixture(before.document)
+            reference.install()
+            reference.edit("modifier_add", addition)
+            val locked = RigModifierStack.fromJson(reference.now.document.rigEdits.modifierStack!!).instances.last()
+            assertEquals(1, locked.version)
+            val expected = RigIrCompiler.compile(reference.now.model)
+            f.edit("modifier_add", JsonObject(addition + ("version" to JsonPrimitive(2))))
+            val after = f.now
+            val actual = RigIrCompiler.compile(after.model)
+            assertEquals(expected.parameters, actual.parameters)
+            assertEquals(expected.parameterTree, actual.parameterTree)
+            for ((old, next) in expected.meshes.zip(actual.meshes)) {
+                assertEquals(old.offsets, next.offsets, old.id)
+                assertEquals(old.shapes, next.shapes, old.id)
+            }
+            assertEquals(expected, actual)
+
+            val stack = RigModifierStack.fromJson(after.document.rigEdits.modifierStack!!)
+            val instance = stack.instances.last()
+            assertEquals(artifact.reference, instance.plugin)
+            val directory = Files.createTempDirectory("brow-shape-package-")
+            val preferences = Preferences.userRoot().node("brow-shape-package/" + UUID.randomUUID())
+            val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+            try {
+                val staging = Files.createDirectory(directory.resolve("package"))
+                Files.write(staging.resolve("plugin.json"), artifact.bytes)
+                for (name in artifact.manifest.files.keys) {
+                    assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                }
+                val providers = stack.instances.dropLast(1).map { provider ->
+                    ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
+                        provider.id, provider.config, provider.outputAliases, provider.plugin)
+                }
+                val adapter = RigBrowShapeModifier.definition(RigModifierSource.of(after.model))
+                val context = adapter.authorContext(instance).withUpstream(providers)
+                repeat(2) {
+                    val installed = store.install(staging.toString())
+                    assertEquals(artifact.reference, installed.reference)
+                    val result = ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(),
+                        assertNotNull(before.model.rig.modifierOutput), instance, {}, store, context = context,
+                        declaredParameters = adapter.parameters(instance))
+                    assertEquals(after.model.rig.modifierOutput, result)
+                    ModifierPluginWorkers.stop(installed.reference)
+                    store.uninstall(installed.reference)
+                    assertTrue(store.snapshot().none { it.reference == installed.reference })
+                }
+                val undone = f.runtime.checkout(after.projectId, after.state, before.historyHead)
+                assertEquals(RigIrCompiler.compile(before.model), RigIrCompiler.compile(undone.model))
+                val redone = f.runtime.checkout(after.projectId, undone.state, after.historyHead)
+                assertEquals(actual, RigIrCompiler.compile(redone.model))
+                val historyStore = WorkspaceStore(directory.resolve("project"))
+                val archive = directory.resolve("brow-shape.psd2live")
+                val repository = ProjectRepository(writeHeadCache = false)
+                repository.save(ProjectSaveCapture(after.projectId, f.runtime.history(), JsonObject(emptyMap()), null, historyStore), archive)
+                repository.open(archive).use { opened ->
+                    val document = opened.history.head().snapshot
+                    assertEquals(instance, RigModifierStack.fromJson(document.rigEdits.modifierStack!!).instances.last())
+                    assertEquals(actual, RigIrCompiler.compile(WorkspacePreviewBuilder().build(document)))
+                }
+            } finally {
+                store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+                preferences.removeNode()
+                ModifierPluginStore.deleteTree(directory)
+            }
+            f.edit("modifier_apply", buildJsonObject { put("id", instance.id) })
+            assertEquals(actual, RigIrCompiler.compile(f.now.model))
+            assertEquals(actual, RigIrCompiler.compile(WorkspacePreviewBuilder().build(f.now.document)))
+            if (head == "face/legacy") {
+                val files = mutableMapOf<String, ByteArray>()
+                io.github.psd2live.format.compile.Compiler.export(io.github.psd2live.targets.cubism.Cmo3Target(),
+                    RigIrCompiler.compile(f.now.model, tileArt = true),
+                    io.github.psd2live.format.compile.ExportOptions("brow-shape")) { path, bytes -> files[path] = bytes }
+                val imported = Cmo3ModelImport.read(files.getValue("brow-shape.cmo3")).puppet
+                val brow = imported.drawables.single { it.id == mesh(f, "brow").id }
+                assertEquals(listOf("ParamBrowLY", "ParamBrowLAngle"), brow.geometryGrid?.axes?.map { it.parameterId.raw })
+                assertEquals(setOf("ParamBrowLX", "ParamBrowLForm"), brow.blendShapes.map { it.parameterId.raw }.toSet())
+            }
+        }
+    }
+
+    @Test fun browShapeV2RejectsEditedHeightGridAtomically(): Unit = runBlocking {
+        val f = Fixture(document())
+        f.install()
+        f.group(listOf("face/legacy", "brow/fitted"))
+        val brow = mesh(f, "brow")
+        val height = assertNotNull(brow.geometryGrid)
+        val offsets = height.cells.first().form.positionDeltas.map { JsonPrimitive(it + .01f) }
+        f.edit("keyform_apply", buildJsonObject { putJsonArray("changes") { addJsonObject {
+            put("op", "set")
+            put("target", "mesh:${brow.id.raw}")
+            putJsonObject("key") { put("ParamBrowLY", -1f) }
+            putJsonObject("geometry") { put("positionDeltas", JsonArray(offsets)) }
+        } } })
+        val before = f.now
+        val error = assertFailsWith<WorkspaceBatchEditException> {
+            f.edit("modifier_add", JsonObject(f.addition("brow.shape", "shape", config = buildJsonObject {
+                put("scaffold", "structure")
+                put("base", "brow")
+            }) + ("version" to JsonPrimitive(2))))
+        }
+        assertContains(error.message.orEmpty(), "requires the unedited fitted height grid")
+        assertEquals(before, f.now)
+    }
+
     private fun compare(native: RigPreviewModel, actual: RigPreviewModel, poses: List<Map<ParameterId, Float>>,
                         aliases: Map<String, String> = emptyMap(), targets: Set<DrawableId>? = null) {
         val evaluator = CpuDeformationEvaluator()

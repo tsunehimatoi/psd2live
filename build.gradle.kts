@@ -80,6 +80,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "fittedFaceV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browFittedElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "depthTurnV2Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "browShapeElements"))
 	implementation(platform("io.ktor:ktor-bom:3.5.1"))
 	// Engine ported from Umamo (format, runtime, interop, render, edit); it brings its own libraries.
 	implementation(project(":umamo"))
@@ -267,6 +268,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginBrowFittedV2")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-fitted-v2")) {
         into("algorithm-plugins/brow-fitted-v2")
+    }
+    dependsOn(":algorithms:binding:pluginBrowShape")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-shape")) {
+        into("algorithm-plugins/brow-shape")
     }
     dependsOn(":algorithms:binding:pluginFittedFaceV2")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-fitted-face-v2")) {

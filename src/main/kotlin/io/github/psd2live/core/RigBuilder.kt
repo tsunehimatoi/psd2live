@@ -5,6 +5,7 @@ import io.github.psd2live.algorithms.binding.EyeFittedInputs
 import io.github.psd2live.algorithms.binding.EyeWideInputs
 import io.github.psd2live.core.modifier.ModifierSourceBounds
 import io.github.psd2live.core.modifier.RigSourceCapture
+import io.github.psd2live.algorithms.binding.BrowShapeInputs
 import io.github.psd2live.algorithms.binding.LegacyBodyMotion
 import io.github.psd2live.algorithms.binding.TorsoFrame
 import io.github.psd2live.core.RigSourceMeasurements.meshFramedAnalysis
@@ -1227,6 +1228,35 @@ object RigBuilder {
                 ScaffoldMesh.Geometry.Iris(aligned.centroidX, aligned.centroidY, tuning.irisJellySquash, tuning.irisJellyStretch), raw)
         }.toMap()
         return io.github.psd2live.algorithms.binding.EyeSquashInputs.encode(measurements)
+    }
+
+    /** Captures the fit and aligned source vertices for the brow's own angle, sideways and form bindings. */
+    internal fun browShapeSourceInputs(
+        analysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig, cache: PreviewMeshCache,
+        targetLayers: Map<String, String>, eyeProvider: String?, parentId: (String, String) -> String,
+    ): BrowShapeInputs {
+        val context = rigContext(analysis, config, cache)
+        val (fits, eyes) = context.fittedBrowMeasurements(config)
+        val layers = context.analysis.layers.associateBy { it.source.id.raw }
+        val names = io.github.psd2live.core.recipe.RigModules.BROW_SHAPE.takeIf {
+            it.applies(io.github.psd2live.core.recipe.RecipeSubject.of(context.analysis))
+        }?.defines.orEmpty().map { tr(it.nameKey) }
+        val targets = targetLayers.mapNotNull { (target, layerId) ->
+            val layer = layers[layerId]?.takeIf {
+                it.semantic.tag == SemanticTag.EYEBROW && it.semantic.role == null && it.opaquePixels > 0
+            } ?: return@mapNotNull null
+            val fit = fits[layer.semantic.side] ?: return@mapNotNull null
+            val placement = atlas.placementByLayerId[layerId] ?: return@mapNotNull null
+            val (parent, frame) = context.parentAndFrame(layer, config)
+            val source = buildGridMesh(layer, frame, context.headSpaceFor(layer, config), config, cache,
+                MeshResolution.unitScale(config, context.analysis.source))
+            val raw = ScaffoldMesh.RawMesh(source.rigPositions,
+                LayerTexture.packed(layer, placement, atlas).bind(source.mesh.uvs), source.mesh.indices)
+            val eye = eyes?.rigs?.get(fit.side)?.let { BrowShapeInputs.Eye(it.opening, it.fit.width) }
+            target to BrowShapeInputs.Target(fit, eye, parent?.let { parentId(target, it.raw) }, frame, raw)
+        }.toMap()
+        return BrowShapeInputs(names, tr("model.group.brows"), targets,
+            eyeProvider.takeIf { targets.values.any { it.eye != null } })
     }
 
     /** Captures the neck's source topology and neutral frames without evaluating any binding stage. */
