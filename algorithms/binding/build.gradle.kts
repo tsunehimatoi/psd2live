@@ -3422,6 +3422,42 @@ tasks.register("pluginMouthSpringV6") {
     }
 }
 
+val mouthSpringV7WorkerJar = registerIsolatedBindingWorker(
+    "mouthSpringV7", "mouth-spring-v7", "worker-mouth-spring-v7", "io.github.psd2live.algorithms.binding.MouthSpringV7Worker",
+)
+
+kotlin.target.compilations.named("mouthSpringV7") {
+    associateWith(kotlin.target.compilations.getByName("mouthSpringV6"))
+}
+mouthSpringV7WorkerJar.configure {
+    from(sourceSets["mouthSpringV6"].output)
+}
+
+tasks.register("pluginMouthSpringV7") {
+    dependsOn(mouthSpringV7WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-spring-v7")
+    val packageVersion = project.version.toString()
+    inputs.file(mouthSpringV7WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthSpringV7WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682e737072696e67.v7"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Mouth spring",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/spring","aliases":["mouth.spring"],"version":7,"name":"Mouth spring","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","mouth/fitted","mouth.jaw"],"contextVersion":2,
+               "reads":["mesh","deformer","parameter","hierarchy","physics"],"writes":["mesh","parameter","hierarchy","physics"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val eyeAftershockV3WorkerJar = registerIsolatedBindingWorker(
     "eyeAftershockV3", "eye-aftershock-v3", "worker-eye-aftershock-v3", "io.github.psd2live.algorithms.binding.EyeAftershockV3Worker",
 )

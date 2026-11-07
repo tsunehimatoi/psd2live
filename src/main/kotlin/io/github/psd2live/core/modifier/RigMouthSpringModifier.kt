@@ -5,6 +5,7 @@ import io.github.psd2live.algorithms.binding.MouthSpringV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV6Algorithm
+import io.github.psd2live.algorithms.binding.MouthSpringV7Algorithm
 import io.github.psd2live.core.PartRole
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.SemanticTag
@@ -63,6 +64,15 @@ internal object RigMouthSpringModifier {
         return definition(source).copy(version = MouthSpringV6Algorithm.VERSION,
             parameters = { MouthSpringV6Algorithm.parameters(capture(it)) }, plugin = closedAlgorithm, authorContext = ::capture)
     }
+
+    private val depthAlgorithm = object : ReadingModifierAlgorithmPlugin by MouthSpringV7Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = MouthSpringV6Algorithm.optionalUpstream
+        override val canonicalOptInType = MouthSpringAlgorithm.TYPE
+    }
+
+    fun closedDepthDefinition(source: RigModifierSource?): RigModifierDefinition =
+        closedDefinition(source).copy(version = MouthSpringV7Algorithm.VERSION, plugin = depthAlgorithm)
 
     fun fullDefinition(source: RigModifierSource?): RigModifierDefinition {
         val contexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()

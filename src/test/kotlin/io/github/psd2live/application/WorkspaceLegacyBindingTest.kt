@@ -743,7 +743,7 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
-    @Test fun closedMouthDepthMatchesLockedVersionAndInstalledWorker(): Unit = runBlocking {
+    @Test fun closedMouthDepthAndSpringMatchLockedVersionsAndInstalledWorkers(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true, closedMouth = true)
         val choices = WorkspaceInitialPreset()
         val defaults = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
@@ -752,13 +752,21 @@ class WorkspaceLegacyBindingTest {
                 RigModules.MOUTH_DEPTH.id to ModuleChoice(true, values = mapOf("depth" to 143f)),
                 RigModules.MOUTH_SPRING.id to ModuleChoice(true))))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        val eyes = mapOf("face/fitted" to 3, "eye/fitted" to 5, "eye.smile" to 3, "eye.wide" to 3,
+            "eye.gaze-lid" to 3, "eye.emotion" to 3, "eye.lid-fade" to 3, "eye.highlight" to 3,
+            "eye.aftershock" to 4, "eye.squash" to 4)
+        val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
+            choices, requestedVersions = eyes)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val depth = stack.instances.single { it.type == "mouth.interior-depth" }
         val index = stack.index(depth.id)
+        val spring = stack.instances.single { it.type == "mouth.spring" }
+        val springIndex = stack.index(spring.id)
         assertEquals(1, depth.version)
+        assertEquals(1, spring.version)
+        assertTrue(springIndex > index)
         val versions = mapOf("mouth/fitted" to 4, "mouth.outline" to 5, "mouth.vowel" to 5,
-            "mouth.capture" to 4, "mouth.tongue" to 4, "mouth.jaw" to 6, depth.type to 4)
+            "mouth.capture" to 4, "mouth.tongue" to 4, "mouth.jaw" to 6, "mouth.cheek-lid" to 6, depth.type to 4, spring.type to 7)
         val locked = stack.copy(instances = stack.instances.map { entry ->
             val version = versions[entry.type] ?: return@map entry
             entry.copy(version = version, plugin = assertNotNull(BundledAlgorithmArtifacts.find(entry.type, version)).reference)
@@ -775,6 +783,12 @@ class WorkspaceLegacyBindingTest {
         assertTrue(expected.deformers.any { deformer -> previous.deformers.none { it.id == deformer.id } })
         assertEquals(previous.meshes.single { it.name == "mouth-closed" }, expected.meshes.single { it.name == "mouth-closed" })
         assertEquals(ModifierStatus.ACTIVE, actual.entries[index].status)
+        assertEquals(ModifierStatus.ACTIVE, actual.entries[springIndex].status)
+        val springBefore = reference[springIndex - 1]
+        val springAfter = reference[springIndex]
+        assertEquals(tongue, springAfter.meshes.single { it.id == tongue.id })
+        assertTrue(springAfter.meshes.single { it.name == "face" }.shapes.any { it.parameter == "ParamMouthSpring" })
+        assertNotEquals(springBefore.physics, springAfter.physics)
         for (stage in index - 1 until stack.instances.size) {
             val a = reference[stage]
             val b = actual.outputs[stage]
@@ -785,7 +799,11 @@ class WorkspaceLegacyBindingTest {
         }
         val compiled = RigIrCompiler.compile(baseline, tileArt = true)
         assertEquals(compiled, RigIrCompiler.compile(preview, tileArt = true))
-        assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(document), tileArt = true))
+        val stageCacheEnabled = RigStageCache.enabled
+        RigStageCache.enabled = false
+        val replayed = try { WorkspacePreviewBuilder().build(document) } finally { RigStageCache.enabled = stageCacheEnabled }
+        assertEquals(springAfter, assertNotNull(replayed.modifierEvaluation).outputs[springIndex])
+        assertEquals(compiled, RigIrCompiler.compile(replayed, tileArt = true))
 
         val artifact = assertNotNull(BundledAlgorithmArtifacts.find(depth.type, 4))
         val directory = Files.createTempDirectory("closed-mouth-depth-package-")
@@ -800,13 +818,30 @@ class WorkspaceLegacyBindingTest {
             val worker = store.install(staging.toString())
             assertEquals(artifact.reference, worker.reference)
             val context = assertNotNull(actual.readAlgorithms[depth.id]).context
-            for ((type, version) in versions - depth.type) {
+            for ((type, version) in versions - depth.type - spring.type) {
                 val provider = context.upstream.single { it.type == type }
                 assertEquals(version, provider.version)
                 assertEquals(BundledAlgorithmArtifacts.find(type, version)?.reference, provider.plugin)
             }
             assertEquals(expected, ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(),
                 actual.outputs[index - 1], actual.entries[index].instance, {}, store, context = context))
+            val springArtifact = assertNotNull(BundledAlgorithmArtifacts.find(spring.type, 7))
+            BundledAlgorithmArtifacts.retain(store, listOf(springArtifact))
+            val springWorker = store.snapshot().single { it.reference == springArtifact.reference }
+            val springContext = assertNotNull(actual.readAlgorithms[spring.id]).context
+            for (type in listOf("mouth.jaw", "mouth.tongue", "mouth.cheek-lid", depth.type)) {
+                val provider = springContext.upstream.single { it.type == type }
+                assertEquals(versions.getValue(type), provider.version)
+                assertEquals(BundledAlgorithmArtifacts.find(type, provider.version)?.reference, provider.plugin)
+            }
+            val instance = actual.entries[springIndex].instance
+            val definition = RigMouthSpringModifier.closedDepthDefinition(RigModifierSource.of(preview))
+            assertEquals(springAfter, ModifierPluginWorkers.evaluate(springWorker, springWorker.manifest.algorithms.single(),
+                actual.outputs[springIndex - 1], instance, {}, store, context = springContext, declaredParameters = definition.parameters(instance)))
+            val incomplete = springContext.withUpstream(springContext.upstream.filterNot { it.type == depth.type })
+            assertContains(assertFailsWith<IllegalArgumentException> {
+                (definition.plugin as ReadingModifierAlgorithmPlugin).changes(springBefore, instance, incomplete) {}
+            }.message.orEmpty(), "requires interior depth v4")
         } finally {
             store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
             preferences.removeNode()
