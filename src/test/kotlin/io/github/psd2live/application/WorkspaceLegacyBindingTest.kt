@@ -45,6 +45,10 @@ import kotlin.math.abs
 import kotlin.test.*
 
 class WorkspaceLegacyBindingTest {
+    private fun prepareHistoricalModernReference(source: WorkspaceDocument, choices: WorkspaceInitialPreset = WorkspaceInitialPreset()) =
+        WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices, preferSourceBindings = true,
+            requestedVersions = mapOf("face/fitted" to 1, "eye/fitted" to 2))
+
     private class Fixture(val document: WorkspaceDocument, val scaffoldVersion: Int = 2) {
         val builder = WorkspacePreviewBuilder()
         val runtime = WorkspaceRuntime<RigPreviewModel>({ builder.build(it) }, rebuildFrom = { doc, previous -> builder.build(doc, previous) })
@@ -263,8 +267,7 @@ class WorkspaceLegacyBindingTest {
         val config = WorkspacePresetBaseline.configure(art.config(), "modern")
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
-            WorkspaceInitialPreset(clothing = true), preferSourceBindings = true)
+        val (initialized, baseline) = prepareHistoricalModernReference(source, WorkspaceInitialPreset(clothing = true))
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val brow = stack.instances.single { it.type == "brow/fitted" }
         val face = stack.instances.single { it.type == "face/fitted" }
@@ -363,8 +366,7 @@ class WorkspaceLegacyBindingTest {
         val baseline = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
         val config = baseline.copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, legacy) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
-            preferSourceBindings = true)
+        val (initialized, legacy) = prepareHistoricalModernReference(source, choices)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val versions = mapOf("eye/fitted" to 5, "eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3,
             "brow/fitted" to 3, "brow.shape" to 3)
@@ -626,8 +628,7 @@ class WorkspaceLegacyBindingTest {
         val baseline = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
         val config = baseline.copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, legacy) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
-            preferSourceBindings = true)
+        val (initialized, legacy) = prepareHistoricalModernReference(source, choices)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val versions = mapOf("eye/fitted" to 5, "eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3,
             "eye.emotion" to 3, "eye.aftershock" to 3, "brow/fitted" to 3, "brow.lid-coupling" to 4, "brow.blink" to 3)
@@ -688,8 +689,7 @@ class WorkspaceLegacyBindingTest {
             RigModules.MOUTH_DEPTH.id to ModuleChoice(true, values = mapOf("depth" to 143f))))
         val config = baseline.copy(recipe = recipe, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, legacy) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
-            preferSourceBindings = true)
+        val (initialized, legacy) = prepareHistoricalModernReference(source, choices)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val versions = mapOf("mouth/fitted" to 3, "mouth.outline" to 3, "mouth.vowel" to 4,
             "mouth.capture" to 3, "mouth.jaw" to 3, "mouth.interior-depth" to 3)
@@ -1005,8 +1005,7 @@ class WorkspaceLegacyBindingTest {
             RigModules.MOUTH_SPRING.id to ModuleChoice(true)))
         val config = baseline.copy(recipe = recipe, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, legacy) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
-            preferSourceBindings = true)
+        val (initialized, legacy) = prepareHistoricalModernReference(source, choices)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val versions = mapOf("mouth/fitted" to 3, "mouth.outline" to 3, "mouth.vowel" to 4,
             "mouth.capture" to 3, "mouth.jaw" to 3, "mouth.spring" to 4)
@@ -1214,8 +1213,7 @@ class WorkspaceLegacyBindingTest {
         ))
         val config = baseline.copy(recipe = recipe, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, legacy) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
-            preferSourceBindings = true)
+        val (initialized, legacy) = prepareHistoricalModernReference(source, choices)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val tongue = stack.instances.single { it.type == "mouth.tongue" }
         val jaw = stack.instances.single { it.type == "mouth.jaw" }
@@ -1368,8 +1366,7 @@ class WorkspaceLegacyBindingTest {
             (RigModules.MOUTH_TONGUE.id to ModuleChoice(false)))
         val config = baseline.copy(recipe = recipe, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, legacy) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
-            preferSourceBindings = true)
+        val (initialized, legacy) = prepareHistoricalModernReference(source, choices)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val versions = mapOf("mouth.outline" to 3, "mouth.vowel" to 3, "mouth.capture" to 2, "mouth.jaw" to 2,
             "mouth.cheek-lid" to 3, "mouth.spring" to 3)
@@ -1401,8 +1398,7 @@ class WorkspaceLegacyBindingTest {
         val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, legacy) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
-            preferSourceBindings = true)
+        val (initialized, legacy) = prepareHistoricalModernReference(source, choices)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val locked = stack.instances.single { it.type == "mouth.capture" }
         assertEquals(1, locked.version)
@@ -1727,8 +1723,7 @@ class WorkspaceLegacyBindingTest {
             RigModules.MOUTH_JAW.id to ModuleChoice(true, values = mapOf("share" to 22f))))
         val config = baseline.copy(recipe = recipe, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, legacy) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
-            preferSourceBindings = true)
+        val (initialized, legacy) = prepareHistoricalModernReference(source, choices)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val versions = mapOf("mouth/fitted" to 3, "mouth.outline" to 3, "mouth.jaw" to 3)
         val jaw = stack.instances.single { it.type == "mouth.jaw" }
@@ -1933,8 +1928,7 @@ class WorkspaceLegacyBindingTest {
         val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, model) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
-            preferSourceBindings = true)
+        val (initialized, model) = prepareHistoricalModernReference(source, choices)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val vowel = stack.instances.single { it.type == "mouth.vowel" }
         val outline = stack.instances.single { it.type == "mouth.outline" }
@@ -2570,8 +2564,7 @@ class WorkspaceLegacyBindingTest {
         val config = WorkspacePresetBaseline.configure(art.config(), "modern")
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
-            WorkspaceInitialPreset(clothing = true), preferSourceBindings = true)
+        val (initialized, baseline) = prepareHistoricalModernReference(source, WorkspaceInitialPreset(clothing = true))
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val gaze = stack.instances.single { it.type == "eye.gaze-lid" }
         val index = stack.index(gaze.id)
@@ -2858,8 +2851,7 @@ class WorkspaceLegacyBindingTest {
         val config = WorkspacePresetBaseline.configure(art.config(), "modern")
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
-            WorkspaceInitialPreset(clothing = true), preferSourceBindings = true)
+        val (initialized, baseline) = prepareHistoricalModernReference(source, WorkspaceInitialPreset(clothing = true))
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val emotion = stack.instances.single { it.type == "eye.emotion" }
         val index = stack.index(emotion.id)
@@ -2993,8 +2985,7 @@ class WorkspaceLegacyBindingTest {
         val config = WorkspacePresetBaseline.configure(art.config(), "modern")
             .copy(generatePhysics = true, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, _) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
-            WorkspaceInitialPreset(clothing = true), preferSourceBindings = true)
+        val (initialized, _) = prepareHistoricalModernReference(source, WorkspaceInitialPreset(clothing = true))
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val locked = stack.instances.single { it.type == "eye.aftershock" }
         val index = stack.index(locked.id)
@@ -3064,8 +3055,7 @@ class WorkspaceLegacyBindingTest {
         val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, legacy) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
-            preferSourceBindings = true)
+        val (initialized, legacy) = prepareHistoricalModernReference(source, choices)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val locked = stack.instances.single { it.type == "eye.aftershock" }
         assertEquals(1, locked.version)
@@ -3549,8 +3539,7 @@ class WorkspaceLegacyBindingTest {
         val config = baseline.copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()),
             recipe = baseline.recipe.copy(modules = baseline.recipe.modules + (RigModules.MOUTH_TONGUE.id to ModuleChoice(false))))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, model) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
-            preferSourceBindings = true)
+        val (initialized, model) = prepareHistoricalModernReference(source, choices)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val locked = stack.instances.single { it.type == "mouth.cheek-lid" }
         assertEquals(1, locked.version)
@@ -3737,8 +3726,7 @@ class WorkspaceLegacyBindingTest {
         val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, model) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
-            preferSourceBindings = true)
+        val (initialized, model) = prepareHistoricalModernReference(source, choices)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val locked = stack.instances.single { it.type == "brow.lid-coupling" }
         assertEquals(1, locked.version)
@@ -4011,8 +3999,7 @@ class WorkspaceLegacyBindingTest {
         val config = WorkspacePresetBaseline.configure(art.config(), "modern")
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
-            WorkspaceInitialPreset(clothing = true), preferSourceBindings = true)
+        val (initialized, baseline) = prepareHistoricalModernReference(source, WorkspaceInitialPreset(clothing = true))
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val wide = stack.instances.single { it.type == "eye.wide" }
         val index = stack.index(wide.id)
@@ -4096,8 +4083,7 @@ class WorkspaceLegacyBindingTest {
         val config = WorkspacePresetBaseline.configure(art.config(), "modern")
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
-            WorkspaceInitialPreset(clothing = true), preferSourceBindings = true)
+        val (initialized, baseline) = prepareHistoricalModernReference(source, WorkspaceInitialPreset(clothing = true))
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val smile = stack.instances.single { it.type == "eye.smile" }
         val index = stack.index(smile.id)
@@ -4256,8 +4242,7 @@ class WorkspaceLegacyBindingTest {
             preset.recipe.copy(modules = preset.recipe.modules + (RigModules.EYE_HIGHLIGHT.id to ModuleChoice(false)))
         val config = preset.copy(recipe = recipe, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
-            WorkspaceInitialPreset(clothing = true), preferSourceBindings = true)
+        val (initialized, baseline) = prepareHistoricalModernReference(source, WorkspaceInitialPreset(clothing = true))
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val squash = stack.instances.single { it.type == "eye.squash" }
         val index = stack.index(squash.id)
@@ -4415,8 +4400,7 @@ class WorkspaceLegacyBindingTest {
         val preset = WorkspacePresetBaseline.configure(art.config(), "modern")
         val config = preset.copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
-            WorkspaceInitialPreset(clothing = true), preferSourceBindings = true)
+        val (initialized, baseline) = prepareHistoricalModernReference(source, WorkspaceInitialPreset(clothing = true))
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val highlight = stack.instances.single { it.type == "eye.highlight" }
         val index = stack.index(highlight.id)
@@ -4833,8 +4817,7 @@ class WorkspaceLegacyBindingTest {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
         val config = WorkspacePresetBaseline.configure(art.config(), "modern")
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config))
-        val (initialized, expected) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
-            preferSourceBindings = true)
+        val (initialized, expected) = prepareHistoricalModernReference(source)
         val builder = WorkspacePreviewBuilder()
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val spring = stack.instances.single { it.type == "brow.spring" }
@@ -4895,8 +4878,7 @@ class WorkspaceLegacyBindingTest {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
         val config = WorkspacePresetBaseline.configure(art.config(), "modern")
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config))
-        val (initialized, expected) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
-            preferSourceBindings = true)
+        val (initialized, expected) = prepareHistoricalModernReference(source)
         val builder = WorkspacePreviewBuilder()
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val spring = stack.instances.single { it.type == "brow.spring" }
@@ -5207,8 +5189,7 @@ class WorkspaceLegacyBindingTest {
         val config = WorkspacePresetBaseline.configure(art.config(), "modern")
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, model) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
-            WorkspaceInitialPreset(clothing = true), preferSourceBindings = true)
+        val (initialized, model) = prepareHistoricalModernReference(source, WorkspaceInitialPreset(clothing = true))
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val gloom = stack.instances.single { it.type == "expression.gloom" }
         assertEquals(1, gloom.version)
@@ -5229,8 +5210,7 @@ class WorkspaceLegacyBindingTest {
         val config = WorkspacePresetBaseline.configure(art.config(), "modern")
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, expectedModel) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
-            WorkspaceInitialPreset(clothing = true), preferSourceBindings = true)
+        val (initialized, expectedModel) = prepareHistoricalModernReference(source, WorkspaceInitialPreset(clothing = true))
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val gloom = stack.instances.single { it.type == "expression.gloom" }
         val artifact = assertNotNull(BundledAlgorithmArtifacts.find(gloom.type, 3))
@@ -5452,8 +5432,7 @@ class WorkspaceLegacyBindingTest {
             modules = preset.recipe.modules + (RigModules.MOUTH_TONGUE.id to ModuleChoice(false)))
         val config = preset.copy(recipe = recipe, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, _) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
-            preferSourceBindings = true)
+        val (initialized, _) = prepareHistoricalModernReference(source, choices)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val arms = stack.instances.single { it.type == "body.arms" }
         val index = stack.index(arms.id)
@@ -5770,8 +5749,7 @@ class WorkspaceLegacyBindingTest {
         val config = WorkspacePresetBaseline.configure(art.config(), "modern")
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, model) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
-            WorkspaceInitialPreset(clothing = true), preferSourceBindings = true)
+        val (initialized, model) = prepareHistoricalModernReference(source, WorkspaceInitialPreset(clothing = true))
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val skirt = stack.instances.single { it.type == "outfit.skirt" }
         assertEquals(1, skirt.version)
@@ -5991,8 +5969,7 @@ class WorkspaceLegacyBindingTest {
         val config = WorkspacePresetBaseline.configure(art.config(), "modern")
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, model) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
-            WorkspaceInitialPreset(clothing = true), preferSourceBindings = true)
+        val (initialized, model) = prepareHistoricalModernReference(source, WorkspaceInitialPreset(clothing = true))
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val clothing = stack.instances.filter { it.type in setOf("outfit.skirt", "outfit.ribbons") }
         assertEquals(2, clothing.size)
@@ -6431,8 +6408,7 @@ class WorkspaceLegacyBindingTest {
         val config = WorkspacePresetBaseline.configure(art.config(), "modern")
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
-            WorkspaceInitialPreset(clothing = true), preferSourceBindings = true)
+        val (initialized, baseline) = prepareHistoricalModernReference(source, WorkspaceInitialPreset(clothing = true))
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val face = stack.instances.single { it.type == "face/fitted" }
         val body = stack.instances.single { it.type == "body/legacy" }
@@ -6483,8 +6459,7 @@ class WorkspaceLegacyBindingTest {
         val config = WorkspacePresetBaseline.configure(art.config(), "modern")
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
-            WorkspaceInitialPreset(clothing = true), preferSourceBindings = true)
+        val (initialized, baseline) = prepareHistoricalModernReference(source, WorkspaceInitialPreset(clothing = true))
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val face = stack.instances.single { it.type == "face/fitted" }
         val body = stack.instances.single { it.type == "body/legacy" }
@@ -6727,8 +6702,7 @@ class WorkspaceLegacyBindingTest {
         val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, model) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
-            preferSourceBindings = true)
+        val (initialized, model) = prepareHistoricalModernReference(source, choices)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val locked = stack.instances.single { it.type == "mouth.outline" }
         assertEquals(1, locked.version)
@@ -7187,8 +7161,7 @@ class WorkspaceLegacyBindingTest {
         val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, model) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
-            preferSourceBindings = true)
+        val (initialized, model) = prepareHistoricalModernReference(source, choices)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val legacy = stack.instances.single { it.type == "mouth/fitted" }
         assertEquals(1, legacy.version)
