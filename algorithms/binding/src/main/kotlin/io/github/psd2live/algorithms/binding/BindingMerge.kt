@@ -375,7 +375,7 @@ object BindingMerge {
         return actual.map { if (key(it) in ranks) ordered.next() else it }
     }
 
-    private fun appendTree(model: PuppetModel, desired: List<ParameterNode>, added: Set<ParameterId>, preserveSourceOrder: Boolean): List<ParameterNode> {
+    internal fun appendTree(model: PuppetModel, desired: List<ParameterNode>, added: Set<ParameterId>, preserveSourceOrder: Boolean): List<ParameterNode> {
         val existing = model.parameterTree.ifEmpty { model.parameters.filter { it.id !in added }.map { ParameterNode.Param(it.id) } }
         fun groups(nodes: List<ParameterNode>): Set<ParameterGroupId> = nodes.filterIsInstance<ParameterNode.Group>().flatMapTo(HashSet()) { listOf(it.id) + groups(it.children) }
         val present = groups(existing)

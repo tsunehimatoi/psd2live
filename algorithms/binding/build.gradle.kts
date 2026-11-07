@@ -4,7 +4,7 @@ import java.security.MessageDigest
 // Binding kernels use the GPL engine; they are separate from the MIT API/format modules.
 plugins { `java-library`; kotlin("jvm"); kotlin("plugin.serialization") }
 group = "io.github.psd2live.algorithms"
-version = "1.0.57"
+version = "1.0.58"
 kotlin { jvmToolchain(21) }
 dependencies {
     api(project(":umamo"))
@@ -21,6 +21,8 @@ val neckWorkerClasses = listOf("**/NeckAlgorithm*.class", "**/NeckInputs*.class"
 
 val bustWorkerClasses = listOf("**/BustBindingAlgorithm*.class", "**/BustBindingInputs*.class", "**/BustBindingWorker*.class")
 
+val hairLegacyWorkerClasses = listOf("**/HairLegacy*.class")
+
 val workerJar by tasks.registering(Jar::class) {
     dependsOn(configurations.runtimeClasspath)
     archiveClassifier.set("worker")
@@ -31,7 +33,7 @@ val workerJar by tasks.registering(Jar::class) {
     from(sourceSets.main.get().output)
     from(configurations.runtimeClasspath.map { files -> files.map { if (it.isDirectory) it else zipTree(it) } })
     exclude("META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA")
-    exclude(neckWorkerClasses + bustWorkerClasses)
+    exclude(neckWorkerClasses + bustWorkerClasses + hairLegacyWorkerClasses)
 }
 
 tasks.register("pluginPackage") {
@@ -292,7 +294,7 @@ val hairChainsWorkerJar by tasks.registering(Jar::class) {
     from(sourceSets.main.get().output)
     from(configurations.runtimeClasspath.map { files -> files.map { if (it.isDirectory) it else zipTree(it) } })
     exclude("META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA")
-    exclude(neckWorkerClasses + bustWorkerClasses)
+    exclude(neckWorkerClasses + bustWorkerClasses + hairLegacyWorkerClasses)
 }
 
 tasks.register("pluginHairChains") {
@@ -386,6 +388,41 @@ tasks.register("pluginBust") {
                "targets":["mesh"],"requires":["rig.scaffold","body/legacy","face/legacy"],"contextVersion":2,
                "reads":["mesh","deformer","parameter","hierarchy","physics","textures"],"writes":["mesh","parameter","hierarchy","physics"],
                "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter","physics"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
+val hairLegacyWorkerJar by tasks.registering(Jar::class) {
+    dependsOn(workerJar)
+    archiveClassifier.set("hair-legacy-worker")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest { attributes["Main-Class"] = "io.github.psd2live.algorithms.binding.HairLegacyWorker" }
+    from(sourceSets.main.get().output) { include(hairLegacyWorkerClasses) }
+    from(workerJar.flatMap { it.archiveFile }.map { zipTree(it) }) { exclude("META-INF/MANIFEST.MF") }
+}
+
+tasks.register("pluginHairLegacy") {
+    dependsOn(hairLegacyWorkerJar)
+    val output = layout.buildDirectory.dir("plugin-hair-legacy")
+    inputs.file(hairLegacyWorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", project.version.toString())
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        hairLegacyWorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"builtin.686169722f6c6567616379.v2","version":"${project.version}","name":"Legacy hair",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"builtin.686169722f6c6567616379.v2/legacy","aliases":["hair/legacy"],
+               "version":2,"name":"Legacy hair","category":"hair","contextVersion":1,"targets":["mesh"],
+               "requires":["rig.scaffold"],"exclusiveFamily":"base:hair",
+               "reads":["*"],"writes":["mesh","deformer","hierarchy","parameter"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
                "configSchema":{"type":"object"},"defaults":{}}]}
         """.trimIndent())
     }

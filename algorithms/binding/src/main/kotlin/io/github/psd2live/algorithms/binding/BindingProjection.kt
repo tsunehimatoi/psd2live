@@ -40,7 +40,7 @@ object BindingProjection {
             } })
     }
 
-    private fun <F> restrict(grid: KeyformGrid<F>?, kept: Set<ParameterId>, defaults: Map<ParameterId, Float>,
+    internal fun <F> restrict(grid: KeyformGrid<F>?, kept: Set<ParameterId>, defaults: Map<ParameterId, Float>,
                              interpolator: FormInterpolator<F>, checkpoint: () -> Unit): KeyformGrid<F>? {
         var current = grid ?: return null
         while (current.axes.any { it.parameterId !in kept }) {

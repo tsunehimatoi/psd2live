@@ -959,6 +959,53 @@ class WorkspaceLegacyBindingTest {
         assertEquals(after, RigIrCompiler.compile(f.builder.build(f.now.document)))
     }
 
+    @Test fun legacyHairSourceAndWorkerMatchVersionOne(): Unit = runBlocking<Unit> {
+        for ((scaffoldVersion, face) in listOf(1 to null, 1 to "face/fitted", 2 to "face/legacy", 2 to "face/fitted")) {
+            suspend fun fixture(version: Int): Pair<Fixture, io.github.psd2live.format.model.RigIR> {
+                val f = Fixture(document(sideLock = true), scaffoldVersion)
+                f.install()
+                f.edit("modifier_add", f.addition(RigSourceModifiers.SCAFFOLD, "structure", config = buildJsonObject {
+                    put("backHairSway", face == null)
+                }))
+                face?.let { f.edit("modifier_add", f.addition(it, "face")) }
+                val input = requireNotNull(f.now.model.rig.modifierOutput)
+                val config = buildJsonObject {
+                    put("scaffold", "structure")
+                    putJsonObject("tuning") {
+                        put("frontHairSway", 27f)
+                        put("frontHairPerspective", 19f)
+                        put("backHairTurn", 4f)
+                        put("hairRollHold", 57f)
+                    }
+                }
+                f.edit("modifier_add", JsonObject(f.addition("hair/legacy", "hair", config = config) +
+                    ("version" to JsonPrimitive(version))))
+                return f to input
+            }
+            val (legacy) = fixture(1)
+            val (direct, input) = fixture(2)
+            val expected = RigIrCompiler.compile(legacy.now.model)
+            val actual = RigIrCompiler.compile(direct.now.model)
+            assertEquals(expected.parameters, actual.parameters)
+            assertEquals(expected.parameterTree, actual.parameterTree)
+            assertEquals(expected.deformers, actual.deformers)
+            assertEquals(expected.meshes, actual.meshes)
+            assertEquals(expected.physics, actual.physics)
+            val stack = RigModifierStack.fromJson(direct.now.document.rigEdits.modifierStack!!)
+            val instance = stack.instances.last()
+            val reference = requireNotNull(instance.plugin)
+            val entry = ModifierPluginStore.shared.snapshot().single { it.reference == reference }
+            val context = RigModifierSource.of(direct.now.model).hairLegacyContext(instance)
+            try {
+                val result = ModifierPluginWorkers.evaluate(entry, entry.manifest.algorithms.single(), input, instance, {}, context = context,
+                    declaredParameters = RigHairLegacySource.parameters(stack.instances.first()))
+                assertEquals(direct.now.model.rig.modifierOutput, result)
+            } finally {
+                ModifierPluginWorkers.stop(reference)
+            }
+        }
+    }
+
     @Test fun hairChainsReplaceTheNativeSwayBranchAndKeepOutputsAfterApplication(): Unit = runBlocking<Unit> {
         for (version in 1..2) {
             val f = Fixture(document()); f.install()

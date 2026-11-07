@@ -232,6 +232,10 @@ tasks.processResources {
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-face-neck")) {
         into("algorithm-plugins/face-neck")
     }
+    dependsOn(":algorithms:binding:pluginHairLegacy")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-hair-legacy")) {
+        into("algorithm-plugins/hair-legacy")
+    }
     dependsOn(":algorithms:binding:pluginSkinClip")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-skin")) {
         into("algorithm-plugins/skin-clip")
