@@ -55,10 +55,7 @@ internal object CliPresetPresentation {
         // Keep the exported physics order without replacing values returned by the plugins.
         val physicsOrder = PhysicsCatalog.groups(preview.analysis, config, parameters.keys.mapTo(HashSet()) { it.raw })
             .map { it.id }
-        val drawables = puppet.drawables.map { mesh ->
-            if (mesh.textureSourceId?.let(SeeThroughLayers::copyId) == mesh.id) mesh.copy(isSelectable = false) else mesh
-        }
-        val ordered = puppet.copy(parameters = (preset + custom).mapNotNull(parameters::get), drawables = drawables,
+        val ordered = puppet.copy(parameters = (preset + custom).mapNotNull(parameters::get),
             parameterTree = StandardParameters.tree(custom, modules, parameters.keys), parameterLinks = StandardParameters.links(preset.toSet()))
         return preview.copy(rig = rig.copy(puppet = ordered, modifierOutput = output.copy(
             physics = output.physics.copy(groups = PhysicsCatalog.ordered(output.physics.groups, physicsOrder) { it.id }))))
