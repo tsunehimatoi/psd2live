@@ -11,6 +11,7 @@ import java.util.zip.Adler32
 import java.util.zip.CRC32
 import java.util.zip.Deflater
 import javax.imageio.ImageIO
+import javax.imageio.stream.MemoryCacheImageOutputStream
 
 /**
  * PNG encodings of an atlas page.
@@ -34,7 +35,10 @@ internal object AtlasPagePng {
 
 	fun canonical(image: BufferedImage): ByteArray {
 		val output = ByteArrayOutputStream()
-		check(ImageIO.write(image, "png", output)) { tr("error.pngEncoder") }
+		// The destination is already in memory. Avoid ImageIO's default disk cache for stream output.
+		MemoryCacheImageOutputStream(output).use { stream ->
+			check(ImageIO.write(image, "png", stream)) { tr("error.pngEncoder") }
+		}
 		return output.toByteArray().also { png -> synchronized(imagesByPng) { imagesByPng[png] = java.lang.ref.WeakReference(image) } }
 	}
 
