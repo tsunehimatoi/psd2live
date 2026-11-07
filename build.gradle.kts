@@ -95,6 +95,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "faceLegacyV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLegacyV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthFittedV2Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "mouthFittedV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthVowelElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthVowelV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthCaptureElements"))
@@ -351,6 +352,7 @@ tasks.processResources {
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-depth")) {
         into("algorithm-plugins/mouth-depth")
     }
+    dependsOn(":algorithms:binding:pluginMouthFittedV3")
     dependsOn(":algorithms:binding:pluginMouthFittedV2")
     dependsOn(":algorithms:binding:pluginBrowFittedV2")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-fitted-v2")) {
@@ -394,6 +396,9 @@ tasks.processResources {
     }
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-fitted-v2")) {
         into("algorithm-plugins/mouth-fitted-v2")
+    }
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-fitted-v3")) {
+        into("algorithm-plugins/mouth-fitted-v3")
     }
     dependsOn(":algorithms:binding:pluginEyeLidFade")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-lid-fade")) {

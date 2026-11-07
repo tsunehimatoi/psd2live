@@ -2159,3 +2159,31 @@ tasks.register("pluginMouthOutlineV3") {
         """.trimIndent())
     }
 }
+
+val mouthFittedV3WorkerJar = registerIsolatedBindingWorker(
+    "mouthFittedV3", "mouth-fitted-v3", "worker-mouth-fitted-v3", "io.github.psd2live.algorithms.binding.MouthFittedV3Worker",
+)
+
+tasks.register("pluginMouthFittedV3") {
+    dependsOn(mouthFittedV3WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-fitted-v3")
+    inputs.file(mouthFittedV3WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", project.version.toString())
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthFittedV3WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682f666974746564.v3"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"${project.version}","name":"Fitted mouth v3",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/binding","aliases":["mouth/fitted"],"version":3,"contextVersion":2,"name":"Fitted mouth v3","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","face/fitted"],"exclusiveFamily":"base:mouth",
+               "reads":["*"],"writes":["mesh","parameter","deformer","hierarchy","relations","rest_pose"],"composableKinds":["mesh","parameter","deformer","hierarchy","relations"],
+               "parameters":[{"id":"ParamMouthForm","name":"Mouth Form","min":-1,"max":1,"default":0},{"id":"ParamMouthOpenY","name":"Mouth Open","min":0,"max":1,"default":0}],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}

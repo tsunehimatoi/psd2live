@@ -2,6 +2,7 @@ package io.github.psd2live.core.modifier
 
 import io.github.psd2live.algorithms.binding.MouthFittedInputs
 import io.github.psd2live.algorithms.binding.MouthFittedV2Algorithm
+import io.github.psd2live.algorithms.binding.MouthFittedV3Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
 import io.github.psd2live.algorithms.binding.ScaffoldMesh
 import io.github.psd2live.algorithms.binding.ScaffoldMeshContext
@@ -32,6 +33,20 @@ internal object RigFittedMouthDefinition {
     }
 
     private fun reach(instance: RigModifierInstance) = (RigLegacyBindings.values(instance)["reach"] ?: 100f) / 100f
+
+    fun modernDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val plugin = object : ChangingModifierAlgorithmPlugin by MouthFittedV3Algorithm(), ModifierOptionalUpstream, ModifierVersionSelection {
+            override val optionalUpstream = setOf("body/legacy", "eye/fitted", "brow/fitted")
+            override val canonicalOptInType = TYPE
+        }
+        return definition(source).copy(version = MouthFittedV3Algorithm.VERSION, plugin = plugin,
+            requires = setOf("rig.scaffold", "face/fitted"),
+            parameters = { instance -> MouthFittedV2Algorithm.parameters(
+                tr("model.parameter.mouthForm"), tr("model.parameter.mouthOpen"), reach(instance).takeIf { it > 1.001f } ?: 1f) },
+            changeWrites = MouthFittedV3Algorithm.WRITES, composableKinds = MouthFittedV3Algorithm.WRITES - "restPose" + "relations",
+            evaluate = { _, _, _ -> error("Fitted mouth v3 requires captured source head inputs") },
+            authorContext = { RigFittedMouthModernSource.capture(requireNotNull(source), it) })
+    }
 
     private fun parameters(instance: RigModifierInstance) = MouthFittedV2Algorithm.parameters(
         tr("model.parameter.mouthForm"), tr("model.parameter.mouthOpen"), reach(instance))
