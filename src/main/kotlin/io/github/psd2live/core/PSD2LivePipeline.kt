@@ -37,6 +37,7 @@ import io.github.psd2live.core.legacy.RigGenerationMigration
 
 class PSD2LivePipeline {
 	internal var deferRuntimeBundles = false
+	internal var rawSourceRotations = false
 	internal val modifierCache = io.github.psd2live.core.modifier.RigModifierEvaluationCache()
     internal var modifierBase: io.github.psd2live.core.modifier.ModifierBaseSnapshot? = null
 	internal var meshCache = PreviewMeshCache()

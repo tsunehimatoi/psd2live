@@ -139,6 +139,7 @@ internal class RigModifierEvaluator(
     private val sourceTargetExists: (ModifierTarget) -> Boolean = { false },
     private val physicsOrder: List<String> = emptyList(),
     private val resolveRasters: ModifierRasterResolver = RigModifierRasterAssets::resolve,
+    private val rawSourceRotations: Boolean = false,
     private val applyOverrides: (RigIR, RigModifierInstance, List<JsonObject>) -> ModifierOverrideResult = { rig, _, edits ->
         require(edits.isEmpty()) { "This evaluator has no override replayer" }; ModifierOverrideResult(rig)
     },
@@ -268,7 +269,7 @@ internal class RigModifierEvaluator(
             val inputKey = if (definition.plugin is ReadingModifierAlgorithmPlugin) null else
                 definition.cacheReads?.let { ModifierInputCache.input(before, it) to authorContext }
             val cached = algorithmCache[instance.id]?.takeIf { it.instance == instance && it.input == inputKey }
-            val generated = if (cached != null) {
+            val evaluated = if (cached != null) {
                 io.github.psd2live.core.RigBuildProfile.count("modifier dependency cache hits")
                 cached.patch.apply(before)
             } else RigBuildProfile.modifierStage("evaluate", instance.type) {
@@ -325,6 +326,8 @@ internal class RigModifierEvaluator(
                     else -> plugin.evaluate(before, instance, checkpoint)
                 }
             }
+            val generated = if (rawSourceRotations && cached == null)
+                RawSourceRotationTransfer.apply(before, evaluated, instance, authorContext) else evaluated
             if (inputKey != null && cached == null) algorithmCache[instance.id] = ModifierInputCache.Entry(instance, inputKey, ModifierInputCache.Patch(before, generated))
             checkpoint()
             validateParameters(before, generated, instance, resolved)

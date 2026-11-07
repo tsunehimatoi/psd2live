@@ -101,11 +101,15 @@ internal object WorkspacePresetInitialization {
     fun prepare(document: WorkspaceDocument, work: WorkspaceRasterWork,
                 choices: WorkspaceInitialPreset = WorkspaceInitialPreset(),
                 requestedVersions: Map<String, Int> = emptyMap(),
-                cliBindings: CliPresetBindings? = null): Pair<WorkspaceDocument, RigPreviewModel> {
+                cliBindings: CliPresetBindings? = null,
+                restoreSourceRotations: Boolean = false): Pair<WorkspaceDocument, RigPreviewModel> {
         val config = document.config()
         var stack = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack))
         require(stack.instances.isEmpty()) { "Initialize presets only into an empty stack" }
-        val pipeline = PSD2LivePipeline().apply { deferRuntimeBundles = true }
+        val pipeline = PSD2LivePipeline().apply {
+            deferRuntimeBundles = true
+            rawSourceRotations = restoreSourceRotations && cliBindings != null && freshSource(config)
+        }
         fun current() = document.copy(rigEdits = document.rigEdits.copy(modifierStack = stack.toJson()))
         fun build(stage: String): RigPreviewModel = RigBuildProfile.stage("source preset: $stage") {
             work.checkpoint()

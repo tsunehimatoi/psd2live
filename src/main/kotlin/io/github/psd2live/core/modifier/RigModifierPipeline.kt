@@ -52,9 +52,10 @@ internal object RigModifierPipeline {
         // Compare the resolved layout and let the evaluator compare the complete authored IR, including
         // page content, before reusing a prefix or its captured inputs.
         val context = listOf(artwork, config.copy(atlasArrangement = null, rigEdits = config.rigEdits.copy(modifierStack = null)),
-            base.atlas.placementByLayerId, base.atlas.fit, base.atlas.footprints, io.github.psd2live.i18n.I18n.currentLanguage)
+            base.atlas.placementByLayerId, base.atlas.fit, base.atlas.footprints, io.github.psd2live.i18n.I18n.currentLanguage, pipeline.rawSourceRotations)
         val result = ModifierPluginStore.shared.withArchivedBundles(stack.pluginReferences()) {
-            RigModifierAlgorithms.evaluator(source, stack).evaluate(input, stack, pipeline.modifierCache, context,
+            RigModifierAlgorithms.evaluator(source, stack, pipeline.rawSourceRotations).evaluate(
+                input, stack, pipeline.modifierCache, context,
                 reuseCapturedAuthorInputs = true) {
                 if (Thread.currentThread().isInterrupted) throw CancellationException("Modifier evaluation cancelled")
                 progress.update("Evaluating modifier stack", .85)

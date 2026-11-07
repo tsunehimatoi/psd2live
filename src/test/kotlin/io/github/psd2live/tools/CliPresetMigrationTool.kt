@@ -185,7 +185,7 @@ class CliPresetMigrationTool {
         val bindings = CliPresetBindings(sourceAnalyses, config)
         val candidate = if (config.meshOnly) pipeline.buildRawMeshExport(source, config) else
             WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
-                WorkspaceInitialPreset(clothing = false), cliBindings = bindings).second
+                WorkspaceInitialPreset(clothing = false), cliBindings = bindings, restoreSourceRotations = true).second
         val expected = RigIrCompiler.compile(native, tileArt = true)
         val after = RigIrCompiler.compile(candidate, tileArt = true)
         val presented = if (config.meshOnly) candidate else

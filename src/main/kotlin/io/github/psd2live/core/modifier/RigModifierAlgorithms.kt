@@ -48,7 +48,8 @@ internal object RigModifierAlgorithms {
             RigModifierRegistry(builtins + workers)
         }
 
-    fun evaluator(source: RigModifierSource? = null, stack: RigModifierStack? = null) = RigModifierEvaluator(
+    fun evaluator(source: RigModifierSource? = null, stack: RigModifierStack? = null,
+                  rawSourceRotations: Boolean = false) = RigModifierEvaluator(
         when {
             stack?.instances?.isEmpty() == true -> emptyRegistry
             source == null -> registry
@@ -56,6 +57,7 @@ internal object RigModifierAlgorithms {
         },
         sourceTargetExists = { it.kind == "layer" && source?.hasLayer(it.id) == true },
         physicsOrder = source?.physicsOrder.orEmpty(),
+        rawSourceRotations = rawSourceRotations,
         resolveRasters = source?.let { it::resolveRasters } ?: RigModifierRasterAssets::resolve) { rig, instance, commands ->
         var model = PuppetIr.toPuppet(rig)
         val issues = ArrayList<GeneratedOverrideIssue>()
