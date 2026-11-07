@@ -2731,6 +2731,76 @@ class WorkspaceLegacyBindingTest {
         compareEyeAftershock("face/fitted")
     }
 
+    @Test fun eyeAftershockV3ReplaysAfterModernGazeAndEmotion(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
+        val choices = WorkspaceInitialPreset()
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, legacy) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
+            preferSourceBindings = true)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val locked = stack.instances.single { it.type == "eye.aftershock" }
+        assertEquals(1, locked.version)
+        val versions = mapOf("eye/fitted" to 5, "eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3, locked.type to 3)
+        fun lock(aftershockVersion: Int): WorkspaceDocument {
+            val candidate = stack.copy(instances = stack.instances.map { entry ->
+                val version = if (entry.id == locked.id) aftershockVersion else versions[entry.type] ?: return@map entry
+                entry.copy(version = version, plugin = assertNotNull(BundledAlgorithmArtifacts.find(entry.type, version)).reference)
+            })
+            return initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = candidate.toJson()))
+        }
+        val rejected = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(lock(2)) }
+        assertContains(rejected.message.orEmpty(), "requires fitted eyes v2 or v4")
+        val document = lock(3)
+        val expected = assertNotNull(legacy.modifierEvaluation).outputs
+        fun verify(model: RigPreviewModel) {
+            val evaluation = assertNotNull(model.modifierEvaluation)
+            assertEquals(versions.keys, evaluation.entries.filter { it.instance.type in versions }.mapTo(hashSetOf()) { it.instance.type })
+            evaluation.entries.forEachIndexed { index, entry ->
+                if (entry.instance.type in versions) assertEquals(expected[index], evaluation.outputs[index], entry.instance.type)
+            }
+            assertEquals(RigIrCompiler.compile(legacy, tileArt = true), RigIrCompiler.compile(model, tileArt = true))
+        }
+        val actual = WorkspacePreviewBuilder().build(document).also(::verify)
+        val cache = RigStageCache.enabled
+        try {
+            RigStageCache.enabled = false
+            verify(PSD2LivePipeline().buildPreview(document.source, document.config()))
+        } finally {
+            RigStageCache.enabled = cache
+        }
+
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 3))
+        val directory = Files.createTempDirectory("eye-aftershock-v3-package-")
+        val preferences = Preferences.userRoot().node("eye-aftershock-v3-package/${UUID.randomUUID()}")
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            for (name in artifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val installed = store.install(staging.toString())
+            val index = stack.index(locked.id)
+            val evaluation = assertNotNull(actual.modifierEvaluation)
+            val instance = evaluation.entries[index].instance.copy(type = installed.manifest.algorithms.single().type)
+            val definition = RigEyeAftershockModifier.modernDefinition(RigModifierSource.of(actual))
+            val adapter = ModifierPluginCatalog.definitions(store, captured = listOf(definition)).single {
+                it.type == instance.type && it.version == instance.version
+            }
+            val context = assertNotNull(evaluation.readAlgorithms[instance.id]).context
+            assertEquals(5, context.upstream.single { it.type == "eye/fitted" }.version)
+            assertEquals(3, context.upstream.single { it.type == "eye.gaze-lid" }.version)
+            assertEquals(expected[index], (adapter.plugin as ContextualModifierAlgorithmPlugin).evaluate(
+                evaluation.outputs[index - 1], instance, context) {})
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
     @Test fun independentEyeAftershockMatchesLockedVersionAfterSourceEyeBinding(): Unit = runBlocking {
         compareEyeAftershock("face/fitted", fittedVersion = 4)
     }
