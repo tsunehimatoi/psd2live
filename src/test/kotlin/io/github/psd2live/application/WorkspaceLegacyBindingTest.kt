@@ -3044,8 +3044,9 @@ class WorkspaceLegacyBindingTest {
     @Test fun independentMouthCheekLidMatchesRecommendedImportAndInstalledWorker(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
         val choices = WorkspaceInitialPreset()
-        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
-            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val baseline = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+        val config = baseline.copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()),
+            recipe = baseline.recipe.copy(modules = baseline.recipe.modules + (RigModules.MOUTH_TONGUE.id to ModuleChoice(false))))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
         val (initialized, model) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
             preferSourceBindings = true)
@@ -3059,9 +3060,14 @@ class WorkspaceLegacyBindingTest {
         val expected = outputs[index]
         assertTrue(expected.deformers.size > input.deformers.size)
         assertTrue(expected.deformers.take(input.deformers.size) != input.deformers)
-        for (version in listOf(3, 4)) {
-            val versions = if (version == 3) mapOf(locked.type to version) else
-                mapOf("mouth/fitted" to 3, "mouth.outline" to 3, "mouth.vowel" to 4, "mouth.capture" to 3, locked.type to version)
+        for (version in 3..5) {
+            val mouth = mapOf("mouth/fitted" to 3, "mouth.outline" to 3, "mouth.vowel" to 4, "mouth.capture" to 3)
+            val eye = mapOf("eye/fitted" to 5, "eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3)
+            val versions = mapOf(locked.type to version) + when (version) {
+                3 -> emptyMap()
+                4 -> mouth
+                else -> mouth + eye + ("mouth.jaw" to 3)
+            }
             val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, version))
             val instance = locked.copy(version = version, plugin = artifact.reference)
             val independent = stack.copy(instances = stack.instances.map { current ->
@@ -3088,12 +3094,20 @@ class WorkspaceLegacyBindingTest {
                     assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
                 }
                 val owner = RigModifierSource.of(actual)
-                val definition = if (version == 3) RigMouthCheekLidModifier.fittedDefinition(owner) else RigMouthCheekLidModifier.fittedMouthDefinition(owner)
+                val definition = when (version) {
+                    3 -> RigMouthCheekLidModifier.fittedDefinition(owner)
+                    4 -> RigMouthCheekLidModifier.fittedMouthDefinition(owner)
+                    else -> RigMouthCheekLidModifier.fittedEyeDefinition(owner)
+                }
                 val upstream = independent.instances.take(index).filter { it.type in definition.requires + definition.optionalUpstream }.map {
                     ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
                 }
                 val context = definition.authorContext(instance).withUpstream(upstream)
-                if (version == 4) assertEquals(3, context.upstream.single { it.type == "mouth/fitted" }.version)
+                if (version >= 4) assertEquals(3, context.upstream.single { it.type == "mouth/fitted" }.version)
+                if (version == 5) {
+                    assertEquals(5, context.upstream.single { it.type == "eye/fitted" }.version)
+                    assertEquals(3, context.upstream.single { it.type == "eye.gaze-lid" }.version)
+                }
                 val installed = store.install(staging.toString())
                 assertEquals(artifact.reference, installed.reference)
                 assertEquals(expected, ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(), actualOutputs[index - 1],

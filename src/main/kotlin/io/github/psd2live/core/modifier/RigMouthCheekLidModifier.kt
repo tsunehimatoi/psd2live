@@ -3,6 +3,7 @@ package io.github.psd2live.core.modifier
 import io.github.psd2live.algorithms.binding.MouthCheekLidAlgorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV4Algorithm
+import io.github.psd2live.algorithms.binding.MouthCheekLidV5Algorithm
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.i18n.tr
 import kotlinx.serialization.json.*
@@ -29,6 +30,17 @@ internal object RigMouthCheekLidModifier {
     fun fittedMouthDefinition(source: RigModifierSource?): RigModifierDefinition = fittedDefinition(source).copy(
         version = MouthCheekLidV4Algorithm.VERSION,
         plugin = fittedMouthAlgorithm,
+    )
+
+    private val fittedEyeAlgorithm = object : ReadingModifierAlgorithmPlugin by MouthCheekLidV5Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = MouthCheekLidV3Algorithm.optionalUpstream
+        override val canonicalOptInType = MouthCheekLidV3Algorithm.TYPE
+    }
+
+    fun fittedEyeDefinition(source: RigModifierSource?): RigModifierDefinition = fittedDefinition(source).copy(
+        version = MouthCheekLidV5Algorithm.VERSION,
+        plugin = fittedEyeAlgorithm,
     )
 
     fun fittedDefinition(source: RigModifierSource?): RigModifierDefinition = definition(source).copy(
