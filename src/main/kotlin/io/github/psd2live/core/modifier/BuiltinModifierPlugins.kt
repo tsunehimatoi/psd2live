@@ -25,7 +25,7 @@ internal object BuiltinModifierPlugins {
         hairChains(source), RigSkirtModifier.definition(source), RigRibbonsModifier.definition(source), RigCreatureModifier.definition(source), RigNeckModifier.definition(source), RigBustModifier.definition(source),
         RigHairLegacySource.definition(source), RigLidFadeModifier.definition(source), RigFittedEyeDefinition.definition(source), RigFittedEyeDefinition.mixedDefinition(source),
         RigFittedEyeDefinition.modernDefinition(source),
-        RigFittedMouthDefinition.definition(source), RigFittedMouthDefinition.modernDefinition(source), RigMouthVowelModifier.definition(source), RigMouthVowelModifier.outlineDefinition(source), RigMouthVowelModifier.fittedDefinition(source), RigMouthCaptureModifier.definition(source), RigMouthCaptureModifier.fittedDefinition(source), RigMouthJawModifier.definition(source), RigMouthJawModifier.fittedDefinition(source), RigMouthTongueModifier.definition(source), RigFittedFaceDefinition.definition(source),
+        RigFittedMouthDefinition.definition(source), RigFittedMouthDefinition.modernDefinition(source), RigMouthVowelModifier.definition(source), RigMouthVowelModifier.outlineDefinition(source), RigMouthVowelModifier.fittedDefinition(source), RigMouthCaptureModifier.definition(source), RigMouthCaptureModifier.fittedDefinition(source), RigMouthJawModifier.definition(source), RigMouthJawModifier.fittedDefinition(source), RigMouthTongueModifier.definition(source), RigMouthTongueModifier.fittedDefinition(source), RigFittedFaceDefinition.definition(source),
         RigLegacyFaceDefinition.definition(source),
         RigFittedFaceDefinition.bodyDefinition(source),
         RigEyeSquashModifier.definition(source), RigLegacyBodyDefinition.definition(source),
