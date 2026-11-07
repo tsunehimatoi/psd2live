@@ -8,15 +8,13 @@ internal object BuiltinModifierPlugins {
     data class Entry(val reference: ModifierPluginReference, val definition: RigModifierDefinition,
                      val artifact: BundledAlgorithmArtifacts.Artifact? = null)
 
-    private val physicsCode = listOf(
-        io.github.psd2live.algorithms.physics.PendulumAlgorithm::class.java,
-        io.github.psd2live.algorithms.physics.PhysicsGroups::class.java,
-        io.github.psd2live.core.RigPhysicsEdit::class.java,
-        io.github.psd2live.core.PhysicsInput::class.java, io.github.psd2live.core.PhysicsOutput::class.java,
-        io.github.psd2live.core.PhysicsSegment::class.java, io.github.psd2live.core.PhysicsNormalization::class.java,
-        io.github.psd2live.core.PhysicsSourceType::class.java,
-        Class.forName("io.github.psd2live.core.RigPhysicsKt"),
-    ).flatMap { listOf(it) + it.declaredClasses.sortedBy { nested -> nested.name } }
+    // Fingerprint inputs from the existing host-only bindings, in their original order.
+    // Compiler output and source line numbers must not change saved compatibility references.
+    private val historicalBindingCode = listOf(
+        "f7f0972749d16f38edbaf8efbebc89d34e08a2bd1c35c28c0a320e281d4a2b2b",
+        "83da034405a01be0055bc59007c438750f78d5413c3a696a8e8c98f69c71280e",
+        "7e491e41ee392e64214cc16ca34edaf8278eca8de4043b7cf2ff64bb2db1af97",
+    )
 
     fun definitions(source: RigModifierSource?): List<RigModifierDefinition> = listOf(
         SwingAlgorithmPlugin.definition, SimulationAlgorithmPlugin.definition,
@@ -48,34 +46,16 @@ internal object BuiltinModifierPlugins {
             authorContext = { requireNotNull(source).hairChainsContext(it) })
     }
 
-    private val implementations by lazy {
-        listOf(SwingAlgorithmPlugin::class.java, SimulationAlgorithmPlugin::class.java,
-            PhysicsAlgorithmPlugin::class.java, MotionAlgorithmPlugin::class.java,
-            RigSourceModifiers::class.java, RigLegacyBindings::class.java, RigSourceBinding::class.java).plus(physicsCode)
-            .associateWith { implementation ->
-                implementation.getResourceAsStream("/${implementation.name.replace('.', '/')}.class")!!.use { ModifierPluginStore.hash(it.readAllBytes()) }
-            }
-    }
-
     val entries: List<Entry> by lazy {
         definitions(null).map { definition ->
             BundledAlgorithmArtifacts.find(definition.type, definition.version)?.let { return@map Entry(it.reference, definition, it) }
-            val implementation = when (definition.type) {
-                "swing" -> SwingAlgorithmPlugin::class.java
-                "simulation" -> SimulationAlgorithmPlugin::class.java
-                "physics" -> PhysicsAlgorithmPlugin::class.java
-                "motion" -> MotionAlgorithmPlugin::class.java
-                else -> RigSourceModifiers::class.java
+            require(RigLegacyBindings.find(definition.type)?.version == definition.version) {
+                "No bundled package for ${definition.type}@${definition.version}"
             }
-            val code = if (implementation == PhysicsAlgorithmPlugin::class.java)
-                (listOf(implementation) + physicsCode).map { implementations.getValue(it) }
-            else if (implementation == RigSourceModifiers::class.java)
-                listOf(implementation, RigLegacyBindings::class.java, RigSourceBinding::class.java).map { implementations.getValue(it) }
-            else listOf(implementations.getValue(implementation))
             val id = "builtin." + java.util.HexFormat.of().formatHex(definition.type.encodeToByteArray()) + ".v${definition.version}"
             val version = "${definition.version}.0.0"
             Entry(ModifierPluginReference(id, version, ModifierPluginStore.hash(
-                (listOf(id, version) + code).joinToString("\n").encodeToByteArray())), definition)
+                (listOf(id, version) + historicalBindingCode).joinToString("\n").encodeToByteArray())), definition)
         }
     }
     private val byAlgorithm by lazy { entries.associateBy { it.definition.type to it.definition.version } }

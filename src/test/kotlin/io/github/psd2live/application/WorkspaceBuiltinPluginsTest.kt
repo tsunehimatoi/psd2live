@@ -38,6 +38,11 @@ class WorkspaceBuiltinPluginsTest {
     @Test fun newInstancesPinEntrypointsWhileLegacyReadsAndOutputIdsStayUnchanged() {
         val targets = listOf(ModifierTarget("mesh", "body"))
         val registry = RigModifierAlgorithms.registry
+        assertEquals(
+            ModifierPluginReference("builtin.626f64792f6c6567616379.v1", "1.0.0",
+                "21e4a61f2450856341987aaa0ead648fa77d2df646192e2a92fb57018f6c7b7d"),
+            BuiltinModifierPlugins.reference("body/legacy", 1),
+        )
         for (entry in BuiltinModifierPlugins.entries) {
             val definition = entry.definition
             val stack = RigModifierStack().add(definition.type, definition.version, targets)
