@@ -58,14 +58,19 @@ internal class RigModifierRegistry(definitions: List<RigModifierDefinition>) {
     init {
         require(entries.size == definitions.size) { "Duplicate modifier algorithm version" }
         require(definitions.all { it.type.isNotBlank() && it.version > 0 }) { "Invalid modifier definition" }
-        val known = definitions.flatMapTo(HashSet()) { it.provides + it.type }
+        val graph = HashMap<String, MutableSet<String>>()
+        for (definition in definitions) {
+            for (provided in definition.provides + definition.type)
+                graph.getOrPut(provided) { LinkedHashSet() }.addAll(definition.requires)
+        }
+        val known = graph.keys
         require(definitions.filter { it.pluginReference == null }.all { it.requires.all(known::contains) }) { "Unknown modifier dependency" }
         val visiting = HashSet<String>()
         val visited = HashSet<String>()
         fun visit(type: String) {
             if (type in visited) return
             require(visiting.add(type)) { "Cyclic modifier dependency: $type" }
-            definitions.filter { it.type == type || type in it.provides }.flatMap { it.requires }.distinct().filter { it in known }.forEach(::visit)
+            graph.getValue(type).forEach { if (it in known) visit(it) }
             visiting.remove(type)
             visited.add(type)
         }

@@ -27,14 +27,28 @@ internal object RigModifierAlgorithms {
         return catalog?.takeIf { it.first == revision }?.second ?: registryFor(null).also { catalog = revision to it }
     }
 
-    private fun registryFor(source: RigModifierSource?): RigModifierRegistry {
-        val builtins = BuiltinModifierPlugins.definitions(source)
-        val resolveRasters = source?.let { it::resolveRasters } ?: RigModifierRasterAssets::resolve
-        return RigModifierRegistry(builtins + ModifierPluginCatalog.definitions(captured = builtins, resolveRasters = resolveRasters))
-    }
+    private fun registryFor(source: RigModifierSource?, stack: RigModifierStack? = null): RigModifierRegistry =
+        RigBuildProfile.stage("modifier source registry") {
+            val builtins = BuiltinModifierPlugins.definitions(source)
+            val resolveRasters = source?.let { it::resolveRasters } ?: RigModifierRasterAssets::resolve
+            // Current canonical packages use the in-process definitions. Explicit worker names and older package
+            // digests still resolve through the catalog, including providers preserved by prefix application.
+            val references = stack?.let {
+                buildSet {
+                    fun include(type: String, version: Int, plugin: ModifierPluginReference?) {
+                        if (plugin != null && plugin != BuiltinModifierPlugins.reference(type, version)) add(plugin)
+                    }
+                    it.instances.forEach { entry -> include(entry.type, entry.version, entry.plugin) }
+                    it.appliedCapabilities.forEach { provider -> include(provider.type, provider.version, provider.plugin) }
+                }
+            }
+            val workers = if (references?.isEmpty() == true) emptyList() else ModifierPluginCatalog.definitions(
+                captured = builtins, resolveRasters = resolveRasters, references = references)
+            RigModifierRegistry(builtins + workers)
+        }
 
-    fun evaluator(source: RigModifierSource? = null) = RigModifierEvaluator(
-        if (source == null) registry else registryFor(source),
+    fun evaluator(source: RigModifierSource? = null, stack: RigModifierStack? = null) = RigModifierEvaluator(
+        if (source == null) registry else registryFor(source, stack),
         sourceTargetExists = { it.kind == "layer" && source?.hasLayer(it.id) == true },
         physicsOrder = source?.physicsOrder.orEmpty(),
         resolveRasters = source?.let { it::resolveRasters } ?: RigModifierRasterAssets::resolve) { rig, instance, commands ->

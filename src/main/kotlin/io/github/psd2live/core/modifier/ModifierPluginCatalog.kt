@@ -4,7 +4,9 @@ package io.github.psd2live.core.modifier
 internal object ModifierPluginCatalog {
     fun definitions(store: ModifierPluginStore = ModifierPluginStore.shared,
                     captured: List<RigModifierDefinition> = emptyList(),
-                    resolveRasters: ModifierRasterResolver = RigModifierRasterAssets::resolve): List<RigModifierDefinition> = store.runnablePackages().flatMap { entry ->
+                    resolveRasters: ModifierRasterResolver = RigModifierRasterAssets::resolve,
+                    references: Set<ModifierPluginReference>? = null): List<RigModifierDefinition> = store.runnablePackages()
+        .filter { references == null || it.reference in references }.flatMap { entry ->
         entry.manifest.algorithms.flatMap { algorithm -> (algorithm.aliases + algorithm.type).map { type ->
             // Only bundled stable aliases can use host-captured author input adapters.
             val adapter = captured.singleOrNull { it.type in algorithm.aliases && (type == algorithm.type || it.type == type) && it.version == algorithm.version &&
