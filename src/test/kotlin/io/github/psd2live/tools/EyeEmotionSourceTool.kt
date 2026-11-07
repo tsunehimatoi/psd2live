@@ -18,7 +18,11 @@ import kotlin.test.*
 
 /** Compares the source emotion on eyelids under refitted shared head frames. */
 class EyeEmotionSourceTool {
-    @Test fun compareSharedFrameEmotion(): Unit = runBlocking {
+    @Test fun compareSharedFrameEmotion(): Unit = verify(1)
+
+    @Test fun compareSharedFrameEmotionAfterSourceWideAndGaze(): Unit = verify(4)
+
+    private fun verify(lidVersion: Int): Unit = runBlocking {
         requireTools()
         val config = PipelineConfig(meshSpacing = 64)
         val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
@@ -27,7 +31,7 @@ class EyeEmotionSourceTool {
             WorkspaceSettingsCodec.encode(config.copy(rigEdits = overlay)))
         val analysis = RigGenerationSource.prepare(RigGenerationSource.analyze(source, config), config)
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4,
-            "eye.smile" to 4, "eye.wide" to 1, "eye.gaze-lid" to 1, "eye.emotion" to 1)
+            "eye.smile" to 4, "eye.wide" to lidVersion, "eye.gaze-lid" to lidVersion, "eye.emotion" to 1)
         val (planned, reference) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
             WorkspaceInitialPreset(clothing = false), requestedVersions = versions, cliBindings = CliPresetBindings(analysis, config))
         val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
@@ -50,8 +54,10 @@ class EyeEmotionSourceTool {
             })
             return planned.copy(rigEdits = planned.rigEdits.copy(modifierStack = modified.toJson()))
         }
-        val rejected = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(candidate(3)) }
-        assertContains(rejected.message.orEmpty(), "cannot migrate an edited neutral lid frame: ArtMeshEyelashL")
+        if (lidVersion == 1) {
+            val rejected = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(candidate(3)) }
+            assertContains(rejected.message.orEmpty(), "cannot migrate an edited neutral lid frame: ArtMeshEyelashL")
+        }
         val preview = WorkspacePreviewBuilder().build(candidate(4))
         val result = assertNotNull(preview.modifierEvaluation)
         fun equal(reference: RigIR, observed: RigIR, stage: String) {
