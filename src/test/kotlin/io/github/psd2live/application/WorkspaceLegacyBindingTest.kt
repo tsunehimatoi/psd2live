@@ -992,7 +992,7 @@ class WorkspaceLegacyBindingTest {
         assertEquals(1, RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.last().version)
     }
 
-    @Test fun independentMouthStackReplaysCaptureJawAndCheekLid(): Unit = runBlocking {
+    @Test fun independentMouthStackReplaysCaptureJawCheekLidAndSpring(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
         val choices = WorkspaceInitialPreset()
         val baseline = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
@@ -1004,8 +1004,8 @@ class WorkspaceLegacyBindingTest {
             preferSourceBindings = true)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val versions = mapOf("mouth.outline" to 3, "mouth.vowel" to 3, "mouth.capture" to 2, "mouth.jaw" to 2,
-            "mouth.cheek-lid" to 3)
-        val evaluatedTypes = setOf("mouth.capture", "mouth.jaw", "mouth.cheek-lid")
+            "mouth.cheek-lid" to 3, "mouth.spring" to 3)
+        val evaluatedTypes = setOf("mouth.capture", "mouth.jaw", "mouth.cheek-lid", "mouth.spring")
         val stages = stack.instances.withIndex().filter { it.value.type in evaluatedTypes }
         assertEquals(evaluatedTypes, stages.mapTo(hashSetOf()) { it.value.type })
         assertTrue(stages.all { it.value.version == 1 })
