@@ -28,6 +28,8 @@ Fitted eyes v5 requires a complete shared v2 scaffold, legacy body v1 or v2 and 
 
 Eye widening v2 extends fitted eye opening and opacity from source measurements. Use v1 with preceding eye highlights, brow blink, or lid coupling.
 
+Eye widening v3 can also recompute eyelid shapes after fitted head turns, including the head-turn deformer for a closed-eyelid drawing. Use v1 if widening would remove an existing deformer, refit a deformer shared with other meshes, or if the source measurements cannot reproduce the current binding.
+
 Brow shape v2 is selectable by version with a shared v2 scaffold and compatible fitted brows. Add it before other brow motion modifiers. Use v1 if the brow height keys, topology, or parent frame have already been edited.
 
 Brow spring v2 adds rebound shapes and physics. It requires shared scaffold v2, fitted brows v1 or v2, and fitted eyes v2 when fitted eyes are present. Use v1 with edited brow geometry or keyforms, or when a lid or brow coupling already precedes it.
