@@ -42,6 +42,8 @@ object MouthOutlineV8Algorithm : ChangingModifierAlgorithmPlugin {
         val liveParts = live.parts.mapTo(hashSetOf()) { it.id }
         val owners = listOf(scaffold) + upstream.filterNot { it.id == scaffoldId }
         val canonicalDeformers = (prior.deformers + desired.deformers).map { it.id }.distinct()
+        val hair = context.values.getValue("hair").jsonObject
+        val hairProvider = upstream.singleOrNull { it.type == "hair/chains" }
         val comparison = BindingComparison()
         val source = object : BindingMerge.Source {
             override fun provider(instance: RigModifierInstance) = scaffold
@@ -52,9 +54,14 @@ object MouthOutlineV8Algorithm : ChangingModifierAlgorithmPlugin {
                 comparison.onlyMasksChange(before, after, DrawableId(target.id), branch)
             override fun deformerIds(instance: RigModifierInstance, target: ModifierTarget, checkpoint: () -> Unit) =
                 canonicalDeformers.associateWith { canonical ->
-                    owners.asSequence().filter { target in it.targets }
-                        .map { DeformerId(ScaffoldBinding.deformerId(it, target.id, canonical.raw, shared = true)) }
-                        .firstOrNull { it in liveDeformers }
+                    val chain = hair[canonical.raw]?.jsonPrimitive?.content
+                    val provider = hairProvider?.takeIf { target in it.targets }
+                    val hairAlias = if (chain != null && provider != null)
+                        DeformerId(ScaffoldBinding.deformerId(provider, target.id, chain, shared = true)) else null
+                    hairAlias?.takeIf { it in liveDeformers }
+                        ?: owners.asSequence().filter { target in it.targets }
+                            .map { DeformerId(ScaffoldBinding.deformerId(it, target.id, canonical.raw, shared = true)) }
+                            .firstOrNull { it in liveDeformers }
                         ?: DeformerId(ScaffoldBinding.deformerId(instance, target.id, canonical.raw, shared = true))
                 }
             override fun partIds(instance: RigModifierInstance, target: ModifierTarget, checkpoint: () -> Unit) =

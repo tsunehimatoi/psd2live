@@ -13,10 +13,14 @@ import java.util.prefs.Preferences
 import kotlin.test.*
 
 class MouthOutlineSourceTool {
-    @Test fun compareDsOutline(): Unit = runBlocking {
+    @Test fun compareDsOutline(): Unit = runBlocking { compareOutline(cli = true) }
+
+    @Test fun compareDsWorkspaceOutline(): Unit = runBlocking { compareOutline(cli = false) }
+
+    private suspend fun compareOutline(cli: Boolean) {
         requireTools()
         val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
-        val config = PipelineConfig(meshSpacing = 64, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val config = PipelineConfig(meshSpacing = if (cli) 64 else 40, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val document = WorkspaceDocument(source, emptyMap(), emptySet(), emptyMap(), emptyMap(), config.rigEdits,
             WorkspaceSettingsCodec.encode(config))
         val analysis = RigGenerationSource.prepare(RigGenerationSource.analyze(source, config), config)
@@ -26,7 +30,7 @@ class MouthOutlineSourceTool {
             "eye.squash" to 5, "brow.shape" to 5, "brow.lid-coupling" to 7, "brow.blink" to 5, "brow.spring" to 6,
             "mouth.outline" to 1)
         val (planned, reference) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
-            WorkspaceInitialPreset(clothing = false), requestedVersions = versions, cliBindings = CliPresetBindings(analysis, config))
+            WorkspaceInitialPreset(clothing = false), requestedVersions = versions, cliBindings = if (cli) CliPresetBindings(analysis, config) else null)
         val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
         assertEquals(versions, stack.instances.filter { it.type in versions }.associate { it.type to it.version })
         val outline = stack.instances.single { it.type == "mouth.outline" }
@@ -42,8 +46,15 @@ class MouthOutlineSourceTool {
             })
             return planned.copy(rigEdits = planned.rigEdits.copy(modifierStack = next.toJson()))
         }
-        val rejected = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(candidate(7)) }
-        assertContains(rejected.message.orEmpty(), "Fitted mouth outline cannot replace authored owner topology: ArtMeshMouth")
+        if (cli) {
+            val rejected = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(candidate(7)) }
+            assertContains(rejected.message.orEmpty(), "Fitted mouth outline cannot replace authored owner topology: ArtMeshMouth")
+        } else {
+            val hair = stack.instances.single { it.type == "hair/chains" }
+            assertTrue(expected[index - 1].deformers.any {
+                hair.localOutputName(it.id)?.startsWith("shared/deformer:SourceChain:") == true
+            }, "Workspace must use source chain carrier IDs")
+        }
         RigBuildProfile.reset()
         val recording = RigBuildProfile.recording
         val preview = try {
@@ -63,7 +74,16 @@ class MouthOutlineSourceTool {
                 .filter { it.isAccessible = true; it.get(a) != it.get(b) }.map { it.name }
             val known = a.meshes.associateBy { it.id }
             val meshes = b.meshes.filter { it != known[it.id] }.map { it.id }
-            fail("$stage differs in $fields, meshes=$meshes")
+            val oldWarps = a.deformers.associateBy { it.id }
+            val warpDifferences = b.deformers.filter { it != oldWarps[it.id] }.map { warp ->
+                val expectedWarp = oldWarps[warp.id]
+                val originalWarp = expected[index - 1].deformers.firstOrNull { it.id == warp.id }
+                val actualAxes = (warp as? io.github.psd2live.format.model.Deformer.Warp)?.lattice?.axes?.map { it.parameter }
+                val expectedAxes = (expectedWarp as? io.github.psd2live.format.model.Deformer.Warp)?.lattice?.axes?.map { it.parameter }
+                "${warp.id}/${warp.name}: expected axes=$expectedAxes actual axes=$actualAxes " +
+                    "expectedChanged=${originalWarp != expectedWarp} actualChanged=${originalWarp != warp}"
+            }
+            fail("$stage differs in $fields, meshes=$meshes, deformers=$warpDifferences")
         }
         for (stage in stack.instances.indices) equal(expected[stage], actual.outputs[stage], stack.instances[stage].type)
         equal(RigIrCompiler.compile(reference, tileArt = true), RigIrCompiler.compile(preview, tileArt = true), "compiled IR")

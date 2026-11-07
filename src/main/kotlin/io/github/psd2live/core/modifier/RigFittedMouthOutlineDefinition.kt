@@ -23,6 +23,7 @@ import io.github.psd2live.i18n.tr
 import io.github.psd2live.targets.cubism.PuppetIr
 import org.umamo.runtime.model.Drawable
 import org.umamo.runtime.model.DeformPath
+import org.umamo.runtime.model.ParameterId
 import kotlinx.serialization.json.*
 
 /** Source observations for the opt-in fitted outline on a shared scaffold. */
@@ -110,9 +111,23 @@ internal object RigFittedMouthOutlineDefinition {
         val prior = headLayers(old, before)
         val desired = headLayers(next, after)
         require(prior.isNotEmpty() && prior.keys == desired.keys)
-        val axes = prefix.flatMapTo(hashSetOf()) { RigLegacyBindings.spec(it.type).parameters }
-        val oldResource = outlineShellSource(old, before, prior, axes, includeFaceLean = true)
-        val newResource = outlineShellSource(next, after, desired, axes, includeFaceLean = true)
+        val hairProvider = prefix.singleOrNull { it.type == "hair/chains" }
+        fun hairChains(context: RigBuilder.RigContext, settings: PipelineConfig) =
+            RigBuilder.hairChains(context.analysis, context.faceRig, settings).filter { it.kind.hair }
+        val beforeChains = if (hairProvider == null) emptyList() else hairChains(old, before)
+        val afterChains = if (hairProvider == null) emptyList() else hairChains(next, after)
+        val hair = beforeChains.map(RigModifierChains::Binding).associate { it.native.warpId to it.warp.raw }
+        require(hair == afterChains.map(RigModifierChains::Binding).associate { it.native.warpId to it.warp.raw }) {
+            "Mouth outline v8 requires stable source hair chains"
+        }
+        val aliases = beforeChains.map(RigModifierChains::Binding).flatMap { it.parameters.entries }.associate { (native, chain) ->
+            ParameterId(native) to ParameterId(requireNotNull(hairProvider).outputId("chain-parameter:${chain.raw.removePrefix("SourceChain:")}"))
+        }
+        val axes = prefix.flatMapTo(hashSetOf()) { RigLegacyBindings.spec(it.type).parameters } + aliases.keys
+        val oldResource = outlineShellSource(old, before, prior, axes, includeFaceLean = true,
+            chains = beforeChains, parameterAliases = aliases)
+        val newResource = outlineShellSource(next, after, desired, axes, includeFaceLean = true,
+            chains = afterChains, parameterAliases = aliases)
         val source = PuppetIr.toPuppet(RigIrBinary.decode(newResource.read()))
         val projectedOwners = source.drawables.associateBy { it.id.raw }
         val prepared = MouthLipLayers.prepare(analysis, after, meshCache)
@@ -150,6 +165,7 @@ internal object RigFittedMouthOutlineDefinition {
             lowered.copy(drawables = lowered.drawables.filter { it.id in ribbonIds }))))
         return ModifierAlgorithmContext(buildJsonObject {
             put("mouth", mouth.id)
+            put("hair", JsonObject(hair.mapValues { JsonPrimitive(it.value) }))
             put("ribbons", JsonArray(descriptors))
         }, resources)
     }

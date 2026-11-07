@@ -3677,7 +3677,8 @@ object RigBuilder {
 	/** Projects the closed-mouth fallback's source meshes and arm frames without building the complete rig. */
 	internal fun closedMouthShellProjection(context: RigContext, config: PipelineConfig, atlas: PackedAtlas,
 	                                      cache: PreviewMeshCache, material: PuppetModel,
-	                                      layers: Map<String, ClassifiedLayer>, kept: Set<ParameterId>, includeFaceLean: Boolean = false): PuppetModel {
+	                                      layers: Map<String, ClassifiedLayer>, kept: Set<ParameterId>, includeFaceLean: Boolean = false,
+                                          chains: List<io.github.psd2live.core.fit.HairChain> = emptyList()): PuppetModel {
 		val switches = io.github.psd2live.algorithms.binding.ExpressionChannels.catalog(context.analysis.layers.mapNotNull { layer ->
 			val override = config.layerOverrides[layer.source.id.raw]
 			val type = override?.type ?: layer.semantic.type
@@ -3695,7 +3696,7 @@ object RigBuilder {
 			val original = originals.getValue(id).copy(channelGrids = grids)
 			meshLoweringSource(layer, context, config, atlas, cache, original)
 		}
-		val parameters = standardParameters(context, config) + moduleParameters(context, config, emptyList())
+		val parameters = standardParameters(context, config) + moduleParameters(context, config, chains)
 		val deformers = if (includeFaceLean) faceTurnAndLean(context, config, stagesOf(cache)) else context.deformers
 		val model = material.copy(parameters = parameters, deformers = deformers, drawables = drawables,
 			parameterTree = StandardParameters.tree(), parameterLinks = emptyList())
