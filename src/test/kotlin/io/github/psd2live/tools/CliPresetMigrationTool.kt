@@ -189,6 +189,23 @@ class CliPresetMigrationTool {
         meshDifferences("positions") { it.geometry?.positions }
         meshDifferences("deformer assignment") { it.parent }
         meshDifferences("texture assignment") { Triple(it.textureSource, it.page, it.tile) }
+        meshDifferences("draw order") { it.drawOrder }
+        meshDifferences("mask") { it.maskedBy to it.invertMask }
+        meshDifferences("keyforms") { it.offsets }
+        meshDifferences("channels") { it.channels }
+        meshDifferences("blend shapes") { it.shapes }
+        if (label == "shared export layout") {
+            for ((before, after) in expected.parameterTree.zip(actual.parameterTree)) {
+                if (before != after) appendLine("  parameter folder: expected=$before actual=$after")
+            }
+            for (part in expected.parts) {
+                val observed = actual.parts.singleOrNull { it.id == part.id } ?: continue
+                if (part.children != observed.children)
+                    appendLine("  part ${part.id}: expected=${part.children} actual=${observed.children}")
+            }
+            val paths = actual.authoring.paths.mapTo(HashSet()) { it.id }
+            appendLine("  missing paths by mesh = ${expected.authoring.paths.filterNot { it.id in paths }.groupingBy { it.mesh }.eachCount()}")
+        }
         val tiles = expected.textures.tileArt.associateBy { it.tile }
         val pixels = actual.textures.tileArt.filter { it.tile in tiles && tiles[it.tile] != it }.map { it.tile }
         appendLine("  tile pixel differences = $pixels")
