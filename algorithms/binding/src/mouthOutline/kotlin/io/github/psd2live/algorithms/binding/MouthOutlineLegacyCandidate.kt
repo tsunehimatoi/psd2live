@@ -2,6 +2,7 @@ package io.github.psd2live.algorithms.binding
 
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.format.model.DeformPath
+import io.github.psd2live.format.model.Floats
 import io.github.psd2live.format.model.Mesh
 import io.github.psd2live.format.model.PathPoint
 import io.github.psd2live.format.model.RigIR
@@ -49,19 +50,22 @@ class MouthOutlineLegacyCandidate {
         instance: RigModifierInstance,
         neutralOwners: Map<String, NeutralOwner>,
         checkpoint: () -> Unit = {},
+        outline: ModifierAlgorithmContext = input.context,
+        retainParentFrame: Boolean = false,
     ): ModifierModelChanges {
-        val captured = MouthOutlineInputs.decode(input.context)
+        val captured = MouthOutlineInputs.decode(outline)
         require(captured.targets.keys == neutralOwners.keys)
         require(captured.targets.values.all { it.fittedProvider == null && !it.headOnMesh }) {
             "Legacy outline owner requires a legacy mouth without mesh-local head motion"
         }
         if (captured.targets.isEmpty()) return ModifierModelChanges()
-        val changes = MouthOutlineAlgorithm().changes(input, instance, checkpoint)
         val before = captured.targets.keys.associateWith { requireNotNull(input.mesh(it)) }
-        val live = PuppetIr.toPuppet(RigIR(
-            input.canvas, input.parameters, meshes = before.values.toList()))
-        val authoring = input.authoring
         val glues = input.glues
+        val model = RigIR(input.canvas, input.parameters, parts = input.parts, deformers = input.deformers,
+            meshes = before.values.toList(), glues = glues)
+        val changes = MouthOutlineAlgorithm().changes(model, instance, outline, checkpoint)
+        val live = PuppetIr.toPuppet(model.copy(parts = emptyList(), deformers = emptyList(), glues = emptyList()))
+        val authoring = input.authoring
         val updates = mutableListOf<ModifierObjectUpdate<Mesh>>()
         val paths = mutableListOf<DeformPath>()
         for (actual in live.drawables) {
@@ -76,15 +80,17 @@ class MouthOutlineLegacyCandidate {
             require(actual.parentDeformerId == neutral.parent) { "Outline owner frame changed: $id" }
             val unbound = MouthOutlineOwner.mesh(contour, target.frame, source.left, source.top,
                 source.width.toFloat(), source.height.toFloat(), target::toCanvas)
-            val mesh = DrawableMesh(if (neutral.parent == null) contour.positions else unbound.positions,
-                neutral.texture.bind(unbound.uvs), unbound.indices)
+            val transform = frameTransform(neutral, target, retainParentFrame)
+            val points = if (neutral.parent == null) contour.positions else transform?.positions(unbound.positions) ?: unbound.positions
+            val mesh = DrawableMesh(points, neutral.texture.bind(unbound.uvs), unbound.indices)
             val curve = captured.curve.points.map { it.x to it.y }
             val previousMotion = MouthOutlineMotion(neutral.aperture, curve, captured.tuning)
             val desiredMotion = MouthOutlineMotion(target.aperture, curve, captured.tuning)
             val previous = actual.copy(mesh = neutral.mesh, blendShapes = emptyList(),
                 geometryGrid = MouthOutlineLegacyOwner.grid(neutral.sourcePoints, neutral.frame, previousMotion, false, checkpoint))
-            val desired = previous.copy(mesh = mesh,
-                geometryGrid = MouthOutlineLegacyOwner.grid(contour.positions, target.frame, desiredMotion, true, checkpoint))
+            val grid = MouthOutlineLegacyOwner.grid(contour.positions, target.frame, desiredMotion, true, checkpoint)
+            val desired = previous.copy(mesh = mesh, geometryGrid = if (transform == null) grid else KeyformGrid(grid.axes,
+                grid.cells.map { KeyformCell(it.coordinate, MeshDeltaForm(transform.offsets(it.form.positionDeltas))) }))
             val hasSidecars = authoring.paths.any { it.mesh == id } || authoring.vertexGroups.any { it.mesh == id } ||
                 glues.any { it.meshA == id || it.meshB == id }
             val updated = MouthOutlineLegacyOwner.merge(live, actual, previous, desired, hasSidecars, checkpoint)
@@ -116,9 +122,44 @@ class MouthOutlineLegacyCandidate {
             meshes = ModifierObjectChanges(updated = updates),
             authoring = if (paths.isEmpty()) null else ModifierFieldChange(authoring, authoring.copy(paths = authoring.paths + paths)),
             rasters = changes.rasters.map { raster ->
-                val owner = owners[raster.owner.id] ?: return@map raster
-                ModifierRasterOutput(owner, raster.mesh, raster.layer, raster.pixels, raster.paths, raster.uvSpace)
+                val id = raster.owner.id
+                val owner = owners[id] ?: raster.owner
+                val transform = frameTransform(neutralOwners.getValue(id), captured.targets.getValue(id), retainParentFrame)
+                val ribbon = transform?.mesh(raster.mesh) ?: raster.mesh
+                ModifierRasterOutput(owner, ribbon, raster.layer, raster.pixels, raster.paths, raster.uvSpace)
             },
         )
+    }
+
+    private fun frameTransform(neutral: NeutralOwner, target: MouthOutlineInputs.Target, retain: Boolean): FrameTransform? =
+        if (retain && neutral.parent != null && neutral.frame != target.frame) FrameTransform(target.frame, neutral.frame) else null
+
+    /** Affine change of normalization, with the preceding parent deformer left in place. */
+    private class FrameTransform(from: ModifierSourceBounds, to: ModifierSourceBounds) {
+        private val width = (to.right - to.left).coerceAtLeast(1e-4f)
+        private val height = (to.bottom - to.top).coerceAtLeast(1e-4f)
+        private val scaleX = (from.right - from.left).coerceAtLeast(1e-4f) / width
+        private val scaleY = (from.bottom - from.top).coerceAtLeast(1e-4f) / height
+        private val offsetX = (from.left - to.left) / width
+        private val offsetY = (from.top - to.top) / height
+
+        fun positions(values: FloatArray) = FloatArray(values.size) { i ->
+            if (i % 2 == 0) values[i] * scaleX + offsetX else values[i] * scaleY + offsetY
+        }
+
+        fun offsets(values: FloatArray) = FloatArray(values.size) { i ->
+            values[i] * if (i % 2 == 0) scaleX else scaleY
+        }
+
+        fun mesh(mesh: Mesh): Mesh {
+            val geometry = requireNotNull(mesh.geometry)
+            require(mesh.shapes.isEmpty()) { "Legacy outline ribbon cannot carry mesh-local blend shapes" }
+            return mesh.copy(geometry = geometry.copy(positions = Floats.wrap(positions(geometry.positions.shared()))),
+                offsets = mesh.offsets?.let { grid ->
+                    grid.copy(cells = grid.cells.map { cell ->
+                        cell.copy(form = cell.form.copy(deltas = Floats.wrap(offsets(cell.form.deltas.shared()))))
+                    })
+                })
+        }
     }
 }

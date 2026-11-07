@@ -663,3 +663,38 @@ val mouthOutlineElements = configurations.create("mouthOutlineElements") {
     isCanBeResolved = false
 }
 artifacts.add(mouthOutlineElements.name, mouthOutlineClassesJar)
+
+val mouthOutlineWorkerJar = tasks.register<Jar>("mouthOutlineWorkerJar") {
+    dependsOn(workerJar)
+    archiveClassifier.set("worker-mouth-outline")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest { attributes["Main-Class"] = "io.github.psd2live.algorithms.binding.MouthOutlineLegacyWorker" }
+    from(mouthOutline.output)
+    from(workerJar.flatMap { it.archiveFile }.map { zipTree(it) }) { exclude("META-INF/MANIFEST.MF") }
+}
+
+tasks.register("pluginMouthOutlineSource") {
+    dependsOn(mouthOutlineWorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-outline-source")
+    inputs.file(mouthOutlineWorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", project.version.toString())
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthOutlineWorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "psd2live.mouth-outline-source"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"${project.version}","name":"Legacy mouth outline source",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/outline","version":1,"contextVersion":2,"name":"Legacy mouth outline source","category":"mouth",
+               "targets":["mesh"],"requires":["mouth/legacy"],"exclusiveFamily":"mouth.outline",
+               "reads":["*"],"writes":["mesh","part","hierarchy","textures","authoring"],
+               "composableKinds":["mesh","part","hierarchy"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}

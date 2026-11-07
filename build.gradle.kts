@@ -613,3 +613,14 @@ tasks.register<Jar>("buildPluginExample") {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     exclude("META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA")
 }
+
+tasks.register<Test>("testMouthOutlinePackage") {
+    dependsOn("testClasses", ":algorithms:binding:pluginMouthOutlineSource")
+    val testSource = sourceSets.test.get()
+    testClassesDirs = testSource.output.classesDirs
+    classpath = testSource.runtimeClasspath
+    filter.includeTestsMatching("io.github.psd2live.core.MouthOutlinePluginParityTest")
+    val packageDirectory = project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-outline-source")
+    inputs.dir(packageDirectory)
+    systemProperty("psd2live.mouthOutlinePackage", packageDirectory.get().asFile.absolutePath)
+}
