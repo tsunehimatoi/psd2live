@@ -1225,6 +1225,34 @@ tasks.register("pluginBrowBlinkV4") {
     }
 }
 
+val browBlinkV5WorkerJar = registerIsolatedBindingWorker(
+    "browBlinkV5", "brow-blink-v5", "worker-brow-blink-v5", "io.github.psd2live.algorithms.binding.BrowBlinkV5Worker",
+)
+tasks.register("pluginBrowBlinkV5") {
+    dependsOn(browBlinkV5WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-brow-blink-v5")
+    val packageVersion = project.version.toString()
+    inputs.file(browBlinkV5WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        browBlinkV5WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.62726f772e626c696e6b.v5"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Brow blink",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/blink","aliases":["brow.blink"],"version":5,"name":"Brow blink","category":"brow",
+               "targets":["mesh"],"requires":["rig.scaffold","brow/fitted"],"contextVersion":2,
+               "reads":["mesh","deformer","part","parameter","canvas","textures","authoring"],"writes":["mesh","deformer"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val neckV3WorkerJar = registerIsolatedBindingWorker(
     "neckV3", "face-neck-v3", "worker-face-neck-v3", "io.github.psd2live.algorithms.binding.NeckV3Worker",
 )

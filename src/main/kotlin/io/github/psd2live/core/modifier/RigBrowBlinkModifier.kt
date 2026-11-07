@@ -3,6 +3,7 @@ package io.github.psd2live.core.modifier
 import io.github.psd2live.algorithms.binding.BrowBlinkAlgorithm
 import io.github.psd2live.algorithms.binding.BrowBlinkV3Algorithm
 import io.github.psd2live.algorithms.binding.BrowBlinkV4Algorithm
+import io.github.psd2live.algorithms.binding.BrowBlinkV5Algorithm
 import io.github.psd2live.algorithms.binding.BrowShapeInputs
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
 import io.github.psd2live.core.RigBuilder
@@ -51,6 +52,18 @@ internal object RigBrowBlinkModifier {
 
     fun fallbackDefinition(source: RigModifierSource?): RigModifierDefinition = definition(source).copy(
         version = BrowBlinkV4Algorithm.VERSION, plugin = fallbackAlgorithm,
+        authorContext = { requireNotNull(source).captureFallback(it) },
+    )
+
+    private val sharedFrameAlgorithm = object : ReadingModifierAlgorithmPlugin by BrowBlinkV5Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = fallbackAlgorithm.optionalUpstream
+        override val canonicalOptInType = BrowBlinkAlgorithm.TYPE
+    }
+
+    fun sharedFrameDefinition(source: RigModifierSource?): RigModifierDefinition = definition(source).copy(
+        version = BrowBlinkV5Algorithm.VERSION,
+        plugin = sharedFrameAlgorithm,
         authorContext = { requireNotNull(source).captureFallback(it) },
     )
 
