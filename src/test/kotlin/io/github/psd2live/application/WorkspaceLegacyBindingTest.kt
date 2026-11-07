@@ -1843,13 +1843,20 @@ class WorkspaceLegacyBindingTest {
             }
         }
         val source = art.copy(source = stippled, settings = WorkspaceSettingsCodec.encode(config))
-        val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        val (initialized, current) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         assertEquals(3, stack.instances.single { it.type == "face/fitted" }.version)
         assertEquals(5, stack.instances.single { it.type == "eye/fitted" }.version)
-        val locked = stack.instances.single { it.type == "expression.cheek" }
-        assertEquals(1, locked.version)
-        val index = stack.index(locked.id)
+        assertEquals(3, stack.instances.single { it.type == "expression.gloom" }.version)
+        val instance = stack.instances.single { it.type == "expression.cheek" }
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(instance.type, 3))
+        assertEquals(3, instance.version)
+        assertEquals(artifact.reference, instance.plugin)
+        val locked = instance.copy(version = 1, plugin = assertNotNull(BuiltinModifierPlugins.reference(instance.type, 1)))
+        val previous = stack.copy(instances = stack.instances.map { if (it.id == instance.id) locked else it })
+        val baseline = WorkspacePreviewBuilder().build(initialized.copy(
+            rigEdits = initialized.rigEdits.copy(modifierStack = previous.toJson())))
+        val index = stack.index(instance.id)
         val evaluation = assertNotNull(baseline.modifierEvaluation)
         val prior = evaluation.outputs[index - 1]
         val legacy = evaluation.outputs[index]
@@ -1868,19 +1875,6 @@ class WorkspaceLegacyBindingTest {
         }
         assertTrue(rejected.message.orEmpty().contains(before.id), rejected.message)
 
-        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 3))
-        val instance = locked.copy(version = 3, plugin = artifact.reference)
-        val gloom = stack.instances.single { it.type == "expression.gloom" }
-        val gloomPackage = assertNotNull(BundledAlgorithmArtifacts.find(gloom.type, 3))
-        val upgraded = stack.copy(instances = stack.instances.map {
-            when (it.id) {
-                locked.id -> instance
-                gloom.id -> gloom.copy(version = 3, plugin = gloomPackage.reference)
-                else -> it
-            }
-        })
-        val updated = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = upgraded.toJson()))
-        val current = WorkspacePreviewBuilder().build(updated)
         val actual = assertNotNull(current.modifierEvaluation)
         assertEquals(ModifierStatus.ACTIVE, actual.entries[index].status)
         for (stage in index until stack.instances.size) {
@@ -1891,7 +1885,7 @@ class WorkspaceLegacyBindingTest {
         val warmCache = RigStageCache.enabled
         RigStageCache.enabled = false
         try {
-            val replay = WorkspacePreviewBuilder().build(updated)
+            val replay = WorkspacePreviewBuilder().build(initialized)
             assertTrue(compiled == RigIrCompiler.compile(replay, tileArt = true), "Cold replay differs")
         } finally {
             RigStageCache.enabled = warmCache

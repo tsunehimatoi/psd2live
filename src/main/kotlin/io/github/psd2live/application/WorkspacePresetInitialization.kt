@@ -7,6 +7,7 @@ import io.github.psd2live.algorithms.binding.BrowLegacyV2Algorithm
 import io.github.psd2live.algorithms.binding.BrowLidV5Algorithm
 import io.github.psd2live.algorithms.binding.BrowShapeV3Algorithm
 import io.github.psd2live.algorithms.binding.BrowSpringV4Algorithm
+import io.github.psd2live.algorithms.binding.CheekCarrierAlgorithm
 import io.github.psd2live.algorithms.binding.EyeAftershockV4Algorithm
 import io.github.psd2live.algorithms.binding.EyeEmotionV3Algorithm
 import io.github.psd2live.algorithms.binding.EyeFittedV5Algorithm
@@ -151,6 +152,7 @@ internal object WorkspacePresetInitialization {
                     val mouth = if (completeEyePair && (subject.has(SemanticTag.MOUTH) || subject.has(SemanticTag.MOUTH_OPEN)))
                         packages(sourceMouthVersions(model.analysis, config, types)) else emptyMap()
                     mouth + packages(mapOf(RigModules.BODY_ARMS.id to ArmSwingV3Algorithm.VERSION)) +
+                        packages(mapOf(RigModules.EXPRESSION_CHEEK.id to CheekCarrierAlgorithm.VERSION)) +
                         packages(mapOf(RigModules.EXPRESSION_GLOOM.id to GloomCarrierAlgorithm.VERSION))
                 } else emptyMap()
                 headAndEye + lids + brows + extensions
