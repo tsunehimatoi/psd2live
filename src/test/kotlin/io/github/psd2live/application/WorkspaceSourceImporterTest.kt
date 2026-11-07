@@ -45,17 +45,17 @@ class WorkspaceSourceImporterTest {
                 assertTrue(stack.instances.any { it.type == "face/fitted" })
                 assertTrue(stack.instances.none { it.type == "face/legacy" || it.type == "face.depth-turn" })
                 assertTrue(installed.model.rig.puppet.deformers.isNotEmpty())
-                val lids = setOf("eye.smile", "eye.wide", "eye.gaze-lid", "eye.emotion")
-                val activeLids = stack.instances.filter { it.type in lids }.map { it.type }
-                val independent = mapOf("body/legacy" to 2, "face/fitted" to 3, "eye/fitted" to 5) +
-                    activeLids.associateWith { 3 }
+                val lids = mapOf("eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3, "eye.emotion" to 3,
+                    "eye.highlight" to 3, "eye.aftershock" to 4, "eye.squash" to 4)
+                val activeLids = lids.filterKeys { type -> stack.instances.any { it.type == type } }
+                val independent = mapOf("body/legacy" to 2, "face/fitted" to 3, "eye/fitted" to 5) + activeLids
                 for ((type, version) in independent) {
                     val instance = stack.instances.single { it.type == type }
                     assertEquals(version, instance.version, type)
                     assertEquals(assertNotNull(BuiltinModifierPlugins.reference(type, version)), instance.plugin)
                 }
                 val previous = mapOf("body/legacy" to 1, "face/fitted" to 1, "eye/fitted" to 2) +
-                    activeLids.associateWith { 1 }
+                    activeLids.mapValues { 1 }
                 val locked = stack.copy(instances = stack.instances.map { instance ->
                     val version = previous[instance.type] ?: return@map instance
                     instance.copy(version = version, plugin = assertNotNull(BuiltinModifierPlugins.reference(instance.type, version)))
