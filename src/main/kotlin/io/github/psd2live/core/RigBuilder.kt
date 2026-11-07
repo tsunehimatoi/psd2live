@@ -1069,12 +1069,16 @@ object RigBuilder {
 			buildWithContext(inputAnalysis, atlas, config, meshCache, context, ids, onBindingInput)
 		}
 
+	internal fun canBuildMaterials(config: PipelineConfig): Boolean = config.meshOnly && !config.generateDeformers &&
+		!config.deferRig && config.rigPendingLayerIds.isEmpty() && !PrimitiveResolution.of(config.rigEdits).active
+
 	/** Trace and bind ordinary source meshes without assembling a semantic rig. */
 	internal fun buildMaterials(input: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig,
 	                            meshCache: PreviewMeshCache): BuiltRig = RigBuildProfile.stage("build: ordinary materials") {
-		require(config.meshOnly && !config.generateDeformers && config.rigEdits == RigEditOverlay.Empty)
+		require(canBuildMaterials(config))
 		val context = rigContext(input, config, meshCache)
-		buildWithContext(input, atlas, config, meshCache, context, emptyMap(), materialsOnly = true)
+		val ids = splitStableDrawableIds(input, config)
+		buildWithContext(input, atlas, config, meshCache, context, ids, materialsOnly = true)
 	}
 
     internal data class ScaffoldSourceInputs(val frames: kotlinx.serialization.json.JsonObject,
@@ -1669,7 +1673,8 @@ object RigBuilder {
 			reservedDrawableIds += id
 			val seed = seeds[layer.source.id.raw]
 			val parts = if (seed != null) {
-				val (drawable, bounds) = pinnedPart(seed, layer, context, config, shouldBuildDeformers, expressions.switchKeys, stages,
+				val switches = if (materialsOnly) emptyMap() else expressions.switchKeys
+				val (drawable, bounds) = pinnedPart(seed, layer, context, config, shouldBuildDeformers, switches, stages,
 					0f, placement.page)
 				val pinned = requireNotNull(drawable.mesh)
 				val offsets = FloatArray(pinned.uvs.size) { index -> pinned.uvs[index] -
@@ -1746,7 +1751,8 @@ object RigBuilder {
 
 		if (materialsOnly) {
 			val source = analysis.source
-			val material = PuppetModel(emptyList(), emptyList(), emptyList(), drawables, emptyList(), null,
+			val material = PuppetModel(parameters = emptyList(), parts = emptyList(), deformers = emptyList(),
+				drawables = drawables, rootChildren = emptyList(), rootPartId = null,
 				canvasWidth = source.widthPx.toFloat(), canvasHeight = source.heightPx.toFloat(),
 				worldOriginX = source.widthPx * 0.5f, worldOriginY = -source.heightPx * 0.5f, runtimeTarget = config.runtimeTarget)
 			val bound = UvBinding.bind(material, inputAnalysis, atlas) { classifiedByDrawable[it.id] }.puppet

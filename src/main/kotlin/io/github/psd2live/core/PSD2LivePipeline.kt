@@ -113,7 +113,8 @@ class PSD2LivePipeline {
         }
         val inputs = generationInputs(analysis, config, progress, previousAtlas)
         val (effectiveAnalysis, fullAtlas, generated) = if (ordinaryMaterials && config.rigEdits == RigEditOverlay.Empty)
-            generateWithAtlasEncoding(inputs, config, progress) else generatedBase(inputs, config, progress)
+            generateWithAtlasEncoding(inputs, config, progress)
+        else generatedBase(inputs, config, progress, materialsOnly = ordinaryMaterials)
         val baseRig = if (ordinaryMaterials) io.github.psd2live.core.modifier.RigOrdinaryMaterials.of(generated, effectiveAnalysis) else generated
 		// The base packs superseded layers (the originals of a split) too; once no mesh samples them the model
 		// packs only the layers it shows, as exports do.
@@ -258,7 +259,7 @@ class PSD2LivePipeline {
 		val atlas = inputs.atlas
 		val visible = inputs.visible
 		if (config.generationSource == null) {
-			val base = if (materialsOnly && !generationConfig.deferRig && generationConfig.rigPendingLayerIds.isEmpty())
+			val base = if (materialsOnly && RigBuilder.canBuildMaterials(generationConfig))
 				RigBuilder.buildMaterials(analyses.geometry, atlas, generationConfig, meshCache)
 			else RigBuilder.build(analyses.geometry, atlas, generationConfig, meshCache)
 			val generated = withoutCreatedMeshes(base, config)
