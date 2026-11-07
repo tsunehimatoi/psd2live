@@ -106,6 +106,8 @@ Requests/responses are one UTF-8 JSON line each. Stdout is protocol-only; logs g
 
 Inputs are projected to declared read/write domains; `*` or unknown domains conservatively receive the full input. `changed` and `removed` update the object index, with `reset` starting a session. `frame`, `mesh:<id>`, and `deformer:<id>` point to content-addressed resources in the request's `resource_directory`, also available as `PSD2LIVE_PLUGIN_RESOURCES`. These use the versioned exact `RigIrObjects` binary format. `mesh_order` and `deformer_order` preserve order.
 
+On subsequent requests the host reuses the binary resources of unchanged mesh and deformer objects. A new object is encoded and compared by content hash before it is sent.
+
 The portable `meshes` view exposes target IDs, opacity, and position/UV buffer references; `parameters` exposes readable parameters. Float resources use little-endian `f32le`, named by SHA-256. Commands may also return such references in place of float arrays; the host validates checksums and finite values before expanding them.
 
 Commands supported:

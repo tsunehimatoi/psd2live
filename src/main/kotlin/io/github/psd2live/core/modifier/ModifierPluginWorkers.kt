@@ -4,6 +4,8 @@ import io.github.psd2live.core.RigBuildProfile
 import io.github.psd2live.algorithm.worker.AlgorithmObjects
 import io.github.psd2live.algorithm.worker.AlgorithmResultValidation
 import io.github.psd2live.format.compile.RigIrObjects
+import io.github.psd2live.format.model.Deformer
+import io.github.psd2live.format.model.Mesh
 import io.github.psd2live.format.model.RigIR
 import kotlinx.serialization.json.*
 import java.nio.ByteBuffer
@@ -53,6 +55,9 @@ internal object ModifierPluginWorkers {
                                   val context: ModifierAlgorithmContext, val reads: ModifierReadSet,
                                   val changes: ModifierModelChanges)
 
+    private data class SentInput(val meshes: Map<String, Mesh>, val deformers: Map<String, Deformer>,
+                                 val objects: Map<String, JsonElement>)
+
     private class Worker(val entry: InstalledModifierPlugin, val store: ModifierPluginStore) : AutoCloseable {
         private val readResults = object : LinkedHashMap<String, ReadResult>(16, .75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ReadResult>?): Boolean = size > 128
@@ -81,7 +86,7 @@ internal object ModifierPluginWorkers {
         private val writer = process.outputStream.bufferedWriter(Charsets.UTF_8)
         private val reader = process.inputStream.bufferedReader(Charsets.UTF_8)
         private var sequence = 0L
-        private var previous = emptyMap<String, JsonElement>()
+        private var previous: SentInput? = null
         @Volatile private var closed = false
         private val requests = java.util.concurrent.locks.ReentrantLock(true)
 
@@ -120,10 +125,9 @@ internal object ModifierPluginWorkers {
                 }
             }
             readResults.remove(instance.id)
-            val objects = RigBuildProfile.stage("plugin input serialization") { RigIrObjects.split(input) }
-            val current = linkedMapOf<String, JsonElement>("frame" to blob(objects.frame))
-            objects.deformers.forEachIndexed { index, bytes -> current["deformer:${input.deformers[index].id}"] = blob(bytes) }
-            objects.meshes.forEachIndexed { index, bytes -> current["mesh:${input.meshes[index].id}"] = blob(bytes) }
+            val sent = RigBuildProfile.stage("plugin input serialization") { serializeInput(input) }
+            val current = sent.objects
+            val earlier = previous?.objects.orEmpty()
             require(context.upstream.isEmpty() || algorithm.contextVersion >= 2) { "Plugin does not support upstream capability inputs" }
             val requestId = ++sequence
             val request = buildJsonObject {
@@ -137,8 +141,8 @@ internal object ModifierPluginWorkers {
                 }))
                 put("config", instance.config); put("resource_directory", resources.toString())
                 put("reset", requestId == 1L)
-                put("changed", JsonObject(current.filter { (key, value) -> previous[key] != value }))
-                put("removed", JsonArray((previous.keys - current.keys).map(::JsonPrimitive)))
+                put("changed", JsonObject(current.filter { (key, value) -> earlier[key] != value }))
+                put("removed", JsonArray((earlier.keys - current.keys).map(::JsonPrimitive)))
                 put("mesh_order", JsonArray(input.meshes.map { JsonPrimitive(it.id) }))
                 put("deformer_order", JsonArray(input.deformers.map { JsonPrimitive(it.id) }))
                 putJsonArray("targets") { instance.targets.forEach { addJsonObject { put("kind", it.kind); put("id", it.id) } } }
@@ -205,9 +209,33 @@ internal object ModifierPluginWorkers {
                 ModifierPluginOutput.apply(rig, instance, algorithm, JsonArray(commands.map(::expand)), checkpoint, declaredParameters)
             }
             checkpoint()
-            previous = current
+            previous = sent
             readResult?.let { readResults[instance.id] = it }
             return output
+        }
+
+        private fun serializeInput(input: RigIR): SentInput {
+            val previous = previous
+            val retained = HashMap<String, JsonElement>()
+            fun <T> changes(kind: String, values: List<T>, prior: Map<String, T>, id: (T) -> String) = values.filter { value ->
+                val key = "$kind:${id(value)}"
+                val reference = previous?.objects?.get(key)
+                if (prior[id(value)] !== value || reference == null ||
+                    !Files.isRegularFile(resources.resolve(reference.jsonObject.getValue("sha256").jsonPrimitive.content))) true
+                else { retained[key] = reference; false }
+            }
+            // Identity preserves the exact serialization, including signed zero and ordered maps.
+            val changedMeshes = changes("mesh", input.meshes, previous?.meshes.orEmpty(), Mesh::id)
+            val changedDeformers = changes("deformer", input.deformers, previous?.deformers.orEmpty(), Deformer::id)
+            val encoded = RigIrObjects.split(input.copy(meshes = changedMeshes, deformers = changedDeformers))
+            val objects = linkedMapOf<String, JsonElement>("frame" to blob(encoded.frame))
+            val deformers = encoded.deformers.iterator()
+            val meshes = encoded.meshes.iterator()
+            input.deformers.forEach { val key = "deformer:${it.id}"; objects[key] = retained[key] ?: blob(deformers.next()) }
+            input.meshes.forEach { val key = "mesh:${it.id}"; objects[key] = retained[key] ?: blob(meshes.next()) }
+            RigBuildProfile.count("plugin input objects encoded", 1L + changedMeshes.size + changedDeformers.size)
+            RigBuildProfile.count("plugin input objects reused", retained.size.toLong())
+            return SentInput(input.meshes.associateBy(Mesh::id), input.deformers.associateBy(Deformer::id), objects)
         }
 
         private fun awaitResponse(task: java.util.concurrent.Future<JsonObject>, checkpoint: () -> Unit, timeoutMillis: Long): JsonObject {
