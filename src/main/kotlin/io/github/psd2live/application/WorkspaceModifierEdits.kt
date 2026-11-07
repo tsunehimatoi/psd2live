@@ -194,8 +194,8 @@ internal object WorkspaceModifierEdits {
         val checkpoint = RigCheckpoint.encode(authored, binding)
         val overlay = document.rigEdits.copy(authoringJournal = document.rigEdits.authoringJournal + checkpoint,
             modifierStack = applied.stack.toJson(), physicsEdits = physics,
-            physicsOrder = (PhysicsCatalog.ordered(existingPhysics, document.rigEdits.physicsOrder) { it.id }.map { it.id } +
-                addedPhysics.map { it.id } + document.rigEdits.physicsOrder).distinct(),
+            // The applied groups can already be interleaved with groups from the remaining stack.
+            physicsOrder = (document.rigEdits.physicsOrder + applied.result.rig.physics.groups.map { it.id }).distinct(),
             motionClips = document.rigEdits.motionClips + clips)
         val candidate = document.copy(rigEdits = overlay)
         work.checkpoint()

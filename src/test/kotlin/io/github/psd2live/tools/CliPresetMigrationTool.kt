@@ -1,9 +1,11 @@
 package io.github.psd2live.tools
 
 import io.github.psd2live.application.CliPresetBindings
+import io.github.psd2live.application.WorkspaceDocumentOperation
 import io.github.psd2live.application.WorkspaceInitialPreset
 import io.github.psd2live.application.WorkspaceModifierConversion
 import io.github.psd2live.application.WorkspaceModifierConversionMismatch
+import io.github.psd2live.application.WorkspaceModifierEdits
 import io.github.psd2live.application.WorkspacePreviewBuilder
 import io.github.psd2live.application.WorkspacePresetInitialization
 import io.github.psd2live.application.WorkspaceRasterWork
@@ -15,9 +17,11 @@ import io.github.psd2live.project.WorkspaceDocument
 import io.github.psd2live.project.WorkspaceSettingsCodec
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import java.nio.file.Files
 import java.util.UUID
 import java.util.prefs.Preferences
@@ -80,6 +84,19 @@ class CliPresetMigrationTool {
             report.writeText(buildString { compare("project conversion", oldIr, newIr) })
             assertEquals(oldIr.copy(parameters = oldIr.parameters.sortedBy { it.id }),
                 newIr.copy(parameters = newIr.parameters.sortedBy { it.id }))
+            val stack = RigModifierStack.fromJson(assertNotNull(converted.rigEdits.modifierStack))
+            assertTrue(stack.overrides.isEmpty(), "Generated presentation must not become authored overrides")
+            val outline = stack.instances.firstOrNull { instance ->
+                instance.type == "mouth.outline" && instance.outputAliases.keys.any { it.startsWith("mouth-art:") }
+            }
+            if (outline != null) {
+                val applied = WorkspaceModifierEdits.apply(
+                    WorkspaceDocumentOperation("modifier_apply", buildJsonObject { put("id", outline.id) }), converted, after)
+                val remaining = RigModifierStack.fromJson(assertNotNull(applied.rigEdits.modifierStack))
+                assertTrue(remaining.instances.none { it.id == outline.id })
+                assertEquals(newIr, RigIrCompiler.compile(WorkspacePreviewBuilder().build(applied), tileArt = true, simulations = true))
+                report.appendText("\nApplied the raster-producing prefix and rebuilt from its checkpoint.\n")
+            }
         } catch (failure: WorkspaceModifierConversionMismatch) {
             report.writeText(failure.message.orEmpty() + "\n" + failure.objects + "\n")
             runCatching {
