@@ -3,11 +3,15 @@ package io.github.psd2live.application
 import io.github.psd2live.algorithms.binding.ArmSwingV3Algorithm
 import io.github.psd2live.algorithms.binding.ArmSwingV4Algorithm
 import io.github.psd2live.algorithms.binding.BrowBlinkV3Algorithm
+import io.github.psd2live.algorithms.binding.BrowBlinkV4Algorithm
 import io.github.psd2live.algorithms.binding.BrowFittedV3Binding
 import io.github.psd2live.algorithms.binding.BrowLegacyV2Algorithm
 import io.github.psd2live.algorithms.binding.BrowLidV5Algorithm
+import io.github.psd2live.algorithms.binding.BrowLidV6Algorithm
 import io.github.psd2live.algorithms.binding.BrowShapeV3Algorithm
+import io.github.psd2live.algorithms.binding.BrowShapeV4Algorithm
 import io.github.psd2live.algorithms.binding.BrowSpringV4Algorithm
+import io.github.psd2live.algorithms.binding.BrowSpringV5Algorithm
 import io.github.psd2live.algorithms.binding.BustBindingV3Algorithm
 import io.github.psd2live.algorithms.binding.CheekCarrierAlgorithm
 import io.github.psd2live.algorithms.binding.CreatureResidualAlgorithm
@@ -24,14 +28,18 @@ import io.github.psd2live.algorithms.binding.FittedFaceV3Algorithm
 import io.github.psd2live.algorithms.binding.GloomCarrierAlgorithm
 import io.github.psd2live.algorithms.binding.LegacyBodyV2Algorithm
 import io.github.psd2live.algorithms.binding.LegacyFaceV2Algorithm
+import io.github.psd2live.algorithms.binding.LidFadeV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthCaptureV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthCaptureV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV6Algorithm
+import io.github.psd2live.algorithms.binding.MouthCheekLidV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV4Algorithm
+import io.github.psd2live.algorithms.binding.MouthDepthV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV4Algorithm
+import io.github.psd2live.algorithms.binding.MouthFittedV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV6Algorithm
@@ -39,6 +47,7 @@ import io.github.psd2live.algorithms.binding.MouthJawV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV5Algorithm
+import io.github.psd2live.algorithms.binding.MouthOutlineV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV6Algorithm
@@ -123,10 +132,14 @@ internal object WorkspacePresetInitialization {
             version to reference
         }
         val scaffold = stack.instances.singleOrNull { it.type == RigSourceModifiers.SCAFFOLD && it.version == 2 }
-        val completeEyePair = subject.sides(SemanticTag.EYEWHITE).size == 2 && subject.sides(SemanticTag.EYELASH).size == 2
+        val eyeWhiteSides = subject.sides(SemanticTag.EYEWHITE)
+        val lashSides = subject.sides(SemanticTag.EYELASH)
+        val completeEyePair = eyeWhiteSides.size == 2 && lashSides.size == 2
+        val singleEyeClosedMouth = eyeWhiteSides.size == 1 && lashSides == eyeWhiteSides &&
+            subject.sides(SemanticTag.EYEBROW) == eyeWhiteSides && subject.has(SemanticTag.MOUTH_CLOSE)
         val fittedSources = if (scaffold != null && config.recipe == RigRecipe.Modern && fittedFace &&
             !config.featureDisplacementEnabled && config.rigTuning == RigTuning() && requestedVersions.isEmpty() && freshSource(config) &&
-            (!subject.has(SemanticTag.EYEBROW) || completeEyePair)) {
+            (!subject.has(SemanticTag.EYEBROW) || completeEyePair || singleEyeClosedMouth)) {
             fun packages(versions: Map<String, Int>): Map<String, Pair<Int, ModifierPluginReference>> {
                 val selected = versions.mapNotNull { (type, version) ->
                     val entry = stack.instances.singleOrNull { it.type == type } ?: return@mapNotNull null
@@ -137,17 +150,31 @@ internal object WorkspacePresetInitialization {
                 }
                 return if (selected.size == versions.size) selected.toMap() else emptyMap()
             }
-            val headAndEye = packages(mapOf(RigLegacyBindings.FITTED_FACE to FittedFaceV3Algorithm.VERSION,
-                RigModules.EYE_FITTED.id to EyeFittedV5Algorithm.VERSION))
-            if (headAndEye.isEmpty()) headAndEye else {
-                // These modules share fitted lid and head-turn inputs. Use a single compatible sequence.
-                val lidVersions = mapOf(RigModules.EYE_SMILE.id to EyeSmileV3Algorithm.VERSION,
-                    RigModules.EYE_WIDE.id to EyeWideV3Algorithm.VERSION, RigModules.EYE_GAZE_LID.id to EyeGazeLidV3Algorithm.VERSION,
-                    RigModules.EYE_EMOTION.id to EyeEmotionV3Algorithm.VERSION,
-                    RigModules.EYE_HIGHLIGHT.id to EyeHighlightV3Algorithm.VERSION,
-                    RigModules.EYE_AFTERSHOCK.id to EyeAftershockV4Algorithm.VERSION,
-                    RigModules.EYE_SQUASH.id to EyeSquashV4Algorithm.VERSION)
-                val plannedLids = lidVersions.filterKeys { type -> stack.instances.any { it.type == type } }
+            val headVersions = mapOf(RigLegacyBindings.FITTED_FACE to FittedFaceV3Algorithm.VERSION,
+                RigModules.EYE_FITTED.id to EyeFittedV5Algorithm.VERSION)
+            val lidVersions = mapOf(RigModules.EYE_SMILE.id to EyeSmileV3Algorithm.VERSION,
+                RigModules.EYE_WIDE.id to EyeWideV3Algorithm.VERSION, RigModules.EYE_GAZE_LID.id to EyeGazeLidV3Algorithm.VERSION,
+                RigModules.EYE_EMOTION.id to EyeEmotionV3Algorithm.VERSION,
+                RigModules.EYE_HIGHLIGHT.id to EyeHighlightV3Algorithm.VERSION,
+                RigModules.EYE_AFTERSHOCK.id to EyeAftershockV4Algorithm.VERSION,
+                RigModules.EYE_SQUASH.id to EyeSquashV4Algorithm.VERSION)
+            val plannedTypes = stack.instances.mapTo(HashSet()) { it.type }
+            val plannedLids = lidVersions.filterKeys { it in plannedTypes }
+            val moodVersions = mapOf(RigModules.EXPRESSION_CHEEK.id to CheekCarrierAlgorithm.VERSION,
+                RigModules.EXPRESSION_GLOOM.id to GloomCarrierAlgorithm.VERSION).filterKeys { it in plannedTypes }
+            val headAndEye = packages(headVersions)
+            if (headAndEye.isEmpty()) headAndEye else if (singleEyeClosedMouth) {
+                val mouth = sourceMouthVersions(model.analysis, config, types, singleEye = true)
+                if (mouth.isEmpty()) emptyMap() else {
+                    val brows = mapOf(RigModules.BROW_FITTED.id to BrowFittedV3Binding.VERSION,
+                        RigModules.BROW_SHAPE.id to BrowShapeV4Algorithm.VERSION,
+                        RigModules.BROW_LID.id to BrowLidV6Algorithm.VERSION,
+                        RigModules.BROW_BLINK.id to BrowBlinkV4Algorithm.VERSION,
+                        RigModules.BROW_SPRING.id to BrowSpringV5Algorithm.VERSION,
+                        RigModules.EYE_LID_FADE.id to LidFadeV3Algorithm.VERSION).filterKeys { it in plannedTypes }
+                    packages(headVersions + plannedLids + brows + mouth + moodVersions)
+                }
+            } else {
                 val lids = packages(plannedLids)
                 val brows = if (lids.isNotEmpty() && subject.has(SemanticTag.EYEBROW)) {
                     val browVersions = mapOf(RigModules.BROW_FITTED.id to BrowFittedV3Binding.VERSION,
@@ -163,9 +190,7 @@ internal object WorkspacePresetInitialization {
                     val armVersion = sourceArmVersion(model.analysis,
                         closedMouth = mouth[RigModules.MOUTH_FITTED.id]?.first == MouthFittedV4Algorithm.VERSION)
                     val arms = armVersion?.let { packages(mapOf(RigModules.BODY_ARMS.id to it)) }.orEmpty()
-                    mouth + arms +
-                        packages(mapOf(RigModules.EXPRESSION_CHEEK.id to CheekCarrierAlgorithm.VERSION)) +
-                        packages(mapOf(RigModules.EXPRESSION_GLOOM.id to GloomCarrierAlgorithm.VERSION))
+                    mouth + arms + packages(moodVersions)
                 } else emptyMap()
                 headAndEye + lids + brows + extensions
             }
@@ -354,14 +379,29 @@ internal object WorkspacePresetInitialization {
         RigModules.MOUTH_SPRING.id to if (RigModules.MOUTH_DEPTH.id in types) MouthSpringV7Algorithm.VERSION else MouthSpringV6Algorithm.VERSION,
     ).filterKeys { it in types }
 
-    private fun sourceMouthVersions(analysis: PipelineAnalysis, config: PipelineConfig, types: List<String>): Map<String, Int> {
+    private fun singleEyeMouthVersions(types: List<String>): Map<String, Int> = mapOf(
+        RigModules.MOUTH_FITTED.id to MouthFittedV5Algorithm.VERSION,
+        RigModules.MOUTH_OUTLINE.id to MouthOutlineV6Algorithm.VERSION,
+        RigModules.MOUTH_VOWEL.id to MouthVowelV6Algorithm.VERSION,
+        RigModules.MOUTH_CAPTURE.id to MouthCaptureV5Algorithm.VERSION,
+        RigModules.MOUTH_TONGUE.id to MouthTongueV5Algorithm.VERSION,
+        RigModules.MOUTH_JAW.id to MouthJawV7Algorithm.VERSION,
+        RigModules.MOUTH_CHEEK_LID.id to MouthCheekLidV7Algorithm.VERSION,
+        RigModules.MOUTH_DEPTH.id to MouthDepthV5Algorithm.VERSION,
+        RigModules.MOUTH_SPRING.id to MouthSpringV8Algorithm.VERSION,
+    ).filterKeys { it in types }
+
+    private fun sourceMouthVersions(analysis: PipelineAnalysis, config: PipelineConfig, types: List<String>,
+                                    singleEye: Boolean = false): Map<String, Int> {
         if (config.mouthOutlineEnabled && !supportsClassicOutline(analysis, config)) return emptyMap()
         val measurement = config.copy(generateDeformers = false)
         val context = RigBuilder.rigContext(analysis, measurement)
         val mouth = context.fittedMouth(measurement) ?: return emptyMap()
-        if (mouth.source == null || mouth.layered || mouth.rig?.fit?.layered != null || context.faceTurn(measurement) == null)
+        if (mouth.source == null || mouth.layered || mouth.rig?.fit?.layered != null ||
+            !singleEye && context.faceTurn(measurement) == null)
             return emptyMap()
-        if (mouth.closedLine) return closedMouthVersions(types)
+        if (mouth.closedLine) return if (singleEye) singleEyeMouthVersions(types) else closedMouthVersions(types)
+        if (singleEye) return emptyMap()
         if (analysis.layers.any { it.semantic.tag == SemanticTag.MOUTH_CLOSE }) return emptyMap()
         val withInterior = RigModules.MOUTH_TONGUE.id in types || RigModules.MOUTH_DEPTH.id in types
         return mapOf(

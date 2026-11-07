@@ -809,6 +809,42 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun modernPresetUsesIndependentSingleEyeClosedMouthBindings(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, closedMouth = true)
+        val choices = WorkspaceInitialPreset(clothing = false)
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        RigBuildProfile.reset()
+        val recording = RigBuildProfile.recording
+        RigBuildProfile.recording = true
+        val (initialized, actual) = try {
+            WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        } finally {
+            RigBuildProfile.recording = recording
+        }
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val versions = mapOf("brow.shape" to 4, "brow.lid-coupling" to 6, "brow.blink" to 4, "brow.spring" to 5,
+            "mouth/fitted" to 5, "mouth.outline" to 6, "mouth.vowel" to 6, "mouth.capture" to 5, "mouth.tongue" to 5,
+            "mouth.jaw" to 7, "mouth.cheek-lid" to 7, "mouth.interior-depth" to 5, "mouth.spring" to 8)
+        assertEquals(versions, stack.instances.filter { it.type in versions }.associate { it.type to it.version })
+        val profile = RigBuildProfile.snapshot()
+        assertEquals(0L, profile["modifier legacy template requests"]?.second ?: 0L,
+            profile.keys.filter { it.startsWith("modifier template consumer:") }.toString())
+        val locked = stack.copy(instances = stack.instances.map { instance ->
+            if (instance.type in versions) instance.copy(version = 1,
+                plugin = assertNotNull(BuiltinModifierPlugins.reference(instance.type, 1))) else instance
+        })
+        val reference = WorkspacePreviewBuilder().build(initialized.copy(
+            rigEdits = initialized.rigEdits.copy(modifierStack = locked.toJson())))
+        val expected = assertNotNull(reference.modifierEvaluation).outputs
+        val result = assertNotNull(actual.modifierEvaluation).outputs
+        for ((index, entry) in stack.instances.withIndex()) {
+            assertTrue(expected[index] == result[index], "Single-eye source binding differs at ${entry.type}")
+        }
+        assertFaceEquals(RigIrCompiler.compile(reference, tileArt = true), RigIrCompiler.compile(actual, tileArt = true))
+    }
+
     @Test fun closedMouthDepthAndSpringMatchLockedVersionsAndInstalledWorkers(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true, closedMouth = true)
         val choices = WorkspaceInitialPreset()
