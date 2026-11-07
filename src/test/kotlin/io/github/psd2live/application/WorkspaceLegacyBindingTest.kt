@@ -5958,19 +5958,20 @@ class WorkspaceLegacyBindingTest {
         val config = WorkspacePresetBaseline.configure(art.config(), "modern")
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, model) = prepareHistoricalModernReference(source, WorkspaceInitialPreset(clothing = true))
+        val (initialized, model) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
+            WorkspaceInitialPreset(clothing = true), preferSourceBindings = true)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val skirt = stack.instances.single { it.type == "outfit.skirt" }
-        assertEquals(1, skirt.version)
+        assertEquals(2, skirt.version)
         assertTrue(stack.instances.any { it.type == "simulation" })
-        val plugin = assertNotNull(BuiltinModifierPlugins.reference(skirt.type, 2))
-        val independent = stack.copy(instances = stack.instances.map {
-            if (it.id == skirt.id) it.copy(version = 2, plugin = plugin) else it
+        val plugin = assertNotNull(BuiltinModifierPlugins.reference(skirt.type, 1))
+        val locked = stack.copy(instances = stack.instances.map {
+            if (it.id == skirt.id) it.copy(version = 1, plugin = plugin) else it
         })
-        val updated = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = independent.toJson()))
+        val updated = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = locked.toJson()))
         val expected = RigIrCompiler.compile(model, tileArt = true)
-        val checked = WorkspaceModifierSimulation.prepare(updated, independent, WorkspaceRasterWork.Direct, allowRebake = false)
-        assertEquals(independent, checked)
+        val checked = WorkspaceModifierSimulation.prepare(updated, locked, WorkspaceRasterWork.Direct, allowRebake = false)
+        assertEquals(locked, checked)
         val current = WorkspacePreviewBuilder().build(updated)
         val report = assertNotNull(current.rig.modifierReport).getValue("entries").jsonArray
         assertTrue(report.all { it.jsonObject.getValue("status").jsonPrimitive.content == "active" })

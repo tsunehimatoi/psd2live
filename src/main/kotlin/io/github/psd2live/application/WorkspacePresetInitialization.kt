@@ -20,6 +20,7 @@ import io.github.psd2live.algorithms.binding.LegacyBodyV2Algorithm
 import io.github.psd2live.algorithms.binding.LegacyFaceV2Algorithm
 import io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV4Algorithm
+import io.github.psd2live.algorithms.binding.SkirtAlgorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.recipe.*
@@ -134,6 +135,12 @@ internal object WorkspacePresetInitialization {
             put(LegacyBodyV2Algorithm.TYPE, LegacyBodyV2Algorithm.VERSION)
             if (!config.featureDisplacementEnabled) {
                 put(LegacyFaceV2Algorithm.TYPE, LegacyFaceV2Algorithm.VERSION)
+                if (SkirtAlgorithm.TYPE in types && config.recipe == RigRecipe.Modern &&
+                    config.rigTuning == RigTuning() && requestedVersions.isEmpty() &&
+                    freshSource(config) && model.analysis.layers.none {
+                        it.opaquePixels > 0 && it.semantic.role == PartRole.SKIRT &&
+                            it.semantic.tag !in setOf(SemanticTag.TOPWEAR, SemanticTag.BOTTOMWEAR)
+                    }) put(SkirtAlgorithm.TYPE, SkirtAlgorithm.VERSION)
                 // These source versions are verified for a fresh legacy-style scaffold and ordinary head turn.
                 if (!config.recipe.modern && config.rigTuning == RigTuning() && config.rigEdits.authoringJournal.isEmpty()) {
                     put(EyeLegacySourceAlgorithm.TYPE, EyeLegacySourceAlgorithm.VERSION)
