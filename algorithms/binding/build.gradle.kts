@@ -2962,3 +2962,39 @@ tasks.register("pluginEyeAftershockV3") {
         """.trimIndent())
     }
 }
+
+val eyeAftershockV4WorkerJar = registerIsolatedBindingWorker(
+    "eyeAftershockV4", "eye-aftershock-v4", "worker-eye-aftershock-v4", "io.github.psd2live.algorithms.binding.EyeAftershockV4Worker",
+)
+
+kotlin.target.compilations.named("eyeAftershockV4") {
+    associateWith(kotlin.target.compilations.getByName("eyeSmile"))
+}
+eyeAftershockV4WorkerJar.configure {
+    from(sourceSets["eyeSmile"].output) { include("**/EyeSmileInputs*.class") }
+}
+
+tasks.register("pluginEyeAftershockV4") {
+    dependsOn(eyeAftershockV4WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-eye-aftershock-v4")
+    val packageVersion = project.version.toString()
+    inputs.file(eyeAftershockV4WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        eyeAftershockV4WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6579652e616674657273686f636b.v4"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Blink aftershock",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/aftershock","aliases":["eye.aftershock"],"version":4,"name":"Blink aftershock","category":"eye",
+               "targets":["mesh"],"requires":["rig.scaffold","eye/fitted"],"contextVersion":2,
+               "reads":["mesh","parameter","hierarchy","canvas","deformer","physics"],"writes":["mesh","parameter","hierarchy","physics"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter","physics"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
