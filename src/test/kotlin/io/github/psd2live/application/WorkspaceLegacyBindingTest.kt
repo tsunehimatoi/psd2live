@@ -2533,6 +2533,84 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun modernMouthCheekLidsPreserveOpenAndSingleEyeClosedSourceMotion(): Unit = runBlocking {
+        for (closed in listOf(false, true)) {
+            val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = !closed, bilateralEyes = !closed,
+                closedMouth = closed)
+            val choices = WorkspaceInitialPreset(clothing = false)
+            val defaults = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+            val config = defaults.copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()),
+                recipe = defaults.recipe.copy(modules = defaults.recipe.modules +
+                    (RigModules.MOUTH_CHEEK_LID.id to ModuleChoice(true, values = mapOf("strength" to 126f)))))
+            val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+            val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
+                requestedVersions = mapOf("body/legacy" to 2, "face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 3,
+                    "eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3, "eye.emotion" to 3, "eye.lid-fade" to 3,
+                    "eye.highlight" to 3, "eye.aftershock" to 4, "eye.squash" to 4,
+                    "mouth/fitted" to 1, "mouth.outline" to 1, "mouth.vowel" to 1, "mouth.capture" to 1,
+                    "mouth.tongue" to 1, "mouth.jaw" to 1, "mouth.cheek-lid" to 1))
+            val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+            val locked = stack.instances.single { it.type == "mouth.cheek-lid" }
+            val index = stack.index(locked.id)
+            assertEquals(1, locked.version)
+            val fitted = if (closed) 5 else 3
+            val outline = if (closed) 6 else 7
+            val cheek = if (closed) 7 else 5
+            val versions = mapOf("mouth/fitted" to fitted, "mouth.outline" to outline, "mouth.vowel" to 6,
+                "mouth.capture" to 5, "mouth.tongue" to 5, "mouth.jaw" to 7, locked.type to cheek)
+            val candidate = stack.copy(instances = stack.instances.map { instance ->
+                val version = versions[instance.type] ?: return@map instance
+                instance.copy(version = version, plugin = assertNotNull(BundledAlgorithmArtifacts.find(instance.type, version)).reference)
+            })
+            val upgraded = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = candidate.toJson()))
+            val actual = WorkspacePreviewBuilder().build(upgraded)
+            val instance = candidate.instances[index]
+            val reference = assertNotNull(baseline.modifierEvaluation).outputs
+            val before = reference[index - 1]
+            val expected = reference[index]
+            assertTrue(expected.meshes.filter { it.name in setOf("lash", "lid", "white") }.any {
+                it != before.meshes.single { prior -> prior.id == it.id }
+            })
+            assertFalse(before.parameters.single { it.id == "ParamMouthForm" }.blend)
+            val compiled = RigIrCompiler.compile(baseline, tileArt = true)
+            fun verify(model: RigPreviewModel) {
+                val evaluation = assertNotNull(model.modifierEvaluation)
+                assertEquals(ModifierStatus.ACTIVE, evaluation.entries[index].status)
+                for (stage in index - 1 until stack.instances.size) {
+                    assertFaceEquals(reference[stage], evaluation.outputs[stage])
+                }
+                assertFaceEquals(compiled, RigIrCompiler.compile(model, tileArt = true))
+            }
+            verify(actual)
+            val cache = RigStageCache.enabled
+            RigStageCache.enabled = false
+            try { verify(WorkspacePreviewBuilder().build(upgraded)) } finally { RigStageCache.enabled = cache }
+
+            val artifact = assertNotNull(BundledAlgorithmArtifacts.find(instance.type, instance.version))
+            val root = Files.createTempDirectory("modern-cheek-lid-package-")
+            val preferences = Preferences.userRoot().node("modern-cheek-lid/" + UUID.randomUUID())
+            val store = ModifierPluginStore(root.resolve("installed"), preferences)
+            try {
+                BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+                val worker = store.snapshot().single()
+                val evaluation = assertNotNull(actual.modifierEvaluation)
+                val context = assertNotNull(evaluation.readAlgorithms[instance.id]).context
+                val providers = mapOf("mouth/fitted" to fitted, "eye/fitted" to 5)
+                for ((type, version) in providers) {
+                    val provider = context.upstream.single { it.type == type }
+                    assertEquals(version, provider.version)
+                    assertEquals(BundledAlgorithmArtifacts.find(type, version)?.reference, provider.plugin)
+                }
+                assertFaceEquals(expected, ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(),
+                    before, instance, {}, store, context = context))
+            } finally {
+                store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+                preferences.removeNode()
+                ModifierPluginStore.deleteTree(root)
+            }
+        }
+    }
+
     @Test fun fittedVowelsReplayAfterIndependentOutline(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
         val choices = WorkspaceInitialPreset()

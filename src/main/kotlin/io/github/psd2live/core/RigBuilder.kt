@@ -3498,6 +3498,14 @@ object RigBuilder {
 		return meshLoweringSource(layer, context, config, atlas, cache, channels)
 	}
 
+	internal fun lidTurnLoweringSource(layer: ClassifiedLayer, context: RigContext, config: PipelineConfig,
+	                                   atlas: PackedAtlas, cache: PreviewMeshCache, channels: Drawable): Drawable {
+		require(layer.semantic.tag in setOf(SemanticTag.EYELASH, SemanticTag.EYEWHITE))
+		val source = meshLoweringSource(layer, context, config, atlas, cache, channels)
+		val angles = setOf(StandardParameters.ANGLE_X, StandardParameters.ANGLE_Y, StandardParameters.ANGLE_Z)
+		return source.copy(blendShapes = source.blendShapes.filter { it.parameterId in angles })
+	}
+
 	private fun meshLoweringSource(layer: ClassifiedLayer, context: RigContext, config: PipelineConfig,
 	                               atlas: PackedAtlas, cache: PreviewMeshCache, channels: Drawable): Drawable {
 		val aligned = context.rigLayer(layer)

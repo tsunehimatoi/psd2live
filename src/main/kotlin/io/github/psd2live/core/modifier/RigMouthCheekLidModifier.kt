@@ -5,9 +5,18 @@ import io.github.psd2live.algorithms.binding.MouthCheekLidV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV6Algorithm
+import io.github.psd2live.algorithms.binding.MouthCheekLidV7Algorithm
 import io.github.psd2live.core.RigBuilder
+import io.github.psd2live.core.SemanticTag
+import io.github.psd2live.format.compile.RigIrBinary
+import io.github.psd2live.format.model.Canvas
+import io.github.psd2live.format.model.RigIR
+import io.github.psd2live.targets.cubism.PuppetIr
 import io.github.psd2live.i18n.tr
 import kotlinx.serialization.json.*
+import org.umamo.runtime.model.BlendMode
+import org.umamo.runtime.model.Drawable
+import org.umamo.runtime.model.DrawableId
 
 internal object RigMouthCheekLidModifier {
     private val algorithm = object : ReadingModifierAlgorithmPlugin by MouthCheekLidAlgorithm(),
@@ -54,6 +63,38 @@ internal object RigMouthCheekLidModifier {
         version = MouthCheekLidV6Algorithm.VERSION,
         plugin = closedAlgorithm,
     )
+
+    private val closedShellAlgorithm = object : ReadingModifierAlgorithmPlugin by MouthCheekLidV7Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = MouthCheekLidV3Algorithm.optionalUpstream
+        override val canonicalOptInType = MouthCheekLidV5Algorithm.TYPE
+    }
+
+    fun closedShellDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val fitted = fittedDefinition(source)
+        return fitted.copy(version = MouthCheekLidV7Algorithm.VERSION, plugin = closedShellAlgorithm,
+            authorContext = { instance ->
+                val capture = requireNotNull(source)
+                val context = fitted.authorContext(instance)
+                val scaffold = capture.provider(instance)
+                val prefix = capture.activeBefore(instance).filter { entry ->
+                    entry.config["scaffold"] == JsonPrimitive(scaffold.id) && entry.targets.any(instance.targets::contains) &&
+                        RigLegacyBindings.find(entry.type)?.let { !it.expressionToggles && !it.seeThrough } == true
+                }
+                val (native, measured) = RigFittedMouthModuleSource.context(capture, scaffold, prefix, null)
+                val layers = measured.analysis.layers.associateBy { it.source.id.raw }
+                val turns = instance.targets.mapNotNull { target ->
+                    val layer = layers[capture.layersByMesh[target.id]] ?: return@mapNotNull null
+                    if (layer.semantic.tag !in setOf(SemanticTag.EYELASH, SemanticTag.EYEWHITE)) return@mapNotNull null
+                    val channels = Drawable(DrawableId(target.id), layer.source.name, null, BlendMode.Normal, emptyList(), null, null)
+                    val raw = RigBuilder.lidTurnLoweringSource(layer, measured, native, capture.atlas, capture.meshCache, channels)
+                    PuppetIr.meshToIr(raw).takeIf { it.shapes.isNotEmpty() }
+                }
+                val resource = ModifierAlgorithmResource(RigIrBinary.encode(RigIR(Canvas(1f, 1f), emptyList(), meshes = turns)))
+                ModifierAlgorithmContext(JsonObject(context.values + ("turnName" to JsonPrimitive(tr("model.deformer.meshTurn", "{meshName}")))),
+                    context.resources + ("lid_turn" to resource))
+            })
+    }
 
     fun fittedDefinition(source: RigModifierSource?): RigModifierDefinition = definition(source).copy(
         version = MouthCheekLidV3Algorithm.VERSION,
