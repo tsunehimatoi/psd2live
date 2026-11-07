@@ -753,32 +753,44 @@ tasks.register("pluginMouthOutlineSource") {
     }
 }
 
-val eyeSquash = sourceSets.create("eyeSquash")
-kotlin.target.compilations.named("eyeSquash") {
-    associateWith(kotlin.target.compilations.getByName("main"))
-}
-val eyeSquashClassesJar by tasks.registering(Jar::class) {
-    archiveClassifier.set("eye-squash")
-    isPreserveFileTimestamps = false
-    isReproducibleFileOrder = true
-    from(eyeSquash.output)
-}
-val eyeSquashElements = configurations.create("eyeSquashElements") {
-    isCanBeConsumed = true
-    isCanBeResolved = false
-}
-artifacts.add(eyeSquashElements.name, eyeSquashClassesJar)
+/** Isolate new entry points from the shared worker so adding one never changes its published bytes. */
+fun registerIsolatedBindingWorker(
+    compilation: String,
+    hostClassifier: String,
+    workerClassifier: String,
+    mainClass: String,
+): TaskProvider<Jar> {
+    val sources = sourceSets.create(compilation)
+    kotlin.target.compilations.named(compilation) {
+        associateWith(kotlin.target.compilations.getByName("main"))
+    }
+    val classesJar = tasks.register<Jar>("${compilation}ClassesJar") {
+        archiveClassifier.set(hostClassifier)
+        isPreserveFileTimestamps = false
+        isReproducibleFileOrder = true
+        from(sources.output)
+    }
+    val elements = configurations.create("${compilation}Elements") {
+        isCanBeConsumed = true
+        isCanBeResolved = false
+    }
+    artifacts.add(elements.name, classesJar)
 
-val eyeSquashWorkerJar by tasks.registering(Jar::class) {
-    dependsOn(workerJar)
-    archiveClassifier.set("worker-eye-squash")
-    isPreserveFileTimestamps = false
-    isReproducibleFileOrder = true
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    manifest { attributes["Main-Class"] = "io.github.psd2live.algorithms.binding.EyeSquashWorker" }
-    from(eyeSquash.output)
-    from(workerJar.flatMap { it.archiveFile }.map { zipTree(it) }) { exclude("META-INF/MANIFEST.MF") }
+    return tasks.register<Jar>("${compilation}WorkerJar") {
+        dependsOn(workerJar)
+        archiveClassifier.set(workerClassifier)
+        isPreserveFileTimestamps = false
+        isReproducibleFileOrder = true
+        duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+        manifest { attributes["Main-Class"] = mainClass }
+        from(sources.output)
+        from(workerJar.flatMap { it.archiveFile }.map { zipTree(it) }) { exclude("META-INF/MANIFEST.MF") }
+    }
 }
+
+val eyeSquashWorkerJar = registerIsolatedBindingWorker(
+    "eyeSquash", "eye-squash", "worker-eye-squash", "io.github.psd2live.algorithms.binding.EyeSquashWorker",
+)
 
 tasks.register("pluginEyeSquash") {
     dependsOn(eyeSquashWorkerJar)
@@ -805,32 +817,9 @@ tasks.register("pluginEyeSquash") {
     }
 }
 
-val bodyLegacyV2 = sourceSets.create("bodyLegacyV2")
-kotlin.target.compilations.named("bodyLegacyV2") {
-    associateWith(kotlin.target.compilations.getByName("main"))
-}
-val bodyLegacyV2ClassesJar by tasks.registering(Jar::class) {
-    archiveClassifier.set("body-legacy-v2")
-    isPreserveFileTimestamps = false
-    isReproducibleFileOrder = true
-    from(bodyLegacyV2.output)
-}
-val bodyLegacyV2Elements = configurations.create("bodyLegacyV2Elements") {
-    isCanBeConsumed = true
-    isCanBeResolved = false
-}
-artifacts.add(bodyLegacyV2Elements.name, bodyLegacyV2ClassesJar)
-
-val bodyLegacyV2WorkerJar by tasks.registering(Jar::class) {
-    dependsOn(workerJar)
-    archiveClassifier.set("worker-body-legacy-v2")
-    isPreserveFileTimestamps = false
-    isReproducibleFileOrder = true
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    manifest { attributes["Main-Class"] = "io.github.psd2live.algorithms.binding.LegacyBodyV2Worker" }
-    from(bodyLegacyV2.output)
-    from(workerJar.flatMap { it.archiveFile }.map { zipTree(it) }) { exclude("META-INF/MANIFEST.MF") }
-}
+val bodyLegacyV2WorkerJar = registerIsolatedBindingWorker(
+    "bodyLegacyV2", "body-legacy-v2", "worker-body-legacy-v2", "io.github.psd2live.algorithms.binding.LegacyBodyV2Worker",
+)
 
 tasks.register("pluginBodyLegacyV2") {
     dependsOn(bodyLegacyV2WorkerJar)
@@ -908,32 +897,9 @@ tasks.register("pluginMouthOutlineV2") {
     }
 }
 
-val browFitted = sourceSets.create("browFitted")
-kotlin.target.compilations.named("browFitted") {
-    associateWith(kotlin.target.compilations.getByName("main"))
-}
-val browFittedClassesJar by tasks.registering(Jar::class) {
-    archiveClassifier.set("brow-fitted")
-    isPreserveFileTimestamps = false
-    isReproducibleFileOrder = true
-    from(browFitted.output)
-}
-val browFittedElements = configurations.create("browFittedElements") {
-    isCanBeConsumed = true
-    isCanBeResolved = false
-}
-artifacts.add(browFittedElements.name, browFittedClassesJar)
-
-val browFittedWorkerJar by tasks.registering(Jar::class) {
-    dependsOn(workerJar)
-    archiveClassifier.set("worker-brow-fitted-v2")
-    isPreserveFileTimestamps = false
-    isReproducibleFileOrder = true
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    manifest { attributes["Main-Class"] = "io.github.psd2live.algorithms.binding.BrowFittedWorker" }
-    from(browFitted.output)
-    from(workerJar.flatMap { it.archiveFile }.map { zipTree(it) }) { exclude("META-INF/MANIFEST.MF") }
-}
+val browFittedWorkerJar = registerIsolatedBindingWorker(
+    "browFitted", "brow-fitted", "worker-brow-fitted-v2", "io.github.psd2live.algorithms.binding.BrowFittedWorker",
+)
 
 tasks.register("pluginBrowFittedV2") {
     dependsOn(browFittedWorkerJar)
@@ -960,32 +926,9 @@ tasks.register("pluginBrowFittedV2") {
     }
 }
 
-val eyeLegacy = sourceSets.create("eyeLegacy")
-kotlin.target.compilations.named("eyeLegacy") {
-    associateWith(kotlin.target.compilations.getByName("main"))
-}
-val eyeLegacyClassesJar by tasks.registering(Jar::class) {
-    archiveClassifier.set("eye-legacy")
-    isPreserveFileTimestamps = false
-    isReproducibleFileOrder = true
-    from(eyeLegacy.output)
-}
-val eyeLegacyElements = configurations.create("eyeLegacyElements") {
-    isCanBeConsumed = true
-    isCanBeResolved = false
-}
-artifacts.add(eyeLegacyElements.name, eyeLegacyClassesJar)
-
-val eyeLegacyWorkerJar by tasks.registering(Jar::class) {
-    dependsOn(workerJar)
-    archiveClassifier.set("worker-eye-legacy")
-    isPreserveFileTimestamps = false
-    isReproducibleFileOrder = true
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    manifest { attributes["Main-Class"] = "io.github.psd2live.algorithms.binding.EyeLegacyWorker" }
-    from(eyeLegacy.output)
-    from(workerJar.flatMap { it.archiveFile }.map { zipTree(it) }) { exclude("META-INF/MANIFEST.MF") }
-}
+val eyeLegacyWorkerJar = registerIsolatedBindingWorker(
+    "eyeLegacy", "eye-legacy", "worker-eye-legacy", "io.github.psd2live.algorithms.binding.EyeLegacyWorker",
+)
 
 tasks.register("pluginEyeLegacy") {
     dependsOn(eyeLegacyWorkerJar)
