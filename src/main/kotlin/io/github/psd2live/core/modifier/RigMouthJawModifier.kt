@@ -1,6 +1,7 @@
 package io.github.psd2live.core.modifier
 
 import io.github.psd2live.algorithms.binding.MouthJawAlgorithm
+import io.github.psd2live.algorithms.binding.MouthJawV3Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldMesh
 import io.github.psd2live.algorithms.binding.ScaffoldMeshContext
 import io.github.psd2live.core.*
@@ -18,24 +19,37 @@ internal object RigMouthJawModifier {
         override val canonicalOptInType = MouthJawAlgorithm.TYPE
     }
 
+    private val fittedAlgorithm = object : ReadingModifierAlgorithmPlugin by MouthJawV3Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = MouthJawV3Algorithm.optionalUpstream
+        override val canonicalOptInType = MouthJawAlgorithm.TYPE
+    }
+
+    fun fittedDefinition(source: RigModifierSource?): RigModifierDefinition =
+        definition(source, MouthJawV3Algorithm.VERSION, fittedAlgorithm)
+
     fun definition(source: RigModifierSource?): RigModifierDefinition =
+        definition(source, MouthJawAlgorithm.VERSION, algorithm)
+
+    private fun definition(source: RigModifierSource?, version: Int, algorithm: ReadingModifierAlgorithmPlugin): RigModifierDefinition =
         RigLegacyBindings.definition(RigLegacyBindings.spec(MouthJawAlgorithm.TYPE), source).copy(
-            version = MouthJawAlgorithm.VERSION, parameters = { emptyList() }, resolveParameter = { _, _, _ -> null },
+            version = version, parameters = { emptyList() }, resolveParameter = { _, _, _ -> null },
             plugin = algorithm, upstreamInputs = true, changeWrites = setOf("mesh"),
             evaluate = { _, _, _ -> error("Mouth jaw requires captured source measurements") },
-            authorContext = { requireNotNull(source).capture(it) },
+            authorContext = { requireNotNull(source).capture(it, version) },
         )
 
-    private fun RigModifierSource.capture(instance: RigModifierInstance): ModifierAlgorithmContext {
+    private fun RigModifierSource.capture(instance: RigModifierInstance, version: Int): ModifierAlgorithmContext {
         val scaffold = provider(instance)
-        require(scaffold.version == 2) { "Mouth jaw v2 requires a shared v2 scaffold" }
+        require(scaffold.version == 2) { "Mouth jaw v$version requires a shared v2 scaffold" }
         val preceding = activeBefore(instance).filter { item ->
             item.config["scaffold"] == JsonPrimitive(scaffold.id) && item.targets.any(instance.targets::contains) &&
                 RigLegacyBindings.find(item.type)?.let { !it.expressionToggles && !it.seeThrough } == true
         }
+        val fittedVersions = if (version == MouthJawV3Algorithm.VERSION) 3..3 else 1..2
         val baseId = instance.config.getValue("base").jsonPrimitive.content
-        require(preceding.any { it.id == baseId && it.type == "mouth/fitted" && it.version in 1..2 }) {
-            "Mouth jaw v2 requires a compatible fitted mouth"
+        require(preceding.any { it.id == baseId && it.type == "mouth/fitted" && it.version in fittedVersions }) {
+            "Mouth jaw v$version requires a compatible fitted mouth"
         }
         require(preceding.none { it.type.startsWith("mouth.") && it.type !in MouthJawAlgorithm.mouthUpstream }) {
             "Use mouth jaw v1 after other mouth modules"
@@ -68,7 +82,7 @@ internal object RigMouthJawModifier {
             hairSimulationBack = !(scaffold.config["backHairSway"]?.jsonPrimitive?.boolean ?: true))
         val context = RigBuilder.rigContext(analysis, native, meshCache)
         val fitted = requireNotNull(context.fittedMouth(native))
-        val measured = requireNotNull(fitted.source) { "Mouth jaw v2 requires readable fitted mouth artwork" }
+        val measured = requireNotNull(fitted.source) { "Mouth jaw v$version requires readable fitted mouth artwork" }
         require(!fitted.layered) { "Use mouth jaw v1 for artwork with separate lip or line layers" }
         val sourceLayers = context.analysis.layers.associateBy { it.source.id.raw }
         val materials = mutableListOf<ScaffoldMeshContext.Material>()
@@ -80,7 +94,7 @@ internal object RigMouthJawModifier {
                 if (fitted.covers(aligned) || aligned.semantic.role?.let { it != PartRole.SHADOW } == true) continue
                 if (tag != SemanticTag.FACE && tag != SemanticTag.NOSE &&
                     !(tag == SemanticTag.FACE_DETAIL && measured.fit.toMouth(aligned.centroidX, aligned.centroidY).second > 0f)) continue
-                require(preceding.all { target in it.targets }) { "Mouth jaw v2 requires a shared source frame for its targets" }
+                require(preceding.all { target in it.targets }) { "Mouth jaw v$version requires a shared source frame for its targets" }
                 val (parent, frame) = context.parentAndFrame(layer, native)
                 val data = RigBuilder.fittedMouthSourceMesh(layer, context, native, atlas, meshCache)
                 materials += ScaffoldMeshContext.Material(target.id, layer.source.id.raw,
@@ -93,10 +107,16 @@ internal object RigMouthJawModifier {
             }
         }
         val fit = measured.fit
+        val fittedSource = if (version == MouthJawV3Algorithm.VERSION) measured.encode() else null
         return ModifierAlgorithmContext(buildJsonObject {
-            put("schema", "mouth-jaw/1")
-            put("fit", JsonArray(listOf(fit.originX, fit.originY, fit.axisX, fit.axisY, fit.width, fit.opening).map(::JsonPrimitive)))
-            put("reach", measured.options.reach)
+            if (fittedSource != null) {
+                put("schema", "mouth-jaw/2")
+                put("mouth", fittedSource.values)
+            } else {
+                put("schema", "mouth-jaw/1")
+                put("fit", JsonArray(listOf(fit.originX, fit.originY, fit.axisX, fit.axisY, fit.width, fit.opening).map(::JsonPrimitive)))
+                put("reach", measured.options.reach)
+            }
             put("chin", fitted.chin)
             put("targets", targets)
             putJsonObject("providers") {
@@ -104,6 +124,6 @@ internal object RigMouthJawModifier {
                     put(provider.type, provider.id)
                 }
             }
-        }, ScaffoldMeshContext.capture(materials).resources)
+        }, ScaffoldMeshContext.capture(materials).resources + fittedSource?.resources.orEmpty())
     }
 }

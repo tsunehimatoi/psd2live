@@ -1344,6 +1344,60 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun independentMouthJawUsesRealFittedSourceProviderAndInstalledWorker(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
+        val choices = WorkspaceInitialPreset()
+        val baseline = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+        val recipe = baseline.recipe.copy(modules = baseline.recipe.modules + mapOf(
+            RigModules.MOUTH_TONGUE.id to ModuleChoice(false),
+            RigModules.MOUTH_JAW.id to ModuleChoice(true, values = mapOf("share" to 22f))))
+        val config = baseline.copy(recipe = recipe, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, legacy) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
+            preferSourceBindings = true)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val versions = mapOf("mouth/fitted" to 3, "mouth.outline" to 3, "mouth.jaw" to 3)
+        val jaw = stack.instances.single { it.type == "mouth.jaw" }
+        val index = stack.index(jaw.id)
+        val locked = stack.copy(instances = stack.instances.map { entry ->
+            val version = versions[entry.type] ?: return@map entry
+            entry.copy(version = version, plugin = assertNotNull(BundledAlgorithmArtifacts.find(entry.type, version)).reference)
+        })
+        fun document(candidate: RigModifierStack) = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = candidate.toJson()))
+        val actual = WorkspacePreviewBuilder().build(document(locked))
+        val expected = assertNotNull(legacy.modifierEvaluation).outputs[index]
+        val evaluated = assertNotNull(actual.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, evaluated.entries[index].status)
+        assertEquals(expected, evaluated.outputs[index])
+        assertEquals(RigIrCompiler.compile(legacy, tileArt = true), RigIrCompiler.compile(actual, tileArt = true))
+
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(jaw.type, 3))
+        val directory = Files.createTempDirectory("fitted-source-jaw-package-")
+        val preferences = Preferences.userRoot().node("fitted-source-jaw-package/" + UUID.randomUUID())
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            for (name in artifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val entry = store.install(staging.toString())
+            val context = assertNotNull(evaluated.readAlgorithms[jaw.id]).context
+            assertTrue(context.upstream.any { it.type == "mouth/fitted" && it.version == 3 })
+            assertEquals(expected, ModifierPluginWorkers.evaluate(entry, entry.manifest.algorithms.single(),
+                evaluated.outputs[index - 1], evaluated.entries[index].instance, {}, store, context = context))
+            val incomplete = context.withUpstream(context.upstream.filterNot { it.type == "mouth/fitted" })
+            assertFailsWith<IllegalArgumentException> {
+                io.github.psd2live.algorithms.binding.MouthJawV3Algorithm().changes(
+                    evaluated.outputs[index - 1], evaluated.entries[index].instance, incomplete) {}
+            }
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
     @Test fun independentMouthJawPreservesRecommendedPreset(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
         val builder = WorkspacePreviewBuilder()
