@@ -903,6 +903,42 @@ tasks.register("pluginBrowShape") {
     }
 }
 
+val browShapeV3WorkerJar = registerIsolatedBindingWorker(
+    "browShapeV3", "brow-shape-v3", "worker-brow-shape-v3", "io.github.psd2live.algorithms.binding.BrowShapeV3Worker",
+)
+
+kotlin.target.compilations.named("browShapeV3") {
+    associateWith(kotlin.target.compilations.getByName("browShape"))
+}
+browShapeV3WorkerJar.configure {
+    from(sourceSets["browShape"].output) { include("**/BrowShapeInputs*.class") }
+}
+
+tasks.register("pluginBrowShapeV3") {
+    dependsOn(browShapeV3WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-brow-shape-v3")
+    val packageVersion = project.version.toString()
+    inputs.file(browShapeV3WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        browShapeV3WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.62726f772e7368617065.v3"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Brow shapes",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/shape","aliases":["brow.shape"],"version":3,"name":"Brow shapes","category":"brow",
+               "targets":["mesh"],"requires":["rig.scaffold","brow/fitted"],"contextVersion":2,
+               "reads":["mesh","parameter","hierarchy"],"writes":["mesh","parameter","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val browBlinkWorkerJar = registerIsolatedBindingWorker(
     "browBlink", "brow-blink", "worker-brow-blink", "io.github.psd2live.algorithms.binding.BrowBlinkWorker",
 )

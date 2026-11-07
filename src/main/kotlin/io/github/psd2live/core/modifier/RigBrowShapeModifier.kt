@@ -1,6 +1,7 @@
 package io.github.psd2live.core.modifier
 
 import io.github.psd2live.algorithms.binding.BrowShapeAlgorithm
+import io.github.psd2live.algorithms.binding.BrowShapeV3Algorithm
 import io.github.psd2live.algorithms.binding.BrowShapeInputs
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
 import io.github.psd2live.core.RigBuilder
@@ -21,11 +22,24 @@ internal object RigBrowShapeModifier {
         override val canonicalOptInType = BrowShapeAlgorithm.TYPE
     }
 
-    fun definition(source: RigModifierSource?): RigModifierDefinition {
+    private val fittedAlgorithm = object : ReadingModifierAlgorithmPlugin by BrowShapeV3Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = setOf("eye/fitted")
+        override val canonicalOptInType = BrowShapeAlgorithm.TYPE
+    }
+
+    fun definition(source: RigModifierSource?): RigModifierDefinition =
+        definition(source, BrowShapeAlgorithm.VERSION, algorithm)
+
+    fun fittedDefinition(source: RigModifierSource?): RigModifierDefinition =
+        definition(source, BrowShapeV3Algorithm.VERSION, fittedAlgorithm)
+
+    private fun definition(source: RigModifierSource?, version: Int,
+                           algorithm: ReadingModifierAlgorithmPlugin): RigModifierDefinition {
         val captures = HashMap<RigModifierInstance, BrowShapeInputs>()
-        fun measurements(instance: RigModifierInstance) = captures.getOrPut(instance) { requireNotNull(source).capture(instance) }
+        fun measurements(instance: RigModifierInstance) = captures.getOrPut(instance) { requireNotNull(source).capture(instance, version) }
         return RigLegacyBindings.definition(RigLegacyBindings.spec(BrowShapeAlgorithm.TYPE), source).copy(
-            version = BrowShapeAlgorithm.VERSION,
+            version = version,
             parameters = { BrowShapeAlgorithm.parameters(measurements(it)) },
             resolveParameter = { _, _, _ -> null },
             evaluate = { _, _, _ -> error("Brow shape requires resolved modifier inputs") },
@@ -36,21 +50,24 @@ internal object RigBrowShapeModifier {
         )
     }
 
-    private fun RigModifierSource.capture(instance: RigModifierInstance): BrowShapeInputs {
+    private fun RigModifierSource.capture(instance: RigModifierInstance, version: Int): BrowShapeInputs {
+        val fitted = version == BrowShapeV3Algorithm.VERSION
+        val browVersions = if (fitted) 1..3 else 1..2
+        val eyeVersions = if (fitted) setOf(2, 5) else setOf(2)
         val scaffold = provider(instance)
-        require(scaffold.version == 2) { "Brow shape v2 requires a shared v2 scaffold" }
+        require(scaffold.version == 2) { "Brow shape v$version requires a shared v2 scaffold" }
         val upstream = activeBefore(instance).filter { previous ->
             previous.config["scaffold"] == JsonPrimitive(scaffold.id) && previous.targets.any(instance.targets::contains)
         }
         val baseId = instance.config.getValue("base").jsonPrimitive.content
-        val base = requireNotNull(upstream.singleOrNull { it.id == baseId && it.type == "brow/fitted" && it.version in 1..2 }) {
-            "Brow shape v2 requires a compatible fitted brow provider"
+        val base = requireNotNull(upstream.singleOrNull { it.id == baseId && it.type == "brow/fitted" && it.version in browVersions }) {
+            "Brow shape v$version requires a compatible fitted brow provider"
         }
         require(upstream.none { previous ->
-            previous.type in setOf(BrowShapeAlgorithm.TYPE, BrowShapeAlgorithm.ENTRYPOINT, "brow.spring", "brow.blink", "brow.lid-coupling")
-        }) { "Brow shape v2 must precede other brow motion modifiers" }
+            previous.type in setOf(BrowShapeAlgorithm.TYPE, BrowShapeAlgorithm.ENTRYPOINT, BrowShapeV3Algorithm.ENTRYPOINT, "brow.spring", "brow.blink", "brow.lid-coupling")
+        }) { "Brow shape v$version must precede other brow motion modifiers" }
         val eye = upstream.lastOrNull { it.type == "eye/fitted" }
-        require(eye == null || eye.version == 2) { "Brow shape v2 requires compatible fitted eyes" }
+        require(eye == null || eye.version in eyeVersions) { "Brow shape v$version requires compatible fitted eyes" }
         val corrections = WorkspaceSettingsCodec.decodeRecipe(scaffold.config["corrections"])
         val bases = RigModules.areas.associate { area ->
             val chosen = when (area.id) {

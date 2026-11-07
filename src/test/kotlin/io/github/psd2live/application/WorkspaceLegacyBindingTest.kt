@@ -357,6 +357,67 @@ class WorkspaceLegacyBindingTest {
         assertEquals(compiled, RigIrCompiler.compile(f.now.model))
     }
 
+    @Test fun browShapeUsesRealFittedSourceProvidersAndInstalledWorker(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
+        val choices = WorkspaceInitialPreset()
+        val baseline = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+        val config = baseline.copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, legacy) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
+            preferSourceBindings = true)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val versions = mapOf("eye/fitted" to 5, "eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3,
+            "brow/fitted" to 3, "brow.shape" to 3)
+        val shape = stack.instances.single { it.type == "brow.shape" }
+        val index = stack.index(shape.id)
+        val locked = stack.copy(instances = stack.instances.map { entry ->
+            val version = versions[entry.type] ?: return@map entry
+            entry.copy(version = version, plugin = assertNotNull(BundledAlgorithmArtifacts.find(entry.type, version)).reference)
+        })
+        fun document(candidate: RigModifierStack) = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = candidate.toJson()))
+        val actual = WorkspacePreviewBuilder().build(document(locked))
+        val baselineOutputs = assertNotNull(legacy.modifierEvaluation).outputs
+        val expected = baselineOutputs[index]
+        val previous = baselineOutputs[index - 1]
+        val evaluated = assertNotNull(actual.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, evaluated.entries[index].status)
+        assertTrue(expected.meshes.zip(previous.meshes).any { (after, before) -> after != before })
+        assertEquals(previous, evaluated.outputs[index - 1])
+        assertEquals(expected, evaluated.outputs[index])
+        assertEquals(RigIrCompiler.compile(legacy, tileArt = true), RigIrCompiler.compile(actual, tileArt = true))
+
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(shape.type, 3))
+        val directory = Files.createTempDirectory("fitted-source-shape-package-")
+        val preferences = Preferences.userRoot().node("fitted-source-shape-package/" + UUID.randomUUID())
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            for (name in artifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val entry = store.install(staging.toString())
+            val context = assertNotNull(evaluated.readAlgorithms[shape.id]).context
+            assertTrue(context.upstream.any { it.type == "brow/fitted" && it.version == 3 })
+            assertTrue(context.upstream.any { it.type == "eye/fitted" && it.version == 5 })
+            assertEquals(expected, ModifierPluginWorkers.evaluate(entry, entry.manifest.algorithms.single(),
+                evaluated.outputs[index - 1], evaluated.entries[index].instance, {}, store, context = context,
+                declaredParameters = RigBrowShapeModifier.fittedDefinition(RigModifierSource.of(actual))
+                    .parameters(evaluated.entries[index].instance)))
+            for (required in listOf("brow/fitted", "eye/fitted")) {
+                val incomplete = context.withUpstream(context.upstream.filterNot { it.capability == required })
+                assertFailsWith<IllegalArgumentException> {
+                    io.github.psd2live.algorithms.binding.BrowShapeV3Algorithm().changes(
+                        evaluated.outputs[index - 1], evaluated.entries[index].instance, incomplete) {}
+                }
+            }
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
     @Test fun browShapeWorkerMatchesLockedBindingAndReopensWithItsHistory(): Unit = runBlocking {
         val artifact = assertNotNull(BundledAlgorithmArtifacts.find("brow.shape", 2))
         for (head in listOf("face/legacy", "face/fitted")) {
