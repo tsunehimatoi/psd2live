@@ -52,6 +52,8 @@ Mouth vowels v2 adds the five standard vowel parameters and their fitted shapes.
 
 Mouth capture v2 adds mouth-tracking keyforms using the original mesh and a compatible fitted mouth. It can follow an outline or vowel modifier. Use v1 for separate closed-mouth drawings, edited or lowered meshes, or other preceding mouth modules.
 
+Mouth outline v3 is available by version. With the shared v2 source scaffold and a fitted mouth, it generates outlines from the original pixels and lip measurements and recomputes the head lattices, hair chains, headwear and neck shapes affected by the mouth landmarks. Use v1 for edited source meshes or combinations with a private head-turn carrier. Presets still select v1, and downstream vowel v1 still builds a compatibility template for the preceding outline.
+
 Mouth jaw v2 is opt-in. It uses a shared v2 source scaffold and a compatible fitted mouth to add opening motion to the face, nose and details below the mouth. Ordinary and fitted head turns, mouth outlines, vowels and capture can precede it. Use v1 for separately drawn lip layers, edited target meshes or combinations that need another deformation carrier.
 
 Mouth tongue v2 adds tongue-out forms to a fitted mouth with a tongue layer and a preceding capture modifier. It supports a single mouth drawing on the original source mesh. Use v1 for layered lips or a separate closed-mouth drawing.
