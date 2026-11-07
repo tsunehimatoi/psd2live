@@ -2,6 +2,7 @@ package io.github.psd2live.core
 
 import io.github.psd2live.algorithms.binding.BindingProjection
 import io.github.psd2live.algorithms.binding.EyeFittedAlgorithm
+import io.github.psd2live.algorithms.binding.EyeFittedSourceAlgorithm
 import io.github.psd2live.algorithms.binding.EyeScaffoldTransition
 import io.github.psd2live.algorithms.binding.ScaffoldAlgorithm
 import io.github.psd2live.algorithms.binding.ScaffoldPartsContext
@@ -16,12 +17,22 @@ import io.github.psd2live.core.recipe.RigRecipe
 import io.github.psd2live.project.rawConfig
 import io.github.psd2live.scenario.Characters
 import io.github.psd2live.targets.cubism.PuppetIr
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
+import java.nio.file.Files
+import java.util.UUID
+import java.util.jar.JarFile
+import java.util.prefs.Preferences
 import org.umamo.runtime.model.Deformer
 import org.umamo.runtime.model.DeformerId
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
@@ -129,6 +140,50 @@ class FittedEyePluginParityTest {
             actual.deformers.filter { it.id.startsWith("DeformEyeGaze") })
         assertTrue(changes.meshes.updated.all { it.before.id in eyeIds && it.before.geometry == it.after.geometry })
         if (source == null) {
+            val author = PuppetIr.toIr(materials.puppet)
+            fun owner(stack: RigModifierStack) = RigModifierSource(analysis, atlas,
+                materialConfig.copy(rigEdits = materialConfig.rigEdits.copy(modifierStack = stack.toJson())),
+                materials.layerIdByDrawableId, materialBase = materials.puppet, meshCache = cache)
+            val stack = RigModifierStack(instances = listOf(provider, instance))
+            val adapter = owner(stack)
+            val live = RigModifierAlgorithms.evaluator(adapter).evaluate(author, stack).rig
+            assertEquals(actual, live)
+            val smile = RigModifierInstance("smile", "eye.smile", RigModules.EYE_SMILE.version, targets,
+                config = buildJsonObject { put("scaffold", provider.id); put("base", instance.id) })
+            val smiling = stack.copy(instances = stack.instances + smile)
+            val composed = RigModifierAlgorithms.evaluator(owner(smiling)).evaluate(author, smiling).rig
+            val nativeSmile = RigBuilder.build(analysis, atlas, oldConfig.copy(recipe = oldConfig.recipe.copy(
+                modules = oldConfig.recipe.modules + (RigModules.EYE_SMILE.id to ModuleChoice(true)))), cache)
+            val smilingEyes = PuppetIr.toIr(nativeSmile.puppet).meshes.filter { it.id in eyeIds }
+            assertTrue(smilingEyes.any { mesh -> mesh.offsets?.axes.orEmpty().any { it.parameter.endsWith("Smile") } })
+            val composedEyes = composed.meshes.filter { it.id in eyeIds }
+            for ((expectedEye, actualEye) in smilingEyes.zip(composedEyes)) assertEquals(expectedEye, actualEye, expectedEye.id)
+            val previous = RigModifierAlgorithms.registry.definition(instance.copy(version = 2))
+            assertEquals(2, previous.version)
+            assertFalse(previous.plugin is EyeFittedSourceAlgorithm)
+            verifyWorker(adapter, allBefore, live, instance)
+            val body = RigModifierInstance("body", "body/legacy", 1, targets, config = instance.config)
+            val head = RigModifierInstance("head", "face/fitted", 1, targets, config = instance.config)
+            val mixed = stack.copy(instances = listOf(provider, body, head, instance))
+            val prefix = mixed.copy(instances = mixed.instances.dropLast(1))
+            val coarseTurn = RigModifierAlgorithms.evaluator(owner(prefix)).evaluate(author, prefix).rig
+            val turn = RigModules.FACE_DEPTH_TURN.id
+            val nativeTurn = RigBuilder.build(analysis, atlas, oldConfig.copy(recipe = oldConfig.recipe.copy(
+                modules = oldConfig.recipe.modules + (turn to ModuleChoice(true)))), cache)
+            val fittedTurn = PuppetIr.toIr(nativeTurn.puppet)
+            val eyeTurnIds = eyeParents.mapTo(hashSetOf()) { it.raw }
+            fun turnGrids(rig: io.github.psd2live.format.model.RigIR) = rig.deformers
+                .filterIsInstance<io.github.psd2live.format.model.Deformer.Warp>()
+                .filter { warp -> warp.id in eyeTurnIds && warp.lattice?.axes.orEmpty().any { it.parameter == "ParamAngleX" } }
+                .associate { it.id to it.lattice }
+            assertTrue(turnGrids(fittedTurn).isNotEmpty())
+            assertEquals(turnGrids(fittedTurn).keys, turnGrids(coarseTurn).keys)
+            assertNotEquals(turnGrids(fittedTurn), turnGrids(coarseTurn), "Coarse eye turn differs after the fitted face prefix")
+            val blockedHead = assertFailsWith<IllegalArgumentException> {
+                RigModifierAlgorithms.evaluator(owner(mixed)).evaluate(author, mixed)
+            }
+            assertEquals("Fitted eye v3 requires head turn to be built from the fitted source scaffold", blockedHead.message)
+
             val (lash, indexedLash) = before.meshes.filter { layers[scaffold.layerIdByDrawableId[it.id]]?.semantic?.tag == SemanticTag.EYELASH }
             val geometry = assertNotNull(lash.geometry)
             val editedUvs = geometry.uvs.shared().copyOf().also { it[0] += 0.0001f }
@@ -145,6 +200,44 @@ class FittedEyePluginParityTest {
             assertTrue(reboundLash.offsets?.axes.orEmpty().isNotEmpty())
             assertEquals(indexed, rebound.meshes.single { it.id == indexedLash.id }.geometry)
             assertEquals(listOf(group), rebound.authoring.vertexGroups)
+        }
+    }
+
+    private fun verifyWorker(
+        owner: RigModifierSource, input: io.github.psd2live.format.model.RigIR, expected: io.github.psd2live.format.model.RigIR,
+        instance: RigModifierInstance,
+    ) {
+        val directory = Files.createTempDirectory("fitted-eye-package-")
+        val preferences = Preferences.userRoot().node("fitted-eye-package/${UUID.randomUUID()}")
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(EyeFittedSourceAlgorithm.TYPE, EyeFittedAlgorithm.VERSION))
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            val manifest = Json.parseToJsonElement(artifact.bytes.decodeToString()).jsonObject
+            // Use a different package revision to exercise the installed worker rather than the bundled implementation.
+            Files.writeString(staging.resolve("plugin.json"), JsonObject(manifest + ("version" to JsonPrimitive("0.9.0"))).toString())
+            artifact.manifest.files.keys.forEach { name ->
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            JarFile(staging.resolve("algorithm.jar").toFile()).use { jar ->
+                assertNotNull(jar.getJarEntry("rig/eye-opening.bin"))
+                assertFalse(jar.entries().asSequence().any { it.name.startsWith("io/github/psd2live/core/RigBuilder") })
+            }
+            val definitions = BuiltinModifierPlugins.definitions(owner)
+            repeat(2) {
+                val entry = store.install(staging.toString())
+                val worker = ModifierPluginCatalog.definitions(store, captured = definitions)
+                    .single { it.type == EyeFittedSourceAlgorithm.ENTRYPOINT }
+                val installed = instance.copy(type = worker.type, plugin = entry.reference)
+                assertEquals(expected, worker.plugin.let { it as ContextualModifierAlgorithmPlugin }
+                    .evaluate(input, installed, worker.authorContext(installed), {}))
+                ModifierPluginWorkers.stop(entry.reference)
+                store.uninstall(entry.reference)
+            }
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
         }
     }
 

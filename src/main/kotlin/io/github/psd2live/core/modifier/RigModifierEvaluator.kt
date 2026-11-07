@@ -36,6 +36,7 @@ internal data class RigModifierDefinition(
     val authorContext: (RigModifierInstance) -> ModifierAlgorithmContext = { ModifierAlgorithmContext.Empty },
 ) {
     val optionalUpstream: Set<String> get() = (plugin as? ModifierOptionalUpstream)?.optionalUpstream.orEmpty()
+    val explicitVersion: Boolean get() = type == (plugin as? ModifierVersionSelection)?.canonicalOptInType
 }
 
 /** Optional capabilities are passed to a contextual plugin when active, without blocking evaluation. */
@@ -43,8 +44,15 @@ internal interface ModifierOptionalUpstream {
     val optionalUpstream: Set<String>
 }
 
+/** A published version can require explicit selection under its canonical type. */
+internal interface ModifierVersionSelection {
+    val canonicalOptInType: String?
+}
+
 internal class RigModifierRegistry(definitions: List<RigModifierDefinition>) {
     private val entries = definitions.associateBy { Triple(it.type, it.version, it.pluginReference) }
+    private val defaults = definitions.filterNot { it.explicitVersion }.groupBy { it.type }
+        .mapValues { (_, candidates) -> candidates.maxBy { it.version } }
 
     init {
         require(entries.size == definitions.size) { "Duplicate modifier algorithm version" }
@@ -79,6 +87,10 @@ internal class RigModifierRegistry(definitions: List<RigModifierDefinition>) {
         required in (capability.provides ?: definition(capability.type, capability.version, capability.plugin)?.provides.orEmpty())
 
     val definitions: List<RigModifierDefinition> get() = entries.values.toList()
+
+    fun defaultDefinition(type: String): RigModifierDefinition? = defaults[type]
+
+    fun storedType(type: String): String = (defaults[type]?.plugin as? ModifierVersionSelection)?.canonicalOptInType ?: type
 }
 
 internal enum class ModifierStatus { ACTIVE, DISABLED, MISSING_DEPENDENCY, MISSING_PLUGIN }

@@ -6,9 +6,15 @@ import io.github.psd2live.algorithms.binding.ScaffoldBranchesContext
 import io.github.psd2live.algorithms.binding.ScaffoldFramesContext
 import io.github.psd2live.algorithms.binding.ScaffoldHead
 import io.github.psd2live.core.*
+import io.github.psd2live.core.recipe.BaseChoice
+import io.github.psd2live.core.recipe.ModuleChoice
+import io.github.psd2live.core.recipe.RigModules
+import io.github.psd2live.core.recipe.RigRecipe
 import io.github.psd2live.core.fit.EyeArtworkFitting
 import io.github.psd2live.core.fit.EyeOpeningAssociation
 import io.github.psd2live.project.WorkspaceSettingsCodec
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -100,6 +106,32 @@ internal object RigFittedEyeSource {
             ModifierUpstreamCapability("rig.scaffold", provider.type, provider.version, provider.targets,
                 provider.id, provider.config, provider.outputAliases, provider.plugin),
         ))
+    }
+
+    fun captureTransition(owner: RigModifierSource, instance: RigModifierInstance): ModifierAlgorithmContext {
+        val structure = owner.provider(instance)
+        require(structure.version == 2) { "Fitted eye v3 requires a version 2 source scaffold" }
+        val ordinary = owner.scaffoldContext(structure)
+        val options = structure.config
+        val corrections = io.github.psd2live.project.WorkspaceSettingsCodec.decodeRecipe(options["corrections"])
+        val fitted = owner.sourceConfig().copy(
+            recipe = RigRecipe(true, bases = mapOf("eye" to BaseChoice("eye/fitted", instance.version)),
+                modules = RigModules.modules.associate { it.id to ModuleChoice(false) },
+                moves = corrections.moves, eyeParts = corrections.eyeParts),
+            featureDisplacementEnabled = options["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
+            hairSimulationFront = !(options["frontHairSway"]?.jsonPrimitive?.boolean ?: true),
+            hairSimulationBack = !(options["backHairSway"]?.jsonPrimitive?.boolean ?: true),
+        )
+        val source = RigBuilder.scaffoldSourceInputs(owner.analysis, fitted, owner.meshCache)
+        val canonical = ordinary.values.getValue("canonical_targets").jsonObject
+        val layers = canonical.entries.associate { owner.layersByMesh.getValue(it.key) to it.value.jsonPrimitive.content }
+        val meshes = RigBuilder.scaffoldMeshInputs(owner.analysis, owner.atlas, fitted, owner.meshCache, layers)
+        val refined = ModifierAlgorithmContext(JsonObject(ordinary.values + mapOf(
+            "frames" to source.frames, "branches" to source.branches, "mesh_inputs" to meshes.values.getValue("mesh_inputs"),
+        )), ordinary.resources + meshes.resources)
+        val eye = capture(instance, structure, owner.analysis, fitted, refined, requireNotNull(source.eyes),
+            owner.layersByMesh, owner.primaryByLayer)
+        return io.github.psd2live.algorithms.binding.EyeFittedSourceAlgorithm.capture(eye, ordinary, refined)
     }
 
     private fun Bounds.sourceBounds() = ModifierSourceBounds(left, top, right, bottom)

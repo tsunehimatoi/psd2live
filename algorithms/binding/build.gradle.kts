@@ -510,3 +510,55 @@ tasks.register("pluginEyeLidFade") {
         """.trimIndent())
     }
 }
+
+val eyeFitted = sourceSets.create("eyeFitted")
+kotlin.target.compilations.named("eyeFitted") {
+    associateWith(kotlin.target.compilations.getByName("main"))
+}
+val eyeFittedClassesJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("eye-fitted")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    from(eyeFitted.output)
+}
+val eyeFittedElements = configurations.create("eyeFittedElements") {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+}
+artifacts.add(eyeFittedElements.name, eyeFittedClassesJar)
+
+val eyeFittedWorkerJar by tasks.registering(Jar::class) {
+    dependsOn(workerJar)
+    archiveClassifier.set("worker-eye-fitted")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest { attributes["Main-Class"] = "io.github.psd2live.algorithms.binding.EyeFittedWorker" }
+    from(eyeFitted.output)
+    from(workerJar.flatMap { it.archiveFile }.map { zipTree(it) }) { exclude("META-INF/MANIFEST.MF") }
+}
+
+tasks.register("pluginEyeFitted") {
+    dependsOn(eyeFittedWorkerJar)
+    val output = layout.buildDirectory.dir("plugin-eye-fitted")
+    val packageVersion = project.version.toString()
+    inputs.file(eyeFittedWorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        eyeFittedWorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6579652f666974746564.v3"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Fitted eyes (source)",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/fitted","aliases":["eye/fitted"],"version":3,"name":"Fitted eyes (source)","category":"eye",
+               "targets":["mesh"],"requires":["rig.scaffold"],"contextVersion":2,
+               "exclusiveFamily":"base:eye","reads":["*"],"writes":["mesh","deformer","parameter","relations","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}

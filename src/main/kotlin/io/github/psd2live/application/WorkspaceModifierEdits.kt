@@ -108,13 +108,14 @@ internal object WorkspaceModifierEdits {
         } }
         val type = request.getValue("type").jsonPrimitive.content
         require(type != "face.depth-turn") { "Add face/fitted instead: legacy face binding and fitted turning are alternative algorithms" }
-        val version = request["version"]?.jsonPrimitive?.int ?: RigModifierAlgorithms.registry.definitions.filter { it.type == type }
-            .maxOfOrNull { it.version } ?: error("Unknown modifier algorithm: $type")
-        val candidate = stack.add(type, version, targets, request.getValue("config").jsonObject,
+        val registry = RigModifierAlgorithms.registry
+        val version = request["version"]?.jsonPrimitive?.int ?: registry.defaultDefinition(type)?.version
+            ?: error("Unknown modifier algorithm: $type")
+        val candidate = stack.add(registry.storedType(type), version, targets, request.getValue("config").jsonObject,
             request["group"]?.jsonPrimitive?.content, request["id"]?.jsonPrimitive?.content,
             plugin = request["plugin"]?.let { Json.decodeFromJsonElement(ModifierPluginReference.serializer(), it) } ?: ModifierPluginCatalog.algorithm(type, version)?.first?.reference)
         val instance = candidate.instances.last()
-        RigModifierAlgorithms.registry.definition(instance)
+        registry.definition(instance)
         val captured = if (model == null) candidate else candidate.update(instance.id) { captureParameterProviders(it, model) }
         return request["index"]?.let { captured.move(instance.id, it.jsonPrimitive.int) } ?: captured
     }

@@ -24,12 +24,17 @@ internal object RigModifierAlgorithms {
     @Volatile private var catalog: Pair<Long, RigModifierRegistry>? = null
     val registry: RigModifierRegistry get() {
         val revision = ModifierPluginStore.shared.revision.value
-        return catalog?.takeIf { it.first == revision }?.second ?: RigModifierRegistry(
-            BuiltinModifierPlugins.definitions(null) + ModifierPluginCatalog.definitions()).also { catalog = revision to it }
+        return catalog?.takeIf { it.first == revision }?.second ?: registryFor(null).also { catalog = revision to it }
+    }
+
+    private fun registryFor(source: RigModifierSource?): RigModifierRegistry {
+        val builtins = BuiltinModifierPlugins.definitions(source)
+        val resolveRasters = source?.let { it::resolveRasters } ?: RigModifierRasterAssets::resolve
+        return RigModifierRegistry(builtins + ModifierPluginCatalog.definitions(captured = builtins, resolveRasters = resolveRasters))
     }
 
     fun evaluator(source: RigModifierSource? = null) = RigModifierEvaluator(
-        if (source == null) registry else RigModifierRegistry(BuiltinModifierPlugins.definitions(source).let { it + ModifierPluginCatalog.definitions(captured = it, resolveRasters = source::resolveRasters) }),
+        if (source == null) registry else registryFor(source),
         sourceTargetExists = { it.kind == "layer" && source?.hasLayer(it.id) == true },
         physicsOrder = source?.physicsOrder.orEmpty(),
         resolveRasters = source?.let { it::resolveRasters } ?: RigModifierRasterAssets::resolve) { rig, instance, commands ->

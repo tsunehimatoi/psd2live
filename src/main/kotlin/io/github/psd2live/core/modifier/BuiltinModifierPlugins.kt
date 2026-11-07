@@ -22,7 +22,7 @@ internal object BuiltinModifierPlugins {
         PhysicsAlgorithmPlugin.definition, MotionAlgorithmPlugin.definition,
     ) + RigSourceModifiers.definitions(source) + listOf(
         hairChains(source), RigNeckModifier.definition(source), RigBustModifier.definition(source),
-        RigHairLegacySource.definition(source), RigLidFadeModifier.definition(source),
+        RigHairLegacySource.definition(source), RigLidFadeModifier.definition(source), RigFittedEyeDefinition.definition(source),
     )
 
     private fun hairChains(source: RigModifierSource?): RigModifierDefinition {

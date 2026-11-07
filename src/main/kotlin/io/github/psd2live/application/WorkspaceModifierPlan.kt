@@ -61,8 +61,10 @@ internal object WorkspaceModifierPlan {
         } }
         require(requestedTargets.isNotEmpty() && requestedTargets.distinct().size == requestedTargets.size) { "Insertion needs distinct captured targets" }
         val type = request["type"]?.jsonPrimitive?.content
-        val covered = if (type in sourceTypes) (stack.instances.filter { it.type == type }.flatMap { it.targets } +
-            stack.appliedCapabilities.filter { it.type == type }.flatMap { it.targets }).toSet() else emptySet()
+        val registry = RigModifierAlgorithms.registry
+        val stored = type?.let(registry::storedType)
+        val covered = if (stored in sourceTypes) (stack.instances.filter { it.type == stored }.flatMap { it.targets } +
+            stack.appliedCapabilities.filter { it.type == stored }.flatMap { it.targets }).toSet() else emptySet()
         val targets = requestedTargets.filterNot(covered::contains)
         require(targets.isNotEmpty()) { "This modifier already exists on every captured target; edit or enable the existing instance" }
         val puppet = model.rig.puppet
@@ -101,12 +103,13 @@ internal object WorkspaceModifierPlan {
                 }
             val wanted = if (wantsModernFace && requestedType == "face/legacy")
                 RigLegacyBindings.FITTED_FACE else requestedType
-            if (reuse) available.firstOrNull { cap -> (cap.type == wanted || equivalent && RigModifierAlgorithms.registry.provides(cap, wanted)) && cap.id != null && targets.all { it in cap.targets } &&
+            if (reuse) available.firstOrNull { cap -> (cap.type == wanted || equivalent && registry.provides(cap, wanted)) && cap.id != null && targets.all { it in cap.targets } &&
                 (scaffold == null || cap.config["scaffold"]?.jsonPrimitive?.content == scaffold) }?.let { cap ->
                 planned.putIfAbsent(cap.id!!, describe(cap, if (stack.instances.any { it.id == cap.id }) "reused" else if (cap.id in stack.retiredIds) "applied" else "added"))
                 return cap
             }
-            val spec = RigLegacyBindings.find(wanted)
+            val storedType = registry.storedType(wanted)
+            val spec = RigLegacyBindings.find(storedType)
             val preset = request["preset"]?.jsonPrimitive?.content
             val configuration = if (wanted == "physics" && preset != null) {
                 val fullRule = requireNotNull(physicsPresets().firstOrNull { it.id == preset }) { "Unknown physics preset: $preset" }
@@ -157,7 +160,7 @@ internal object WorkspaceModifierPlan {
                 }
                 motionConfiguration(model, preset, parameters)
             } else if (wanted in nativeTypes) request["config"]?.jsonObject ?: nativeConfiguration(model, wanted, targets, preset)
-            else if (ModifierPluginCatalog.algorithm(wanted) != null) {
+            else if (storedType == wanted && ModifierPluginCatalog.algorithm(wanted) != null) {
                 val algorithm = ModifierPluginCatalog.algorithm(wanted)!!.second
                 algorithm.requires.forEach { ensure(it) }
                 request["config"]?.jsonObject ?: algorithm.defaults
@@ -171,14 +174,14 @@ internal object WorkspaceModifierPlan {
                     if (related.isNotEmpty()) put("dependencies", JsonObject(related.mapValues { JsonPrimitive(requireNotNull(it.value.id)) }))
                 }
             }
-            val version = RigModifierAlgorithms.registry.definitions.filter { it.type == wanted }.maxOf { it.version }
-            candidate = candidate.add(wanted, version, targets, configuration, group, plugin = ModifierPluginCatalog.algorithm(wanted, version)?.first?.reference)
+            val version = requireNotNull(registry.defaultDefinition(wanted)) { "Unknown modifier algorithm: $wanted" }.version
+            candidate = candidate.add(storedType, version, targets, configuration, group, plugin = ModifierPluginCatalog.algorithm(wanted, version)?.first?.reference)
             val instance = candidate.instances.last()
             val cap = instance.capability()
             available += cap
             entries += buildJsonObject {
                 instance.plugin?.let { put("plugin", Json.encodeToJsonElement(ModifierPluginReference.serializer(), it)) }
-                put("id", instance.id); put("type", wanted); put("version", version); put("config", configuration)
+                put("id", instance.id); put("type", storedType); put("version", version); put("config", configuration)
                 put("targets", JsonArray(targets.map { buildJsonObject { put("kind", it.kind); put("id", it.id) } }))
             }
             planned[instance.id] = describe(cap, "added")

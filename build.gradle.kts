@@ -69,6 +69,7 @@ dependencies {
 	implementation(project(":algorithms:swing"))
 	implementation(project(":algorithms:simulation"))
 	implementation(project(":algorithms:binding"))
+	implementation(project(path = ":algorithms:binding", configuration = "eyeFittedElements"))
 	implementation(platform("io.ktor:ktor-bom:3.5.1"))
 	// Engine ported from Umamo (format, runtime, interop, render, edit); it brings its own libraries.
 	implementation(project(":umamo"))
@@ -239,6 +240,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginEyeLidFade")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-lid-fade")) {
         into("algorithm-plugins/eye-lid-fade")
+    }
+    dependsOn(":algorithms:binding:pluginEyeFitted")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-fitted")) {
+        into("algorithm-plugins/eye-fitted")
     }
     dependsOn(":algorithms:binding:pluginSkinClip")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-skin")) {
