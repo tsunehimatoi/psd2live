@@ -70,6 +70,7 @@ import io.github.psd2live.algorithms.binding.MouthSpringV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV8Algorithm
+import io.github.psd2live.algorithms.binding.MouthSpringV9Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV5Algorithm
@@ -237,7 +238,10 @@ internal object WorkspacePresetInitialization {
                     if (frameBindings.isEmpty()) frameBindings else {
                         val moods = if (RigCheekModifier.sourceMoodParametersAvailable(source, scaffold))
                             packages(moodVersions) else emptyMap()
-                        frameBindings + packages(sourceMouthVersions(model.analysis, config, types, sharedBrow = true)) + moods
+                        val mouth = packages(sourceMouthVersions(model.analysis, config, types, sharedBrow = true))
+                        val arms = if (RigModules.MOUTH_FITTED.id in mouth) sourceArmVersion(model.analysis, closedMouth = false)
+                            ?.let { packages(mapOf(RigModules.BODY_ARMS.id to it)) }.orEmpty() else emptyMap()
+                        frameBindings + mouth + moods + arms
                     }
                 } else emptyMap()
             } else if (singleEyeClosedMouth) {
@@ -333,8 +337,9 @@ internal object WorkspacePresetInitialization {
                     entry.type == RigModules.OUTFIT_CREATURE.id && entry.version == 1 ->
                         CreatureResidualAlgorithm.VERSION to CreatureResidualAlgorithm.PROFILE
                     entry.type == RigModules.BODY_BUST.id && entry.version == 2 && completeEyePair -> {
-                        val mouth = upstream.singleOrNull { it.type == RigModules.MOUTH_FITTED.id }?.version
-                        if (mouth != MouthFittedV3Algorithm.VERSION && mouth != MouthFittedV4Algorithm.VERSION) return@mapIndexed entry
+                        val mouth = upstream.singleOrNull { it.type == RigModules.MOUTH_FITTED.id }?.version ?: return@mapIndexed entry
+                        if (mouth !in setOf(MouthFittedV3Algorithm.VERSION, MouthFittedV4Algorithm.VERSION, MouthFittedV6Algorithm.VERSION))
+                            return@mapIndexed entry
                         BustBindingV3Algorithm.VERSION to mapOf(RigModules.EYE_FITTED.id to EyeFittedV5Algorithm.VERSION,
                             RigModules.MOUTH_FITTED.id to mouth)
                     }
@@ -476,7 +481,10 @@ internal object WorkspacePresetInitialization {
             put(RigModules.MOUTH_CAPTURE.id, MouthCaptureV6Algorithm.VERSION)
             if (RigModules.MOUTH_JAW.id !in types || RigModules.MOUTH_TONGUE.id in types) return@buildMap
             put(RigModules.MOUTH_JAW.id, MouthJawV8Algorithm.VERSION)
-            if (RigModules.MOUTH_CHEEK_LID.id in types) put(RigModules.MOUTH_CHEEK_LID.id, MouthCheekLidV8Algorithm.VERSION)
+            if (RigModules.MOUTH_CHEEK_LID.id !in types) return@buildMap
+            put(RigModules.MOUTH_CHEEK_LID.id, MouthCheekLidV8Algorithm.VERSION)
+            if (RigModules.MOUTH_SPRING.id in types && RigModules.MOUTH_DEPTH.id !in types)
+                put(RigModules.MOUTH_SPRING.id, MouthSpringV9Algorithm.VERSION)
         }
         val withInterior = RigModules.MOUTH_TONGUE.id in types || RigModules.MOUTH_DEPTH.id in types
         return mapOf(

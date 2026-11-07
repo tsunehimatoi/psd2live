@@ -48,12 +48,24 @@ class CliPresetMigrationTool {
 
     @Test fun buildSharedFrameWorkspace(): Unit = runBlocking {
         requireTools()
-        val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
+        val sample = Sample.fromEnvironment()
+        val source = PSD2LivePipeline().readPsd(sample.path)
         val config = PipelineConfig()
         val overlay = config.rigEdits.copy(modifierStack = RigModifierStack().toJson())
         val document = WorkspaceDocument(source, emptyMap(), emptySet(), emptyMap(), emptyMap(), overlay,
             WorkspaceSettingsCodec.encode(config.copy(rigEdits = overlay)))
-        val (saved, model) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct)
+        val profiling = RigBuildProfile.recording
+        RigBuildProfile.reset()
+        RigBuildProfile.recording = true
+        val (saved, model) = try {
+            WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct)
+        } finally {
+            val consumers = RigBuildProfile.snapshot().filterKeys { it.startsWith("modifier template consumer:") }
+            output("cli-preset-migration").resolve("workspace-template-consumers-${sample.name}.txt")
+                .writeText(consumers.entries.joinToString("\n") { (stage, value) -> "$stage ${value.second}" })
+            RigBuildProfile.reset()
+            RigBuildProfile.recording = profiling
+        }
         val stack = RigModifierStack.fromJson(assertNotNull(saved.rigEdits.modifierStack))
         val evaluated = assertNotNull(model.modifierEvaluation)
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4,
@@ -61,7 +73,8 @@ class CliPresetMigrationTool {
             "eye.smile" to 4, "eye.wide" to 4, "eye.gaze-lid" to 4, "eye.emotion" to 4,
             "eye.aftershock" to 5, "eye.squash" to 5, "mouth/fitted" to 6, "mouth.outline" to 8,
             "mouth.vowel" to 7, "mouth.capture" to 6, "mouth.jaw" to 8, "mouth.cheek-lid" to 8,
-            "expression.cheek" to 3, "expression.gloom" to 3)
+            "mouth.spring" to 9, "expression.cheek" to 3, "expression.gloom" to 3,
+            "body.bust" to 3, "body.arms" to 3)
         for ((type, version) in versions) {
             val instance = stack.instances.single { it.type == type }
             assertEquals(version, instance.version, type)
