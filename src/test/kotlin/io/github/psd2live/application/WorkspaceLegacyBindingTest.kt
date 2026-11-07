@@ -809,6 +809,78 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun singleEyeOpenMouthFittingMatchesHistoricSource(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, closedMouth = false)
+        val choices = WorkspaceInitialPreset(clothing = false)
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 3, "brow.shape" to 4,
+            "brow.lid-coupling" to 6, "brow.blink" to 4, "brow.spring" to 5, "eye.smile" to 3, "eye.wide" to 3,
+            "eye.gaze-lid" to 3, "eye.emotion" to 3, "eye.lid-fade" to 3, "eye.highlight" to 3,
+            "eye.aftershock" to 4, "eye.squash" to 4, "mouth/fitted" to 1)
+        val (initialized, locked) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
+            requestedVersions = versions)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val mouth = stack.instances.single { it.type == "mouth/fitted" }
+        val index = stack.index(mouth.id)
+        assertEquals(1, mouth.version)
+        assertEquals(versions, stack.instances.filter { it.type in versions }.associate { it.type to it.version })
+        val reference = assertNotNull(locked.modifierEvaluation).outputs
+        assertNotEquals(reference[index - 1].meshes.single { it.name == "mouth" },
+            reference[index].meshes.single { it.name == "mouth" })
+        fun candidate(version: Int): WorkspaceDocument {
+            val artifact = assertNotNull(BundledAlgorithmArtifacts.find(mouth.type, version))
+            val replacement = stack.copy(instances = stack.instances.map {
+                if (it.id == mouth.id) it.copy(version = version, plugin = artifact.reference) else it
+            })
+            return initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = replacement.toJson()))
+        }
+        val closedOnly = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(candidate(5)) }
+        assertContains(closedOnly.message.orEmpty(), "Fitted mouth v4 requires a separate closed drawing")
+        val document = candidate(3)
+        val cache = RigStageCache.enabled
+        val model = try {
+            RigStageCache.enabled = false
+            WorkspacePreviewBuilder().build(document)
+        } finally {
+            RigStageCache.enabled = cache
+        }
+        val actual = assertNotNull(model.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, actual.entries[index].status)
+        for (stage in stack.instances.indices) {
+            assertTrue(reference[stage] == actual.outputs[stage], "Single-eye open fitting differs at ${stack.instances[stage].type}")
+        }
+        assertFaceEquals(RigIrCompiler.compile(locked, tileArt = true), RigIrCompiler.compile(model, tileArt = true))
+
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(mouth.type, 3))
+        val root = Files.createTempDirectory("single-eye-open-mouth-package-")
+        val preferences = Preferences.userRoot().node("single-eye-open-mouth/" + UUID.randomUUID())
+        val store = ModifierPluginStore(root.resolve("installed"), preferences)
+        try {
+            BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+            val worker = store.snapshot().single()
+            val instance = actual.entries[index].instance
+            val definition = RigFittedMouthDefinition.modernDefinition(RigModifierSource.of(model))
+            val context = definition.authorContext(instance).withUpstream(actual.entries.take(index)
+                .filter { it.status == ModifierStatus.ACTIVE && it.instance.type in definition.requires + definition.optionalUpstream }
+                .map { entry -> entry.instance.let {
+                    ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+                } })
+            for (type in listOf("face/fitted", "eye/fitted", "brow/fitted")) {
+                val provider = context.upstream.first { it.type == type }
+                assertEquals(versions.getValue(type), provider.version)
+                assertEquals(stack.instances.single { it.type == type }.plugin, provider.plugin)
+            }
+            assertFaceEquals(reference[index], ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(),
+                actual.outputs[index - 1], instance, {}, store, context = context, declaredParameters = definition.parameters(instance)))
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(root)
+        }
+    }
+
     @Test fun modernPresetUsesIndependentSingleEyeClosedMouthBindings(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, closedMouth = true)
         val choices = WorkspaceInitialPreset(clothing = false)
