@@ -36,13 +36,18 @@ import io.github.psd2live.ui.state.availability
 import io.github.psd2live.ui.theme.*
 import kotlinx.serialization.json.*
 
-internal fun modifierName(type: String): String = when {
-    ModifierPluginCatalog.algorithm(type) != null -> ModifierPluginCatalog.algorithm(type)!!.second.name
-    type == RigSourceModifiers.SCAFFOLD -> tr("modifier.scaffold")
-    '/' in type && RigLegacyBindings.find(type) == null -> type
-    '/' in type -> tr("settings.rig.area.${type.substringBefore('/')}") + " · " + tr("settings.rig.base.${type.replace('/', '.')}")
-    '.' in type -> tr("settings.rig.module.$type")
-    else -> tr("modifier.type.$type")
+internal fun modifierName(type: String): String {
+    val registry = RigModifierAlgorithms.registry
+    val stored = registry.storedType(type)
+    if (stored != type) return tr("modifier.algorithm.version", modifierName(stored), requireNotNull(registry.defaultDefinition(type)).version)
+    ModifierPluginCatalog.algorithm(type)?.let { return it.second.name }
+    return when {
+        type == RigSourceModifiers.SCAFFOLD -> tr("modifier.scaffold")
+        '/' in type && RigLegacyBindings.find(type) == null -> type
+        '/' in type -> tr("settings.rig.area.${type.substringBefore('/')}") + " · " + tr("settings.rig.base.${type.replace('/', '.')}")
+        '.' in type -> tr("settings.rig.module.$type")
+        else -> tr("modifier.type.$type")
+    }
 }
 
 private fun contentName(state: PSD2LiveState, kind: String, id: String): String {
@@ -398,7 +403,7 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
         type == RigSourceModifiers.SCAFFOLD -> "structure"
         type == "physics" || type == "simulation" || type == "swing" -> "advanced"
         type == "motion" -> "expression"
-        else -> RigLegacyBindings.find(type)?.area ?: "plugins"
+        else -> RigLegacyBindings.find(RigModifierAlgorithms.registry.storedType(type))?.area ?: "plugins"
     }
     fun categoryName(id: String): String = when {
         id == "legacy" || groups -> tr("modifier.algorithm.$id")

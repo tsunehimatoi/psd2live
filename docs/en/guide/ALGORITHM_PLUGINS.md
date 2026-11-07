@@ -6,7 +6,9 @@ Bundled entries are catalogued and enabled independently by algorithm type and r
 
 External packages may declare dependencies on bundled package IDs and versions returned by `plugin_list`. Installation locks their content digests; disabling or losing a required bundled version makes the dependent package unavailable too. The aggregate `builtin` identity is reserved. Installable `builtin.*` archives must declare a stable type alias matching their package ID and algorithm revision, for historical bundled algorithm restoration. Enabled states persist in preferences but evaluation reads an in-memory snapshot instead of accessing system preferences per entry.
 
-Except for physics groups, motion, swing, baked simulation, expression toggles, eye/brow see-through, skin clipping and binding structure, these entries still compile and ship with the application, rather than independently installable JARs. Binding algorithms still call shared application generation services; the entrypoint digest does not cover the complete application and all underlying dependencies. Independent package distribution for the remaining algorithms, retaining their historical binaries and local binding computation remain migration work. Individual management and pinned identities do not establish completion of that work.
+Independent packages also cover legacy mouth and hair binding, hair chains, neck tilt, chest bounce, eyelid fade, and the opt-in fitted eyes v3 and fitted mouth v2. Other bundled bindings still have compatibility paths that extract their results from host-generated templates.
+
+Select fitted eyes v3 or fitted mouth v2 by version in the add menu. They require a compatible eye scaffold and a neutral mouth scaffold respectively. Stacks with existing fitted head turn continue to use the default versions. The document stores the stable modifier type and the selected package, so later modifiers can still resolve the original dependency type.
 
 ## Install and remove
 

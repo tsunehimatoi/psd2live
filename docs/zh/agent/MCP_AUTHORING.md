@@ -70,7 +70,7 @@
 | `modifier_catalog` | 无 | 注册类型、版本、依赖、提供的能力及互斥族；`groups` 列出旧／新算法各三档丰富程度。`face/fitted` 与 `face/legacy` 互斥；旧 `face.depth-turn` 只保留重放兼容。基础强度范围 0–4，其他值以目录 schema 为准 |
 | `modifier_plan` | `type` 或 `group`，固定的 `targets`；原生摆动／物理／模拟／动作可给 `config`，动作和物理也可单独给 `preset` | 只读规划源图绑定或原生生成器。摆动可定位 Warp；其余规划目标为网格。省略原生配置时使用已有参数与原算法构造默认值；无可用参数时拒绝。返回完整新增 `entries`（已分配稳定 ID）及前置项 `plan`，区分新增、复用与已固化。六种组 ID 见 `modifier_catalog.groups`；`fitted` 是 `modern-standard` 的兼容别名。可将返回的 `group` 与 `entries` 传入 `workspace_preview_regeneration`，再以同一 `state` 提交 `modifier_add_group`；计划本身不改变文档 |
 | `modifier_stack` | 无 | 读取捕获版本的栈、固定目标、配置、来源组、实际贡献与状态，并返回可用于下一次修改的 `state`。`owned_keyforms` 列出生成关键形的对象与参数引用，可选 `key` 指明已有轴上新增单元的完整参数坐标；`override_issues` 报告覆盖冲突或无法匹配的覆盖。模拟烘焙只返回摘要，不返回顶点数组 |
-| `modifier_add` / `modifier_add_group` | `state`；单项的 `type`、`targets`、`config`，或组的 `group`、`entries` | 只对已有显式栈生效。可用 `id` 预先固定实例身份，供后续批量成员引用；省略时从文档分配。省略 `version` 选择该类型当前已注册的最高版本，保存后保持版本；可用 `index` 显式指定插入位置（从 0 开始，省略为追加），不自动重排已有项。配置按类型严格校验；组只记录共同来源，各项仍独立。一次调用或整个批量只提交一个历史节点 |
+| `modifier_add` / `modifier_add_group` | `state`；单项的 `type`、`targets`、`config`，或组的 `group`、`entries` | 只对已有显式栈生效。可用 `id` 预先固定实例身份，供后续批量成员引用；省略时从文档分配。省略 `version` 选择该类型的默认版本，保存后锁定版本。仅供显式选择的版本可通过 `version` 指定，也可将 `plugin_list` 返回的包入口类型交给 `modifier_plan`；可用 `index` 显式指定插入位置（从 0 开始，省略为追加），不自动重排已有项。配置按类型严格校验；组只记录共同来源，各项仍独立。一次调用或整个批量只提交一个历史节点 |
 | `modifier_update` / `modifier_enable` | `state`、`id`；`type` 与完整 `config`，或 `enabled` | 调整实例配置或启停，不改变实例身份、算法版本和捕获目标。禁用保留其覆盖记录 |
 | `modifier_move` / `modifier_remove` | `state`、`id`；移动另带从 0 开始的 `index` | 移动改变实际求值顺序，违反依赖时拒绝；移除保留休眠覆盖并退休该身份，新实例不继承它 |
 | `modifier_apply` | `state`、`id` | 固化截至该项的完整前缀，移除前缀实例并保留后续项。物理成为普通物理配置，动作成为保留文件名的普通片段；重建结果必须与应用前相等才提交。以上修改均返回进程任务，可由 `job_wait` / `job_get` 读取终态 |
