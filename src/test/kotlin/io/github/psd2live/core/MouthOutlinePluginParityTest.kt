@@ -2,6 +2,9 @@ package io.github.psd2live.core
 
 import io.github.psd2live.algorithms.binding.MouthOutlineAlgorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineInputs
+import io.github.psd2live.algorithms.binding.MouthOutlineOwner
+import io.github.psd2live.algorithms.binding.MouthContour
+import org.umamo.runtime.model.DrawableId
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.project.rawConfig
 import io.github.psd2live.scenario.Characters
@@ -78,7 +81,23 @@ class MouthOutlinePluginParityTest {
         val prepared = MouthLipLayers.prepare(analysis, legacyConfig, cache)
         val lipLayers = prepared.layers.filter { it.source is MouthLipLayer }
         val packed = RigModifierRasterAssets.append(atlas, lipLayers, legacyConfig)
-        val expected = PuppetIr.toIr(RigBuilder.build(prepared, packed, legacyConfig, cache).puppet)
+        val native = RigBuilder.build(prepared, packed, legacyConfig, cache).puppet
+        val capturedTarget = capture.targets.getValue(id)
+        val owner = native.drawables.single { it.id.raw == id }
+        val ownerMesh = requireNotNull(owner.mesh)
+        val contour = requireNotNull(MouthContour.ownerContour(topology.positions, topology.triangles))
+        val capturedOwner = MouthOutlineOwner.mesh(contour, capturedTarget.frame,
+            layer.source.bounds.left.toFloat(), layer.source.bounds.top.toFloat(),
+            layer.source.raster.width.toFloat(), layer.source.raster.height.toFloat(), capturedTarget::toCanvas)
+        assertContentEquals(if (owner.parentDeformerId == null) contour.positions else capturedOwner.positions, ownerMesh.positions)
+        assertContentEquals(capturedOwner.indices, ownerMesh.indices)
+        val placement = packed.placementByLayerId.getValue(layerId)
+        assertContentEquals(LayerTexture.packed(layer, placement, packed).bind(capturedOwner.uvs), ownerMesh.uvs)
+        val sourceId = DrawableId(layerId)
+        val paths = MouthOutlineOwner.paths(sourceId, capturedOwner)
+        assertEquals(2, paths.size)
+        assertEquals(paths, native.deformPaths.filter { it.drawableId == sourceId })
+        val expected = PuppetIr.toIr(native)
         val attached = changes.applyWithResources(input, {}, { rig, outputs, checkpoint ->
             RigModifierRasterAssets.attach(rig, outputs, legacyConfig, checkpoint)
         })

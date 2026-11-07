@@ -2416,7 +2416,7 @@ object RigBuilder {
 		}
 		val mouthAperture = mouthApertureFor(rigLayer)
 		val mouthPaths = if (outlineMouth) {
-			createMouthDeformPaths(DrawableId(layer.source.id.raw), meshData, parentFrame)
+			io.github.psd2live.algorithms.binding.MouthOutlineOwner.paths(DrawableId(layer.source.id.raw), meshData.mesh)
 		} else emptyList()
 		val geometryGrid = if (config.meshOnly) {
 			zeroMeshGrid(mesh.positions.size)
@@ -3865,73 +3865,18 @@ object RigBuilder {
 			MeshDeltaForm(delta)
 		}
 
-    private fun createMouthDeformPaths(drawableId: DrawableId, data: MeshData, frame: Bounds): List<DeformPath> {
-        val colCount = MouthContour.DEFAULT_SEGMENTS + 1
-        if (data.mesh.positions.size < colCount * 6) return emptyList()
-        val count = 9
-        val sampleCols = (0 until count).map { i -> (i * (colCount - 1) + (count - 1) / 2) / (count - 1) }
-        val upperPoints = sampleCols.mapNotNull { c ->
-            val v = c * 3
-            val px = data.mesh.positions[v * 2]
-            val py = data.mesh.positions[v * 2 + 1]
-            try {
-                DeformPathTools.bind(data.mesh.positions, data.mesh.indices, px, py, corner = (c == 0 || c == colCount - 1))
-            } catch (_: IllegalArgumentException) {
-                null
-            }
-        }
-        val lowerPoints = sampleCols.mapNotNull { c ->
-            val v = c * 3 + 2
-            val px = data.mesh.positions[v * 2]
-            val py = data.mesh.positions[v * 2 + 1]
-            try {
-                DeformPathTools.bind(data.mesh.positions, data.mesh.indices, px, py, corner = (c == 0 || c == colCount - 1))
-            } catch (_: IllegalArgumentException) {
-                null
-            }
-        }
-        if (upperPoints.size < 2 || lowerPoints.size < 2) return emptyList()
-        return listOf(
-            DeformPath(
-                id = generatedPathId(drawableId, "upper"),
-                drawableId = drawableId,
-                points = upperPoints,
-                width = DeformPath.DEFAULT_WIDTH,
-                hardness = DeformPath.DEFAULT_HARDNESS,
-                closed = false,
-                editLevel = 2,
-            ),
-            DeformPath(
-                id = generatedPathId(drawableId, "lower"),
-                drawableId = drawableId,
-                points = lowerPoints,
-                width = DeformPath.DEFAULT_WIDTH,
-                hardness = DeformPath.DEFAULT_HARDNESS,
-                closed = false,
-                editLevel = 2,
-            ),
-        )
-    }
-
     // Shared columns guarantee that the fill and both lip ribbons interpolate identical curves.
     private fun mouthContourMesh(data: MeshData, layer: ClassifiedLayer, frame: Bounds,
                                  space: HeadCoordinateSpace?): MeshData {
         val contour = io.github.psd2live.algorithms.binding.MouthContour.ownerContour(data.rigPositions, data.mesh.indices) ?: return data
-        val rig = contour.positions
-        val positions = FloatArray(rig.size)
-        val uvs = FloatArray(rig.size)
-        val width = max(1, layer.source.raster.width).toFloat()
-        val height = max(1, layer.source.raster.height).toFloat()
-        for (i in rig.indices step 2) {
-            val x = rig[i]
-            val y = rig[i + 1]
-            positions[i] = normalizeX(x, frame)
-            positions[i + 1] = normalizeY(y, frame)
-            val canvas = space?.toCanvas(x, y) ?: (x to y)
-            uvs[i] = (canvas.first - layer.source.bounds.left).coerceIn(0f, width)
-            uvs[i + 1] = (canvas.second - layer.source.bounds.top).coerceIn(0f, height)
+        val source = layer.source
+        val mesh = io.github.psd2live.algorithms.binding.MouthOutlineOwner.mesh(contour,
+            io.github.psd2live.core.modifier.ModifierSourceBounds(frame.left, frame.top, frame.right, frame.bottom),
+            source.bounds.left.toFloat(), source.bounds.top.toFloat(),
+            max(1, source.raster.width).toFloat(), max(1, source.raster.height).toFloat()) { x, y ->
+            space?.toCanvas(x, y) ?: (x to y)
         }
-        return MeshData(DrawableMesh(positions, uvs, contour.triangles), rig)
+        return MeshData(mesh, contour.positions)
     }
 
     private fun mouthAxes(): List<KeyformAxis> = listOf(
