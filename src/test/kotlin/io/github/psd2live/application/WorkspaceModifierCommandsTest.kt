@@ -1,5 +1,6 @@
 package io.github.psd2live.application
 
+import io.github.psd2live.algorithms.binding.BindingProjection
 import io.github.psd2live.algorithms.binding.EyeFittedSourceAlgorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
@@ -1145,7 +1146,9 @@ class WorkspaceModifierCommandsTest {
         val rest = evaluator.evaluate(f.now.model.rig.puppet, emptyMap()).worldPositions.getValue(untouched)
         f.edit("modifier_add", add(f, RigSourceModifiers.SCAFFOLD, JsonObject(emptyMap()), "structure"))
         f.edit("modifier_add", add(f, RigBodyModifier.TYPE, body("structure"), "body"))
-        val native = RigModifierSource.of(f.now.model).body(1f) {}
+        val source = RigModifierSource.of(f.now.model)
+        val generated = RigBuilder.build(source.analysis, source.atlas, source.sourceConfig()).puppet
+        val native = BindingProjection.retain(generated, RigBodyModifier.parameters, mapOf(StandardParameters.MOUTH_OPEN to 1f))
         val poses = listOf(emptyMap(), mapOf(StandardParameters.BODY_X to 8f), mapOf(StandardParameters.BODY_LEAN to -5f),
             mapOf(StandardParameters.BODY_X to 7f, StandardParameters.BODY_Z to -6f, StandardParameters.BODY_LEAN to 4f,
                 StandardParameters.PROPORTION to -3f, StandardParameters.BREATH to .7f))

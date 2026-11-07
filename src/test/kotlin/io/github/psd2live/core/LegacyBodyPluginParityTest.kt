@@ -1,6 +1,7 @@
 package io.github.psd2live.core
 
 import io.github.psd2live.algorithms.binding.LegacyBodyAlgorithm
+import io.github.psd2live.algorithms.binding.LegacyBodyInputs
 import io.github.psd2live.algorithms.binding.ScaffoldAlgorithm
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.recipe.RigRecipe
@@ -44,10 +45,10 @@ class LegacyBodyPluginParityTest {
             warp.geometryGrid?.axes?.any { it.parameterId == StandardParameters.ANGLE_Y } == true
         }.map(PuppetIr::deformerToIr)
         val pitch = ModifierAlgorithmResource(RigIrBinary.encode(RigIR(Canvas(0f, 0f), emptyList(), deformers = poses)))
-        val definition = RigBodyModifier.sourceDefinition(capture) { pitch }
-        val author = definition.authorContext(body).withUpstream(listOf(
+        val source = capture.bodyContext(body)
+        val author = ModifierAlgorithmContext(source.values, source.resources + (LegacyBodyInputs.HEAD_POSES to pitch)).withUpstream(listOf(
             ModifierUpstreamCapability("rig.scaffold", scaffold.type, scaffold.version, scaffold.targets, scaffold.id)))
-        val algorithmInProcess = definition.plugin as LegacyBodyAlgorithm
+        val algorithmInProcess = LegacyBodyAlgorithm()
         fun compare(candidate: RigIR): RigIR {
             val expected = RigSourceBinding.apply(candidate, body, capture) {}
             val actual = algorithmInProcess.evaluate(candidate, body, author) {}
@@ -76,7 +77,7 @@ class LegacyBodyPluginParityTest {
             try {
                 val pkg = store.install(Path.of(directory).toString())
                 val algorithm = pkg.manifest.algorithms.single()
-                val declared = definition.parameters(body)
+                val declared = RigLegacyBodyDefinition.definition(capture).parameters(body)
                 repeat(2) {
                     val installed = store.snapshot().single()
                     val transported = ModifierPluginWorkers.evaluate(installed, algorithm, input,

@@ -48,7 +48,7 @@ internal object RigArmSwingModifier {
         }) { "Arm swing v2 requires a body binding on the same scaffold" }
         // Fitted layer footprints can move the neck pivot used to measure the arm's parent frame.
         val fitted = if (modern) fittedArmMeasurements(instance, scaffold) else null
-        val measured = if (fitted == null) bodyContext(body, null).values else null
+        val measured = if (fitted == null) bodyContext(body).values else null
         val structural = measured?.getValue("scaffold")?.jsonObject
         val torso = fitted?.torso?.let {
             JsonArray(listOf(it.centerX, it.shoulderY, it.waistY, it.halfWidth).map(::JsonPrimitive))

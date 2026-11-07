@@ -224,13 +224,7 @@ internal class RigModifierSource(
         return RigModifierRasterAssets.attachRibbons(rig, ribbons, config)
     }
 
-    fun body(strength: Float, tuning: RigTuning = RigTuning(), checkpoint: () -> Unit): PuppetModel {
-        checkpoint()
-        return restricted(generated(strength, tuning).puppet, RigBodyModifier.parameters).also { checkpoint() }
-    }
-
-    /** Source adapter for the independent body candidate. Pitch grids must come from an independent head evaluator. */
-    fun bodyContext(instance: RigModifierInstance, headPitchGrids: ModifierAlgorithmResource?): ModifierAlgorithmContext {
+    fun bodyContext(instance: RigModifierInstance): ModifierAlgorithmContext {
         val scaffold = provider(instance)
         val tuning = RigLegacyBindings.tuning(instance, RigTuning()).bodyMotion()
         val context = scaffoldContext(scaffold)
@@ -240,8 +234,7 @@ internal class RigModifierSource(
             StandardParameters.all.filter { it.id in RigBodyModifier.parameters }.associate { it.id.raw to it.name },
             linkedMapOf("ParamGroupFace" to tr("model.group.face"), "ParamGroupEyes" to tr("model.group.eyes"),
                 "ParamGroupBrows" to tr("model.group.brows"), "ParamGroupMouth" to tr("model.group.mouth"),
-                "ParamGroupBody" to tr("model.group.body"), "ParamGroupPhysics" to tr("model.group.physics")),
-            headPitchGrids)
+                "ParamGroupBody" to tr("model.group.body"), "ParamGroupPhysics" to tr("model.group.physics")))
     }
 
     private val staticModels = java.util.IdentityHashMap<PuppetModel, PuppetModel>()

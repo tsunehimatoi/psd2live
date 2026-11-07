@@ -55,7 +55,7 @@ internal object RigLegacyFaceDefinition {
         return ModifierAlgorithmContext(buildJsonObject {
             put("face", captured.values)
             body?.let {
-                put("body", JsonObject(bodyContext(it, null).values - "scaffold" - "schema" - "group_names" + ("id" to JsonPrimitive(it.id))))
+                put("body", JsonObject(bodyContext(it).values - "scaffold" - "schema" - "group_names" + ("id" to JsonPrimitive(it.id))))
             }
         }, captured.resources)
     }
