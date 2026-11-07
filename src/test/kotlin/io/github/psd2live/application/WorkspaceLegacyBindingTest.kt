@@ -2180,6 +2180,104 @@ class WorkspaceLegacyBindingTest {
         assertEquals(edited, RigIrCompiler.compile(direct.builder.build(direct.now.document)))
     }
 
+    @Test fun skirtV2KeepsLegacyBindingAndRunsInstalledWorker(): Unit = runBlocking {
+        suspend fun fixture(version: Int): Fixture {
+            val f = Fixture(document(outfitDetails = true, expressionDetails = true))
+            f.install()
+            f.group(listOf("body/legacy", "face/legacy", "expression.toggles", "outfit.ribbons"))
+            val config = buildJsonObject {
+                put("scaffold", "structure")
+                putJsonObject("dependencies") { put("body/legacy", "body"); put("face/legacy", "face") }
+                putJsonObject("values") { put("swing", 140f) }
+            }
+            f.edit("modifier_add", JsonObject(f.addition("outfit.skirt", "skirt", config = config) +
+                ("version" to JsonPrimitive(version))))
+            return f
+        }
+        val legacy = fixture(1)
+        val direct = fixture(2)
+        val snapshot = assertNotNull(direct.now.model.modifierEvaluation)
+        val instance = snapshot.stack.instances.last()
+        val before = snapshot.outputs[snapshot.outputs.lastIndex - 1]
+        val expected = RigIrCompiler.compile(legacy.now.model)
+        val actual = RigIrCompiler.compile(direct.now.model)
+        val axes = actual.parameters.filter { it.id.startsWith("modifier:skirt:") }
+        assertEquals(7, axes.size)
+        assertEquals(4, RigModifierPhysics.entries(instance, actual).size)
+        assertFaceEquals(expected, actual)
+        val pose = axes.mapIndexed { i, parameter -> ParameterId(parameter.id) to if (i % 2 == 0) .65f else -.75f }.toMap()
+        compare(legacy.now.model, direct.now.model, listOf(emptyMap(), pose,
+            pose + mapOf(StandardParameters.BODY_X to 7f, StandardParameters.ANGLE_X to 23f, StandardParameters.BREATH to .6f)))
+
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find("outfit.skirt", 2))
+        assertEquals(artifact.reference, instance.plugin)
+        val directory = Files.createTempDirectory("skirt-v2-")
+        val preferences = Preferences.userRoot().node("skirt-v2/${UUID.randomUUID()}")
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            artifact.manifest.files.keys.forEach { name ->
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val providers = RigLegacyBindings.providers(instance).map { (capability, id) ->
+                val provider = snapshot.stack.instances.single { it.id == id }
+                ModifierUpstreamCapability(capability, provider.type, provider.version, provider.targets, provider.id,
+                    provider.config, provider.outputAliases, provider.plugin)
+            }
+            val context = RigSkirtModifier.capture(RigModifierSource.of(direct.now.model), instance).withUpstream(providers)
+            repeat(2) {
+                val entry = store.install(staging.toString())
+                val worker = entry.manifest.algorithms.single()
+                assertEquals(snapshot.outputs.last(),
+                    ModifierPluginWorkers.evaluate(entry, worker, before, instance, {}, context = context))
+                ModifierPluginWorkers.stop(entry.reference)
+                store.uninstall(entry.reference)
+                assertTrue(store.snapshot().isEmpty())
+            }
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+        val (slot, group) = RigModifierPhysics.entries(instance, actual).entries.first()
+        val override = Physics3Json.setting(group).copy(name = "Adjusted skirt")
+        direct.edit("modifier_update", buildJsonObject {
+            put("id", instance.id)
+            put("type", instance.type)
+            put("config", JsonObject(instance.config + ("physics" to buildJsonObject { put(slot, override.toJson()) })))
+        })
+        val edited = RigIrCompiler.compile(direct.now.model)
+        assertEquals(override.name, edited.physics.groups.single { it.id == group.id }.name)
+        direct.edit("modifier_apply", buildJsonObject { put("id", instance.id) })
+        assertEquals(edited, RigIrCompiler.compile(WorkspacePreviewBuilder().build(direct.now.document)))
+    }
+
+    @Test fun skirtV2MatchesTheRecommendedPresetWithClothingSimulation(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true)
+        val config = WorkspacePresetBaseline.configure(art.config(), "modern")
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, model) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
+            WorkspaceInitialPreset(clothing = true), preferSourceBody = true)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val skirt = stack.instances.single { it.type == "outfit.skirt" }
+        assertEquals(1, skirt.version)
+        assertTrue(stack.instances.any { it.type == "simulation" })
+        val plugin = assertNotNull(BuiltinModifierPlugins.reference(skirt.type, 2))
+        val independent = stack.copy(instances = stack.instances.map {
+            if (it.id == skirt.id) it.copy(version = 2, plugin = plugin) else it
+        })
+        val updated = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = independent.toJson()))
+        val expected = RigIrCompiler.compile(model, tileArt = true)
+        val checked = WorkspaceModifierSimulation.prepare(updated, independent, WorkspaceRasterWork.Direct, allowRebake = false)
+        assertEquals(independent, checked)
+        val current = WorkspacePreviewBuilder().build(updated)
+        val report = assertNotNull(current.rig.modifierReport).getValue("entries").jsonArray
+        assertTrue(report.all { it.jsonObject.getValue("status").jsonPrimitive.content == "active" })
+        assertFaceEquals(expected, RigIrCompiler.compile(current, tileArt = true))
+    }
+
     @Test fun separateClothingInstancesOwnOnlyTheirTargetsAndTheirOwnPhysics(): Unit = runBlocking<Unit> {
         val f = Fixture(document(outfitDetails = true), scaffoldVersion = 1); f.install()
         f.group(listOf("body/legacy", "face/legacy"))

@@ -1257,3 +1257,31 @@ tasks.register("pluginEyeAftershock") {
         """.trimIndent())
     }
 }
+
+val skirtWorkerJar = registerIsolatedBindingWorker(
+    "skirt", "outfit-skirt", "worker-outfit-skirt", "io.github.psd2live.algorithms.binding.SkirtWorker",
+)
+
+tasks.register("pluginSkirt") {
+    dependsOn(skirtWorkerJar)
+    val output = layout.buildDirectory.dir("plugin-outfit-skirt")
+    inputs.file(skirtWorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", project.version.toString())
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        skirtWorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"builtin.6f75746669742e736b697274.v2","version":"${project.version}","name":"Skirt sway",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"builtin.6f75746669742e736b697274.v2/skirt","aliases":["outfit.skirt"],
+               "version":2,"name":"Skirt sway","category":"outfit","contextVersion":2,"targets":["mesh"],
+               "requires":["rig.scaffold","body/legacy","face/legacy"],"exclusiveFamily":"chain:outfit.skirt",
+               "reads":["*"],"writes":["mesh","deformer","hierarchy","parameter","physics"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter","physics"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
