@@ -4277,6 +4277,21 @@ object RigBuilder {
         axis(StandardParameters.MOUTH_OPEN, 0f, 0.5f, 1f),
     )
 
+    /** Reuses the native fitted ribbon motion without building unrelated meshes. */
+    internal fun sourceOutlineRibbon(owner: Drawable, layer: ClassifiedLayer, lip: ClassifiedLayer, side: Int,
+                                     context: RigContext, config: PipelineConfig, atlas: PackedAtlas,
+                                     cache: PreviewMeshCache): Drawable? {
+        val mouth = context.fittedMouth(config)?.takeIf { it.covers(layer) }?.rig ?: return null
+        val aperture = mouthApertureFor(context.rigLayer(layer)) ?: return null
+        val (parent, frame) = context.parentAndFrame(layer, config)
+        val turn = context.headTurn(config).takeUnless {
+            context.faceTurn(config) != null && (parent == faceWarpId || parent in context.underFace)
+        }
+        val mesh = fittedMouthSourceMesh(layer, context, config, atlas, cache)
+        return mouthOutline(owner.copy(parentDeformerId = parent), mesh, frame, aperture, config, side, lip,
+            context.headSpaceFor(layer, config), mouth, turn).first
+    }
+
     private fun mouthOutline(
         owner: Drawable,
         data: MeshData,
