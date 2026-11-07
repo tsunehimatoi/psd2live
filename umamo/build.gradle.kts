@@ -26,6 +26,23 @@ dependencies {
 	testImplementation("net.java.dev.jna:jna:5.18.0")
 }
 
+// The application needs several precisions of one trace. Keep this extension out of pinned worker JARs.
+val contourVariants = sourceSets.create("contourVariants")
+kotlin.target.compilations.named(contourVariants.name) {
+	associateWith(kotlin.target.compilations.getByName("main"))
+}
+val contourVariantsJar = tasks.register<Jar>("contourVariantsJar") {
+	archiveClassifier.set("contour-variants")
+	isPreserveFileTimestamps = false
+	isReproducibleFileOrder = true
+	from(contourVariants.output)
+}
+val contourVariantsElements = configurations.create("contourVariantsElements") {
+	isCanBeConsumed = true
+	isCanBeResolved = false
+}
+artifacts.add(contourVariantsElements.name, contourVariantsJar)
+
 tasks.withType<Test>().configureEach {
 	useJUnitPlatform()
 	maxHeapSize = "2g"

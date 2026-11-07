@@ -27,6 +27,7 @@ import io.github.psd2live.core.mesh.snap
 import io.github.psd2live.core.mesh.triangleEdges
 import io.github.psd2live.core.mesh.validDomain
 import org.umamo.format.art.analyzeAlpha
+import org.umamo.format.art.simplified
 import kotlin.math.abs
 import kotlin.math.acos
 import kotlin.math.atan2
@@ -196,12 +197,15 @@ internal object AdaptiveMeshGenerator {
 		if (wrapRadius > 0.0) MeshWrap.close(width, height, geometryRgba, wrapRadius)
 		// One-pixel tolerance can simplify a one-pixel rectangle into a triangle, clipping half
 		// of a hairline before meshing even starts. Keep subpixel contour accuracy here.
-		val alpha = analyzeAlpha(width, height, geometryRgba, 1, contourEpsilon = 0.35f) ?: return null
-		// Both analyses trace the same mask in the same order. Coarser fit controls suppress
-		// raster staircase curvature while the precise rings retain coverage and ownership.
-		val fitContours = analyzeAlpha(width, height, geometryRgba, 1, contourEpsilon = 1.0f)?.contours ?: return null
-		val fitSources = alpha.contours.zip(fitContours).associate { (exact, fit) -> exact.points to fit.points }
-		val outerCandidates = alpha.contours.filter { !it.isHole && it.points.size >= 6 }
+		val rings = RigBuildProfile.stage("mesh: trace alpha rings") {
+			analyzeAlpha(width, height, geometryRgba, 1, contourEpsilon = 0f)
+		}?.contours ?: return null
+		// Derive both precisions from the same exact rings. The coarser guides suppress raster staircase curvature.
+		val fitSources = HashMap<IntArray, IntArray>(rings.size)
+		val contours = rings.map { ring ->
+			ring.simplified(0.35f).also { fitSources[it.points] = ring.simplified(1.0f).points }
+		}
+		val outerCandidates = contours.filter { !it.isHole && it.points.size >= 6 }
 		if (outerCandidates.isEmpty()) return null
 		val areas = outerCandidates.map { contourArea(it.points) }
 		val largestIndex = areas.indices.maxByOrNull { areas[it] } ?: return null
@@ -218,7 +222,7 @@ internal object AdaptiveMeshGenerator {
 		val sources = outerContours.map { it.points }
 		val holesByOuter = Array(sources.size) { mutableListOf<IntArray>() }
 		// Traced finer than a mesh unit, a hole must also be as large as the smallest one a mesh-unit trace keeps.
-		for (hole in alpha.contours.filter { it.isHole && it.points.size >= 6 && (unit <= 1.0 || contourArea(it.points) >= 2.0 * unit * unit) }) {
+		for (hole in contours.filter { it.isHole && it.points.size >= 6 && (unit <= 1.0 || contourArea(it.points) >= 2.0 * unit * unit) }) {
 			val probe = Point(hole.points[0].toDouble(), hole.points[1].toDouble())
 			val owner = sources.indices.filter { pointInPolygon(probe, sourcePoints(sources[it])) }
 				.minByOrNull { contourArea(sources[it]) } ?: continue

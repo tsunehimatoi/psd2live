@@ -4,6 +4,8 @@ import io.github.psd2live.core.AdaptiveMeshGenerator
 import io.github.psd2live.core.MeshEdgeMode
 import io.github.psd2live.core.MeshSettings
 import io.github.psd2live.core.mesh.*
+import org.umamo.format.art.analyzeAlpha
+import org.umamo.format.art.simplified
 import kotlin.math.*
 import kotlin.test.*
 
@@ -35,6 +37,24 @@ class StructureMesherTest {
 	}
 
 	private class Case(val old: AdaptiveMeshGenerator.Result, val rim: PreservedRim, val mesh: StructureMesh)
+
+	@Test
+	fun contourPrecisionsMatchSeparateTracesForIslandsAndHoles() {
+		val rgba = raster()
+		for (y in 75..100) for (x in 80..110) rgba[(y * w + x) * 4 + 3] = 0
+		for (y in 5..9) for (x in 5..10) rgba[(y * w + x) * 4 + 3] = -1
+		val rings = assertNotNull(analyzeAlpha(w, h, rgba, contourEpsilon = 0f)).contours
+		assertEquals(3, rings.size)
+		assertEquals(1, rings.count { it.isHole })
+		for (epsilon in listOf(0.35f, 1f)) {
+			val expected = assertNotNull(analyzeAlpha(w, h, rgba, contourEpsilon = epsilon)).contours
+			for ((index, ring) in rings.withIndex()) {
+				val simplified = ring.simplified(epsilon)
+				assertEquals(expected[index].isHole, simplified.isHole)
+				assertContentEquals(expected[index].points, simplified.points)
+			}
+		}
+	}
 
 	private fun build(mode: MeshEdgeMode, rows: Int, settings: StructureMeshSettings = StructureMeshSettings()): Case {
 		val rgba = raster()
