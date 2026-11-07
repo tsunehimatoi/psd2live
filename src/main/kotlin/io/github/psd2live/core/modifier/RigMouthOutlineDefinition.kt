@@ -16,11 +16,12 @@ import kotlinx.serialization.json.*
 internal object RigMouthOutlineDefinition {
     private const val TYPE = MouthOutlineV2Algorithm.TYPE
 
+    private val plugin = object : ReadingModifierAlgorithmPlugin by MouthOutlineV2Algorithm(), ModifierVersionSelection {
+        override val canonicalOptInType = TYPE
+    }
+
     fun definition(source: RigModifierSource?): RigModifierDefinition {
         val legacy = RigLegacyBindings.definition(RigLegacyBindings.spec(TYPE), source)
-        val plugin = object : ReadingModifierAlgorithmPlugin by MouthOutlineV2Algorithm(), ModifierVersionSelection {
-            override val canonicalOptInType = TYPE
-        }
         return legacy.copy(version = MouthOutlineV2Algorithm.VERSION, requires = setOf("rig.scaffold", "mouth/legacy"),
             parameters = { emptyList() }, upstreamInputs = true, plugin = plugin,
             changeWrites = setOf("mesh", "part", "hierarchy", "textures", "authoring"),

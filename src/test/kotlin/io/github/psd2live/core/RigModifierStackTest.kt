@@ -434,8 +434,19 @@ class RigModifierStackTest {
         val reused = engine.evaluate(authored, stack(20), cache)
         assertEquals(1, calls)
         assertEquals(20, reused.rig.parts.first().drawOrder)
-        val changed = engine.evaluate(authored, stack(30, "other"), cache)
+        val renamed = authored.copy(parts = authored.parts.map {
+            if (it.id == "body") it.copy(name = "Renamed") else it
+        })
+        val afterRename = engine.evaluate(renamed, stack(20), cache, context = "renamed")
+        assertEquals(1, calls)
+        assertEquals("Renamed", afterRename.rig.parts.first().name)
+        val edited = renamed.copy(parts = renamed.parts.map {
+            if (it.id == "other") it.copy(drawOrder = 40) else it
+        })
+        assertEquals(41, engine.evaluate(edited, stack(20), cache, context = "edited").rig.parts.last().drawOrder)
         assertEquals(2, calls)
+        val changed = engine.evaluate(authored, stack(30, "other"), cache)
+        assertEquals(3, calls)
         assertEquals(31, changed.rig.parts.last().drawOrder)
         assertEquals(changed, engine.evaluate(authored, stack(30, "other")))
     }

@@ -149,7 +149,8 @@ internal class RigModifierEvaluator(
         val entries = ArrayList<ModifierEvaluation>()
         val exclusive = HashMap<Pair<String, ModifierTarget>, String>()
         val writers = HashMap<Pair<String, String>, Pair<String, RigModifierDefinition>>()
-        val saved = cache?.snapshot?.takeIf { it.plugins == pluginRevision && it.context == context && it.authored == authored &&
+        val previous = cache?.snapshot?.takeIf { it.plugins == pluginRevision }
+        val saved = previous?.takeIf { it.context == context && it.authored == authored &&
             it.stack.appliedCapabilities == stack.appliedCapabilities }
         val authorContexts = HashMap<String, ModifierAlgorithmContext>()
         fun capture(instance: RigModifierInstance): ModifierAlgorithmContext = authorContexts.getOrPut(instance.id) {
@@ -161,8 +162,10 @@ internal class RigModifierEvaluator(
                 (saved.authorContexts[a.id]?.let { it == capture(b) } ?: true)
         }?.size ?: 0
         val outputs = ArrayList<RigIR>()
-        val algorithmCache = saved?.algorithms.orEmpty().filterKeys { id -> stack.instances.any { it.id == id } }.toMutableMap()
-        val readCache = saved?.readAlgorithms.orEmpty().filterKeys { id -> stack.instances.any { it.id == id } }.toMutableMap()
+        val instanceIds = stack.instances.mapTo(HashSet()) { it.id }
+        val algorithmCache = saved?.algorithms.orEmpty().filterKeys { it in instanceIds }.toMutableMap()
+        // Tracked changes are checked against their actual reads and write preconditions.
+        val readCache = previous?.readAlgorithms.orEmpty().filterKeys { it in instanceIds }.toMutableMap()
         var unavailableUpstream: String? = null
         for ((index, instance) in stack.instances.withIndex()) {
             checkpoint()
