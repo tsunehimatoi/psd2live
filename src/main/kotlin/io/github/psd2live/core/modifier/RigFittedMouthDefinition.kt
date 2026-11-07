@@ -5,6 +5,7 @@ import io.github.psd2live.algorithms.binding.MouthFittedV2Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV5Algorithm
+import io.github.psd2live.algorithms.binding.MouthFittedV6Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
 import io.github.psd2live.algorithms.binding.ScaffoldMesh
 import io.github.psd2live.algorithms.binding.ScaffoldMeshContext
@@ -15,8 +16,7 @@ import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.core.recipe.RigRecipe
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.project.WorkspaceSettingsCodec
-import kotlinx.serialization.json.boolean
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.*
 
 /** Explicit source-only entry. Shared fitted head fields still use the composed v1 path. */
 internal object RigFittedMouthDefinition {
@@ -66,6 +66,56 @@ internal object RigFittedMouthDefinition {
         }
         return modern.copy(version = MouthFittedV5Algorithm.VERSION, plugin = plugin,
             authorContext = { requireNotNull(source).closedMouthShellContext(it) })
+    }
+
+    fun sharedFrameDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val modern = modernDefinition(source)
+        val plugin = object : ChangingModifierAlgorithmPlugin by MouthFittedV6Algorithm, ModifierOptionalUpstream, ModifierVersionSelection {
+            override val optionalUpstream = modern.optionalUpstream
+            override val canonicalOptInType = TYPE
+        }
+        return modern.copy(version = MouthFittedV6Algorithm.VERSION, plugin = plugin,
+            changeWrites = MouthFittedV6Algorithm.WRITES, composableKinds = MouthFittedV6Algorithm.WRITES - "restPose" + "relations",
+            authorContext = { requireNotNull(source).captureSharedFrames(it) })
+    }
+
+    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val scaffold = provider(instance)
+        val preceding = bindingPredecessors(instance, scaffold)
+        require(scaffold.version == 2 && preceding.all { entry ->
+            entry.targets.toSet() == instance.targets.toSet() && entry.type in setOf("body/legacy", "face/fitted", "eye/fitted", "brow/fitted")
+        }) { "Fitted mouth v6 requires a shared source head" }
+        val head = preceding.single { it.type == "face/fitted" && it.version == 3 }
+        val eye = preceding.single { it.type == "eye/fitted" && it.version == 5 }
+        val brow = preceding.single { it.type == "brow/fitted" && it.version == 4 }
+        val (old, before) = RigFittedMouthModuleSource.context(this, scaffold, preceding, null)
+        val (next, after) = RigFittedMouthModuleSource.context(this, scaffold, preceding + instance, null)
+        val mouth = after.fittedMouth(next)
+        require(mouth?.source != null && !mouth.closedLine && !mouth.layered && mouth.rig?.fit?.layered == null &&
+            before.faceTurn(old) != null && after.faceTurn(next) != null) {
+            "Fitted mouth v6 requires an open source drawing and fitted head frames"
+        }
+        fun headLayers(context: RigBuilder.RigContext, config: PipelineConfig): Map<String, ClassifiedLayer> {
+            val parents = context.deformers.associate { it.id to it.parent }
+            return bindingSourceLayers(instance, context) { layer ->
+                layer.semantic.tag.group == LayerGroup.HEAD || generateSequence(context.parentAndFrame(layer, config).first) {
+                    parents[it]
+                }.any { it.raw == "DeformHeadRotation" }
+            }
+        }
+        val oldLayers = headLayers(before, old)
+        val nextLayers = headLayers(after, next)
+        require(oldLayers.isNotEmpty() && oldLayers.keys == nextLayers.keys) { "Fitted mouth v6 requires stable head targets" }
+        val axes = preceding.flatMapTo(hashSetOf()) { RigLegacyBindings.spec(it.type).parameters }
+        return ModifierAlgorithmContext(buildJsonObject {
+            put("face", head.id)
+            put("eye", eye.id)
+            put("brow", brow.id)
+        }, mapOf(
+            "before" to outlineShellSource(before, old, oldLayers, axes, includeFaceLean = true),
+            "after" to outlineShellSource(after, next, nextLayers, axes + RigLegacyBindings.spec(TYPE).parameters,
+                includeFaceLean = true),
+        ))
     }
 
     private fun parameters(instance: RigModifierInstance) = MouthFittedV2Algorithm.parameters(
