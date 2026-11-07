@@ -154,7 +154,7 @@ class EyeOpeningTest {
 		}
 		val eye = eye()
 		val options = EyeOptions(wide = true, lidFade = true)
-		val track = EyeModules.opacity(SemanticTag.EYELASH, PartRole.LID, Side.LEFT, eye, options)!!
+		val track = EyeModules.opacity(SemanticTag.EYELASH.name, PartRole.LID.name, Side.LEFT, eye, options)!!
 		val grids = ChannelGrids(mapOf(FormChannel.OPACITY to track))
 		assertEquals(1f, grids.scalarAt(FormChannel.OPACITY, 0.2f, { 2f }), 1e-6f, "wide eye must not fall back to static opacity")
 	}

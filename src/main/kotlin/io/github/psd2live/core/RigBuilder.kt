@@ -1054,12 +1054,13 @@ object RigBuilder {
 
     internal data class ScaffoldSourceInputs(val frames: kotlinx.serialization.json.JsonObject,
                                               val branches: kotlinx.serialization.json.JsonObject,
-                                              val torso: TorsoFrame)
+                                              val torso: TorsoFrame,
+                                              val eyes: io.github.psd2live.core.modifier.RigFittedEyeSource.Measurements?)
 
     /** Captures source measurements only: no deformer stage or bound model is evaluated. */
     internal fun scaffoldSourceInputs(analysis: PipelineAnalysis, config: PipelineConfig, cache: PreviewMeshCache): ScaffoldSourceInputs {
-        require(!config.recipe.modern && config.rigEdits.skeleton?.enabled != true) {
-            "Source scaffold measurements require the legacy source recipe without a skeleton"
+        require(config.rigEdits.skeleton?.enabled != true) {
+            "Source scaffold measurements require a recipe without a skeleton"
         }
         val context = rigContext(analysis, config.copy(generateDeformers = false), cache)
         val head = scaffoldHeadInput(context.bodyFrame, context.head, context.face, context.faceRig,
@@ -1071,7 +1072,18 @@ object RigBuilder {
                 layer.riggedIn(context.analysis.anchors, context.headSpace).bounds, scaffoldSlot(layer, context.analysis.anchors))
         }, context.bodyFrame, context.stance.legsFrame, head,
             { tr("model.deformer.pair", it) }, { tr("model.deformer.armHang", it) })
-        return ScaffoldSourceInputs(frames, branches, context.stance.torso)
+        val eyeMeasurements = if (config.recipe.base("eye") === io.github.psd2live.core.recipe.RigModules.EYE_FITTED) {
+            val eyes = context.analysis.layers.filter { it.semantic.tag in setOf(
+                SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYE_CLOSE, SemanticTag.IRIDES) }
+            io.github.psd2live.core.modifier.RigFittedEyeSource.Measurements(
+                eyes, context.faceRig.centerX, context.headSpace,
+                eyes.filter { inferredGroup(it, context.analysis.anchors) == LayerGroup.HEAD }.mapTo(hashSetOf()) { it.source.id.raw },
+                eyes.associate { layer ->
+                    val aligned = context.rigLayer(layer)
+                    layer.source.id.raw to (aligned to matchingEyeWhiteBounds(aligned, context.eyeWhiteLayers))
+                })
+        } else null
+        return ScaffoldSourceInputs(frames, branches, context.stance.torso, eyeMeasurements)
     }
 
     internal fun scaffoldFrameInputs(analysis: PipelineAnalysis, config: PipelineConfig, cache: PreviewMeshCache) =
@@ -1080,7 +1092,7 @@ object RigBuilder {
     /** Source topology and measurements, before parent binding or default-pose generation. */
     internal fun scaffoldMeshInputs(analysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig,
                                     cache: PreviewMeshCache, canonicalByLayer: Map<String, String>): io.github.psd2live.core.modifier.ModifierAlgorithmContext {
-        require(!config.recipe.modern && !config.mouthOutlineEnabled && config.rigEdits.skeleton?.enabled != true)
+        require(!config.mouthOutlineEnabled && config.rigEdits.skeleton?.enabled != true)
         val context = rigContext(analysis, config.copy(generateDeformers = false), cache)
         val tuning = config.rigTuning
         val curve = if (config.mouthShape == "custom") config.mouthCurve else MouthCurve.preset(config.mouthShape)
@@ -3348,9 +3360,9 @@ object RigBuilder {
 		return when (tag) {
 			SemanticTag.EYEWHITE, SemanticTag.EYELASH ->
 				(if (layer.semantic.side == Side.NONE && eyes != null) io.github.psd2live.core.fit.EyeModules.pairedLidGrid(
-					io.github.psd2live.core.fit.EyeModules.meshOf(tag, layer.semantic.role)!!, layer.source.id.raw, data.rigPositions, parentFrame, eyes) else null)
+					io.github.psd2live.core.fit.EyeModules.meshOf(tag.name, layer.semantic.role?.name)!!, layer.source.id.raw, data.rigPositions, parentFrame, eyes.motion) else null)
 				?: eyes?.rigs?.get(layer.semantic.side)?.let { eye ->
-					io.github.psd2live.core.fit.EyeModules.lidGrid(io.github.psd2live.core.fit.EyeModules.meshOf(tag, layer.semantic.role)!!,
+					io.github.psd2live.core.fit.EyeModules.lidGrid(io.github.psd2live.core.fit.EyeModules.meshOf(tag.name, layer.semantic.role?.name)!!,
 						layer.semantic.side, data.rigPositions, parentFrame, eye, eyes.options, layer.source.id.raw)
 				} ?: eyeClosureGrid(layer, data, parentFrame, faceRig, eyeWhiteBounds, config.rigTuning, neutralOnly)
 			SemanticTag.EYE_CLOSE -> eyes?.rigs?.get(layer.semantic.side)?.let { eye ->
@@ -3583,7 +3595,7 @@ object RigBuilder {
 		if (layer.semantic.side == Side.NONE && eyes != null && (tag == SemanticTag.EYEWHITE || tag == SemanticTag.EYELASH)) {
 			val owner = List(data.rigPositions.size / 2) { i -> eyes.sideAt(layer.source.id.raw, data.rigPositions[i * 2], data.rigPositions[i * 2 + 1]) }
 			return eyes.rigs.flatMap { (side, eye) -> io.github.psd2live.core.fit.EyeModules.lidShapes(
-				io.github.psd2live.core.fit.EyeModules.meshOf(tag, layer.semantic.role)!!, side, data.rigPositions, frame, eye, eyes.options, layer.source.id.raw)
+				io.github.psd2live.core.fit.EyeModules.meshOf(tag.name, layer.semantic.role?.name)!!, side, data.rigPositions, frame, eye, eyes.options, layer.source.id.raw)
 				.map { shape -> shape.copy(forms = shape.forms.map { form -> form?.let { org.umamo.runtime.model.MeshForm(it.positionDeltas.mapIndexed { i, delta ->
 					if (owner[i / 2] == side) delta else 0f }.toFloatArray()) } }) }
 			}
@@ -3591,7 +3603,7 @@ object RigBuilder {
 		val eye = eyes?.rigs?.get(layer.semantic.side) ?: return emptyList()
 		return when {
 			tag == SemanticTag.EYEWHITE || tag == SemanticTag.EYELASH -> io.github.psd2live.core.fit.EyeModules.lidShapes(
-				io.github.psd2live.core.fit.EyeModules.meshOf(tag, layer.semantic.role)!!, layer.semantic.side, data.rigPositions, frame, eye, eyes.options, layer.source.id.raw)
+				io.github.psd2live.core.fit.EyeModules.meshOf(tag.name, layer.semantic.role?.name)!!, layer.semantic.side, data.rigPositions, frame, eye, eyes.options, layer.source.id.raw)
 			tag == SemanticTag.IRIDES && layer.semantic.role == PartRole.HIGHLIGHT ->
 				io.github.psd2live.core.fit.EyeModules.highlightShapes(data.rigPositions, frame, eye.fit.iris ?: layer.bounds, eyes.options)
 			tag == SemanticTag.IRIDES -> io.github.psd2live.core.fit.EyeModules.pupilShapes(layer.semantic.side, data.rigPositions, frame,
@@ -3649,7 +3661,7 @@ object RigBuilder {
 		if (grids.gridsByChannel.containsKey(FormChannel.OPACITY)) return grids
 		val eyes = context.fittedEyes(config) ?: return grids
 		val eye = eyes.rigs[layer.semantic.side] ?: return grids
-		val opacity = io.github.psd2live.core.fit.EyeModules.opacity(layer.semantic.tag, layer.semantic.role, layer.semantic.side, eye, eyes.options) ?: return grids
+		val opacity = io.github.psd2live.core.fit.EyeModules.opacity(layer.semantic.tag.name, layer.semantic.role?.name, layer.semantic.side, eye, eyes.options) ?: return grids
 		return ChannelGrids(grids.gridsByChannel + (FormChannel.OPACITY to opacity))
 	}
 

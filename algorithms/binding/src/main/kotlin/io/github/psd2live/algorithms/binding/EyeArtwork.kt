@@ -7,6 +7,7 @@ import kotlin.math.hypot
 enum class EyeRegion { UPPER, LOWER }
 enum class EyePrimitive { LINE, TUFT, SIDE, SKIN, AUTO }
 
+@kotlinx.serialization.Serializable
 data class EyePoint(val x: Float, val y: Float) {
 	operator fun plus(p: EyePoint) = EyePoint(x + p.x, y + p.y)
 	operator fun minus(p: EyePoint) = EyePoint(x - p.x, y - p.y)
@@ -45,6 +46,7 @@ data class EyeStroke(
 }
 
 /** An overlap interval, rather than a pin to one material point of another layer. */
+@kotlinx.serialization.Serializable
 data class EyeContact(val region: EyeRegion, val from: Float, val to: Float, val centre: EyePoint)
 data class EyeBranch(val root: EyePoint, val tip: EyePoint, val points: List<EyePoint>)
 data class EyeMaterialPart(

@@ -1,9 +1,7 @@
 package io.github.psd2live.core.fit
 
-import io.github.psd2live.algorithms.binding.EyeRig
-
-import kotlin.math.max
-import kotlin.math.min
+import io.github.psd2live.algorithms.binding.FeatureInterpolation
+import io.github.psd2live.algorithms.binding.moved as moveEyeHandles
 
 /**
  * The features a user can correct on the canvas, each with its handles: an eye's corners and the middles of its lid
@@ -18,30 +16,6 @@ object FeatureHandles {
 	val features: Map<String, List<String>> = mapOf("eye.L" to EYE, "eye.R" to EYE, "brow.L" to BROW, "brow.R" to BROW, "mouth" to MOUTH)
 
 	fun known(feature: String, handle: String): Boolean = features[feature]?.contains(handle) == true
-
-	/**
-	 * The second coordinates, at [n] evenly spaced places along the first, of the rig points [points] seen in a frame
-	 * ([toFrame]): what a curve becomes once its points moved and its frame changed.
-	 */
-	internal fun resample(points: List<Pair<Float, Float>>, toFrame: (Float, Float) -> Pair<Float, Float>, n: Int): List<Float> {
-		val framed = points.map { toFrame(it.first, it.second) }.sortedBy { it.first }
-		return List(n) { k ->
-			val u = k.toFloat() / (n - 1)
-			val i = framed.indexOfFirst { it.first >= u }
-			when {
-				i < 0 -> framed.last().second
-				i == 0 -> framed.first().second
-				else -> {
-					val a = framed[i - 1]; val b = framed[i]
-					val t = ((u - a.first) / max(b.first - a.first, 1e-5f)).coerceIn(0f, 1f)
-					a.second + (b.second - a.second) * t
-				}
-			}
-		}
-	}
-
-	/** How much of a handle at the middle of an edge moves the edge at [u]: all of it at the middle, none at the ends. */
-	internal fun middle(u: Float): Float = EyeRig.hump(min(max(u, 0f), 1f)).coerceAtLeast(0f)
 }
 
 /** A rig-space move of a feature's handle. */
@@ -51,29 +25,7 @@ private operator fun RigMove.times(k: Float): RigMove = first * k to second * k
 private operator fun RigMove.plus(o: RigMove): RigMove = first + o.first to second + o.second
 private val NONE: RigMove = 0f to 0f
 
-/** This eye with its handles ([moves]: inner, outer, upper, lower, as rig moves) moved. */
-fun EyeFit.moved(moves: Map<String, RigMove>): EyeFit {
-	if (moves.isEmpty()) return this
-	val inner = moves["inner"] ?: NONE; val outer = moves["outer"] ?: NONE
-	fun shifted(curve: List<Float>, peak: RigMove): List<Pair<Float, Float>> = curve.indices.map { k ->
-		val u = EyeFit.u(k)
-		val (x, y) = toCanvas(u, curve[k])
-		val d = inner * (1f - u) + outer * u + peak * FeatureHandles.middle(u)
-		(x + d.first) to (y + d.second)
-	}
-	val upperPoints = shifted(upper, moves["upper"] ?: NONE)
-	val lowerPoints = shifted(lower, moves["lower"] ?: NONE)
-	val closedPoints = closed?.let { shifted(it, NONE) }
-	val (ox, oy) = upperPoints.first(); val (ex, ey) = upperPoints.last()
-	val width = ((ex - ox) * axisX + (ey - oy) * axisY).coerceAtLeast(1f)
-	val frame = copy(originX = ox, originY = oy, width = width)
-	val movedUpper = FeatureHandles.resample(upperPoints, frame::toEye, EyeFit.SAMPLES)
-	val sourceUpper = FeatureHandles.resample(upper.indices.map { toCanvas(EyeFit.u(it),upper[it]) }, frame::toEye, EyeFit.SAMPLES)
-	return frame.copy(upper = movedUpper,
-		lower = FeatureHandles.resample(lowerPoints, frame::toEye, EyeFit.SAMPLES),
-		closed = closedPoints?.let { FeatureHandles.resample(it, frame::toEye, EyeFit.SAMPLES) },
-		artwork = null, upperCorrection = movedUpper.indices.map { movedUpper[it]-sourceUpper[it] })
-}
+fun EyeFit.moved(moves: Map<String, RigMove>): EyeFit = this.moveEyeHandles(moves)
 
 /** The eye's handles where they sit, in the rig's space. */
 fun EyeFit.handles(): Map<String, Pair<Float, Float>> = mapOf(
@@ -88,7 +40,7 @@ fun MouthFit.moved(moves: Map<String, RigMove>): MouthFit {
 	fun shifted(curve: List<Float>, peak: RigMove): List<Pair<Float, Float>> = curve.indices.map { k ->
 		val u = k.toFloat() / (curve.size - 1)
 		val (x, y) = toCanvas(u, curve[k])
-		val d = left * (1f - u) + right * u + peak * FeatureHandles.middle(u)
+		val d = left * (1f - u) + right * u + peak * FeatureInterpolation.middle(u)
 		(x + d.first) to (y + d.second)
 	}
 	val upperPoints = shifted(upper, upMove)
@@ -100,8 +52,8 @@ fun MouthFit.moved(moves: Map<String, RigMove>): MouthFit {
 		val uw = FloatArray(n * 2); val lw = FloatArray(n * 2)
 		for (i in 0 until n) {
 			val u = i.toFloat() / (n - 1)
-			val du = left * (1f - u) + right * u + upMove * FeatureHandles.middle(u)
-			val dl = left * (1f - u) + right * u + loMove * FeatureHandles.middle(u)
+			val du = left * (1f - u) + right * u + upMove * FeatureInterpolation.middle(u)
+			val dl = left * (1f - u) + right * u + loMove * FeatureInterpolation.middle(u)
 			uw[i * 2] = lf.upperWorld65[i * 2] + du.first; uw[i * 2 + 1] = lf.upperWorld65[i * 2 + 1] + du.second
 			lw[i * 2] = lf.lowerWorld65[i * 2] + dl.first; lw[i * 2 + 1] = lf.lowerWorld65[i * 2 + 1] + dl.second
 		}
@@ -123,8 +75,8 @@ fun MouthFit.moved(moves: Map<String, RigMove>): MouthFit {
 			lf.upperLipBoundsLocal, lf.lowerLipBoundsLocal, lf.tongueBoundsLocal, lf.hUtVis0, lf.utSideReserve, lf.hLtVis0)
 	}
 	val frame = copy(originX = ox, originY = oy, width = width, layered = movedLayered)
-	return frame.copy(upper = FeatureHandles.resample(upperPoints, frame::toMouth, MouthFit.SAMPLES),
-		lower = FeatureHandles.resample(lowerPoints, frame::toMouth, MouthFit.SAMPLES))
+	return frame.copy(upper = FeatureInterpolation.resample(upperPoints, frame::toMouth, MouthFit.SAMPLES),
+		lower = FeatureInterpolation.resample(lowerPoints, frame::toMouth, MouthFit.SAMPLES))
 }
 
 /** The mouth's handles where they sit, in the rig's space. */
@@ -139,14 +91,14 @@ fun BrowFit.moved(moves: Map<String, RigMove>): BrowFit {
 	val points = centre.indices.map { k ->
 		val u = EyeFit.u(k)
 		val (x, y) = toRig(u, centre[k])
-		val d = inner * (1f - u) + outer * u + arch * FeatureHandles.middle(u)
+		val d = inner * (1f - u) + outer * u + arch * FeatureInterpolation.middle(u)
 		(x + d.first) to (y + d.second)
 	}
 	val (ox, oy) = toRig(0f, 0f).let { (x, y) -> (x + inner.first) to (y + inner.second) }
 	val (ex, ey) = toRig(1f, 0f).let { (x, y) -> (x + outer.first) to (y + outer.second) }
 	val length = ((ex - ox) * axisX + (ey - oy) * axisY).coerceAtLeast(1f)
 	val frame = copy(originX = ox, originY = oy, length = length)
-	return frame.copy(centre = FeatureHandles.resample(points, frame::toBrow, EyeFit.SAMPLES))
+	return frame.copy(centre = FeatureInterpolation.resample(points, frame::toBrow, EyeFit.SAMPLES))
 }
 
 /** The brow's handles where they sit, in the rig's space. */

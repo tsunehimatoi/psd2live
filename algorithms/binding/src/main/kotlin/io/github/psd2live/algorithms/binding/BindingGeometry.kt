@@ -1,6 +1,7 @@
 package io.github.psd2live.algorithms.binding
 
 /** Source-coordinate geometry shared by binding implementations and their host adapters. */
+@kotlinx.serialization.Serializable
 enum class Side { LEFT, RIGHT, NONE }
 
 data class Bounds(val left: Float, val top: Float, val right: Float, val bottom: Float) {

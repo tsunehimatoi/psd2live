@@ -132,7 +132,7 @@ class EyeArtworkClassificationTest {
 		val right = EyeRig(eye.copy(side = Side.RIGHT, originX = -20f, axisX = -1f), 0.25f, 1f, 0.6f)
 		val eyes = FittedEyes(EyeFitting.Result(emptyMap(), emptyMap()), linkedMapOf(Side.LEFT to left, Side.RIGHT to right), EyeOptions())
 		val grid = requireNotNull(EyeModules.pairedLidGrid(EyeRig.EyeMesh.UPPER_LASH, "both", floatArrayOf(70f, 25f, -70f, 25f),
-			Bounds(-200f, 0f, 200f, 100f), eyes))
+			Bounds(-200f, 0f, 200f, 100f), eyes.motion))
 		val closeLeft = grid.cells.single { it.coordinate.contentEquals(intArrayOf(0, right.keys.lastIndex)) }.form.positionDeltas
 		assertTrue(closeLeft[1] != 0f)
 		assertEquals(0f, closeLeft[2]); assertEquals(0f, closeLeft[3])
