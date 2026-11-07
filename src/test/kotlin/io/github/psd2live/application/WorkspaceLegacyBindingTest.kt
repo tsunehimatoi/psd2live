@@ -66,7 +66,7 @@ class WorkspaceLegacyBindingTest {
     /** Small public procedural art with distinct eye, brow, mouth, hair and torso inputs. */
     private fun document(eyeDetails: Boolean = false, mouthDetails: Boolean = false, expressionDetails: Boolean = false, skinDetails: Boolean = false, outfitDetails: Boolean = false, sideLock: Boolean = false, bangOverlay: Boolean = false,
                          chestDetail: Boolean = false, pairedArms: Boolean = false, thinMouth: Boolean = false, pairedBrows: Boolean = false, bilateralEyes: Boolean = false,
-                         closedMouth: Boolean = false): WorkspaceDocument {
+                         closedMouth: Boolean = false, ribbonDetails: Boolean = false): WorkspaceDocument {
         data class Shape(val id: String, val tag: SemanticTag, val side: Side, val x: Int, val y: Int, val w: Int, val h: Int, val role: PartRole? = null)
         val shapes = listOf(
             Shape("iris", SemanticTag.IRIDES, Side.LEFT, 37, 19, 5, 10),
@@ -117,6 +117,13 @@ class WorkspaceLegacyBindingTest {
             Shape("tail", SemanticTag.TAIL, Side.NONE, 53, 51, 9, 24),
             Shape("wing", SemanticTag.WINGS, Side.RIGHT, 48, 45, 13, 15),
         ) else emptyList()
+        val ribbonShapes = if (ribbonDetails) listOf(
+            Shape("head-ribbon", SemanticTag.HEADWEAR, Side.NONE, 18, 3, 5, 16, PartRole.RIBBON),
+            Shape("ear-pendant", SemanticTag.EARWEAR, Side.LEFT, 11, 27, 3, 10, PartRole.PENDANT),
+            Shape("matched-left", SemanticTag.TOPWEAR, Side.LEFT, 18, 50, 3, 8, PartRole.RIBBON),
+            Shape("matched-right", SemanticTag.TOPWEAR, Side.RIGHT, 43, 50, 3, 8, PartRole.RIBBON),
+            Shape("hair-ribbon", SemanticTag.BACK_HAIR, Side.NONE, 38, 24, 5, 20, PartRole.RIBBON),
+        ) else emptyList()
         val chestShapes = if (chestDetail) listOf(Shape("chest-panel", SemanticTag.TOPWEAR, Side.NONE, 26, 48, 12, 15)) else emptyList()
         val armShapes = if (pairedArms) listOf(
             Shape("glove-l", SemanticTag.HANDWEAR, Side.LEFT, 4, 51, 6, 26),
@@ -124,7 +131,7 @@ class WorkspaceLegacyBindingTest {
         ) else emptyList()
         val classified = if (bangOverlay) listOf(allShapes.single { it.id == "front" }.copy(h = 24)) +
             allShapes.filterNot { it.id == "front" } + skinShapes + outfitShapes
-        else allShapes + skinShapes + outfitShapes + chestShapes + armShapes
+        else allShapes + skinShapes + outfitShapes + chestShapes + armShapes + ribbonShapes
         val source = WorkspaceSourceArt(64, 80, classified.mapIndexed { index, shape ->
             val color = if (!bangOverlay) 0xffffff else when (shape.tag) {
                 SemanticTag.FRONT_HAIR, SemanticTag.BACK_HAIR -> 0x725672
@@ -2778,7 +2785,147 @@ class WorkspaceLegacyBindingTest {
         assertFaceEquals(expected, RigIrCompiler.compile(current, tileArt = true))
     }
 
-    @Test fun separateClothingInstancesOwnOnlyTheirTargetsAndTheirOwnPhysics(): Unit = runBlocking<Unit> {
+    @Test fun ribbonsV2KeepsLegacyBindingAndRunsInstalledWorker(): Unit = runBlocking {
+        suspend fun fixture(version: Int, withSkirt: Boolean): Fixture {
+            val f = Fixture(document(outfitDetails = true, expressionDetails = true))
+            f.install()
+            f.group(listOf("body/legacy", "face/legacy", "expression.toggles") + if (withSkirt) listOf("outfit.skirt") else emptyList())
+            val config = buildJsonObject {
+                put("scaffold", "structure")
+                putJsonObject("dependencies") { put("body/legacy", "body"); put("face/legacy", "face") }
+                putJsonObject("values") { put("swing", 140f) }
+            }
+            f.edit("modifier_add", JsonObject(f.addition("outfit.ribbons", "ribbons", config = config) +
+                ("version" to JsonPrimitive(version))))
+            return f
+        }
+        val plainLegacy = fixture(1, false)
+        val plain = fixture(2, false)
+        assertFaceEquals(RigIrCompiler.compile(plainLegacy.now.model), RigIrCompiler.compile(plain.now.model))
+        val legacy = fixture(1, true)
+        val direct = fixture(2, true)
+        val snapshot = assertNotNull(direct.now.model.modifierEvaluation)
+        val instance = snapshot.stack.instances.last()
+        val before = snapshot.outputs[snapshot.outputs.lastIndex - 1]
+        val expected = RigIrCompiler.compile(legacy.now.model)
+        val actual = RigIrCompiler.compile(direct.now.model)
+        val axes = actual.parameters.filter { it.id.startsWith("modifier:ribbons:") }
+        assertEquals(6, axes.size)
+        assertEquals(axes.map { it.id }, RigIrCompiler.compile(plain.now.model).parameters
+            .filter { it.id.startsWith("modifier:ribbons:") }.map { it.id })
+        assertTrue(axes.any { it.name.contains("Ribbon2") })
+        assertEquals(4, RigModifierPhysics.entries(instance, actual).size)
+        assertFaceEquals(expected, actual)
+        val pose = axes.mapIndexed { i, parameter -> ParameterId(parameter.id) to if (i % 2 == 0) .65f else -.75f }.toMap()
+        compare(legacy.now.model, direct.now.model, listOf(emptyMap(), pose,
+            pose + mapOf(StandardParameters.BODY_X to 7f, StandardParameters.ANGLE_X to 23f, StandardParameters.BREATH to .6f)))
+
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find("outfit.ribbons", 2))
+        assertEquals(artifact.reference, instance.plugin)
+        val directory = Files.createTempDirectory("ribbons-v2-")
+        val preferences = Preferences.userRoot().node("ribbons-v2/${UUID.randomUUID()}")
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            artifact.manifest.files.keys.forEach { name ->
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val providers = RigLegacyBindings.providers(instance).map { (capability, id) ->
+                val provider = snapshot.stack.instances.single { it.id == id }
+                ModifierUpstreamCapability(capability, provider.type, provider.version, provider.targets, provider.id,
+                    provider.config, provider.outputAliases, provider.plugin)
+            }
+            val context = RigRibbonsModifier.capture(RigModifierSource.of(direct.now.model), instance).withUpstream(providers)
+            repeat(2) {
+                val entry = store.install(staging.toString())
+                val worker = entry.manifest.algorithms.single()
+                assertEquals(snapshot.outputs.last(),
+                    ModifierPluginWorkers.evaluate(entry, worker, before, instance, {}, context = context))
+                ModifierPluginWorkers.stop(entry.reference)
+                store.uninstall(entry.reference)
+                assertTrue(store.snapshot().isEmpty())
+            }
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+        val (slot, group) = RigModifierPhysics.entries(instance, actual).entries.first()
+        val override = Physics3Json.setting(group).copy(name = "Adjusted ribbon")
+        direct.edit("modifier_update", buildJsonObject {
+            put("id", instance.id)
+            put("type", instance.type)
+            put("config", JsonObject(instance.config + ("physics" to buildJsonObject { put(slot, override.toJson()) })))
+        })
+        val edited = RigIrCompiler.compile(direct.now.model)
+        assertEquals(override.name, edited.physics.groups.single { it.id == group.id }.name)
+        direct.edit("modifier_apply", buildJsonObject { put("id", instance.id) })
+        assertEquals(edited, RigIrCompiler.compile(WorkspacePreviewBuilder().build(direct.now.document)))
+    }
+
+    @Test fun ribbonsV2MatchesTheRecommendedPresetWithClothingSimulation(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true)
+        val config = WorkspacePresetBaseline.configure(art.config(), "modern")
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, model) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
+            WorkspaceInitialPreset(clothing = true), preferSourceBody = true)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val clothing = stack.instances.filter { it.type in setOf("outfit.skirt", "outfit.ribbons") }
+        assertEquals(2, clothing.size)
+        assertTrue(clothing.all { it.version == 1 })
+        assertTrue(stack.instances.any { it.type == "simulation" })
+        val independent = stack.copy(instances = stack.instances.map {
+            if (it in clothing) it.copy(version = 2, plugin = assertNotNull(BuiltinModifierPlugins.reference(it.type, 2))) else it
+        })
+        val updated = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = independent.toJson()))
+        val expected = RigIrCompiler.compile(model, tileArt = true)
+        val checked = WorkspaceModifierSimulation.prepare(updated, independent, WorkspaceRasterWork.Direct, allowRebake = false)
+        assertEquals(independent, checked)
+        val current = WorkspacePreviewBuilder().build(updated)
+        val report = assertNotNull(current.rig.modifierReport).getValue("entries").jsonArray
+        assertTrue(report.all { it.jsonObject.getValue("status").jsonPrimitive.content == "active" })
+        assertFaceEquals(expected, RigIrCompiler.compile(current, tileArt = true))
+    }
+
+    @Test fun ribbonsV2MatchesHeadAndEarAttachmentsAndLeavesPairedArtAlone(): Unit = runBlocking {
+        suspend fun fixture(version: Int): Fixture {
+            val f = Fixture(document(ribbonDetails = true, expressionDetails = true))
+            f.install()
+            f.group(listOf("body/legacy", "face/legacy"))
+            val config = buildJsonObject {
+                put("scaffold", "structure")
+                putJsonObject("dependencies") { put("body/legacy", "body"); put("face/legacy", "face") }
+            }
+            f.edit("modifier_add", JsonObject(f.addition("outfit.ribbons", "ribbons", config = config) +
+                ("version" to JsonPrimitive(version))))
+            return f
+        }
+        val previous = fixture(1)
+        val current = fixture(2)
+        val expected = RigIrCompiler.compile(previous.now.model)
+        val actual = RigIrCompiler.compile(current.now.model)
+        assertFaceEquals(expected, actual)
+        val axes = actual.parameters.filter { it.id.startsWith("modifier:ribbons:") }
+        assertEquals(6, axes.size)
+        val snapshot = assertNotNull(current.now.model.modifierEvaluation)
+        for (name in listOf("matched-left", "matched-right", "hair-ribbon")) {
+            val id = mesh(current, name).id.raw
+            assertEquals(snapshot.outputs[snapshot.outputs.lastIndex - 1].meshes.single { it.id == id },
+                snapshot.outputs.last().meshes.single { it.id == id })
+        }
+    }
+
+    @Test fun separateClothingInstancesOwnOnlyTheirTargetsAndTheirOwnPhysics(): Unit = runBlocking {
+        separateClothingInstances(1)
+    }
+
+    @Test fun ribbonsV2InstancesOwnOnlyTheirTargetsAndTheirOwnPhysics(): Unit = runBlocking {
+        separateClothingInstances(2)
+    }
+
+    private suspend fun separateClothingInstances(version: Int) {
         val f = Fixture(document(outfitDetails = true), scaffoldVersion = 1); f.install()
         f.group(listOf("body/legacy", "face/legacy"))
         val ribbon = ModifierTarget("mesh", mesh(f, "ribbon").id.raw)
@@ -2786,20 +2933,22 @@ class WorkspaceLegacyBindingTest {
         val configuration = buildJsonObject {
             put("scaffold", "structure"); putJsonObject("dependencies") { put("body/legacy", "body"); put("face/legacy", "face") }
         }
-        f.edit("modifier_add", f.addition("outfit.ribbons", "ribbon-a", listOf(ribbon), configuration))
+        suspend fun add(id: String, target: ModifierTarget) =
+            f.edit("modifier_add", JsonObject(f.addition("outfit.ribbons", id, listOf(target), configuration) +
+                ("version" to JsonPrimitive(version))))
+        add("ribbon-a", ribbon)
         fun stack() = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
         fun owned(id: String) = RigIrCompiler.compile(f.now.model).parameters.map { it.id }.filter { it.startsWith("modifier:$id:") }.toSet()
         val first = owned("ribbon-a")
         assertEquals(4, first.size)
-        assertTrue(RigModifierSource.of(f.now.model).chains(stack().instances.last()).all { it.binding.native.kind == io.github.psd2live.core.fit.HairKind.RIBBON })
-        f.edit("modifier_add", f.addition("outfit.ribbons", "pendant-b", listOf(pendant), configuration))
+        add("pendant-b", pendant)
         val second = owned("pendant-b")
         assertEquals(2, second.size)
         assertTrue(first.intersect(second).isEmpty())
         val original = RigIrCompiler.compile(f.now.model)
         val before = f.now
         assertFailsWith<WorkspaceBatchEditException> {
-            f.edit("modifier_add", f.addition("outfit.ribbons", "overlap", listOf(ribbon), configuration))
+            add("overlap", ribbon)
         }
         assertEquals(before.state, f.now.state)
         val evaluator = CpuDeformationEvaluator()
@@ -2811,7 +2960,7 @@ class WorkspaceLegacyBindingTest {
         f.edit("modifier_enable", buildJsonObject { put("id", "ribbon-a"); put("enabled", true) })
         assertEquals(original, RigIrCompiler.compile(f.now.model))
         f.edit("modifier_remove", buildJsonObject { put("id", "ribbon-a") })
-        f.edit("modifier_add", f.addition("outfit.ribbons", "ribbon-new", listOf(ribbon), configuration))
+        add("ribbon-new", ribbon)
         val replacement = owned("ribbon-new")
         assertEquals(first.size, replacement.size)
         assertTrue(first.intersect(replacement).isEmpty(), "a new instance cannot adopt a retired chain's parameter identity")

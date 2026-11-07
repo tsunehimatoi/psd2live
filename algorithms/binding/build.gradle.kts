@@ -1416,3 +1416,31 @@ tasks.register("pluginMouthVowel") {
         """.trimIndent())
     }
 }
+
+val ribbonsWorkerJar = registerIsolatedBindingWorker(
+    "ribbons", "outfit-ribbons", "worker-outfit-ribbons", "io.github.psd2live.algorithms.binding.RibbonsWorker",
+)
+
+tasks.register("pluginRibbons") {
+    dependsOn(ribbonsWorkerJar)
+    val output = layout.buildDirectory.dir("plugin-outfit-ribbons")
+    inputs.file(ribbonsWorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", project.version.toString())
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        ribbonsWorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"builtin.6f75746669742e726962626f6e73.v2","version":"${project.version}","name":"Ribbon and pendant sway",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"builtin.6f75746669742e726962626f6e73.v2/ribbons","aliases":["outfit.ribbons"],
+               "version":2,"name":"Ribbon and pendant sway","category":"outfit","contextVersion":2,"targets":["mesh"],
+               "requires":["rig.scaffold","body/legacy","face/legacy"],"exclusiveFamily":"chain:outfit.ribbons",
+               "reads":["*"],"writes":["mesh","part","deformer","hierarchy","parameter","physics"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter","physics"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}

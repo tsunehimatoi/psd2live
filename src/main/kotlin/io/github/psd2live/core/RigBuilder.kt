@@ -3209,7 +3209,7 @@ object RigBuilder {
 		columns: Int = 3,
 	): Deformer.Warp = ScaffoldPairs.identityWarp(id, name, parent, frame, parentFrame, partId, rows, columns)
 
-	private fun isHandledByFaceRegion(layer: ClassifiedLayer, faceRig: NinePoseFaceRig): Boolean = when (layer.semantic.tag) {
+	internal fun isHandledByFaceRegion(layer: ClassifiedLayer, faceRig: NinePoseFaceRig): Boolean = when (layer.semantic.tag) {
 		SemanticTag.IRIDES -> faceRig.regionFor(FaceFeature.IRIS, layer.semantic.side) != null
 		SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYE_CLOSE ->
 			faceRig.regionFor(FaceFeature.EYE, layer.semantic.side) != null

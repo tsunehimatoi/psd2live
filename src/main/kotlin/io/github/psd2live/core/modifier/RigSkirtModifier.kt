@@ -7,12 +7,9 @@ import io.github.psd2live.algorithms.binding.SkirtAlgorithm
 import io.github.psd2live.algorithms.binding.SkirtInputs
 import io.github.psd2live.core.*
 import io.github.psd2live.core.fit.HairKind
-import io.github.psd2live.core.recipe.BaseChoice
 import io.github.psd2live.core.recipe.RecipeSubject
 import io.github.psd2live.core.recipe.RigModules
-import io.github.psd2live.core.recipe.RigRecipe
 import io.github.psd2live.i18n.tr
-import io.github.psd2live.project.WorkspaceSettingsCodec
 import org.umamo.runtime.model.ParameterId
 
 internal object RigSkirtModifier {
@@ -34,28 +31,12 @@ internal object RigSkirtModifier {
     }
 
     fun capture(source: RigModifierSource, instance: RigModifierInstance): ModifierAlgorithmContext {
-        val scaffold = source.provider(instance)
-        val corrections = WorkspaceSettingsCodec.decodeRecipe(scaffold.config["corrections"])
         val targets = instance.targets.mapTo(hashSetOf()) { it.id }
         val meshesByLayer = source.layersByMesh.entries.filter { it.key in targets }.groupBy({ it.value }, { it.key })
         val previous = source.activeBefore(instance).filter { it.config["scaffold"] == instance.config["scaffold"] }
         val skirtLayers = source.analysis.layers.filter { HairKind.clothOf(it) == HairKind.SKIRT }.mapTo(hashSetOf()) { it.source.id.raw }
         val skirtTargets = instance.targets.filter { source.layersByMesh[it.id] in skirtLayers }
-        fun measurementProviders(target: ModifierTarget) = previous.filter { preceding ->
-            target in preceding.targets && (RigLegacyBindings.find(preceding.type)?.isBase == true || preceding.type == "mouth.outline")
-        }.associateBy { it.type }
-        val providers = skirtTargets.firstOrNull()?.let(::measurementProviders).orEmpty()
-        require(skirtTargets.all { measurementProviders(it) == providers }) { "Skirt targets use different source frames" }
-        val bases = providers.values.filter { it.type != RigLegacyBindings.FITTED_FACE && RigLegacyBindings.find(it.type)?.isBase == true }
-            .associate { RigLegacyBindings.spec(it.type).area to BaseChoice(it.type, it.version, RigLegacyBindings.values(it)) }
-        val recipe = RigRecipe(true, bases = RigModules.areas.associate { area ->
-            area.id to (bases[area.id] ?: BaseChoice(area.legacy.id, area.legacy.version))
-        }, moves = corrections.moves, eyeParts = corrections.eyeParts)
-        val tuning = RigLegacyBindings.specs.fold(RigTuning()) { tuning, spec ->
-            providers[spec.type]?.let { RigLegacyBindings.tuning(it, tuning) } ?: tuning
-        }
-        val config = source.sourceConfig().copy(generateDeformers = false, mouthOutlineEnabled = "mouth.outline" in providers,
-            bodyStrength = providers["body/legacy"]?.let(RigLegacyBindings::strength) ?: 1f, rigTuning = tuning, recipe = recipe)
+        val config = RigClothingSourceFrame.config(source, instance, skirtTargets, previous)
         val context = RigBuilder.rigContext(source.analysis, config, source.meshCache)
         val body = context.bodyFrame
         val layers = context.analysis.layers
