@@ -2,21 +2,28 @@ package io.github.psd2live.tools
 
 import io.github.psd2live.application.CliPresetBindings
 import io.github.psd2live.application.WorkspaceInitialPreset
+import io.github.psd2live.application.WorkspacePreviewBuilder
 import io.github.psd2live.application.WorkspacePresetInitialization
 import io.github.psd2live.application.WorkspaceRasterWork
 import io.github.psd2live.core.*
-import io.github.psd2live.core.modifier.RigModifierStack
+import io.github.psd2live.core.modifier.*
 import io.github.psd2live.format.model.Mesh as RigIRMesh
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.project.WorkspaceDocument
 import io.github.psd2live.project.WorkspaceSettingsCodec
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.nio.file.Files
+import java.util.UUID
+import java.util.prefs.Preferences
 import kotlin.io.path.readText
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 /** Compare a raw PSD export with a stack that uses names derived from the same source. */
 class CliPresetMigrationTool {
@@ -66,6 +73,64 @@ class CliPresetMigrationTool {
             val report = exported.exportedFiles.single { it.path.fileName.toString().endsWith(".psd2live.json") }
             val physics = Json.parseToJsonElement(report.path.readText()).jsonObject.getValue("physics").jsonObject
             assertEquals(result.physics.groups.map { it.id }, physics.getValue("groups").jsonArray.map { it.jsonPrimitive.content })
+        }
+    }
+
+    @Test fun compareFittedBrowSharedFrames() = runBlocking {
+        requireTools()
+        val sample = Sample.fromEnvironment()
+        val config = PipelineConfig(meshSpacing = 64)
+        val source = PSD2LivePipeline().readPsd(sample.path)
+        val overlay = config.rigEdits.copy(modifierStack = RigModifierStack().toJson())
+        val document = WorkspaceDocument(source, emptyMap(), emptySet(), emptyMap(), emptyMap(), overlay,
+            WorkspaceSettingsCodec.encode(config.copy(rigEdits = overlay)))
+        val analysis = RigGenerationSource.prepare(RigGenerationSource.analyze(source, config), config)
+        val bindings = CliPresetBindings(analysis, config)
+        val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 1)
+        for (cliBindings in listOf(null, bindings)) {
+            val (planned, historical) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
+                WorkspaceInitialPreset(clothing = false), requestedVersions = versions, cliBindings = cliBindings)
+            val stack = RigModifierStack.fromJson(planned.rigEdits.modifierStack!!)
+            val brow = stack.instances.single { it.type == "brow/fitted" }
+            val index = stack.index(brow.id)
+            val artifact = assertNotNull(BundledAlgorithmArtifacts.find(brow.type, 4))
+            val selected = brow.copy(version = 4, plugin = artifact.reference)
+            val modified = stack.copy(instances = stack.instances.map { if (it.id == brow.id) selected else it })
+            val candidate = WorkspacePreviewBuilder().build(planned.copy(rigEdits = planned.rigEdits.copy(modifierStack = modified.toJson())))
+            val expected = assertNotNull(historical.modifierEvaluation).outputs
+            val actual = assertNotNull(candidate.modifierEvaluation).outputs
+            val oldMeshes = expected[index - 1].meshes.associateBy { it.id }
+            assertTrue(expected[index].meshes.any { !it.id.startsWith("ArtMeshEyebrow") && it != oldMeshes[it.id] },
+                "Choose the DS PSD or another fixture with non-brow descendants of the refitted frame")
+            assertTrue(expected[index - 1] == actual[index - 1], "The real preceding fitted head and eye stages must match")
+            assertTrue(expected[index] == actual[index], buildString { compare("brow stage", expected[index], actual[index]) })
+            val reference = RigIrCompiler.compile(historical, tileArt = true)
+            val result = RigIrCompiler.compile(candidate, tileArt = true)
+            assertTrue(reference == result, buildString { compare("full IR", reference, result) })
+
+            if (cliBindings != null) {
+                val root = Files.createTempDirectory("fitted-brow-v4-")
+                val preferences = Preferences.userRoot().node("fitted-brow-v4/" + UUID.randomUUID())
+                val store = ModifierPluginStore(root.resolve("installed"), preferences)
+                try {
+                    BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+                    val worker = store.snapshot().single()
+                    val definition = RigBrowFittedModifier.sharedFrameDefinition(RigModifierSource.of(candidate))
+                    val providers = stack.instances.take(index).filter { it.type in definition.requires + definition.optionalUpstream }
+                    for ((type, version) in versions.filterKeys { it != brow.type })
+                        assertEquals(version, providers.single { it.type == type }.version)
+                    val context = definition.authorContext(selected).withUpstream(providers.map {
+                        ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+                    })
+                    val replay = ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(), expected[index - 1],
+                        selected, {}, store, context = context, declaredParameters = definition.parameters(selected))
+                    assertTrue(expected[index] == replay, buildString { compare("installed brow worker", expected[index], replay) })
+                } finally {
+                    ModifierPluginWorkers.stop(artifact.reference)
+                    preferences.removeNode()
+                    ModifierPluginStore.deleteTree(root)
+                }
+            }
         }
     }
 

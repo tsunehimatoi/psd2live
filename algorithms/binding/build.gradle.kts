@@ -1453,6 +1453,34 @@ tasks.register("pluginBrowFittedV3") {
     }
 }
 
+val browFittedV4WorkerJar = registerIsolatedBindingWorker(
+    "browFittedV4", "brow-fitted-v4", "worker-brow-fitted-v4", "io.github.psd2live.algorithms.binding.BrowFittedV4Worker",
+)
+tasks.register("pluginBrowFittedV4") {
+    dependsOn(browFittedV4WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-brow-fitted-v4")
+    val packageVersion = project.version.toString()
+    inputs.file(browFittedV4WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        browFittedV4WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.62726f772f666974746564.v4"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Fitted brows",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/binding","aliases":["brow/fitted"],"version":4,"name":"Fitted brows","category":"brow",
+               "targets":["mesh"],"requires":["rig.scaffold"],"exclusiveFamily":"base:brow","contextVersion":2,
+               "reads":["*"],"writes":["mesh","deformer","part","parameter","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val eyeLegacyWorkerJar = registerIsolatedBindingWorker(
     "eyeLegacy", "eye-legacy", "worker-eye-legacy", "io.github.psd2live.algorithms.binding.EyeLegacyWorker",
 )
