@@ -45,6 +45,7 @@ import io.github.psd2live.algorithms.binding.MouthTongueV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV6Algorithm
+import io.github.psd2live.algorithms.binding.RibbonsResidualAlgorithm
 import io.github.psd2live.algorithms.binding.SkirtAlgorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
@@ -228,6 +229,27 @@ internal object WorkspacePresetInitialization {
                 independent.takeIf(ModifierPluginCatalog::available) ?: configured
             } else configured
         })
+        if (fittedSources.isNotEmpty()) {
+            val ribbons = stack.instances.singleOrNull { it.type == RigModules.OUTFIT_RIBBONS.id && it.version == 1 }
+            if (ribbons != null) {
+                val upstream = stack.instances.take(stack.index(ribbons.id))
+                val profile = RibbonsResidualAlgorithm.PROFILE + mapOf(
+                    RigSourceModifiers.SCAFFOLD to 2, LegacyBodyV2Algorithm.TYPE to LegacyBodyV2Algorithm.VERSION,
+                    RigLegacyBindings.FITTED_FACE to FittedFaceV3Algorithm.VERSION)
+                val compatible = profile.all { (type, version) -> upstream.any {
+                    it.type == type && it.version == version && it.targets.containsAll(ribbons.targets)
+                } }
+                if (compatible) {
+                    val version = RibbonsResidualAlgorithm.VERSION
+                    val plugin = BuiltinModifierPlugins.reference(ribbons.type, version)
+                    if (plugin != null && ModifierPluginCatalog.available(ribbons.type, version, plugin)) {
+                        stack = stack.copy(instances = stack.instances.map {
+                            if (it.id == ribbons.id) it.copy(version = version, plugin = plugin) else it
+                        })
+                    }
+                }
+            }
+        }
         model = build("binding preview")
         val available = model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }
         val claimed = model.rig.modifierOutput!!.physics.groups.flatMapTo(HashSet()) { it.outputs.map { output -> output.parameter } }
