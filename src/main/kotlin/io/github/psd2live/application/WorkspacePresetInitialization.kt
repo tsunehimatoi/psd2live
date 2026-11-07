@@ -57,6 +57,7 @@ import io.github.psd2live.algorithms.binding.MouthTongueV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV6Algorithm
+import io.github.psd2live.algorithms.binding.NeckV3Algorithm
 import io.github.psd2live.algorithms.binding.RibbonsResidualAlgorithm
 import io.github.psd2live.algorithms.binding.RibbonsV4Algorithm
 import io.github.psd2live.algorithms.binding.SkirtAlgorithm
@@ -190,7 +191,8 @@ internal object WorkspacePresetInitialization {
                     val armVersion = sourceArmVersion(model.analysis,
                         closedMouth = mouth[RigModules.MOUTH_FITTED.id]?.first == MouthFittedV4Algorithm.VERSION)
                     val arms = armVersion?.let { packages(mapOf(RigModules.BODY_ARMS.id to it)) }.orEmpty()
-                    mouth + arms + packages(moodVersions)
+                    val neck = if (completeEyePair) packages(mapOf(RigModules.FACE_NECK.id to NeckV3Algorithm.VERSION)) else emptyMap()
+                    mouth + arms + neck + packages(moodVersions)
                 } else emptyMap()
                 headAndEye + lids + brows + extensions
             }
