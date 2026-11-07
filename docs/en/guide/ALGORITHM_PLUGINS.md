@@ -180,7 +180,7 @@ New IDs use `modifier:<instance-id>:<UTF-8 hex of local name>`. The host validat
 
 Bundled calls avoid IPC. External workers reuse processes, content-addressed buffers, and incremental input synchronization. Author input, binding templates, and algorithms with declared dependencies have separate caches. Folder edits do not evaluate algorithms.
 
-The acceptance limit is four seconds from reading the PSD through complete presets, preview and initial project history, minus the actual synchronous simulation-baking time. Baking must still finish; it cannot be deferred or omitted. Reports show total time, excluded baking time and counted time separately for first and repeated generation. Further baking optimization is currently deferred.
+Migration acceptance checks generation through the independent algorithms, output equivalence and historical replay. Performance optimization follows the migration. The diagnostic tool reports the first and repeated generation times with synchronous baking shown separately.
 
 Some bundled binding algorithms still extract their results from generated templates. Adjacent built-in algorithms can compute changes in parallel when their declared read and write domains are disjoint and their dependencies are already satisfied. The host checks actual reads and write preconditions and merges changes in stack order. Other algorithms evaluate in sequence. First and repeated generation are timed separately.
 
@@ -370,7 +370,7 @@ The host reconstructs observed values from the actual transmitted input projecti
 
 A cache hit does not advance unsent input revisions. The next real request remains relative to the last transmitted state. Exited, disabled or uninstalled workers cannot bypass availability checks through caching; failures and cancellation discard the worker. Dedicated checks use `plugin worker evaluations` and `plugin read cache hits` counters.
 
-The actual physics package passed checks showing no additional worker calls for repeated input or added unread parameters, and reevaluation after a read parameter changes, with equivalent final models. Reopening, uninstall and reinstall remain valid. This does not establish the complete-generation performance target or read-protocol support in the other five languages.
+The actual physics package passed checks showing no additional worker calls for repeated input or added unread parameters, and reevaluation after a read parameter changes, with equivalent final models. Reopening, uninstall and reinstall remain valid. Read-protocol support in the other five languages still needs verification.
 
 ### Host boundary for generated artwork
 

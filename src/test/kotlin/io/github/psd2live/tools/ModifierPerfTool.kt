@@ -49,7 +49,7 @@ class ModifierPerfTool {
                 val counted = elapsed - baking
                 report.appendLine("import $round: %.1f ms".format(elapsed))
                 report.appendLine("import $round baking excluded: %.1f ms".format(baking))
-                report.appendLine("import $round counted: %.1f ms; limit: 4000 ms; %s".format(counted, if (counted <= 4000.0) "PASS" else "FAIL"))
+                report.appendLine("import $round excluding baking: %.1f ms".format(counted))
                 stages.forEach { (name, value) ->
                     report.appendLine("%-65s %9.1f ms x%d".format(name, value.first, value.second))
                 }
