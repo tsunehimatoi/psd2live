@@ -157,6 +157,7 @@ dependencies {
 	implementation("org.jetbrains.compose.material:material:1.11.1")
 	implementation(project(path = ":algorithms:binding", configuration = "mouthOutlineElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthOutlineV2Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "mouthOutlineV3Elements"))
 	testImplementation(kotlin("test"))
 }
 
@@ -302,6 +303,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginHairLegacy")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-hair-legacy")) {
         into("algorithm-plugins/hair-legacy")
+    }
+    dependsOn(":algorithms:binding:pluginMouthOutlineV3")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-outline-v3")) {
+        into("algorithm-plugins/mouth-outline-v3")
     }
     dependsOn(":algorithms:binding:pluginMouthOutlineV2")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-outline-v2")) {
@@ -832,4 +837,15 @@ tasks.register<Test>("testMouthOutlinePackage") {
     val packageDirectory = project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-outline-source")
     inputs.dir(packageDirectory)
     systemProperty("psd2live.mouthOutlinePackage", packageDirectory.get().asFile.absolutePath)
+}
+
+tasks.register<Test>("testMouthOutlineV3Package") {
+    dependsOn("testClasses", ":algorithms:binding:pluginMouthOutlineV3")
+    val testSource = sourceSets.test.get()
+    testClassesDirs = testSource.output.classesDirs
+    classpath = testSource.runtimeClasspath
+    filter.includeTestsMatching("io.github.psd2live.core.MouthOutlineV3ParityTest")
+    val packageDirectory = project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-outline-v3")
+    inputs.dir(packageDirectory)
+    systemProperty("psd2live.mouthOutlineV3Package", packageDirectory.get().asFile.absolutePath)
 }

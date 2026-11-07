@@ -5132,6 +5132,62 @@ class WorkspaceLegacyBindingTest {
         assertEquals(expected, RigIrCompiler.compile(WorkspacePreviewBuilder().build(current.now.document)))
     }
 
+    @Test fun fittedOutlineMatchesRecommendedImport(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
+        val choices = WorkspaceInitialPreset()
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, model) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
+            preferSourceBindings = true)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val locked = stack.instances.single { it.type == "mouth.outline" }
+        assertEquals(1, locked.version)
+        val index = stack.index(locked.id)
+        val expected = assertNotNull(model.modifierEvaluation).outputs[index]
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 3))
+        val instance = locked.copy(version = 3, plugin = artifact.reference)
+        val independent = stack.copy(instances = stack.instances.map { if (it.id == locked.id) instance else it })
+        val updated = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = independent.toJson()))
+        val actual = WorkspacePreviewBuilder().build(updated)
+        val evaluation = assertNotNull(actual.modifierEvaluation)
+        val result = evaluation.outputs[index]
+        assertEquals(expected.deformers.map { it.id }, result.deformers.map { it.id })
+        val wrongDeformers = expected.deformers.zip(result.deformers).filter { it.first != it.second }.map { it.first.name }
+        val wrongMeshes = expected.meshes.zip(result.meshes).filter { it.first != it.second }.map { (a, b) ->
+            a.name + " geometry=${a.geometry == b.geometry} offsets=${a.offsets == b.offsets}" +
+                " channels=${a.channels == b.channels} shapes=${a.shapes == b.shapes}"
+        }
+        assertTrue(expected == result, "Differing deformers: $wrongDeformers. Differing meshes: $wrongMeshes.")
+        assertEquals(model.rig.modifierOutput, actual.rig.modifierOutput)
+        val legacyCompiled = RigIrCompiler.compile(model, tileArt = true)
+        val sourceCompiled = RigIrCompiler.compile(actual, tileArt = true)
+        assertEquals(legacyCompiled, sourceCompiled)
+        assertContentEquals(io.github.psd2live.format.compile.RigIrBinary.encode(legacyCompiled),
+            io.github.psd2live.format.compile.RigIrBinary.encode(sourceCompiled))
+
+        val directory = Files.createTempDirectory("fitted-outline-v3-package-")
+        val preferences = Preferences.userRoot().node("fitted-outline-v3-package/" + UUID.randomUUID())
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            for (name in artifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val context = assertNotNull(evaluation.readAlgorithms[instance.id]).context
+            val installed = store.install(staging.toString())
+            assertEquals(artifact.reference, installed.reference)
+            assertEquals(expected, ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(),
+                evaluation.outputs[index - 1], instance, {}, store, context = context,
+                resolveRasters = { rig, outputs, checkpoint -> RigModifierRasterAssets.attach(rig, outputs, actual.config, checkpoint) }))
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
     @Test fun mouthOutlineV2UsesCapturedLegacyMouthAndReplaysWithoutSwitchingTheDefault(): Unit = runBlocking {
         suspend fun fixture(): Fixture = Fixture(document()).also { it.install(); it.group(listOf("mouth/legacy")) }
         suspend fun add(f: Fixture, type: String) {
