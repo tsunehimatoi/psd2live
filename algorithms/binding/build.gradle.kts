@@ -3680,6 +3680,35 @@ tasks.register("pluginMouthSpringV7") {
     }
 }
 
+val mouthSpringV8WorkerJar = registerIsolatedBindingWorker(
+    "mouthSpringV8", "mouth-spring-v8", "worker-mouth-spring-v8", "io.github.psd2live.algorithms.binding.MouthSpringV8Worker",
+)
+
+tasks.register("pluginMouthSpringV8") {
+    dependsOn(mouthSpringV8WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-spring-v8")
+    val packageVersion = project.version.toString()
+    inputs.file(mouthSpringV8WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthSpringV8WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682e737072696e67.v8"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Mouth spring",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/spring","aliases":["mouth.spring"],"version":8,"name":"Mouth spring","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","mouth/fitted","mouth.jaw"],"contextVersion":2,
+               "reads":["mesh","deformer","parameter","hierarchy","physics"],"writes":["mesh","parameter","hierarchy","physics"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val eyeAftershockV3WorkerJar = registerIsolatedBindingWorker(
     "eyeAftershockV3", "eye-aftershock-v3", "worker-eye-aftershock-v3", "io.github.psd2live.algorithms.binding.EyeAftershockV3Worker",
 )

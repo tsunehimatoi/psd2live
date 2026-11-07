@@ -6,6 +6,7 @@ import io.github.psd2live.algorithms.binding.MouthSpringV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV7Algorithm
+import io.github.psd2live.algorithms.binding.MouthSpringV8Algorithm
 import io.github.psd2live.core.PartRole
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.SemanticTag
@@ -65,6 +66,19 @@ internal object RigMouthSpringModifier {
             parameters = { MouthSpringV6Algorithm.parameters(capture(it)) }, plugin = closedAlgorithm, authorContext = ::capture)
     }
 
+    private val modernAlgorithm = object : ReadingModifierAlgorithmPlugin by MouthSpringV8Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = MouthSpringV8Algorithm.optionalUpstream
+        override val canonicalOptInType = MouthSpringAlgorithm.TYPE
+    }
+
+    fun modernDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val contexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
+        fun capture(instance: RigModifierInstance) = contexts.getOrPut(instance) { requireNotNull(source).capture(instance, MouthSpringV8Algorithm.VERSION) }
+        return definition(source).copy(version = MouthSpringV8Algorithm.VERSION,
+            parameters = { MouthSpringV8Algorithm.parameters(capture(it)) }, plugin = modernAlgorithm, authorContext = ::capture)
+    }
+
     private val depthAlgorithm = object : ReadingModifierAlgorithmPlugin by MouthSpringV7Algorithm(),
         ModifierOptionalUpstream, ModifierVersionSelection {
         override val optionalUpstream = MouthSpringV6Algorithm.optionalUpstream
@@ -100,9 +114,7 @@ internal object RigMouthSpringModifier {
 
     private fun RigModifierSource.capture(instance: RigModifierInstance, version: Int = MouthSpringAlgorithm.VERSION): ModifierAlgorithmContext {
         val full = version >= MouthSpringV3Algorithm.VERSION
-        val closed = version == MouthSpringV6Algorithm.VERSION
-        val sourceVersions = if (closed) 4..4 else if (version >= MouthSpringV4Algorithm.VERSION) 1..3 else 1..2
-        val jawVersions = if (closed) 5..6 else if (version == MouthSpringV5Algorithm.VERSION) 1..4 else sourceVersions
+        val modern = version == MouthSpringV8Algorithm.VERSION
         val scaffold = provider(instance)
         require(scaffold.version == 2) { "Mouth spring v$version requires a shared v2 scaffold" }
         val preceding = activeBefore(instance).filter { item ->
@@ -111,10 +123,20 @@ internal object RigMouthSpringModifier {
         }
         val baseId = instance.config.getValue("base").jsonPrimitive.content
         val jawId = instance.config.getValue("dependencies").jsonObject.getValue("mouth.jaw").jsonPrimitive.content
-        val base = requireNotNull(preceding.singleOrNull { it.id == baseId && it.type == "mouth/fitted" && it.version in sourceVersions })
+        val base = requireNotNull(preceding.singleOrNull { it.id == baseId && it.type == "mouth/fitted" })
+        val closed = version == MouthSpringV6Algorithm.VERSION || modern && base.version == 5
+        val sourceVersions = if (closed) 4..4 else if (version >= MouthSpringV4Algorithm.VERSION) 1..3 else 1..2
+        require(if (modern) base.version in setOf(3, 5) else base.version in sourceVersions)
+        val jawVersions = when {
+            modern -> 7..7
+            closed -> 5..6
+            version == MouthSpringV5Algorithm.VERSION -> 1..4
+            else -> sourceVersions
+        }
         val jaw = requireNotNull(preceding.singleOrNull { it.id == jawId && it.type == "mouth.jaw" && it.version in jawVersions &&
             it.config["base"] == JsonPrimitive(baseId) }) { "Mouth spring v$version requires a compatible jaw binding" }
         val optional = when (version) {
+            MouthSpringV8Algorithm.VERSION -> MouthSpringV8Algorithm.optionalUpstream
             MouthSpringV6Algorithm.VERSION -> MouthSpringV6Algorithm.optionalUpstream
             MouthSpringV5Algorithm.VERSION -> MouthSpringV5Algorithm.optionalUpstream
             MouthSpringV4Algorithm.VERSION -> MouthSpringV4Algorithm.optionalUpstream
