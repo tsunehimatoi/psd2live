@@ -211,11 +211,8 @@ object RigIdCheck {
 	}
 
 	/** The model [preview] exports: interior effects lowered or dropped as the export resolves them ([RigIrCompiler]). */
-	fun exported(preview: RigPreviewModel): PuppetModel {
-		val (analysis, _, rig, config) = preview
-		return io.github.psd2live.core.interior.InteriorLifecycle.exportModel(rig.puppet, config.rigEdits,
-			PhysicsCatalog.active(analysis, config, rig.puppet.parameters.mapTo(linkedSetOf()) { it.id.raw }, rig.puppet))
-	}
+	fun exported(preview: RigPreviewModel): PuppetModel = io.github.psd2live.core.interior.InteriorLifecycle.exportModel(
+		preview.rig.puppet, preview.config.rigEdits, PhysicsCatalog.active(preview))
 
 	/** `kind id` for each ID more than one object of its kind holds. */
 	fun conflicts(model: PuppetModel, advanced: io.github.psd2live.format.model.AdvancedIR? = null): List<String> =

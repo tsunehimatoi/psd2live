@@ -2,7 +2,6 @@ package io.github.psd2live.core.modifier
 
 import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.RigRecipe
-import io.github.psd2live.format.model.Physics
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.format.model.TileArt
 import io.github.psd2live.targets.cubism.PuppetIr
@@ -18,28 +17,7 @@ internal object RigModifierPipeline {
     fun input(model: RigPreviewModel): RigIR {
         val config = ordinaryConfig(model.config)
         val authored = model.authored.finished(config.rigEdits, config.layerVisibility, config.drawOrderOverrides)
-        return compileOrdinary(model.modifierAuthorAnalysis ?: model.analysis, model.modifierAuthorAtlas ?: model.atlas, authored, model.config)
-    }
-
-    /** Compile authored sidecars without inferring generated physics from the names of ordinary parameters. */
-    fun compileOrdinary(analysis: PipelineAnalysis, atlas: PackedAtlas, rig: BuiltRig, config: PipelineConfig,
-                        tileArt: Boolean = false, simulations: Boolean = false): RigIR {
-        val stack = config.rigEdits.modifierStack?.let(RigModifierStack::fromJson)
-        val meshOnly = config.meshOnly && stack?.let { it.instances.none { entry -> entry.enabled } && it.appliedCapabilities.isEmpty() } == true
-        val ordinary = ordinaryConfig(config).copy(meshOnly = meshOnly, generatePhysics = false)
-        val compiled = RigIrCompiler.compile(analysis, atlas, rig.copy(modifierOutput = null), ordinary, tileArt, simulations)
-        val available = rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }
-        val claimed = HashSet<String>()
-        val groups = PhysicsCatalog.ordered(config.rigEdits.physicsEdits, config.rigEdits.physicsOrder) { it.id }
-            .filter { it.id !in config.rigEdits.disabledPhysicsIds && PhysicsCatalog.issueOf(it, available) == null }
-            .map { group ->
-                require(group.outputParameters.all { claimed.add(it) }) { "Ordinary physics groups have conflicting outputs" }
-                Physics3Json.group(group)
-            }
-        val textures = if (tileArt) compiled.textures else compiled.textures.copy(tileArt = rig.modifierRasterAssets)
-        return compiled.copy(textures = textures, physics = Physics(groups, config.rigEdits.physicsFps.toFloat()),
-            restPose = (if (meshOnly) compiled.restPose else emptyMap()) + rig.authoredRestPose.filterKeys { it in available },
-            parameterRoles = RigIrCompiler.orderedParameterRoles(rig.authoredParameterRoles + compiled.parameterRoles).filter { role -> role.parameters.all { it in available } })
+        return RigIrCompiler.compileAuthored(model.modifierAuthorAnalysis ?: model.analysis, model.modifierAuthorAtlas ?: model.atlas, authored, model.config)
     }
 
     /** Ordinary content may contain custom motions and physics, but no legacy preset runs implicitly. */
@@ -68,7 +46,7 @@ internal object RigModifierPipeline {
                 ProgressListener { message, fraction -> progress.update(message, fraction * .8) }, previousAtlas)
         }
         if (retained != null) RigBuildProfile.count("modifier author input cache hits")
-        val input = retained?.input ?: compileOrdinary(base.analysis, base.atlas, base.rig, config)
+        val input = retained?.input ?: RigIrCompiler.compileAuthored(base.analysis, base.atlas, base.rig, config)
         val source = RigModifierSource(base.analysis, base.atlas, config, base.rig.layerIdByDrawableId, base.rig.copiedDrawableIds, base.baseRig.puppet, pipeline.meshCache)
         // Saving the initial automatic layout as an explicit arrangement is presentation bookkeeping.
         // Compare the resolved layout and let the evaluator compare the complete authored IR, including
