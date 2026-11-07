@@ -24,7 +24,7 @@ internal object BuiltinModifierPlugins {
         hairChains(source), RigNeckModifier.definition(source), RigBustModifier.definition(source),
         RigHairLegacySource.definition(source), RigLidFadeModifier.definition(source), RigFittedEyeDefinition.definition(source),
         RigFittedMouthDefinition.definition(source), RigFittedFaceDefinition.definition(source),
-        RigEyeSquashModifier.definition(source),
+        RigEyeSquashModifier.definition(source), RigLegacyBodyDefinition.definition(source),
     )
 
     private fun hairChains(source: RigModifierSource?): RigModifierDefinition {

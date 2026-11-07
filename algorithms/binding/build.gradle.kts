@@ -804,3 +804,55 @@ tasks.register("pluginEyeSquash") {
         """.trimIndent())
     }
 }
+
+val bodyLegacyV2 = sourceSets.create("bodyLegacyV2")
+kotlin.target.compilations.named("bodyLegacyV2") {
+    associateWith(kotlin.target.compilations.getByName("main"))
+}
+val bodyLegacyV2ClassesJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("body-legacy-v2")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    from(bodyLegacyV2.output)
+}
+val bodyLegacyV2Elements = configurations.create("bodyLegacyV2Elements") {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+}
+artifacts.add(bodyLegacyV2Elements.name, bodyLegacyV2ClassesJar)
+
+val bodyLegacyV2WorkerJar by tasks.registering(Jar::class) {
+    dependsOn(workerJar)
+    archiveClassifier.set("worker-body-legacy-v2")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest { attributes["Main-Class"] = "io.github.psd2live.algorithms.binding.LegacyBodyV2Worker" }
+    from(bodyLegacyV2.output)
+    from(workerJar.flatMap { it.archiveFile }.map { zipTree(it) }) { exclude("META-INF/MANIFEST.MF") }
+}
+
+tasks.register("pluginBodyLegacyV2") {
+    dependsOn(bodyLegacyV2WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-body-legacy-v2")
+    val packageVersion = project.version.toString()
+    inputs.file(bodyLegacyV2WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        bodyLegacyV2WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.626f64792f6c6567616379.v2"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Legacy body binding",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/motion","aliases":["body/legacy"],"version":2,"name":"Legacy body binding","category":"body",
+               "targets":["mesh"],"requires":["rig.scaffold"],"contextVersion":2,"exclusiveFamily":"base:body",
+               "reads":["*"],"writes":["mesh","deformer","hierarchy","relations","parameter"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}

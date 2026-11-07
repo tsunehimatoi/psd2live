@@ -1379,6 +1379,62 @@ class WorkspaceLegacyBindingTest {
         assertTrue(differences.isEmpty(), differences.joinToString())
     }
 
+    @Test fun independentBodyKeepsLegacyHeadAndBodyMotion(): Unit = runBlocking<Unit> {
+        suspend fun fixture(version: Int?): Fixture {
+            val f = Fixture(document(outfitDetails = true))
+            f.install()
+            f.edit("modifier_add", f.addition("rig.scaffold", "structure"))
+            val body = f.addition("body/legacy", "body", config = buildJsonObject {
+                put("scaffold", "structure")
+                put("strength", .75f)
+                putJsonObject("tuning") { put("faceLeanUp", 11f); put("breathLift", 4.25f) }
+            })
+            f.edit("modifier_add", if (version == null) body else JsonObject(body + ("version" to JsonPrimitive(version))))
+            f.edit("modifier_add", f.addition("face/legacy", "face"))
+            return f
+        }
+        val previous = fixture(null)
+        val current = fixture(2)
+        val stack = RigModifierStack.fromJson(current.now.document.rigEdits.modifierStack!!)
+        val (scaffold, body) = stack.instances
+        assertEquals(1, RigModifierStack.fromJson(previous.now.document.rigEdits.modifierStack!!).instances[1].version)
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find("body/legacy", 2))
+        assertEquals(artifact.reference, body.plugin)
+        val output = assertNotNull(current.now.model.modifierEvaluation).outputs
+        val previousOutput = assertNotNull(previous.now.model.modifierEvaluation).outputs
+        assertEquals(previousOutput[1], output[1])
+        val expected = RigIrCompiler.compile(previous.now.model)
+        assertEquals(expected, RigIrCompiler.compile(current.now.model))
+
+        val directory = Files.createTempDirectory("body-legacy-v2-")
+        val preferences = Preferences.userRoot().node("body-legacy-v2/${UUID.randomUUID()}")
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            artifact.manifest.files.keys.forEach { name ->
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val entry = store.install(staging.toString())
+            val algorithm = entry.manifest.algorithms.single()
+            val worker = ModifierPluginCatalog.definitions(store, BuiltinModifierPlugins.definitions(RigModifierSource.of(current.now.model)))
+                .single { it.type == algorithm.type }
+            val instance = body.copy(type = algorithm.type, plugin = entry.reference)
+            val context = worker.authorContext(instance).withUpstream(listOf(
+                ModifierUpstreamCapability(scaffold.type, scaffold.type, scaffold.version, scaffold.targets,
+                    scaffold.id, scaffold.config, scaffold.outputAliases, scaffold.plugin),
+            ))
+            assertEquals(output[1], (worker.plugin as ContextualModifierAlgorithmPlugin)
+                .evaluate(output[0], instance, context, {}))
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+        current.edit("modifier_apply", buildJsonObject { put("id", "body") })
+        assertEquals(expected, RigIrCompiler.compile(WorkspacePreviewBuilder().build(current.now.document)))
+    }
+
     @Test fun depthTurnMatchesNativeAcrossHeadAndBodyPoses(): Unit = runBlocking<Unit> {
         val f = Fixture(document(sideLock = true)); f.install()
         f.group(listOf("body/legacy", "face/fitted", "eye/fitted", "brow/fitted", "mouth/fitted", "hair/legacy"))

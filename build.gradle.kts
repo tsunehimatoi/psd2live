@@ -71,6 +71,7 @@ dependencies {
 	implementation(project(":algorithms:binding"))
 	implementation(project(path = ":algorithms:binding", configuration = "eyeFittedElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "eyeSquashElements"))
+	implementation(project(path = ":algorithms:binding", configuration = "bodyLegacyV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthFittedV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "fittedFaceV2Elements"))
 	implementation(platform("io.ktor:ktor-bom:3.5.1"))
@@ -266,6 +267,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginEyeSquash")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-squash")) {
         into("algorithm-plugins/eye-squash")
+    }
+    dependsOn(":algorithms:binding:pluginBodyLegacyV2")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-body-legacy-v2")) {
+        into("algorithm-plugins/body-legacy-v2")
     }
     dependsOn(":algorithms:binding:pluginEyeFitted")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-fitted")) {
