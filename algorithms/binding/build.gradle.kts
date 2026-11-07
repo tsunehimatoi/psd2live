@@ -2756,6 +2756,40 @@ tasks.register("pluginMouthFittedV3") {
     }
 }
 
+val mouthFittedV4WorkerJar = registerIsolatedBindingWorker(
+    "mouthFittedV4", "mouth-fitted-v4", "worker-mouth-fitted-v4", "io.github.psd2live.algorithms.binding.MouthFittedV4Worker",
+)
+kotlin.target.compilations.named("mouthFittedV4") {
+    associateWith(kotlin.target.compilations.getByName("mouthFittedV3"))
+}
+mouthFittedV4WorkerJar.configure {
+    from(sourceSets["mouthFittedV3"].output)
+}
+
+tasks.register("pluginMouthFittedV4") {
+    dependsOn(mouthFittedV4WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-fitted-v4")
+    inputs.file(mouthFittedV4WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", project.version.toString())
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthFittedV4WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682f666974746564.v4"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"${project.version}","name":"Fitted mouth with a closed drawing",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/binding","aliases":["mouth/fitted"],"version":4,"contextVersion":2,"name":"Fitted mouth with a closed drawing","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","face/fitted"],"exclusiveFamily":"base:mouth",
+               "reads":["*"],"writes":["mesh","parameter","deformer","hierarchy","relations","rest_pose"],"composableKinds":["mesh","parameter","deformer","hierarchy","relations"],
+               "parameters":[{"id":"ParamMouthForm","name":"Mouth Form","min":-1,"max":1,"default":0},{"id":"ParamMouthOpenY","name":"Mouth Open","min":0,"max":1,"default":0}],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val mouthVowelV4WorkerJar = registerIsolatedBindingWorker(
     "mouthVowelV4", "mouth-vowel-v4", "worker-mouth-vowel-v4", "io.github.psd2live.algorithms.binding.MouthVowelV4Worker",
 )

@@ -1796,6 +1796,65 @@ class WorkspaceLegacyBindingTest {
         assertEquals(RigIrCompiler.compile(expected), RigIrCompiler.compile(current))
     }
 
+    @Test fun fittedMouthWithSeparateClosedDrawingMatchesLockedVersionAndWorker(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true, closedMouth = true)
+        val choices = WorkspaceInitialPreset()
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices, preferSourceBindings = true)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val index = stack.instances.indexOfFirst { it.type == "mouth/fitted" }
+        val locked = stack.instances[index]
+        assertEquals(1, locked.version)
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 4))
+        val candidate = stack.copy(instances = stack.instances.mapIndexed { i, it ->
+            if (i == index) it.copy(version = 4, plugin = artifact.reference) else it
+        })
+        val document = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = candidate.toJson()))
+        val actual = WorkspacePreviewBuilder().build(document)
+        val reference = assertNotNull(baseline.modifierEvaluation).outputs
+        val evaluation = assertNotNull(actual.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, evaluation.entries[index].status)
+        val before = reference[index - 1]
+        val after = reference[index]
+        assertNotEquals(before.meshes.single { it.name == "mouth-closed" }.channels, after.meshes.single { it.name == "mouth-closed" }.channels)
+        assertNotEquals(before.meshes.single { it.name == "top" }.geometry, after.meshes.single { it.name == "top" }.geometry)
+        for (stage in index until stack.instances.size) {
+            val lhs = reference[stage]
+            val rhs = evaluation.outputs[stage]
+            val meshes = lhs.meshes.zip(rhs.meshes).filter { (a, b) -> a != b }.joinToString { (a, b) ->
+                "${a.name} geometry=${a.geometry != b.geometry} grid=${a.offsets != b.offsets} channels=${a.channels != b.channels}"
+            }
+            assertTrue(lhs == rhs, "${stack.instances[stage].type}: $meshes, other=${lhs.copy(meshes = emptyList()) != rhs.copy(meshes = emptyList())}")
+        }
+        val compiled = RigIrCompiler.compile(baseline, tileArt = true)
+        assertEquals(compiled, RigIrCompiler.compile(actual, tileArt = true))
+        assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(document), tileArt = true))
+        val instance = candidate.instances[index]
+        val definition = RigFittedMouthDefinition.closedDefinition(RigModifierSource.of(actual))
+        val context = definition.authorContext(instance).withUpstream(candidate.instances.take(index).map {
+            ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+        })
+        val directory = Files.createTempDirectory("closed-fitted-mouth-package-")
+        val preferences = Preferences.userRoot().node("closed-fitted-mouth-package/${UUID.randomUUID()}")
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            for (name in artifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val installed = store.install(staging.toString())
+            assertEquals(after, ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(), before,
+                instance, {}, store, context = context, declaredParameters = definition.parameters(instance)))
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
     @Test fun fittedVowelsReplayAfterIndependentOutline(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
         val choices = WorkspaceInitialPreset()

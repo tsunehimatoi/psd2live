@@ -7,7 +7,7 @@ import kotlinx.serialization.json.*
 
 /** Captures the source-only transition for the fitted mouth and its shared head field. */
 internal object RigFittedMouthModernSource {
-    fun capture(owner: RigModifierSource, instance: RigModifierInstance): ModifierAlgorithmContext {
+    fun capture(owner: RigModifierSource, instance: RigModifierInstance, closedDrawing: Boolean = false): ModifierAlgorithmContext {
         val scaffold = owner.provider(instance)
         require(scaffold.version == 2 && instance.targets.toSet() == scaffold.targets.toSet())
         val prefix = owner.activeBefore(instance).filter { it.id != scaffold.id && it.targets.any(instance.targets::contains) }
@@ -30,6 +30,10 @@ internal object RigFittedMouthModernSource {
         }
         val fitted = new.fittedMouth(after)
         require(fitted?.source != null && local.isNotEmpty()) { "Fitted mouth v3 requires source mouth measurements" }
+        require(!closedDrawing || fitted.closedLine) { "Fitted mouth v4 requires a separate closed drawing" }
+        val stationary = if (!closedDrawing) emptyMap() else layers.filter { (id, layer) ->
+            id !in local && id !in styled && old.parentAndFrame(layer, before) != new.parentAndFrame(layer, after)
+        }
         val newFrames = local.mapValues { new.parentAndFrame(it.value, after) }
         val parents = newFrames.mapValues { (_, frame) -> frame.first?.raw }
         val measurements = RigFittedMouthSource.capture(new, after, parents, local,
@@ -63,7 +67,7 @@ internal object RigFittedMouthModernSource {
                 }
             }
         }
-        fun meshes(settings: PipelineConfig, measured: RigBuilder.RigContext) = ScaffoldMeshContext.capture((local + styled).map { (id, layer) ->
+        fun meshes(settings: PipelineConfig, measured: RigBuilder.RigContext) = ScaffoldMeshContext.capture((local + styled + stationary).map { (id, layer) ->
             val data = RigBuilder.fittedMouthSourceMesh(layer, measured, settings, owner.atlas, owner.meshCache)
             ScaffoldMeshContext.Material(id, layer.source.id.raw,
                 ScaffoldMesh.RawMesh(data.rigPositions, data.mesh.uvs, data.mesh.indices), ScaffoldMesh.Geometry.Zero)
@@ -84,6 +88,12 @@ internal object RigFittedMouthModernSource {
             putJsonObject("styled") {
                 styled.forEach { (id, layer) -> putJsonObject(id) {
                     put("tag", layer.semantic.tag.name)
+                    put("before", frame(old, before, layer))
+                    put("after", frame(new, after, layer))
+                } }
+            }
+            if (closedDrawing) putJsonObject("stationary") {
+                stationary.forEach { (id, layer) -> putJsonObject(id) {
                     put("before", frame(old, before, layer))
                     put("after", frame(new, after, layer))
                 } }
