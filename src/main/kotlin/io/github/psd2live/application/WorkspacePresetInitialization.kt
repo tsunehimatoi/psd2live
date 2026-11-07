@@ -22,12 +22,12 @@ internal object WorkspacePresetInitialization {
         require(stack.instances.isEmpty()) { "Initialize presets only into an empty stack" }
         val pipeline = PSD2LivePipeline().apply { deferRuntimeBundles = true }
         fun current() = document.copy(rigEdits = document.rigEdits.copy(modifierStack = stack.toJson()))
-        fun build(): RigPreviewModel {
+        fun build(stage: String): RigPreviewModel = RigBuildProfile.stage("source preset: $stage") {
             work.checkpoint()
             val candidate = current()
-            return pipeline.buildPreview(candidate.source, candidate.config(), ProgressListener { _, _ -> work.checkpoint() })
+            pipeline.buildPreview(candidate.source, candidate.config(), ProgressListener { _, _ -> work.checkpoint() })
         }
-        var model = build()
+        var model = build("author preview")
         val targets = model.rig.puppet.drawables.filter { it.mesh != null && it.id.raw in model.rig.ownLayerIdByDrawableId }
             .map { ModifierTarget("mesh", it.id.raw) }
         if (targets.isEmpty()) {
@@ -85,7 +85,7 @@ internal object WorkspacePresetInitialization {
                 independent.takeIf(ModifierPluginCatalog::available) ?: configured
             } else configured
         })
-        model = build()
+        model = build("binding preview")
         val available = model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }
         val claimed = model.rig.modifierOutput!!.physics.groups.flatMapTo(HashSet()) { it.outputs.map { output -> output.parameter } }
         if (config.generatePhysics) for (rule in PhysicsGenerator.presetRules(
@@ -128,7 +128,9 @@ internal object WorkspacePresetInitialization {
             WorkspaceModifierEdits.captureParameterProviders(it.copy(presetGroup = group), model, stopAtConsumer = true)
         })
         RigModifierAlgorithms.evaluator().validateOrder(stack)
-        stack = WorkspaceModifierSimulation.prepare(current(), stack, work, pipeline = pipeline)
-        return current() to build().also { work.checkpoint(); it.runtimeBundle.materialize(); work.checkpoint() }
+        stack = RigBuildProfile.stage("source preset: simulation preparation") {
+            WorkspaceModifierSimulation.prepare(current(), stack, work, pipeline = pipeline)
+        }
+        return current() to build("final preview").also { work.checkpoint(); it.runtimeBundle.materialize(); work.checkpoint() }
     }
 }
