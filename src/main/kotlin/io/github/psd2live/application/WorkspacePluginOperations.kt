@@ -36,18 +36,23 @@ internal object WorkspacePluginManagement {
             BuiltinModifierPlugins.entries.forEach { entry -> addJsonObject {
                 val reference = entry.reference
                 val definition = entry.definition
+                val manifest = entry.artifact?.manifest
+                val algorithm = manifest?.algorithms?.singleOrNull { definition.type in it.aliases && definition.version == it.version }
                 put("id", reference.id); put("version", reference.version); put("digest", reference.digest); put("name", definition.type)
-                put("available", store.builtinEnabled(reference.id)); put("issues", JsonArray(emptyList()))
-                put("dependencies", JsonArray(emptyList())); put("conflicts", JsonArray(emptyList())); put("resolved_dependencies", JsonArray(emptyList()))
+                putResolution(store.resolution(reference), manifest)
                 put("enabled", store.builtinEnabled(reference.id)); put("builtin", true); put("git_commit", JsonNull)
                 putJsonArray("algorithms") { addJsonObject {
                     put("type", definition.type); put("version", definition.version); put("name", definition.type)
-                    put("context_version", if (definition.upstreamInputs || definition.plugin is io.github.psd2live.core.modifier.ReadingModifierAlgorithmPlugin) 2 else 1)
-                    put("config_schema", WorkspaceModifierSchemas.configuration(definition.type)); put("defaults", JsonObject(emptyMap()))
+                    val builtinContext = if (definition.upstreamInputs || definition.plugin is ReadingModifierAlgorithmPlugin) 2 else 1
+                    put("context_version", algorithm?.contextVersion ?: builtinContext)
+                    put("config_schema", WorkspaceModifierSchemas.configuration(definition.type))
+                    put("defaults", algorithm?.defaults ?: JsonObject(emptyMap()))
                     put("requires", JsonArray(definition.requires.sorted().map(::JsonPrimitive)))
                     put("provides", JsonArray(definition.provides.sorted().map(::JsonPrimitive)))
-                    put("targets", JsonArray((if (definition.type == "swing") listOf("mesh", "deformer") else listOf("mesh")).map(::JsonPrimitive)))
-                    put("reads", JsonArray(listOf(JsonPrimitive("*")))); put("writes", JsonArray(listOf(JsonPrimitive("*"))))
+                    val targets = algorithm?.targets ?: if (definition.type == "swing") setOf("mesh", "deformer") else setOf("mesh")
+                    put("targets", JsonArray(targets.sorted().map(::JsonPrimitive)))
+                    put("reads", JsonArray((algorithm?.reads ?: setOf("*")).sorted().map(::JsonPrimitive)))
+                    put("writes", JsonArray((algorithm?.writes ?: setOf("*")).sorted().map(::JsonPrimitive)))
                     put("exclusive_family", definition.exclusiveFamily?.let(::JsonPrimitive) ?: JsonNull)
                 } }
             } }
@@ -55,12 +60,17 @@ internal object WorkspacePluginManagement {
         } }
     }
 
+    private fun JsonObjectBuilder.putResolution(resolution: ModifierPluginResolution, manifest: ModifierPluginManifest?) {
+        put("available", resolution.available)
+        put("issues", JsonArray(resolution.issues.map(::JsonPrimitive)))
+        put("dependencies", Json.encodeToJsonElement(manifest?.dependencies.orEmpty()))
+        put("conflicts", Json.encodeToJsonElement(manifest?.conflicts.orEmpty()))
+        put("resolved_dependencies", Json.encodeToJsonElement(resolution.dependencies))
+    }
+
     private fun describe(entry: InstalledModifierPlugin, store: ModifierPluginStore, inspecting: Boolean = false) = buildJsonObject {
         val resolution = if (inspecting) ModifierPluginDependencies.resolve(entry.reference, store.packages().filterNot { it.reference == entry.reference } + entry) else store.resolution(entry.reference)
-        put("available", resolution.available); put("issues", JsonArray(resolution.issues.map(::JsonPrimitive)))
-        put("dependencies", Json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(ModifierPluginDependency.serializer()), entry.manifest.dependencies))
-        put("conflicts", Json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(ModifierPluginDependency.serializer()), entry.manifest.conflicts))
-        put("resolved_dependencies", Json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(ModifierPluginReference.serializer()), resolution.dependencies))
+        putResolution(resolution, entry.manifest)
         put("id", entry.reference.id); put("version", entry.reference.version); put("digest", entry.reference.digest)
         put("name", entry.manifest.name); put("enabled", entry.enabled); put("builtin", false)
         put("git_commit", entry.gitCommit?.let(::JsonPrimitive) ?: JsonNull)

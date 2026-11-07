@@ -55,12 +55,13 @@ internal object ModifierPluginCatalog {
         } }
     }
 
-    fun available(instance: RigModifierInstance): Boolean = instance.plugin?.let { reference ->
-        if (reference.id.startsWith("builtin.")) ModifierPluginStore.shared.builtinEnabled(reference.id) &&
-            (BuiltinModifierPlugins.matches(instance) || ModifierPluginStore.shared.resolution(reference).available)
-        else ModifierPluginStore.shared.resolution(reference).available
-    } ?: BuiltinModifierPlugins.reference(instance.type, instance.version)?.let { ModifierPluginStore.shared.builtinEnabled(it.id) }
-        ?: ModifierPluginStore.shared.builtinsEnabled()
+    fun available(instance: RigModifierInstance): Boolean = available(instance.type, instance.version, instance.plugin)
+
+    fun available(type: String, version: Int, plugin: ModifierPluginReference? = null): Boolean {
+        val reference = plugin ?: BuiltinModifierPlugins.reference(type, version)
+        val store = ModifierPluginStore.shared
+        return reference?.let { store.resolution(it).available } ?: store.builtinsEnabled()
+    }
 
     fun algorithm(type: String, version: Int? = null): Pair<InstalledModifierPlugin, ModifierPluginAlgorithm>? {
         val store = ModifierPluginStore.shared

@@ -6,7 +6,7 @@ Bundled entries are catalogued and enabled independently by algorithm type and r
 
 External packages may declare dependencies on bundled package IDs and versions returned by `plugin_list`. Installation locks their content digests; disabling or losing a required bundled version makes the dependent package unavailable too. The aggregate `builtin` identity is reserved. Installable `builtin.*` archives must declare a stable type alias matching their package ID and algorithm revision, for historical bundled algorithm restoration. Enabled states persist in preferences but evaluation reads an in-memory snapshot instead of accessing system preferences per entry.
 
-Independent packages also cover legacy mouth and hair binding, hair chains, neck tilt, chest bounce, eyelid fade, and the opt-in fitted face v2, fitted eyes v3, and fitted mouth v2. Other bundled bindings still have compatibility paths that extract their results from host-generated templates.
+The application ships at least one independently executable package for each of the 49 modifier types. Historical instances replay their locked revisions. Some recommended presets still use v1 bindings that extract results from host-generated templates.
 
 Select fitted face v2, fitted eyes v3, or fitted mouth v2 by version in the add menu. Fitted face v2 requires the complete target set of a neutral shared v2 scaffold. Fitted eyes v3 requires a compatible eye scaffold, and fitted mouth v2 requires a neutral mouth scaffold. Fitted eyes v4 also supports a complete shared v2 scaffold with fitted face v1 and, when present, legacy body v1. It can move the head frames needed by the eyes and rejects combinations where it cannot preserve authored geometry or references. New source projects with presets use legacy body v2 when the full shared v2 scaffold and the package are available. Legacy body v2 can also be selected by version. It computes body motion and head pitch from source measurements and requires a source-aware scaffold. Shared scaffolds require their full target set. Mouth outline v2 requires legacy mouth v2 on the same static scaffold with no other preceding active bindings. Iris squash v2 is also selectable by version and requires fitted eyes and the captured iris topology. Use v1 with fitted head turn. The document stores the stable modifier type and the selected package so later modifiers can still resolve the original dependency type.
 
@@ -98,7 +98,7 @@ Preferences record the installation directory and enabled state. The default dir
 
 ## MCP
 
-GUI and MCP share one management service. `plugin_list` returns package identity, enabled state, algorithm configuration schemas/defaults, dependencies, targets, and read/write domains; `problems` reports unreadable packages.
+GUI and MCP share one management service. `plugin_list` returns package identity, enabled state, algorithm configuration schemas and defaults, dependencies, targets, and read/write domains. Bundled packages report dependencies, conflicts, and read/write domains from their manifests. Built-in algorithm configuration schemas come from the host validation contract. `problems` reports unreadable packages.
 
 `plugin_inspect` and `plugin_install` accept `source` and optional Git `ref`. For example:
 

@@ -5,7 +5,8 @@ import kotlinx.serialization.json.*
 
 /** Individually versioned, in-process entries. Null document references remain legacy aliases, never rewritten on read. */
 internal object BuiltinModifierPlugins {
-    data class Entry(val reference: ModifierPluginReference, val definition: RigModifierDefinition)
+    data class Entry(val reference: ModifierPluginReference, val definition: RigModifierDefinition,
+                     val artifact: BundledAlgorithmArtifacts.Artifact? = null)
 
     private val physicsCode = listOf(
         io.github.psd2live.algorithms.physics.PendulumAlgorithm::class.java,
@@ -56,7 +57,7 @@ internal object BuiltinModifierPlugins {
 
     val entries: List<Entry> by lazy {
         definitions(null).map { definition ->
-            BundledAlgorithmArtifacts.find(definition.type, definition.version)?.let { return@map Entry(it.reference, definition) }
+            BundledAlgorithmArtifacts.find(definition.type, definition.version)?.let { return@map Entry(it.reference, definition, it) }
             val implementation = when (definition.type) {
                 "swing" -> SwingAlgorithmPlugin::class.java
                 "simulation" -> SimulationAlgorithmPlugin::class.java
@@ -84,10 +85,10 @@ internal object BuiltinModifierPlugins {
     /** Bundled and installed entries participate in the same package dependency graph. */
     fun packages(store: ModifierPluginStore): List<InstalledModifierPlugin> = entries.map { entry ->
         val definition = entry.definition
-        val manifest = ModifierPluginManifest(id = entry.reference.id, version = entry.reference.version,
+        val manifest = entry.artifact?.manifest ?: ModifierPluginManifest(id = entry.reference.id, version = entry.reference.version,
             name = definition.type, commands = emptyMap(), files = emptyMap(), algorithms = listOf(
                 ModifierPluginAlgorithm(definition.type, definition.version, definition.type,
-                    requires = definition.requires, exclusiveFamily = definition.exclusiveFamily,
+                    requires = definition.requires, provides = definition.provides, exclusiveFamily = definition.exclusiveFamily,
                     reads = setOf("*"), writes = setOf("*"), composableKinds = definition.composableKinds,
                     configSchema = buildJsonObject { put("type", "object") }, defaults = JsonObject(emptyMap()))))
         InstalledModifierPlugin(manifest, entry.reference, store.root, store.builtinEnabled(entry.reference.id))

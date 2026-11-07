@@ -6,7 +6,7 @@
 
 外部包可以在 `dependencies` 中引用 `plugin_list` 返回的内置包 ID 与版本；安装时锁定相同的内容摘要，内置项被停用或对应版本缺失时依赖包也不可用。`builtin` 整体身份保留；`builtin.*` 安装包必须声明与包 ID 和算法修订匹配的稳定类型别名，供历史内置算法恢复。启停状态保存在偏好中，求值从内存快照读取，不逐项访问系统偏好。
 
-已独立打包的类型还包括传统嘴部与头发、发链、颈部倾斜、胸部弹性、眼睑淡出，以及可显式选择的拟合脸 v2、拟合眼 v3 和拟合嘴 v2。其余内置绑定仍有从宿主生成模板提取结果的兼容路径。
+应用为 49 种修改器各随附至少一个可独立执行的包。历史实例继续按锁定修订重放。部分推荐预设仍使用 v1，从宿主生成模板提取结果。
 
 其中物理组实现已迁到 `:algorithms:physics`：`PendulumAlgorithm` 直接实现公共求值接口，配置解析、物理组转换和输出冲突检查均在该模块完成。算法仅使用 `algorithm-api`，应用注册入口只委托调用；普通物理导出和其他生成器复用同一转换实现。另由 `algorithm-worker` 提供工作进程入口，`./gradlew :algorithms:physics:pluginPackage` 在 `algorithms/physics/build/plugin` 生成独立安装目录（`plugin.json` 与携带依赖的 `algorithm.jar`），可交给 `plugin_install`。包 ID 为 `builtin.70687973696373.v1`，入口为该命名空间下的 `/pendulum`，`aliases: ["physics"]` 保留工程中的类型、算法修订和输出 ID。
 
@@ -98,7 +98,7 @@
 
 ## MCP
 
-GUI 与 MCP 使用相同管理服务。`plugin_list` 返回包身份、启用状态、算法列表、配置 schema、默认值、依赖、目标类型和读写范围。`problems` 列出不能加载的包。
+GUI 与 MCP 使用相同管理服务。`plugin_list` 返回包身份、启用状态、算法列表、配置 schema、默认值、依赖、目标类型和读写范围。随附包使用自身清单的依赖、冲突和读写声明。内置算法的配置 schema 来自宿主的校验契约。`problems` 列出不能加载的包。
 
 ```json
 {"source":"D:/plugins/example-python.zip"}
