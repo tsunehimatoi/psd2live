@@ -46,6 +46,8 @@ Mouth capture v2 adds mouth-tracking keyforms using the original mesh and a comp
 
 Mouth jaw v2 is opt-in. It uses a shared v2 source scaffold and a compatible fitted mouth to add opening motion to the face, nose and details below the mouth. Ordinary and fitted head turns, mouth outlines, vowels and capture can precede it. Use v1 for separately drawn lip layers, edited target meshes or combinations that need another deformation carrier.
 
+Mouth tongue v2 adds tongue-out forms to a fitted mouth with a tongue layer and a preceding capture modifier. It supports a single mouth drawing on the original source mesh. Use v1 for layered lips or a separate closed-mouth drawing.
+
 Skirt sway v2 is selectable for topwear or bottomwear attached under the torso. It uses a shared source frame and preserves the existing skirt mesh, physics and simulation bindings in compatible presets.
 
 Arm swing v2 is selectable for the original hanging-arm frames of a shared v2 scaffold, with body and face bindings on that scaffold. Use v1 if an arm has been reparented or its neutral lattice edited.

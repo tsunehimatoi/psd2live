@@ -15,7 +15,7 @@ internal object BundledAlgorithmArtifacts {
     val artifacts: List<Artifact> by lazy {
         listOf("physics", "motion", "swing", "simulation", "binding", "see-through-eye", "see-through-brow",
             "skin-clip", "scaffold-1", "scaffold-2", "mouth-legacy", "hair-chains", "face-neck", "body-bust", "outfit-skirt", "outfit-ribbons", "outfit-creature",
-            "hair-legacy", "eye-lid-fade", "eye-fitted", "mouth-fitted-v2", "mouth-vowel", "mouth-capture", "mouth-jaw", "fitted-face-v2", "eye-squash", "body-legacy-v2",
+            "hair-legacy", "eye-lid-fade", "eye-fitted", "mouth-fitted-v2", "mouth-vowel", "mouth-capture", "mouth-jaw", "mouth-tongue", "fitted-face-v2", "eye-squash", "body-legacy-v2",
             "mouth-outline-v2", "brow-fitted-v2", "eye-legacy", "face-legacy-v2", "brow-legacy-v2", "depth-turn-v2",
             "eye-wide", "brow-shape", "eye-smile", "eye-fitted-v4", "brow-spring", "brow-blink", "eye-aftershock", "body-arms", "brow-lid", "eye-gaze-lid", "eye-emotion", "eye-highlight").map { name ->
             val resource = "/algorithm-plugins/$name/"

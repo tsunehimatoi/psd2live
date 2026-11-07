@@ -575,6 +575,95 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun independentMouthTongueMatchesLockedVersionWithHeadTurnAndInstalledWorker(): Unit = runBlocking {
+        for (head in listOf("face/legacy", "face/fitted")) {
+            val f = Fixture(document(mouthDetails = true))
+            f.install()
+            f.group(listOf("body/legacy", head, "mouth/fitted"))
+            if (head == "face/fitted") {
+                val vowel = f.addition("mouth.vowel", "vowels", config = buildJsonObject { put("scaffold", "structure"); put("base", "mouth") })
+                f.edit("modifier_add", JsonObject(vowel + ("version" to JsonPrimitive(2))))
+            }
+            val capture = f.addition("mouth.capture", "capture", config = buildJsonObject { put("scaffold", "structure"); put("base", "mouth") })
+            f.edit("modifier_add", if (head == "face/fitted") JsonObject(capture + ("version" to JsonPrimitive(2))) else capture)
+            val prefix = f.now
+            val previous = assertNotNull(prefix.model.rig.modifierOutput)
+            val add = f.addition("mouth.tongue", "tongue-out", config = buildJsonObject {
+                put("scaffold", "structure"); put("base", "mouth")
+                putJsonObject("dependencies") { put("mouth.capture", "capture") }
+            })
+            f.edit("modifier_add", add)
+            assertEquals(1, RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.last().version)
+            val legacy = f.now.model
+            val expected = assertNotNull(legacy.rig.modifierOutput)
+            f.runtime.checkout(f.now.projectId, f.now.state, prefix.historyHead)
+            f.edit("modifier_add", JsonObject(add + ("version" to JsonPrimitive(2))))
+            val current = f.now.model
+            val actual = assertNotNull(current.rig.modifierOutput)
+            assertEquals(expected.parameters, actual.parameters)
+            assertTrue(previous.parameters.none { it.id == "ParamTongueOut" })
+            assertTrue(actual.meshes.single { it.name == "tongue" }.shapes.any { it.parameter == "ParamTongueOut" })
+            assertEquals(expected.parameterTree, actual.parameterTree)
+            for ((before, after) in expected.meshes.zip(actual.meshes)) {
+                assertEquals(before.shapes, after.shapes, before.id)
+                assertEquals(before, after, before.id)
+            }
+            assertEquals(expected, actual)
+            val compiled = RigIrCompiler.compile(current)
+            assertEquals(RigIrCompiler.compile(legacy), compiled)
+            val pose = mapOf(StandardParameters.ANGLE_X to 18f, StandardParameters.ANGLE_Y to -12f,
+                StandardParameters.MOUTH_OPEN to .25f, StandardParameters.MOUTH_FORM to .44f,
+                ParameterId("ParamTongueOut") to .7f)
+            val evaluator = CpuDeformationEvaluator()
+            val mouth = mesh(f, "tongue").id
+            val changed = evaluator.evaluate(current.rig.puppet, pose).worldPositions.getValue(mouth)
+            assertContentEquals(evaluator.evaluate(legacy.rig.puppet, pose).worldPositions.getValue(mouth), changed)
+            assertFalse(evaluator.evaluate(prefix.model.rig.puppet, pose).worldPositions.getValue(mouth).contentEquals(changed))
+
+            val stack = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
+            val instance = stack.instances.last()
+            val artifact = assertNotNull(BundledAlgorithmArtifacts.find(instance.type, 2))
+            assertEquals(artifact.reference, instance.plugin)
+            if (head == "face/fitted") {
+                val directory = Files.createTempDirectory("mouth-tongue-package-")
+                val preferences = Preferences.userRoot().node("mouth-tongue-package/" + UUID.randomUUID())
+                val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+                try {
+                    val staging = Files.createDirectory(directory.resolve("package"))
+                    Files.write(staging.resolve("plugin.json"), artifact.bytes)
+                    for (name in artifact.manifest.files.keys) {
+                        assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                    }
+                    val providers = stack.instances.dropLast(1).map { provider ->
+                        ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
+                            provider.id, provider.config, provider.outputAliases, provider.plugin)
+                    }
+                    val definition = RigMouthTongueModifier.definition(RigModifierSource.of(current))
+                    repeat(2) {
+                        val installed = store.install(staging.toString())
+                        assertEquals(artifact.reference, installed.reference)
+                        val external = instance.copy(type = installed.manifest.algorithms.single().type)
+                        val adapter = ModifierPluginCatalog.definitions(store, captured = listOf(definition)).single {
+                            it.type == external.type && it.version == external.version
+                        }
+                        val context = adapter.authorContext(external).withUpstream(providers.filter {
+                            it.capability in adapter.requires + adapter.optionalUpstream
+                        })
+                        assertEquals(actual, (adapter.plugin as ContextualModifierAlgorithmPlugin).evaluate(previous, external, context) {})
+                        ModifierPluginWorkers.stop(installed.reference)
+                        store.uninstall(installed.reference)
+                    }
+                } finally {
+                    store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+                    preferences.removeNode()
+                    ModifierPluginStore.deleteTree(directory)
+                }
+            }
+            f.edit("modifier_apply", buildJsonObject { put("id", "tongue-out") })
+            assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(f.now.document)))
+        }
+    }
+
     @Test fun independentMouthCapturePreservesPrecedingOutlineAndVowels(): Unit = runBlocking {
         for (head in listOf("face/legacy", "face/fitted")) {
             val f = Fixture(document(mouthDetails = true))
