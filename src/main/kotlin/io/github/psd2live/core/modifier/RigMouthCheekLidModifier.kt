@@ -6,6 +6,8 @@ import io.github.psd2live.algorithms.binding.MouthCheekLidV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV7Algorithm
+import io.github.psd2live.algorithms.binding.MouthCheekLidV8Algorithm
+import io.github.psd2live.core.CharacterAnalyzer
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.format.compile.RigIrBinary
@@ -93,6 +95,30 @@ internal object RigMouthCheekLidModifier {
                 val resource = ModifierAlgorithmResource(RigIrBinary.encode(RigIR(Canvas(1f, 1f), emptyList(), meshes = turns)))
                 ModifierAlgorithmContext(JsonObject(context.values + ("turnName" to JsonPrimitive(tr("model.deformer.meshTurn", "{meshName}")))),
                     context.resources + ("lid_turn" to resource))
+            })
+    }
+
+    fun sharedFrameDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val projected = object : ChangingModifierAlgorithmPlugin by MouthCheekLidV8Algorithm, ModifierOptionalUpstream, ModifierVersionSelection {
+            override val optionalUpstream = RigLegacyBindings.specs.filter { !it.expressionToggles && !it.seeThrough }
+                .mapTo(linkedSetOf()) { it.type } - setOf(MouthCheekLidV8Algorithm.TYPE, "mouth/fitted", "eye/fitted")
+            override val canonicalOptInType = MouthCheekLidV8Algorithm.TYPE
+        }
+        return definition(source).copy(version = MouthCheekLidV8Algorithm.VERSION, plugin = projected,
+            changeWrites = MouthCheekLidV8Algorithm.WRITES, authorContext = { requireNotNull(source).captureSharedFrames(it) })
+    }
+
+    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val scaffold = provider(instance)
+        val prior = bindingPredecessors(instance, scaffold)
+        require(scaffold.version == 2 && prior.all { it.targets.containsAll(instance.targets) } &&
+            prior.none { it.type == MouthCheekLidV8Algorithm.TYPE }) { "Cheek and lid v8 requires a shared fitted source" }
+        val providers = setOf("face/fitted", "eye/fitted", "brow/fitted", "mouth/fitted", "mouth.outline", "mouth.vowel",
+            "mouth.capture", "mouth.jaw")
+        val lids = setOf(SemanticTag.EYEWHITE, SemanticTag.EYELASH)
+        return captureBindingTransition(instance, scaffold, prior, eyeBindingTags + CharacterAnalyzer.MOUTH_TAGS + SemanticTag.EYEBROW,
+            projectedTags = lids, values = buildJsonObject {
+                putJsonObject("providers") { for (type in providers) put(type, prior.single { it.type == type }.id) }
             })
     }
 
