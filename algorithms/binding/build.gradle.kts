@@ -862,6 +862,34 @@ fun registerIsolatedBindingWorker(
     }
 }
 
+val expressionV2WorkerJar = registerIsolatedBindingWorker(
+    "expressionV2", "expression-v2", "worker-expression-v2", "io.github.psd2live.algorithms.binding.ExpressionV2Worker",
+)
+
+tasks.register("pluginExpressionV2") {
+    dependsOn(expressionV2WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-expression-v2")
+    val packageVersion = project.version.toString()
+    inputs.file(expressionV2WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        expressionV2WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.65787072657373696f6e2e746f67676c6573.v2"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Expressions with upstream parameters",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/toggles","aliases":["expression.toggles"],"version":2,"name":"Expressions with upstream parameters","category":"expression",
+               "targets":["mesh"],"requires":["rig.scaffold"],"exclusiveFamily":"expression.toggles",
+               "reads":["*"],"writes":["mesh","parameter","hierarchy","physics"],"composableKinds":["mesh","part","deformer","hierarchy","relations","parameter","physics"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val eyeSquashWorkerJar = registerIsolatedBindingWorker(
     "eyeSquash", "eye-squash", "worker-eye-squash", "io.github.psd2live.algorithms.binding.EyeSquashWorker",
 )

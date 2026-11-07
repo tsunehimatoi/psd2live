@@ -63,6 +63,7 @@ kotlin {
 
 dependencies {
 	implementation(project(":algorithm-api"))
+	implementation(project(path = ":algorithms:binding", configuration = "expressionV2Elements"))
 	implementation(project(":algorithm-worker"))
 	implementation(project(":algorithms:physics"))
 	implementation(project(":algorithms:motion"))
@@ -608,6 +609,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginPackage")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin")) {
         into("algorithm-plugins/binding")
+    }
+    dependsOn(":algorithms:binding:pluginExpressionV2")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-expression-v2")) {
+        into("algorithm-plugins/expression-v2")
     }
     dependsOn(":algorithms:physics:pluginPackage")
     from(project(":algorithms:physics").layout.buildDirectory.dir("plugin")) {

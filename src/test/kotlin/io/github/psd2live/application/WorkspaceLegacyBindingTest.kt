@@ -7389,6 +7389,61 @@ class WorkspaceLegacyBindingTest {
         assertEquals(before, RigIrCompiler.compile(f.builder.build(f.now.document)))
     }
 
+    @Test fun expressionV2ReusesLiveStandardAxesAndMatchesInstalledWorker(): Unit = runBlocking {
+        val art = document()
+        val f = Fixture(art.copy(layerOverrides = art.layerOverrides + mapOf(
+            "iris" to LayerClassificationOverride(LayerType.TOGGLE, parameter = StandardParameters.MOUTH_FORM.raw),
+            "lash" to LayerClassificationOverride(LayerType.SWITCH, parameter = "Variant", switchId = 0),
+            "close" to LayerClassificationOverride(LayerType.SWITCH, parameter = "Variant", switchId = 1),
+        )))
+        f.install()
+        f.group(listOf("body/legacy", "face/legacy", "mouth/legacy", "hair/chains"))
+        val prefix = f.now
+        val before = assertNotNull(prefix.model.rig.modifierOutput)
+        val add = f.addition("expression.toggles", "expressions")
+        f.edit("modifier_add", add)
+        val expected = f.now.model
+        f.runtime.checkout(f.now.projectId, f.now.state, prefix.historyHead)
+        f.edit("modifier_add", JsonObject(add + ("version" to JsonPrimitive(2))))
+        val actual = f.now.model
+        val output = assertNotNull(actual.rig.modifierOutput)
+        assertEquals(expected.rig.modifierOutput, output)
+        assertEquals(RigIrCompiler.compile(expected, tileArt = true), RigIrCompiler.compile(actual, tileArt = true))
+        val standard = StandardParameters.MOUTH_FORM.raw
+        assertEquals(before.parameters.single { it.id == standard }, output.parameters.single { it.id == standard })
+        assertTrue(output.meshes.any { it.channels.values.any { track -> track.axes.any { axis -> axis.parameter == standard } } })
+        assertTrue(output.physics.groups.any { it.inputs.any { input -> input.parameter == "Variant" } })
+
+        val instance = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.last()
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(instance.type, instance.version))
+        val directory = Files.createTempDirectory("expression-v2-package-")
+        val preferences = Preferences.userRoot().node("expression-v2-package/${UUID.randomUUID()}")
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            for (name in artifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val installed = store.install(staging.toString())
+            val alias = instance.copy(type = installed.manifest.algorithms.single().type)
+            val definition = RigExpressionModifier.definition(RigModifierSource.of(actual))
+            val adapter = ModifierPluginCatalog.definitions(store, captured = listOf(definition)).single { it.type == alias.type }
+            val plugin = adapter.plugin as ContextualModifierAlgorithmPlugin
+            val context = adapter.authorContext(alias)
+            assertEquals(output, plugin.evaluate(before, alias, context) {})
+            val missing = before.copy(parameters = before.parameters.filterNot { it.id == standard })
+            val error = assertFailsWith<IllegalArgumentException> {
+                (definition.plugin as ContextualModifierAlgorithmPlugin).evaluate(missing, instance, context) {}
+            }
+            assertTrue(error.message.orEmpty().contains(standard))
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
     @Test fun expressionModifierUsesNativeOpacityAndAddsInputsToChainsInEitherOrder(): Unit = runBlocking<Unit> {
         val art = document()
         val classified = art.layerOverrides + mapOf(

@@ -163,22 +163,33 @@ internal class RigModifierSource(
         return PuppetIr.parametersToIr(materialBase.copy(parameters = parameters))
     }
 
-    fun expressionContext(instance: RigModifierInstance): ModifierAlgorithmContext = ModifierAlgorithmContext(buildJsonObject {
-        put("schema", "expression/1")
-        putJsonObject("layers") {
-            expressionLayers.forEach { (id, layer) ->
-                putJsonObject(id) {
-                    put("parameter", layer.parameter)
-                    layer.switchId?.let { put("switch", it) }
+    private fun expressionStandardIds(instance: RigModifierInstance): Set<ParameterId> =
+        expressionIds(instance).intersect(StandardParameters.all.mapTo(HashSet()) { it.id })
+
+    fun expressionSourceParameters(instance: RigModifierInstance): List<io.github.psd2live.format.model.Parameter> {
+        val ids = expressionIds(instance) - expressionStandardIds(instance)
+        return PuppetIr.parametersToIr(materialBase.copy(parameters = expressionCatalog.parameters.filter { it.id in ids }))
+    }
+
+    fun expressionContext(instance: RigModifierInstance, requireUpstreamStandards: Boolean = false): ModifierAlgorithmContext =
+        ModifierAlgorithmContext(buildJsonObject {
+            put("schema", "expression/1")
+            if (requireUpstreamStandards) put("requiredParameters", JsonArray(expressionStandardIds(instance).map { JsonPrimitive(it.raw) }))
+            putJsonObject("layers") {
+                expressionLayers.forEach { (id, layer) ->
+                    putJsonObject(id) {
+                        put("parameter", layer.parameter)
+                        layer.switchId?.let { put("switch", it) }
+                    }
                 }
             }
-        }
-        put("meshes", JsonObject(layersByMesh.mapValues { JsonPrimitive(it.value) }))
-        putJsonObject("opacity") { analysis.layers.forEach { put(it.source.id.raw, it.source.opacity.coerceIn(0f, 1f)) } }
-        put("chain_owners", Json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(RigModifierInstance.serializer()),
-            activeBefore(instance).filter { RigModifierChains.kinds(it.type).isNotEmpty() }))
-    }, resources = mapOf("parameters" to ModifierAlgorithmResource(io.github.psd2live.format.compile.RigIrBinary.encode(
-        RigIR(io.github.psd2live.format.model.Canvas(1f, 1f), expressionParameters(instance))))))
+            put("meshes", JsonObject(layersByMesh.mapValues { JsonPrimitive(it.value) }))
+            putJsonObject("opacity") { analysis.layers.forEach { put(it.source.id.raw, it.source.opacity.coerceIn(0f, 1f)) } }
+            put("chain_owners", Json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(RigModifierInstance.serializer()),
+                activeBefore(instance).filter { RigModifierChains.kinds(it.type).isNotEmpty() }))
+        }, resources = mapOf("parameters" to ModifierAlgorithmResource(io.github.psd2live.format.compile.RigIrBinary.encode(
+            RigIR(io.github.psd2live.format.model.Canvas(1f, 1f),
+                if (requireUpstreamStandards) expressionSourceParameters(instance) else expressionParameters(instance))))))
 
     fun expression(rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit): RigIR =
         io.github.psd2live.algorithms.binding.ExpressionAlgorithm().evaluate(rig, instance, expressionContext(instance), checkpoint)

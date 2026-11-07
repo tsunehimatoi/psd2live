@@ -3,12 +3,15 @@ package io.github.psd2live.core
 import io.github.psd2live.core.modifier.ModifierTarget
 import io.github.psd2live.core.modifier.RigModifierInstance
 import io.github.psd2live.core.modifier.RigModifierSource
+import io.github.psd2live.core.modifier.RigModifierStack
 import io.github.psd2live.core.recipe.*
 import io.github.psd2live.format.model.Canvas
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.project.rawConfig
 import io.github.psd2live.scenario.Characters
 import io.github.psd2live.targets.cubism.PuppetIr
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.*
 
 class ExpressionGeometryCacheTest {
@@ -74,20 +77,27 @@ class ExpressionGeometryCacheTest {
             variant to document.layerOverrides.getValue(variant).copy(type = LayerType.SWITCH, parameter = "Variant", switchId = 2),
             unrelated to document.layerOverrides.getValue(unrelated).copy(type = LayerType.TOGGLE, parameter = StandardParameters.ANGLE_X.raw),
         )
+        val instance = RigModifierInstance("expression", "expression.toggles", 1,
+            listOf(ModifierTarget("mesh", "eye"), ModifierTarget("mesh", "variant")))
         val recipe = RigRecipe(true, modules = RigModules.modules.associate { it.id to ModuleChoice(it == RigModules.EXPRESSION_TOGGLES) })
-        val config = document.rawConfig().copy(recipe = recipe, layerOverrides = overrides)
+        val config = document.rawConfig().copy(recipe = recipe, layerOverrides = overrides,
+            rigEdits = document.rigEdits.copy(modifierStack = RigModifierStack(instances = listOf(instance)).toJson()))
         val analysis = CharacterAnalyzer.analyze(document.source, config)
         val atlas = AtlasLayout.pack(analysis.layers, config)
         val base = PuppetIr.toPuppet(RigIR(Canvas(1f, 1f), emptyList()))
         val cache = PreviewMeshCache()
-        val source = RigModifierSource(analysis, atlas, config, mapOf("eye" to eye, "variant" to variant),
+        val source = RigModifierSource(analysis, atlas, config, mapOf("eye" to eye, "variant" to variant, "angle" to unrelated),
             materialBase = base, meshCache = cache)
-        val instance = RigModifierInstance("expression", "expression.toggles", 1,
-            listOf(ModifierTarget("mesh", "eye"), ModifierTarget("mesh", "variant")))
 
         val actual = source.expressionParameters(instance)
         val expectedIds = listOf(StandardParameters.EYE_L_OPEN.raw, "Variant")
         assertEquals(expectedIds, actual.map { it.id })
+
+        val v2 = instance.copy(version = 2, targets = instance.targets + ModifierTarget("mesh", "angle"))
+        val context = source.expressionContext(v2, requireUpstreamStandards = true)
+        assertEquals(setOf(StandardParameters.EYE_L_OPEN.raw, StandardParameters.ANGLE_X.raw),
+            context.values.getValue("requiredParameters").jsonArray.mapTo(hashSetOf()) { it.jsonPrimitive.content })
+        assertEquals(listOf("Variant"), source.expressionSourceParameters(v2).map { it.id })
         assertEquals(0L, cache.stages.misses(RigStageCache.MESH))
         val reference = RigBuilder.build(analysis, atlas, config, cache).puppet
         assertEquals(PuppetIr.parametersToIr(reference).filter { it.id in expectedIds }, actual)
