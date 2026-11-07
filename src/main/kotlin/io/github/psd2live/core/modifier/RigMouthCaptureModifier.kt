@@ -52,7 +52,9 @@ internal object RigMouthCaptureModifier {
         require(preceding.none { it.type.startsWith("mouth.") && it.type !in setOf("mouth.outline", "mouth.vowel") }) {
             "Mouth capture v$version supports preceding outlines and vowels. Use v1 for other preceding mouth modules."
         }
-        val (native, context) = RigFittedMouthModuleSource.context(this, scaffold, preceding, RigModules.MOUTH_CAPTURE)
+        // The worker reads the upstream mesh tracks. Only source coordinates and fitting belong here.
+        val (native, context) = RigFittedMouthModuleSource.context(this, scaffold, preceding, RigModules.MOUTH_CAPTURE,
+            neutralScaffold = version == MouthCaptureV3Algorithm.VERSION)
         val fitted = requireNotNull(context.fittedMouth(native)?.takeIf { it.source != null }) {
             "Mouth capture v$version requires readable fitted mouth source artwork"
         }

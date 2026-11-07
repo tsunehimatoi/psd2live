@@ -11,9 +11,9 @@ import kotlinx.serialization.json.*
 /** Source fitting and raw vertex measurements shared by fitted-mouth add-ons. */
 internal object RigFittedMouthModuleSource {
     fun context(source: RigModifierSource, scaffold: RigModifierInstance, preceding: List<RigModifierInstance>,
-                activeModule: RigModule?): Pair<PipelineConfig, RigBuilder.RigContext> {
+                activeModule: RigModule?, neutralScaffold: Boolean = false): Pair<PipelineConfig, RigBuilder.RigContext> {
         val native = nativeConfig(source, scaffold, preceding, activeModule)
-        return native to RigBuilder.rigContext(source.analysis, native, source.meshCache)
+        return native to RigBuilder.rigContext(source.analysis, native, source.meshCache, neutralScaffold = neutralScaffold)
     }
 
     private fun nativeConfig(source: RigModifierSource, scaffold: RigModifierInstance, preceding: List<RigModifierInstance>,

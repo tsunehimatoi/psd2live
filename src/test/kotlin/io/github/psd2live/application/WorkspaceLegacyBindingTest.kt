@@ -1423,6 +1423,13 @@ class WorkspaceLegacyBindingTest {
         }
         assertEquals(RigIrCompiler.compile(legacy, tileArt = true), RigIrCompiler.compile(actual, tileArt = true))
 
+        val index = stack.index(locked.id)
+        val beforeCapture = evaluation.outputs[index - 1]
+        val afterCapture = evaluation.outputs[index]
+        val lipPress = "ParamMouthPressLipOpen"
+        assertTrue(beforeCapture.parameters.none { it.id == lipPress })
+        assertTrue(afterCapture.meshes.any { mesh -> mesh.offsets?.axes?.any { it.parameter == lipPress } == true })
+
         val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 3))
         val directory = Files.createTempDirectory("mouth-capture-v3-package-")
         val preferences = Preferences.userRoot().node("mouth-capture-v3-package/${UUID.randomUUID()}")
@@ -1434,7 +1441,6 @@ class WorkspaceLegacyBindingTest {
                 assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val installed = store.install(staging.toString())
-            val index = stack.index(locked.id)
             val instance = evaluation.entries[index].instance.copy(type = installed.manifest.algorithms.single().type)
             val definition = RigMouthCaptureModifier.fittedDefinition(RigModifierSource.of(actual))
             val adapter = ModifierPluginCatalog.definitions(store, captured = listOf(definition)).single {
