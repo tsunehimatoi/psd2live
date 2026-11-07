@@ -19,6 +19,7 @@ import io.github.psd2live.algorithms.binding.BrowSpringV5Algorithm
 import io.github.psd2live.algorithms.binding.BrowSpringV6Algorithm
 import io.github.psd2live.algorithms.binding.BustBindingV3Algorithm
 import io.github.psd2live.algorithms.binding.CheekCarrierAlgorithm
+import io.github.psd2live.algorithms.binding.CreatureAlgorithm
 import io.github.psd2live.algorithms.binding.CreatureResidualAlgorithm
 import io.github.psd2live.algorithms.binding.EyeAftershockV4Algorithm
 import io.github.psd2live.algorithms.binding.EyeAftershockV5Algorithm
@@ -81,6 +82,7 @@ import io.github.psd2live.algorithms.binding.RibbonsResidualAlgorithm
 import io.github.psd2live.algorithms.binding.RibbonsV4Algorithm
 import io.github.psd2live.algorithms.binding.SkirtAlgorithm
 import io.github.psd2live.core.*
+import io.github.psd2live.core.fit.HairKind
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.recipe.*
 import io.github.psd2live.core.sim.ModelPresets
@@ -241,7 +243,14 @@ internal object WorkspacePresetInitialization {
                         val mouth = packages(sourceMouthVersions(model.analysis, config, types, sharedBrow = true))
                         val arms = if (RigModules.MOUTH_FITTED.id in mouth) sourceArmVersion(model.analysis, closedMouth = false)
                             ?.let { packages(mapOf(RigModules.BODY_ARMS.id to it)) }.orEmpty() else emptyMap()
-                        frameBindings + mouth + moods + arms
+                        val attachments = buildMap {
+                            if (RigModules.FACE_NECK.id in plannedTypes) put(RigModules.FACE_NECK.id, NeckV3Algorithm.VERSION)
+                            if (RigModules.OUTFIT_CREATURE.id in plannedTypes) {
+                                val kinds = model.analysis.layers.filter { it.opaquePixels > 0 }.mapNotNull { HairKind.partOf(it) }.toSet()
+                                if (kinds == setOf(HairKind.ANIMAL_TAIL)) put(RigModules.OUTFIT_CREATURE.id, CreatureAlgorithm.VERSION)
+                            }
+                        }
+                        frameBindings + mouth + moods + arms + packages(attachments)
                     }
                 } else emptyMap()
             } else if (singleEyeClosedMouth) {

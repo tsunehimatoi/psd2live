@@ -74,7 +74,7 @@ class CliPresetMigrationTool {
             "eye.aftershock" to 5, "eye.squash" to 5, "mouth/fitted" to 6, "mouth.outline" to 8,
             "mouth.vowel" to 7, "mouth.capture" to 6, "mouth.jaw" to 8, "mouth.cheek-lid" to 8,
             "mouth.spring" to 9, "expression.cheek" to 3, "expression.gloom" to 3,
-            "body.bust" to 3, "body.arms" to 3)
+            "body.bust" to 3, "body.arms" to 3, "face.neck" to 3, "outfit.creature" to 2)
         for ((type, version) in versions) {
             val instance = stack.instances.single { it.type == type }
             assertEquals(version, instance.version, type)
@@ -321,6 +321,9 @@ class CliPresetMigrationTool {
                 " axes changed=${before.pivot?.axes != rotation.pivot?.axes}" +
                 " first changed pivot=$cellDiff")
         }
+        val meshOrder = expected.meshes.zip(actual.meshes).filter { (before, after) -> before.id != after.id }
+            .map { (before, after) -> "${before.id}->${after.id}" }
+        if (meshOrder.isNotEmpty()) appendLine("  mesh storage order differences = $meshOrder")
         val meshes = expected.meshes.associateBy { it.id }
         fun <T> meshDifferences(kind: String, value: (RigIRMesh) -> T) {
             val changed = actual.meshes.mapNotNull { mesh ->
