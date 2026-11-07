@@ -157,6 +157,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "depthTurnV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browShapeElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browShapeV3Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "browShapeV4Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browBlinkElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browBlinkV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLidElements"))
@@ -560,6 +561,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginBrowShapeV3")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-shape-v3")) {
         into("algorithm-plugins/brow-shape-v3")
+    }
+    dependsOn(":algorithms:binding:pluginBrowShapeV4")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-shape-v4")) {
+        into("algorithm-plugins/brow-shape-v4")
     }
     dependsOn(":algorithms:binding:pluginFittedFaceV2")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-fitted-face-v2")) {

@@ -4490,6 +4490,85 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun singleEyeBrowShapeMatchesHistoricSourceAndInstalledWorker(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, closedMouth = true)
+        val choices = WorkspaceInitialPreset()
+        val defaults = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+        val config = defaults.copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()),
+            recipe = defaults.recipe.copy(modules = defaults.recipe.modules +
+                (RigModules.BROW_SHAPE.id to ModuleChoice(true, values = mapOf("strength" to 127f)))))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 3, "brow.shape" to 1, "brow.lid-coupling" to 1,
+            "eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3, "eye.emotion" to 3,
+            "eye.highlight" to 3, "eye.aftershock" to 4, "eye.squash" to 4)
+        val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
+            requestedVersions = versions)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val locked = stack.instances.single { it.type == "brow.shape" }
+        val index = stack.index(locked.id)
+        assertEquals(1, locked.version)
+        val reference = assertNotNull(baseline.modifierEvaluation).outputs
+        val before = reference[index - 1]
+        val expected = reference[index]
+        val brow = expected.meshes.single { it.name == "brow" }
+        assertNotEquals(before.meshes.single { it.id == brow.id }, brow)
+        assertTrue(brow.shapes.any { it.parameter == "ParamBrowLX" })
+        fun candidate(selected: Map<String, Int>): WorkspaceDocument {
+            val modified = stack.copy(instances = stack.instances.map { entry ->
+                val version = selected[entry.type] ?: return@map entry
+                val artifact = assertNotNull(BundledAlgorithmArtifacts.find(entry.type, version))
+                entry.copy(version = version, plugin = artifact.reference)
+            })
+            return initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = modified.toJson()))
+        }
+        val rejected = assertFailsWith<IllegalArgumentException> {
+            WorkspacePreviewBuilder().build(candidate(mapOf(locked.type to 3)))
+        }
+        assertContains(rejected.message.orEmpty(), "Brow shape v3 requires the fitted source mesh and parent frame")
+        val document = candidate(mapOf(locked.type to 4))
+        val compiled = RigIrCompiler.compile(baseline, tileArt = true)
+        fun verify(model: RigPreviewModel) {
+            val evaluation = assertNotNull(model.modifierEvaluation)
+            assertEquals(ModifierStatus.ACTIVE, evaluation.entries[index].status)
+            for (stage in index - 1 until stack.instances.size) assertFaceEquals(reference[stage], evaluation.outputs[stage])
+            assertFaceEquals(compiled, RigIrCompiler.compile(model, tileArt = true))
+        }
+        val actual = WorkspacePreviewBuilder().build(document).also(::verify)
+        val cache = RigStageCache.enabled
+        RigStageCache.enabled = false
+        try { verify(WorkspacePreviewBuilder().build(document)) } finally { RigStageCache.enabled = cache }
+
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 4))
+        val root = Files.createTempDirectory("single-eye-brow-shape-package-")
+        val preferences = Preferences.userRoot().node("single-eye-brow-shape/" + UUID.randomUUID())
+        val store = ModifierPluginStore(root.resolve("installed"), preferences)
+        try {
+            BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+            val worker = store.snapshot().single()
+            val evaluation = assertNotNull(actual.modifierEvaluation)
+            val instance = evaluation.entries[index].instance
+            val context = assertNotNull(evaluation.readAlgorithms[instance.id]).context
+            for (type in listOf("face/fitted", "eye/fitted", "brow/fitted")) {
+                val provider = context.upstream.first { it.type == type }
+                assertEquals(versions.getValue(type), provider.version)
+                assertEquals(stack.instances.single { it.type == type }.plugin, provider.plugin)
+            }
+            val definition = RigBrowShapeModifier.fallbackDefinition(RigModifierSource.of(actual))
+            assertFaceEquals(expected, ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(),
+                before, instance, {}, store, context = context, declaredParameters = definition.parameters(instance)))
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(root)
+        }
+        val composed = WorkspacePreviewBuilder().build(candidate(mapOf(locked.type to 4, "brow.lid-coupling" to 6))).also(::verify)
+        val couplingId = stack.instances.single { it.type == "brow.lid-coupling" }.id
+        val coupling = assertNotNull(assertNotNull(composed.modifierEvaluation).readAlgorithms[couplingId])
+        val shapeProvider = coupling.context.upstream.single { it.type == "brow.shape" }
+        assertEquals(4, shapeProvider.version)
+        assertEquals(artifact.reference, shapeProvider.plugin)
+    }
+
     @Test fun singleEyeBrowLidCouplingMatchesHistoricSourceAndInstalledWorker(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, closedMouth = true)
         val choices = WorkspaceInitialPreset()

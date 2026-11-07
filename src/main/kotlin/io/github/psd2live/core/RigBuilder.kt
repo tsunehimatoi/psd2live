@@ -3520,6 +3520,24 @@ object RigBuilder {
 	internal fun lidTurnLoweringSource(layer: ClassifiedLayer, context: RigContext, config: PipelineConfig,
 	                                   atlas: PackedAtlas, cache: PreviewMeshCache, channels: Drawable): Drawable {
 		require(layer.semantic.tag in setOf(SemanticTag.EYELASH, SemanticTag.EYEWHITE, SemanticTag.IRIDES))
+		return turnLoweringSource(layer, context, config, atlas, cache, channels)
+	}
+
+	internal fun browTurnLoweringSource(layer: ClassifiedLayer, context: RigContext, config: PipelineConfig,
+	                                    atlas: PackedAtlas, cache: PreviewMeshCache, channels: Drawable): Drawable {
+		require(layer.semantic.tag == SemanticTag.EYEBROW)
+		return turnLoweringSource(layer, context, config, atlas, cache, channels)
+	}
+
+	internal fun browTurnSourceBranch(context: RigContext, config: PipelineConfig, cache: PreviewMeshCache,
+	                                  parents: Set<DeformerId>): List<Deformer> {
+		val deformers = faceTurnAndLean(context, config, stagesOf(cache)).associateBy { it.id }
+		return parents.flatMap { parent -> generateSequence(parent) { deformers.getValue(it).parent }.toList() }
+			.distinct().map(deformers::getValue)
+	}
+
+	private fun turnLoweringSource(layer: ClassifiedLayer, context: RigContext, config: PipelineConfig,
+	                               atlas: PackedAtlas, cache: PreviewMeshCache, channels: Drawable): Drawable {
 		val source = meshLoweringSource(layer, context, config, atlas, cache, channels)
 		val angles = setOf(StandardParameters.ANGLE_X, StandardParameters.ANGLE_Y, StandardParameters.ANGLE_Z)
 		return source.copy(blendShapes = source.blendShapes.filter { it.parameterId in angles })

@@ -2,16 +2,28 @@ package io.github.psd2live.core.modifier
 
 import io.github.psd2live.algorithms.binding.BrowShapeAlgorithm
 import io.github.psd2live.algorithms.binding.BrowShapeV3Algorithm
+import io.github.psd2live.algorithms.binding.BrowShapeV4Algorithm
 import io.github.psd2live.algorithms.binding.BrowShapeInputs
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.RigTuning
+import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.recipe.BaseChoice
 import io.github.psd2live.core.recipe.ModuleChoice
 import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.core.recipe.RigRecipe
 import io.github.psd2live.project.WorkspaceSettingsCodec
+import io.github.psd2live.format.compile.RigIrBinary
+import io.github.psd2live.format.model.Canvas
+import io.github.psd2live.format.model.RigIR
+import io.github.psd2live.i18n.tr
+import io.github.psd2live.targets.cubism.PuppetIr
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import org.umamo.runtime.model.BlendMode
+import org.umamo.runtime.model.Drawable
+import org.umamo.runtime.model.DrawableId
+import org.umamo.runtime.model.DeformerId
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -33,6 +45,46 @@ internal object RigBrowShapeModifier {
 
     fun fittedDefinition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, BrowShapeV3Algorithm.VERSION, fittedAlgorithm)
+
+    private val fallbackAlgorithm = object : ReadingModifierAlgorithmPlugin by BrowShapeV4Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = setOf("eye/fitted", "face/fitted", "face/legacy", "mouth/fitted")
+        override val canonicalOptInType = BrowShapeAlgorithm.TYPE
+    }
+
+    fun fallbackDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val fitted = fittedDefinition(source)
+        return fitted.copy(version = BrowShapeV4Algorithm.VERSION, plugin = fallbackAlgorithm,
+            changeWrites = fitted.changeWrites.orEmpty() + "deformer",
+            authorContext = { instance -> requireNotNull(source).captureFallback(instance, fitted.authorContext(instance)) })
+    }
+
+    private fun RigModifierSource.captureFallback(
+        instance: RigModifierInstance, context: ModifierAlgorithmContext,
+    ): ModifierAlgorithmContext {
+        val scaffold = provider(instance)
+        val preceding = activeBefore(instance).filter { entry ->
+            entry.config["scaffold"] == JsonPrimitive(scaffold.id) && entry.targets.any(instance.targets::contains) &&
+                RigLegacyBindings.find(entry.type)?.let { !it.expressionToggles && !it.seeThrough } == true
+        }
+        val (native, measured) = RigFittedMouthModuleSource.context(this, scaffold, preceding, null)
+        val source = BrowShapeInputs.decode(context) {}
+        val layers = measured.analysis.layers.associateBy { it.source.id.raw }
+        val raw = source.targets.keys.map { id ->
+            val layer = layers.getValue(layersByMesh.getValue(id))
+            require(layer.semantic.tag == SemanticTag.EYEBROW)
+            val channels = Drawable(DrawableId(id), layer.source.name, null, BlendMode.Normal, emptyList(), null, null)
+            PuppetIr.meshToIr(RigBuilder.browTurnLoweringSource(layer, measured, native, atlas, meshCache, channels))
+        }
+        val branch = RigBuilder.browTurnSourceBranch(measured, native, meshCache, raw.mapNotNullTo(hashSetOf()) {
+            it.parent?.let(::DeformerId)
+        }).map(PuppetIr::deformerToIr)
+        val resource = ModifierAlgorithmResource(RigIrBinary.encode(RigIR(Canvas(1f, 1f), emptyList(), meshes = raw, deformers = branch)))
+        val ids = JsonObject(source.targets.keys.associateWith { id -> JsonPrimitive(primaryByLayer.getValue(layersByMesh.getValue(id))) })
+        return ModifierAlgorithmContext(JsonObject(context.values + mapOf(
+            "native_ids" to ids, "turn_name" to JsonPrimitive(tr("model.deformer.meshTurn", "{meshName}")))),
+            context.resources + ("brow_turn" to resource))
+    }
 
     private fun definition(source: RigModifierSource?, version: Int,
                            algorithm: ReadingModifierAlgorithmPlugin): RigModifierDefinition {
