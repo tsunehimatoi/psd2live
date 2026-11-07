@@ -62,10 +62,15 @@ internal object ModifierPluginCatalog {
     } ?: BuiltinModifierPlugins.reference(instance.type, instance.version)?.let { ModifierPluginStore.shared.builtinEnabled(it.id) }
         ?: ModifierPluginStore.shared.builtinsEnabled()
 
-    fun algorithm(type: String, version: Int? = null): Pair<InstalledModifierPlugin, ModifierPluginAlgorithm>? =
-        ModifierPluginStore.shared.snapshot().filter { ModifierPluginStore.shared.resolution(it.reference).available }.flatMap { entry -> entry.manifest.algorithms.map { entry to it } }
-            .filter { it.second.type == type && (version == null || it.second.version == version) }
-            .maxWithOrNull(compareBy<Pair<InstalledModifierPlugin, ModifierPluginAlgorithm>> { it.second.version }.thenBy { ModifierPluginVersion.parse(it.first.reference.version, legacy = true) })
+    fun algorithm(type: String, version: Int? = null): Pair<InstalledModifierPlugin, ModifierPluginAlgorithm>? {
+        val store = ModifierPluginStore.shared
+        return store.snapshot().asSequence().flatMap { entry ->
+            val matching = entry.manifest.algorithms.filter { it.type == type && (version == null || it.version == version) }
+            if (matching.isEmpty() || !store.resolution(entry.reference).available) emptySequence()
+            else matching.asSequence().map { entry to it }
+        }.maxWithOrNull(compareBy<Pair<InstalledModifierPlugin, ModifierPluginAlgorithm>> { it.second.version }
+            .thenBy { ModifierPluginVersion.parse(it.first.reference.version, legacy = true) })
+    }
 
     fun requireAvailable(stack: RigModifierStack) {
         val missing = stack.instances.filter { it.enabled && !available(it) }

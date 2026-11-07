@@ -80,7 +80,8 @@ internal object WorkspaceModifierPlan {
             return simulationPreset(model, stack, targets, request.getValue("preset").jsonPrimitive.content)
         require((type == null) != (group == null)) { "Choose a modifier or a preset group" }
         val requested = requestedTypes ?: if (type != null) listOf(type) else requireNotNull(groups[group]) { "Unknown source preset group: $group" }
-        require(requested.all { it in types }) { "Unknown modifier" }
+        val availableTypes = types.toHashSet()
+        require(requested.all(availableTypes::contains)) { "Unknown modifier" }
         require(request["preset"] == null || type in setOf("motion", "physics") && request["config"] == null) { "A preset and an explicit configuration are alternative inputs" }
         require(type in nativeTypes || ModifierPluginCatalog.algorithm(type.orEmpty()) != null || request["config"] == null) { "Source binding configuration is resolved from its captured dependencies" }
         require(type == "swing" || ModifierPluginCatalog.algorithm(type.orEmpty())?.second?.targets?.let { kinds -> targets.all { it.kind in kinds } } == true || targets.all { it.kind == "mesh" }) { "This modifier needs captured mesh targets" }
