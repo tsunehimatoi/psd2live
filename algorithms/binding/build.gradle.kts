@@ -1437,6 +1437,35 @@ tasks.register("pluginMouthSpringV3") {
     }
 }
 
+val mouthSpringV4WorkerJar = registerIsolatedBindingWorker(
+    "mouthSpringV4", "mouth-spring-v4", "worker-mouth-spring-v4", "io.github.psd2live.algorithms.binding.MouthSpringV4Worker",
+)
+
+tasks.register("pluginMouthSpringV4") {
+    dependsOn(mouthSpringV4WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-spring-v4")
+    val packageVersion = project.version.toString()
+    inputs.file(mouthSpringV4WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthSpringV4WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682e737072696e67.v4"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Mouth spring",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/spring","aliases":["mouth.spring"],"version":4,"name":"Mouth spring","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","mouth/fitted","mouth.jaw"],"contextVersion":2,
+               "reads":["mesh","deformer","parameter","hierarchy","physics"],"writes":["mesh","parameter","hierarchy","physics"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val browSpringWorkerJar = registerIsolatedBindingWorker(
     "browSpring", "brow-spring", "worker-brow-spring", "io.github.psd2live.algorithms.binding.BrowSpringWorker",
 )

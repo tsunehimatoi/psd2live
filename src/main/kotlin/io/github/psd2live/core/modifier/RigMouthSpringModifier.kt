@@ -2,6 +2,7 @@ package io.github.psd2live.core.modifier
 
 import io.github.psd2live.algorithms.binding.MouthSpringAlgorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV3Algorithm
+import io.github.psd2live.algorithms.binding.MouthSpringV4Algorithm
 import io.github.psd2live.core.PartRole
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.SemanticTag
@@ -29,11 +30,24 @@ internal object RigMouthSpringModifier {
         override val canonicalOptInType = MouthSpringAlgorithm.TYPE
     }
 
+    private val fittedAlgorithm = object : ReadingModifierAlgorithmPlugin by MouthSpringV4Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = MouthSpringV4Algorithm.optionalUpstream
+        override val canonicalOptInType = MouthSpringAlgorithm.TYPE
+    }
+
     fun fullDefinition(source: RigModifierSource?): RigModifierDefinition {
         val contexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
-        fun capture(instance: RigModifierInstance) = contexts.getOrPut(instance) { requireNotNull(source).capture(instance, full = true) }
+        fun capture(instance: RigModifierInstance) = contexts.getOrPut(instance) { requireNotNull(source).capture(instance, MouthSpringV3Algorithm.VERSION) }
         return definition(source).copy(version = MouthSpringV3Algorithm.VERSION,
             parameters = { MouthSpringV3Algorithm.parameters(capture(it)) }, plugin = fullAlgorithm, authorContext = ::capture)
+    }
+
+    fun fittedDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val contexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
+        fun capture(instance: RigModifierInstance) = contexts.getOrPut(instance) { requireNotNull(source).capture(instance, MouthSpringV4Algorithm.VERSION) }
+        return definition(source).copy(version = MouthSpringV4Algorithm.VERSION,
+            parameters = { MouthSpringV4Algorithm.parameters(capture(it)) }, plugin = fittedAlgorithm, authorContext = ::capture)
     }
 
     fun definition(source: RigModifierSource?): RigModifierDefinition {
@@ -46,8 +60,9 @@ internal object RigMouthSpringModifier {
             evaluate = { _, _, _ -> error("Mouth spring requires captured fitted-mouth inputs") }, authorContext = ::capture)
     }
 
-    private fun RigModifierSource.capture(instance: RigModifierInstance, full: Boolean = false): ModifierAlgorithmContext {
-        val version = if (full) 3 else 2
+    private fun RigModifierSource.capture(instance: RigModifierInstance, version: Int = MouthSpringAlgorithm.VERSION): ModifierAlgorithmContext {
+        val full = version >= MouthSpringV3Algorithm.VERSION
+        val sourceVersions = 1..if (version == MouthSpringV4Algorithm.VERSION) 3 else 2
         val scaffold = provider(instance)
         require(scaffold.version == 2) { "Mouth spring v$version requires a shared v2 scaffold" }
         val preceding = activeBefore(instance).filter { item ->
@@ -56,10 +71,14 @@ internal object RigMouthSpringModifier {
         }
         val baseId = instance.config.getValue("base").jsonPrimitive.content
         val jawId = instance.config.getValue("dependencies").jsonObject.getValue("mouth.jaw").jsonPrimitive.content
-        val base = requireNotNull(preceding.singleOrNull { it.id == baseId && it.type == "mouth/fitted" && it.version in 1..2 })
-        val jaw = requireNotNull(preceding.singleOrNull { it.id == jawId && it.type == "mouth.jaw" && it.version in 1..2 &&
+        val base = requireNotNull(preceding.singleOrNull { it.id == baseId && it.type == "mouth/fitted" && it.version in sourceVersions })
+        val jaw = requireNotNull(preceding.singleOrNull { it.id == jawId && it.type == "mouth.jaw" && it.version in sourceVersions &&
             it.config["base"] == JsonPrimitive(baseId) })
-        val optional = if (full) MouthSpringV3Algorithm.optionalUpstream else MouthSpringAlgorithm.optionalUpstream
+        val optional = when (version) {
+            MouthSpringV4Algorithm.VERSION -> MouthSpringV4Algorithm.optionalUpstream
+            MouthSpringV3Algorithm.VERSION -> MouthSpringV3Algorithm.optionalUpstream
+            else -> MouthSpringAlgorithm.optionalUpstream
+        }
         require(full || preceding.all { it == base || it == jaw || it.type in optional }) {
             "Mouth spring v$version requires compatible source bindings. Use v1 after other mouth or face modules."
         }
@@ -95,7 +114,11 @@ internal object RigMouthSpringModifier {
             PuppetIr.meshToIr(RigBuilder.skinLoweringSource(layer, context, native, atlas, meshCache, channels))
         }
         val resource = ModifierAlgorithmResource(RigIrBinary.encode(RigIR(Canvas(1f, 1f), emptyList(), meshes = skin)))
-        return MouthSpringV3Algorithm.context(measurements, lippedSkin, name, folder, physics,
-            preceding.filter { it.type in optional }, resource)
+        val providers = preceding.filter { it.type in optional }
+        return if (version == MouthSpringV4Algorithm.VERSION) {
+            MouthSpringV4Algorithm.context(measurements, lippedSkin, name, folder, physics, providers, resource)
+        } else {
+            MouthSpringV3Algorithm.context(measurements, lippedSkin, name, folder, physics, providers, resource)
+        }
     }
 }
