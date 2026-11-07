@@ -1940,6 +1940,37 @@ class WorkspaceLegacyBindingTest {
         }
         assertEquals(compiled, RigIrCompiler.compile(jawPreview, tileArt = true))
         assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(lockedJaw), tileArt = true))
+        val tongueIndex = captureStack.instances.indexOfFirst { it.type == "mouth.tongue" }
+        val tongueBefore = captureEvaluation.outputs[tongueIndex - 1]
+        val tongueAfter = captureEvaluation.outputs[tongueIndex]
+        assertEquals(tongueBefore.meshes.map { it.id }, tongueAfter.meshes.map { it.id })
+        val tongueClosedBefore = tongueBefore.meshes.single { it.name == "mouth-closed" }
+        val tongueClosedAfter = tongueAfter.meshes.single { it.id == tongueClosedBefore.id }
+        val tongueOut = "ParamTongueOut"
+        val closedTongueShape = tongueClosedAfter.shapes.single { it.parameter == tongueOut }
+        assertEquals(tongueClosedBefore, tongueClosedAfter.copy(shapes = tongueClosedAfter.shapes - closedTongueShape))
+        assertTrue(closedTongueShape.limits.isEmpty())
+        assertEquals(0f, closedTongueShape.shapes.filterNotNull().single().opacity)
+        assertTrue(tongueAfter.meshes.single { it.name == "tongue" }.shapes.single { it.parameter == tongueOut }
+            .shapes.filterNotNull().single().opacity > 0f)
+        val tongueArtifact = assertNotNull(BundledAlgorithmArtifacts.find("mouth.tongue", 4))
+        val tongueStack = captureStack.copy(instances = captureStack.instances.mapIndexed { i, entry ->
+            if (i == tongueIndex) entry.copy(version = 4, plugin = tongueArtifact.reference) else entry
+        })
+        val lockedTongue = document.copy(rigEdits = document.rigEdits.copy(modifierStack = tongueStack.toJson()))
+        val tonguePreview = WorkspacePreviewBuilder().build(lockedTongue)
+        val tongueEvaluation = assertNotNull(tonguePreview.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, tongueEvaluation.entries[tongueIndex].status)
+        for (stage in tongueIndex until stack.instances.size) {
+            val expected = reference[stage]
+            val output = tongueEvaluation.outputs[stage]
+            val changed = expected.meshes.zip(output.meshes).filter { (a, b) -> a != b }.joinToString { (a, b) ->
+                "${a.name} shapes=${a.shapes != b.shapes} channels=${a.channels != b.channels}"
+            }
+            assertTrue(expected == output, "${stack.instances[stage].type}: $changed")
+        }
+        assertEquals(compiled, RigIrCompiler.compile(tonguePreview, tileArt = true))
+        assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(lockedTongue), tileArt = true))
         val instance = candidate.instances[index]
         val definition = RigFittedMouthDefinition.closedDefinition(RigModifierSource.of(actual))
         val context = definition.authorContext(instance).withUpstream(candidate.instances.take(index).map {
@@ -2004,6 +2035,18 @@ class WorkspaceLegacyBindingTest {
             val jawContext = assertNotNull(jawEvaluation.readAlgorithms[jawInstance.id]).context
             assertEquals(jawAfter, ModifierPluginWorkers.evaluate(jawWorker, jawWorker.manifest.algorithms.single(),
                 jawBefore, jawInstance, {}, store, context = jawContext))
+            val tongueInstance = tongueStack.instances[tongueIndex]
+            val tongueStaging = Files.createDirectory(directory.resolve("tongue-package"))
+            Files.write(tongueStaging.resolve("plugin.json"), tongueArtifact.bytes)
+            for (name in tongueArtifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(tongueArtifact.resource + name)).use { Files.copy(it, tongueStaging.resolve(name)) }
+            }
+            val tongueWorker = store.install(tongueStaging.toString())
+            assertEquals(tongueArtifact.reference, tongueWorker.reference)
+            val tongueContext = assertNotNull(tongueEvaluation.readAlgorithms[tongueInstance.id]).context
+            val tongueDefinition = RigMouthTongueModifier.closedDefinition(RigModifierSource.of(tonguePreview))
+            assertEquals(tongueAfter, ModifierPluginWorkers.evaluate(tongueWorker, tongueWorker.manifest.algorithms.single(),
+                tongueBefore, tongueInstance, {}, store, context = tongueContext, declaredParameters = tongueDefinition.parameters(tongueInstance)))
         } finally {
             store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
             preferences.removeNode()
