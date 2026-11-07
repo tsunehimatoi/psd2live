@@ -30,18 +30,19 @@ internal class RigModifierSource(
     private val projections = java.util.IdentityHashMap<PuppetModel, MutableMap<String, PuppetModel>>()
     private fun generated(strength: Float = 1f, tuning: RigTuning = RigTuning(), headStrength: Float = 1f,
                           recipe: RigRecipe = RigRecipe.Legacy, outline: RigModifierInstance? = null,
-                          featureDisplacement: Boolean = false, frontHairSway: Boolean = true, backHairSway: Boolean = true, neutralScaffold: Boolean = false, capture: ((() -> PuppetModel) -> Unit)? = null): BuiltRig {
+                          featureDisplacement: Boolean = false, frontHairSway: Boolean = true, backHairSway: Boolean = true,
+                          neutralScaffold: Boolean = false): BuiltRig {
         RigBuildProfile.count("modifier legacy rig builds")
         val native = generationConfig(strength, tuning, headStrength, recipe, outline,
             featureDisplacement, frontHairSway, backHairSway)
-        if (outline == null) return if (neutralScaffold) RigBuilder.buildNeutralScaffold(analysis, atlas, native, meshCache, capture)
-            else RigBuilder.build(analysis, atlas, native, meshCache, capture)
+        if (outline == null) return if (neutralScaffold) RigBuilder.buildNeutralScaffold(analysis, atlas, native, meshCache)
+            else RigBuilder.build(analysis, atlas, native, meshCache)
         val prepared = MouthLipLayers.prepare(analysis, native, meshCache)
         val lips = prepared.layers.filter { it.source is MouthLipLayer }
         val pack = { RigBuildProfile.stage("source artwork: outline atlas") { RigModifierRasterAssets.append(atlas, lips, native) } }
         val packed = if (RigStageCache.enabled) meshCache.stages.get("mouth outline atlas", 16,
             listOf(atlas, lips, native.effectiveAtlasBudget()), pack) else pack()
-        return RigBuilder.build(prepared, packed, native, meshCache, capture)
+        return RigBuilder.build(prepared, packed, native, meshCache)
     }
     val skeletonEnabled: Boolean get() = config.rigEdits.skeleton?.enabled == true
     private fun generationConfig(strength: Float, tuning: RigTuning, headStrength: Float, recipe: RigRecipe,
@@ -57,12 +58,12 @@ internal class RigModifierSource(
         deferRig = false, rigPendingLayerIds = emptySet(), parentOverrides = emptyMap(),
         rigEdits = RigEditOverlay(splitDrawableIds = primaryByLayer))
 
-    private data class Template(val model: PuppetModel, val chains: List<RigModifierChains.Binding>, val bindingInput: (() -> PuppetModel)? = null)
+    private data class Template(val model: PuppetModel, val chains: List<RigModifierChains.Binding>)
     private val templates = HashMap<Map<String, JsonObject>, Template>()
     private val transitions = HashMap<Pair<String, ModifierTarget>, Pair<RigModifierChains.Projection, RigModifierChains.Projection>>()
     private val chainProjections = java.util.IdentityHashMap<PuppetModel, MutableMap<List<RigModifierChains.Owned>, RigModifierChains.Projection>>()
 
-    fun skinClipContext(instance: RigModifierInstance, includeEarlier: Boolean = true): ModifierAlgorithmContext {
+    fun skinClipContext(instance: RigModifierInstance): ModifierAlgorithmContext {
         val clips = RigOrdinaryMaterials.clipping(analysis.source, primaryByLayer.entries.associate { it.value to it.key })
         fun bounds(layer: ClassifiedLayer) = JsonArray(listOf(layer.bounds.left, layer.bounds.top, layer.bounds.right, layer.bounds.bottom).map(::JsonPrimitive))
         val layers = analysis.layers.associateBy { it.source.id.raw }
@@ -76,7 +77,7 @@ internal class RigModifierSource(
                 if (layerId !in clips && (layer.semantic.tag == SemanticTag.FACE_DETAIL ||
                     layer.semantic.tag == SemanticTag.FRONT_HAIR && layer.semantic.role == PartRole.SHADOW)) put(mesh, bounds(layer))
             } }
-            put("already_active", JsonArray(if (!includeEarlier) emptyList() else instance.targets.filter { target ->
+            put("already_active", JsonArray(instance.targets.filter { target ->
                 relevantBefore(instance, target).any { it.type == "face.skin-clip" }
             }.map { JsonPrimitive(it.id) }))
         })
@@ -340,159 +341,50 @@ internal class RigModifierSource(
     }
 
     private fun buildTemplate(instances: List<RigModifierInstance>, scaffold: JsonObject, state: Map<String, RigModifierInstance>): Template {
-        if (RigStageCache.enabled && instances.lastOrNull()?.type == "face.skin-clip") {
-            return skinTemplate(instances, scaffold)
+        var tuning = RigTuning()
+        for (spec in RigLegacyBindings.specs) state[spec.type]?.let { tuning = RigLegacyBindings.tuning(it, tuning) }
+        val bodyStrength = state["body/legacy"]?.let(RigLegacyBindings::strength) ?: 1f
+        val headStrength = (state[RigLegacyBindings.FITTED_FACE] ?: state["face/legacy"])?.let(RigLegacyBindings::strength) ?: 1f
+        val kept = state.keys.flatMapTo(HashSet()) { RigLegacyBindings.spec(it).parameters }
+        val byArea = instances.filter { RigLegacyBindings.spec(it.type).isBase }.associateBy { RigLegacyBindings.spec(it.type).area }
+        val recipe = if (instances.none { !it.type.endsWith("/legacy") }) RigRecipe.Legacy else RigRecipe(true,
+            bases = RigModules.areas.associate { area ->
+                val chosen = byArea[area.id]
+                val base = chosen?.type?.takeUnless { it == RigLegacyBindings.FITTED_FACE } ?: area.legacy.id
+                area.id to BaseChoice(base, chosen?.version ?: area.legacy.version, chosen?.let(RigLegacyBindings::values).orEmpty())
+            }, modules = RigModules.modules.associate { module ->
+                val chosen = state[module.id] ?: state[RigLegacyBindings.FITTED_FACE]?.takeIf { module.id == RigModules.FACE_DEPTH_TURN.id }
+                module.id to ModuleChoice(chosen != null, chosen?.version ?: module.version, chosen?.let(RigLegacyBindings::values).orEmpty())
+            })
+        val outline = state[RigModules.MOUTH_OUTLINE.id]
+        val corrections = io.github.psd2live.project.WorkspaceSettingsCodec.decodeRecipe(scaffold["corrections"])
+        val correctedRecipe = recipe.copy(moves = corrections.moves, eyeParts = corrections.eyeParts)
+        val native = RigBuildProfile.stage("modifier legacy template: ${instances.lastOrNull()?.type ?: "rig.scaffold"}") {
+            generated(bodyStrength, tuning, headStrength, correctedRecipe, outline, scaffold["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
+                scaffold["frontHairSway"]?.jsonPrimitive?.boolean ?: true, scaffold["backHairSway"]?.jsonPrimitive?.boolean ?: true,
+                neutralScaffold = instances.isEmpty())
         }
-        // Keep the full generator as the uncached equivalence path. Color-only additions do not rebuild geometry.
-        if (RigStageCache.enabled && instances.lastOrNull()?.type in setOf("expression.cheek", "expression.gloom") &&
-            instances.dropLast(1).any { !it.type.endsWith("/legacy") }) {
-            moodTemplate(instances, scaffold, state)?.let { return it }
-        }
-            var tuning = RigTuning()
-            for (spec in RigLegacyBindings.specs) state[spec.type]?.let { tuning = RigLegacyBindings.tuning(it, tuning) }
-            val bodyStrength = state["body/legacy"]?.let(RigLegacyBindings::strength) ?: 1f
-            val headStrength = (state[RigLegacyBindings.FITTED_FACE] ?: state["face/legacy"])?.let(RigLegacyBindings::strength) ?: 1f
-            val kept = state.keys.flatMapTo(HashSet()) { RigLegacyBindings.spec(it).parameters }
-            val byArea = instances.filter { RigLegacyBindings.spec(it.type).isBase }.associateBy { RigLegacyBindings.spec(it.type).area }
-            val recipe = if (instances.none { !it.type.endsWith("/legacy") }) RigRecipe.Legacy else RigRecipe(true,
-                bases = RigModules.areas.associate { area ->
-                    val chosen = byArea[area.id]
-                    val base = chosen?.type?.takeUnless { it == RigLegacyBindings.FITTED_FACE } ?: area.legacy.id
-                    area.id to BaseChoice(base, chosen?.version ?: area.legacy.version, chosen?.let(RigLegacyBindings::values).orEmpty())
-                }, modules = RigModules.modules.associate { module ->
-                    val chosen = state[module.id] ?: state[RigLegacyBindings.FITTED_FACE]?.takeIf { module.id == RigModules.FACE_DEPTH_TURN.id }
-                    module.id to ModuleChoice(chosen != null, chosen?.version ?: module.version, chosen?.let(RigLegacyBindings::values).orEmpty())
-                })
-            val outline = state[RigModules.MOUTH_OUTLINE.id]
-            val corrections = io.github.psd2live.project.WorkspaceSettingsCodec.decodeRecipe(scaffold["corrections"])
-            val correctedRecipe = recipe.copy(moves = corrections.moves, eyeParts = corrections.eyeParts)
-            if (RigStageCache.enabled && instances.lastOrNull()?.type == "mouth/fitted") {
-                val nativeConfig = generationConfig(bodyStrength, tuning, headStrength, correctedRecipe, outline,
-                    scaffold["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
-                    scaffold["frontHairSway"]?.jsonPrimitive?.boolean ?: true, scaffold["backHairSway"]?.jsonPrimitive?.boolean ?: true)
-                fittedMouthTemplate(instances, scaffold, nativeConfig, kept, byArea.keys)?.let { return it }
-            }
-            var bindingInput: (() -> PuppetModel)? = null
-            val native = RigBuildProfile.stage("modifier legacy template: ${instances.lastOrNull()?.type ?: "rig.scaffold"}") {
-                generated(bodyStrength, tuning, headStrength, correctedRecipe, outline, scaffold["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
-                    scaffold["frontHairSway"]?.jsonPrimitive?.boolean ?: true, scaffold["backHairSway"]?.jsonPrimitive?.boolean ?: true,
-                    neutralScaffold = instances.isEmpty(), capture = { bindingInput = it })
-            }
-            val chains = native.generatedChains.filter { chain -> instances.any { chain.kind in RigModifierChains.kinds(it.type) } }
-                .map { RigModifierChains.Binding(it) }
-            return finishTemplate(native.puppet, chains, kept, byArea.keys, bindingInput)
-    }
-
-    private fun fittedMouthTemplate(instances: List<RigModifierInstance>, scaffold: JsonObject,
-                                    native: PipelineConfig, kept: Set<ParameterId>, areas: Set<String>): Template? {
-        val context = RigBuilder.rigContext(analysis, native, meshCache).takeIf { it.fittedMouth(native)?.rig != null } ?: return null
-        val previous = template(instances.dropLast(1), scaffold)
-        val input = requireNotNull(previous.bindingInput) { "Fitted mouth requires captured upstream source geometry" }.invoke()
-        val sourceLayers = context.analysis.layers.associateBy { it.source.id.raw }
-        val layers = input.drawables.mapNotNull { mesh ->
-            sourceLayers[layersByMesh[mesh.id.raw]]?.let { mesh.id.raw to it }
-        }.toMap()
-        val frames = layers.mapValues { (_, layer) -> context.parentAndFrame(layer, native).second }
-        val originals = layers.filterValues { it.semantic.tag in CharacterAnalyzer.MOUTH_TAGS ||
-            it.semantic.tag in setOf(SemanticTag.FACE, SemanticTag.NOSE, SemanticTag.FACE_DETAIL) }
-            .mapValues { (_, layer) -> RigBuilder.fittedMouthSourceMesh(layer, context, native, atlas, meshCache) }
-        val headSource = RigBuilder.fittedMouthHeadSource(input, layers, context, native, atlas, meshCache)
-        val source = headSource.copy(drawables = headSource.drawables.map { drawable ->
-            val data = originals[drawable.id.raw] ?: return@map drawable
-            val layer = layers.getValue(drawable.id.raw)
-            if (layer.semantic.tag !in CharacterAnalyzer.MOUTH_TAGS) return@map drawable
-            drawable.copy(parentDeformerId = context.parentAndFrame(layer, native).first, mesh = data.mesh,
-                geometryGrid = RigBuilder.zeroMeshGrid(data.rigPositions.size), blendShapes = emptyList())
-        })
-        val headProvider = instances.lastOrNull { it.type in setOf("face/fitted", "face.depth-turn") }?.id
-        val captured = RigFittedMouthSource.capture(context, native, source, layers, frames,
-            input.drawables.map { it.id.raw }, headProvider)
-        var bindingInput: PuppetModel? = null
-        val result = io.github.psd2live.algorithms.binding.MouthFittedAlgorithm().project(source, layers.keys, captured,
-            sourcePositions = originals.mapValues { (_, data) -> data.rigPositions },
-            checkpoint = { if (Thread.currentThread().isInterrupted) throw java.util.concurrent.CancellationException() },
-            onBindingInput = { bindingInput = it })
-        RigBuildProfile.count("modifier direct fitted mouth")
-        val raw = requireNotNull(bindingInput)
-        return finishTemplate(result, previous.chains, kept, areas) { raw }
+        val chains = native.generatedChains.filter { chain -> instances.any { chain.kind in RigModifierChains.kinds(it.type) } }
+            .map { RigModifierChains.Binding(it) }
+        return finishTemplate(native.puppet, chains, kept, byArea.keys)
     }
 
     private fun finishTemplate(input: PuppetModel, chains: List<RigModifierChains.Binding>, kept: Set<ParameterId>,
-                               areas: Set<String>, bindingInput: (() -> PuppetModel)?): Template {
-            val dynamic = chains.flatMap { it.native.parameters }
-            val model = RigModifierChains.normalize(restricted(input, kept + dynamic), chains)
-            val clips = RigOrdinaryMaterials.clipping(analysis.source, primaryByLayer.entries.associate { it.value to it.key })
-            val tags = analysis.layers.associate { it.source.id.raw to it.semantic.tag }
-            val opacity = analysis.layers.associate { it.source.id.raw to it.source.opacity }
-            return Template(model.copy(drawables = model.drawables.map { mesh ->
-                val layer = layersByMesh[mesh.id.raw]
-                val eye = tags[layer] in setOf(SemanticTag.IRIDES, SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYE_CLOSE)
-                val mouth = tags[layer] in CharacterAnalyzer.MOUTH_COMPONENT_TAGS + setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)
-                val active = eye && "eye" in areas || mouth && "mouth" in areas
-                mesh.copy(maskedBy = if ((eye || mouth) && !active) listOfNotNull(clips[layer]) else mesh.maskedBy,
-                    channelGrids = if ((eye || mouth) && !active) ChannelGrids.Empty else mesh.channelGrids,
-                    opacity = if ((eye || mouth) && !active) opacity[layer] ?: mesh.opacity else mesh.opacity)
-            }), chains, bindingInput)
-    }
-
-    private fun skinTemplate(instances: List<RigModifierInstance>, scaffold: JsonObject): Template {
-        val previous = template(instances.dropLast(1), scaffold)
-        val instance = instances.last()
-        // Clipping reads only identities and mask state; never serialize geometry for this local pass.
-        val input = RigIR(io.github.psd2live.format.model.Canvas(1f, 1f), emptyList(), meshes = previous.model.drawables.map {
-            io.github.psd2live.format.model.Mesh(it.id.raw, it.name, null, geometry = null, offsets = null,
-                maskedBy = it.maskedBy.map { id -> id.raw }, invertMask = it.invertMask)
-        })
-        val context = skinClipContext(instance, includeEarlier = false)
-        val complete = instance.copy(targets = input.meshes.map { ModifierTarget("mesh", it.id) })
-        val changes = io.github.psd2live.algorithms.binding.SkinClipAlgorithm().changes(input, complete,
-            context) {}
-        val masks = changes.meshes.updated.map { it.after }
-            .associate { it.id to (it.maskedBy.map(::DrawableId) to it.invertMask) }
-        fun apply(model: PuppetModel) = model.copy(drawables = model.drawables.map { mesh ->
-            val next = masks[mesh.id.raw] ?: return@map mesh
-            if (mesh.maskedBy == next.first && mesh.invertMask == next.second) mesh
-            else mesh.copy(maskedBy = next.first, invertMask = next.second)
-        })
-        RigBuildProfile.count("modifier local clipping templates")
-        return Template(apply(previous.model), previous.chains, previous.bindingInput?.let { capture -> { apply(capture()) } })
-    }
-
-    private fun moodTemplate(instances: List<RigModifierInstance>, scaffold: JsonObject, state: Map<String, RigModifierInstance>): Template? {
-        // Source tracks using these names participate in standard parameter resolution; retain that compatibility path.
-        if (expressionLayers.values.any { ParameterId(it.parameter) in io.github.psd2live.algorithms.binding.MoodChannels.parameters }) return null
-        val previous = template(instances.dropLast(1), scaffold)
-        val input = previous.bindingInput?.invoke() ?: return null
-        val modules = listOf(RigModules.EXPRESSION_CHEEK, RigModules.EXPRESSION_GLOOM)
-        val subject = RecipeSubject.of(analysis)
-        val active = modules.filter { it.id in state && it.applies(subject) }
-        val additions = active.flatMap { it.defines }.filter { definition -> input.parameters.none { it.id.raw == definition.id } }
-            .map { Parameter(ParameterId(it.id), io.github.psd2live.i18n.tr(it.nameKey), it.min, it.max, it.default) }
-        val order = RigModules.modules.flatMap { it.defines }.map { ParameterId(it.id) }.withIndex().associate { it.value to it.index }
-        val dynamic = previous.chains.flatMapTo(HashSet()) { it.native.parameters }
-        val layers = analysis.layers.associateBy { it.source.id.raw }
-        val cheek = active.any { it == RigModules.EXPRESSION_CHEEK }
-        val gloom = active.any { it == RigModules.EXPRESSION_GLOOM }
-        val influences = input.drawables.mapNotNull { mesh ->
-            val layer = layers[layersByMesh[mesh.id.raw]] ?: return@mapNotNull null
-            val tag = layer.semantic.tag; val role = layer.semantic.role
-            val skin = tag == SemanticTag.FACE || tag == SemanticTag.NOSE || tag == SemanticTag.EARS || tag == SemanticTag.FACE_DETAIL && role != PartRole.HIGHLIGHT
-            val warmth = when {
-                tag == SemanticTag.FACE_DETAIL && role == PartRole.BLUSH -> .3f
-                tag == SemanticTag.FACE || tag == SemanticTag.NOSE -> .06f
-                tag == SemanticTag.EARS -> .05f
-                else -> 0f
-            } * (state["expression.cheek"]?.let { RigLegacyBindings.values(it)["strength"] } ?: 100f) / 100f
-            val darkness = (if (skin) 1f else 0f) * (state["expression.gloom"]?.let { RigLegacyBindings.values(it)["strength"] } ?: 100f) / 100f
-            mesh.id to io.github.psd2live.algorithms.binding.MoodBinding.Influence(warmth, darkness, role == PartRole.HIGHLIGHT)
-        }.toMap()
-        val evaluated = io.github.psd2live.algorithms.binding.MoodBinding(carrierName = { head, meshName ->
-            io.github.psd2live.i18n.tr(if (head) "model.deformer.meshTurn" else "model.deformer.meshShape", meshName)
-        }).evaluate(input, additions, order, dynamic, influences, cheek, gloom)
-        RigBuildProfile.count("modifier local color templates")
-        val kept = state.keys.flatMapTo(HashSet()) { RigLegacyBindings.spec(it).parameters }
-        val areas = instances.filter { RigLegacyBindings.spec(it.type).isBase }.mapTo(HashSet()) { RigLegacyBindings.spec(it.type).area }
-        return finishTemplate(evaluated.model, previous.chains, kept, areas) { evaluated.source }
+                               areas: Set<String>): Template {
+        val dynamic = chains.flatMap { it.native.parameters }
+        val model = RigModifierChains.normalize(restricted(input, kept + dynamic), chains)
+        val clips = RigOrdinaryMaterials.clipping(analysis.source, primaryByLayer.entries.associate { it.value to it.key })
+        val tags = analysis.layers.associate { it.source.id.raw to it.semantic.tag }
+        val opacity = analysis.layers.associate { it.source.id.raw to it.source.opacity }
+        return Template(model.copy(drawables = model.drawables.map { mesh ->
+            val layer = layersByMesh[mesh.id.raw]
+            val eye = tags[layer] in setOf(SemanticTag.IRIDES, SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYE_CLOSE)
+            val mouth = tags[layer] in CharacterAnalyzer.MOUTH_COMPONENT_TAGS + setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)
+            val active = eye && "eye" in areas || mouth && "mouth" in areas
+            mesh.copy(maskedBy = if ((eye || mouth) && !active) listOfNotNull(clips[layer]) else mesh.maskedBy,
+                channelGrids = if ((eye || mouth) && !active) ChannelGrids.Empty else mesh.channelGrids,
+                opacity = if ((eye || mouth) && !active) opacity[layer] ?: mesh.opacity else mesh.opacity)
+        }), chains)
     }
 
     fun transition(instance: RigModifierInstance, target: ModifierTarget, checkpoint: () -> Unit): Pair<PuppetModel, PuppetModel> {

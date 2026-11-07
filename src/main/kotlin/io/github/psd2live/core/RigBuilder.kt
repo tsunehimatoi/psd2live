@@ -3451,25 +3451,6 @@ object RigBuilder {
 		return Deformer.Warp(id, name, parent, part, rows, 3, true, grid)
 	}
 
-    /** Refresh the head field that reads the fitted mouth landmarks before the mouth is projected. */
-    internal fun fittedMouthHeadSource(input: PuppetModel, layers: Map<String, ClassifiedLayer>, context: RigContext,
-                                      config: PipelineConfig, atlas: PackedAtlas, cache: PreviewMeshCache): PuppetModel {
-        val leaned = faceTurnAndLean(context, config, stagesOf(cache))
-        val turnAxes = setOf(StandardParameters.ANGLE_X, StandardParameters.ANGLE_Y)
-        val source = if (context.faceTurn(config) == null) input else input.copy(drawables = input.drawables.map { drawable ->
-            val original = layers[drawable.id.raw]?.takeIf(::styled) ?: return@map drawable
-            val aligned = context.rigLayer(original)
-            val (parent, frame) = context.parentAndFrame(original, config)
-            val data = fittedMouthSourceMesh(original, context, config, atlas, cache)
-            val shapes = styleTurnShapes(aligned, data.rigPositions, frame, context, config)
-            // A removed sway warp has already reparented the upstream mesh. Start in its native frame
-            // so removing the warp below transforms both the mesh and its refreshed shapes together.
-            val native = if (parent == drawable.parentDeformerId) drawable else drawable.copy(parentDeformerId = parent, mesh = data.mesh)
-            native.copy(blendShapes = drawable.blendShapes.filterNot { it.parameterId in turnAxes } + neutralized(shapes, native))
-        })
-        return withoutLegacyHairSway(source.copy(deformers = leaned), config)
-    }
-
 	/** Uses the fitted recipe's mesh density and the native aligned source coordinates. */
 	internal fun fittedMouthSourceMesh(layer: ClassifiedLayer, context: RigContext, config: PipelineConfig,
 	                                  atlas: PackedAtlas, cache: PreviewMeshCache): MeshData {
