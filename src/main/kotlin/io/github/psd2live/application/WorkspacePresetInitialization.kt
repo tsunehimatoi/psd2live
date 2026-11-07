@@ -52,6 +52,7 @@ import io.github.psd2live.algorithms.binding.MouthDepthV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV5Algorithm
+import io.github.psd2live.algorithms.binding.MouthFittedV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV6Algorithm
@@ -226,7 +227,9 @@ internal object WorkspacePresetInitialization {
                         RigModules.EYE_AFTERSHOCK.id to EyeAftershockV5Algorithm.VERSION,
                         RigModules.EYE_SQUASH.id to EyeSquashV5Algorithm.VERSION,
                     )
-                    packages(headVersions + sharedVersions.filterKeys { it in plannedTypes })
+                    val frameBindings = packages(headVersions + sharedVersions.filterKeys { it in plannedTypes })
+                    if (frameBindings.isEmpty()) frameBindings else
+                        frameBindings + packages(sourceMouthVersions(model.analysis, config, types, sharedBrow = true))
                 } else emptyMap()
             } else if (singleEyeClosedMouth) {
                 val mouth = sourceMouthVersions(model.analysis, config, types, singleEye = true)
@@ -438,7 +441,7 @@ internal object WorkspacePresetInitialization {
     ).filterKeys { it in types }
 
     private fun sourceMouthVersions(analysis: PipelineAnalysis, config: PipelineConfig, types: List<String>,
-                                    singleEye: Boolean = false): Map<String, Int> {
+                                    singleEye: Boolean = false, sharedBrow: Boolean = false): Map<String, Int> {
         if (config.mouthOutlineEnabled && !supportsClassicOutline(analysis, config)) return emptyMap()
         val measurement = config.copy(generateDeformers = false)
         val context = RigBuilder.rigContext(analysis, measurement)
@@ -446,9 +449,15 @@ internal object WorkspacePresetInitialization {
         if (mouth.source == null || mouth.layered || mouth.rig?.fit?.layered != null ||
             !singleEye && context.faceTurn(measurement) == null)
             return emptyMap()
-        if (mouth.closedLine) return if (singleEye) singleEyeMouthVersions(types) else closedMouthVersions(types)
+        if (mouth.closedLine) return when {
+            sharedBrow -> emptyMap()
+            singleEye -> singleEyeMouthVersions(types)
+            else -> closedMouthVersions(types)
+        }
         if (singleEye) return emptyMap()
         if (analysis.layers.any { it.semantic.tag == SemanticTag.MOUTH_CLOSE }) return emptyMap()
+        if (sharedBrow) return mapOf(RigModules.MOUTH_FITTED.id to MouthFittedV6Algorithm.VERSION)
+            .filterKeys { it in types }
         val withInterior = RigModules.MOUTH_TONGUE.id in types || RigModules.MOUTH_DEPTH.id in types
         return mapOf(
             RigModules.MOUTH_FITTED.id to MouthFittedV3Algorithm.VERSION,
