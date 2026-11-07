@@ -34,11 +34,10 @@ import java.util.concurrent.FutureTask
 internal object WorkspacePresetInitialization {
     fun create(document: WorkspaceDocument, work: WorkspaceRasterWork,
                choices: WorkspaceInitialPreset = WorkspaceInitialPreset()): WorkspaceDocument =
-        prepare(document, work, choices, preferSourceBindings = true).first
+        prepare(document, work, choices).first
 
     fun prepare(document: WorkspaceDocument, work: WorkspaceRasterWork,
                 choices: WorkspaceInitialPreset = WorkspaceInitialPreset(),
-                preferSourceBindings: Boolean = false,
                 requestedVersions: Map<String, Int> = emptyMap()): Pair<WorkspaceDocument, RigPreviewModel> {
         val config = document.config()
         var stack = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack))
@@ -51,21 +50,21 @@ internal object WorkspacePresetInitialization {
             pipeline.buildPreview(candidate.source, candidate.config(), ProgressListener { _, _ -> work.checkpoint() })
         }
         // Planning needs the package graph, but making the ordinary source meshes only needs the empty stack.
-        val catalog = if (preferSourceBindings) FutureTask { RigModifierAlgorithms.registry }.also {
+        val catalog = FutureTask { RigModifierAlgorithms.registry }.also {
             Thread.ofVirtual().name("psd2live-preset-catalog").start(it)
-        } else null
+        }
         var model: RigPreviewModel
         val targets = try {
             model = build("author preview")
             model.rig.puppet.drawables.filter { it.mesh != null && it.id.raw in model.rig.ownLayerIdByDrawableId }
                 .map { ModifierTarget("mesh", it.id.raw) }.also {
-                    if (it.isNotEmpty() && catalog != null) RigBuildProfile.stage("source preset: wait for modifier catalog") {
+                    if (it.isNotEmpty()) RigBuildProfile.stage("source preset: wait for modifier catalog") {
                         try { catalog.get() }
                         catch (failure: ExecutionException) { throw failure.cause ?: failure }
                     }
                 }
         } finally {
-            catalog?.cancel(true)
+            catalog.cancel(true)
         }
         if (targets.isEmpty()) {
             require(requestedVersions.isEmpty()) { "Cannot select preset versions without mesh targets" }
@@ -95,7 +94,7 @@ internal object WorkspacePresetInitialization {
         }
         val scaffold = stack.instances.singleOrNull { it.type == RigSourceModifiers.SCAFFOLD && it.version == 2 }
         val completeEyePair = subject.sides(SemanticTag.EYEWHITE).size == 2 && subject.sides(SemanticTag.EYELASH).size == 2
-        val fittedSources = if (preferSourceBindings && scaffold != null && config.recipe == RigRecipe.Modern && fittedFace &&
+        val fittedSources = if (scaffold != null && config.recipe == RigRecipe.Modern && fittedFace &&
             !config.featureDisplacementEnabled && config.rigTuning == RigTuning() && requestedVersions.isEmpty() && freshSource(config) &&
             (!subject.has(SemanticTag.EYEBROW) || completeEyePair)) {
             fun packages(versions: Map<String, Int>): Map<String, Pair<Int, ModifierPluginReference>> {
@@ -131,7 +130,7 @@ internal object WorkspacePresetInitialization {
                 headAndEye + lids + brows
             }
         } else emptyMap()
-        val sourceVersions = if (preferSourceBindings && scaffold != null) buildMap {
+        val sourceVersions = if (scaffold != null) buildMap {
             put(LegacyBodyV2Algorithm.TYPE, LegacyBodyV2Algorithm.VERSION)
             if (!config.featureDisplacementEnabled) {
                 put(LegacyFaceV2Algorithm.TYPE, LegacyFaceV2Algorithm.VERSION)

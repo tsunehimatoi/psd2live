@@ -30,7 +30,7 @@ internal class WorkspaceSourceImporter(
     private val newProjectId: () -> String = { UUID.randomUUID().toString() },
     private val initialWorkspaceIds: () -> List<String> = { emptyList() },
     private val preparePreset: (WorkspaceDocument, WorkspaceRasterWork, WorkspaceInitialPreset) -> Pair<WorkspaceDocument, RigPreviewModel> =
-        { document, work, choices -> WorkspacePresetInitialization.prepare(document, work, choices, preferSourceBindings = true) },
+        { document, work, choices -> WorkspacePresetInitialization.prepare(document, work, choices) },
 ) {
     suspend fun importPsd(path: Path, projectId: String?, state: String, discardUnsaved: Boolean = false,
                          initialConfig: PipelineConfig = PipelineConfig(),

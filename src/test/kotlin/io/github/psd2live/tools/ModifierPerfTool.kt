@@ -39,7 +39,7 @@ class ModifierPerfTool {
                 val runtime = WorkspaceRuntime<RigPreviewModel>({ builder.build(it) }, rebuildFrom = { document, previous -> builder.build(document, previous) })
                 val start = System.nanoTime()
                 val installed = WorkspaceSourceImporter(runtime, build = { builder.build(it) }, preparePreset = { document, work, choices ->
-                    WorkspacePresetInitialization.prepare(document, work, choices, preferSourceBindings = true, requestedVersions = importVersions)
+                    WorkspacePresetInitialization.prepare(document, work, choices, requestedVersions = importVersions)
                 }).importPsd(
                     sample.path.toAbsolutePath(), null, runtime.state.value.state,
                     modifiers = WorkspaceInitialModifiers.RECOMMENDED)
