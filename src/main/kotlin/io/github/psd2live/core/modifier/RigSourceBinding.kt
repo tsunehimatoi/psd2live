@@ -23,7 +23,9 @@ internal object RigSourceBinding {
             override fun vertexSources(from: PuppetModel, original: Drawable, to: PuppetModel, target: Drawable, checkpoint: () -> Unit) =
                 RasterMeshJournal.prepare(canvasMesh(from, original), canvasMesh(to, target), checkpoint).sources
         }
-        val current = BindingMerge.apply(PuppetIr.toPuppet(rig), instance, inputs, checkpoint)
+        val original = PuppetIr.toPuppet(rig)
+        val merged = BindingMerge.apply(original, instance, inputs, checkpoint)
+        val current = restoreSourceRotationAngles(original, merged, instance, source, checkpoint)
         val chains = if (RigModifierChains.kinds(instance.type).isEmpty()) emptyList() else source.chains(instance, checkpoint)
         val spec = RigLegacyBindings.spec(instance.type)
         val bound = rig.withPuppet(orderNativeChainParameters(current, instance, chains))
@@ -31,6 +33,31 @@ internal object RigSourceBinding {
             bound.copy(restPose = bound.restPose + (StandardParameters.MOUTH_OPEN.raw to 1f)) else bound
         val output = RigModifierPhysics.add(posed, instance, chains)
         return if (chains.isEmpty()) output else source.addUpstreamExpressionInputs(output, instance)
+    }
+
+    private fun restoreSourceRotationAngles(original: PuppetModel, merged: PuppetModel, instance: RigModifierInstance,
+                                            source: RigModifierSource, checkpoint: () -> Unit): PuppetModel {
+        if (instance.outputAliases.isEmpty()) return merged
+        val rotations = original.deformers.filterIsInstance<Deformer.Rotation>().associateBy { it.id }
+        if (rotations.isEmpty()) return merged
+        val (before, after) = source.transition(instance, instance.targets.first(), checkpoint)
+        val previous = before.deformers.filterIsInstance<Deformer.Rotation>().associateBy { it.id }
+        val angles = buildMap {
+            for (next in after.deformers.filterIsInstance<Deformer.Rotation>()) {
+                val prior = previous[next.id] ?: continue
+                if (prior.baseAngle == next.baseAngle) continue
+                val alias = instance.outputAliases["shared/deformer:${next.id.raw}"] ?: continue
+                val live = rotations[DeformerId(alias)] ?: continue
+                val parent = prior.parent?.let { id -> DeformerId(instance.outputAliases["shared/deformer:${id.raw}"] ?: id.raw) }
+                if (live.parent != parent || PuppetIr.deformerToIr(live.copy(id = prior.id, parent = prior.parent, partId = prior.partId)) !=
+                    PuppetIr.deformerToIr(prior)) continue
+                put(live.id, next.baseAngle)
+            }
+        }
+        // The native binding merge transports the keyed pivot. The source also owns its unchanged static reference angle.
+        return if (angles.isEmpty()) merged else merged.copy(deformers = merged.deformers.map { deformer ->
+            if (deformer is Deformer.Rotation) angles[deformer.id]?.let { deformer.copy(baseAngle = it) } ?: deformer else deformer
+        })
     }
 
     private fun orderNativeChainParameters(model: PuppetModel, instance: RigModifierInstance,
