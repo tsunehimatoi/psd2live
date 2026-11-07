@@ -1387,3 +1387,32 @@ tasks.register("pluginEyeGazeLid") {
         """.trimIndent())
     }
 }
+
+val mouthVowelWorkerJar = registerIsolatedBindingWorker(
+    "mouthVowel", "mouth-vowel", "worker-mouth-vowel", "io.github.psd2live.algorithms.binding.MouthVowelWorker",
+)
+
+tasks.register("pluginMouthVowel") {
+    dependsOn(mouthVowelWorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-vowel")
+    val packageVersion = project.version.toString()
+    inputs.file(mouthVowelWorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthVowelWorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682e766f77656c.v2"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Mouth vowels",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/vowel","aliases":["mouth.vowel"],"version":2,"name":"Mouth vowels","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","mouth/fitted"],"contextVersion":2,
+               "reads":["mesh","parameter","hierarchy"],"writes":["mesh","parameter","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}

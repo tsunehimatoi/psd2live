@@ -84,6 +84,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "faceLegacyV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLegacyV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthFittedV2Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "mouthVowelElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "fittedFaceV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browFittedElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "depthTurnV2Elements"))
@@ -277,6 +278,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginMouthOutlineV2")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-outline-v2")) {
         into("algorithm-plugins/mouth-outline-v2")
+    }
+    dependsOn(":algorithms:binding:pluginMouthVowel")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-vowel")) {
+        into("algorithm-plugins/mouth-vowel")
     }
     dependsOn(":algorithms:binding:pluginMouthFittedV2")
     dependsOn(":algorithms:binding:pluginBrowFittedV2")
