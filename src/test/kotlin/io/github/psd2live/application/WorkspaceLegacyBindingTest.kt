@@ -252,6 +252,65 @@ class WorkspaceLegacyBindingTest {
         assertEquals(legacy, RigIrCompiler.compile(bind(version = 2, bodyVersion = 2)))
     }
 
+    @Test fun fittedBrowV3MatchesCompleteRecommendedPresetAndItsInstalledWorker(): Unit = runBlocking {
+        val art = document(pairedBrows = true, eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true)
+        val config = WorkspacePresetBaseline.configure(art.config(), "modern")
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
+            WorkspaceInitialPreset(clothing = true), preferSourceBindings = true)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val brow = stack.instances.single { it.type == "brow/fitted" }
+        val face = stack.instances.single { it.type == "face/fitted" }
+        val index = stack.index(brow.id)
+        val expected = assertNotNull(baseline.modifierEvaluation).outputs
+        fun select(instance: RigModifierInstance, version: Int) =
+            instance.copy(version = version, plugin = assertNotNull(BundledAlgorithmArtifacts.find(instance.type, version)).reference)
+        fun withVersions(vararg replacements: RigModifierInstance): WorkspaceDocument {
+            val byId = replacements.associateBy { it.id }
+            val updated = stack.copy(instances = stack.instances.map { byId[it.id] ?: it })
+            return initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = updated.toJson()))
+        }
+
+        val previous = select(brow, 2)
+        val modern = select(brow, 3)
+        val independentFace = select(face, 3)
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(brow.type, 3))
+        val previousModel = WorkspacePreviewBuilder().build(withVersions(previous))
+        assertFaceEquals(expected[index], assertNotNull(previousModel.modifierEvaluation).outputs[index])
+        assertFaceEquals(RigIrCompiler.compile(baseline), RigIrCompiler.compile(previousModel))
+        assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(withVersions(previous, independentFace)) }
+        val actual = WorkspacePreviewBuilder().build(withVersions(modern, independentFace))
+        val evaluated = assertNotNull(actual.modifierEvaluation)
+        assertFaceEquals(expected[index], evaluated.outputs[index])
+        assertFaceEquals(RigIrCompiler.compile(baseline), RigIrCompiler.compile(actual))
+
+        val directory = Files.createTempDirectory("fitted-brow-v3-")
+        val preferences = Preferences.userRoot().node("fitted-brow-v3/" + UUID.randomUUID())
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            for (name in artifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val installed = store.install(staging.toString())
+            assertEquals(artifact.reference, installed.reference)
+            val definition = RigBrowFittedModifier.modernDefinition(RigModifierSource.of(actual))
+            val upstream = evaluated.stack.instances.take(index).filter { it.type in definition.requires + definition.optionalUpstream }.map {
+                ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+            }
+            val context = definition.authorContext(modern).withUpstream(upstream)
+            assertFaceEquals(expected[index], ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(),
+                evaluated.outputs[index - 1], modern, {}, store, context = context,
+                declaredParameters = definition.parameters(modern)))
+        } finally {
+            ModifierPluginWorkers.stop(artifact.reference)
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
     @Test fun fittedBrowRetainsAuthoredGeometryAfterHeadTurnIsApplied(): Unit = runBlocking {
         val f = Fixture(document())
         f.install()

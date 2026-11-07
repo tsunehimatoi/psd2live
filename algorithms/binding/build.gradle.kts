@@ -1064,6 +1064,40 @@ tasks.register("pluginBrowFittedV2") {
     }
 }
 
+val browFittedV3WorkerJar = registerIsolatedBindingWorker(
+    "browFittedV3", "brow-fitted-v3", "worker-brow-fitted-v3", "io.github.psd2live.algorithms.binding.BrowFittedV3Worker",
+)
+kotlin.target.compilations.named("browFittedV3") {
+    associateWith(kotlin.target.compilations.getByName("browFitted"))
+}
+browFittedV3WorkerJar.configure {
+    from(sourceSets.named("browFitted").map { it.output })
+}
+tasks.register("pluginBrowFittedV3") {
+    dependsOn(browFittedV3WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-brow-fitted-v3")
+    val packageVersion = project.version.toString()
+    inputs.file(browFittedV3WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        browFittedV3WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.62726f772f666974746564.v3"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Fitted brows",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/binding","aliases":["brow/fitted"],"version":3,"name":"Fitted brows","category":"brow",
+               "targets":["mesh"],"requires":["rig.scaffold"],"exclusiveFamily":"base:brow","contextVersion":2,
+               "reads":["*"],"writes":["mesh","deformer","parameter","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val eyeLegacyWorkerJar = registerIsolatedBindingWorker(
     "eyeLegacy", "eye-legacy", "worker-eye-legacy", "io.github.psd2live.algorithms.binding.EyeLegacyWorker",
 )

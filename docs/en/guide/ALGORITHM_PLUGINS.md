@@ -14,6 +14,8 @@ Legacy eyes v2 is selectable by version. It requires the complete target set of 
 
 Fitted brows v2 is available through explicit version selection in the add panel. It requires a shared v2 scaffold and supports compatible preceding body, head turn, and eye versions. Recommended presets use fitted brows v1.
 
+Fitted brows v3 can follow fitted face v3 on the same shared scaffold. The full recommended model has been checked with fitted eyes v2, including evaluation from the installed JVM package. The fitted mouth compatibility path can still request a brow template.
+
 Legacy brows v2 is selectable by version with a source-aware shared scaffold and compatible ordinary or fitted head turn. Use v1 for a reparented brow branch or fitted shapes that exceed the mesh budget.
 
 Legacy face v2 is also available by explicit version selection. It computes head turn from source measurements and supports the full target set of a source-aware shared v2 scaffold, with an optional legacy body v1 or v2 on that same scaffold. New source projects created with the legacy preset select v2 when its source and target requirements are met and the bundled package is available. Saved stacks and existing preset switches keep their version selection.

@@ -1,6 +1,7 @@
 package io.github.psd2live.core.modifier
 
 import io.github.psd2live.algorithms.binding.BrowFittedBinding
+import io.github.psd2live.algorithms.binding.BrowFittedV3Binding
 import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.BaseChoice
 import io.github.psd2live.core.recipe.ModuleChoice
@@ -28,17 +29,30 @@ internal object RigBrowFittedModifier {
         )
     }
 
-    private fun RigModifierSource.capture(instance: RigModifierInstance): ModifierAlgorithmContext {
+    fun modernDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val algorithm = object : ChangingModifierAlgorithmPlugin by BrowFittedV3Binding, ModifierOptionalUpstream, ModifierVersionSelection {
+            override val optionalUpstream = setOf("eye/fitted", "face/fitted")
+            override val canonicalOptInType = "brow/fitted"
+        }
+        return definition(source).copy(
+            version = BrowFittedV3Binding.VERSION,
+            plugin = algorithm,
+            authorContext = { requireNotNull(source).capture(it, modern = true) },
+        )
+    }
+
+    private fun RigModifierSource.capture(instance: RigModifierInstance, modern: Boolean = false): ModifierAlgorithmContext {
         val scaffold = provider(instance)
-        require(scaffold.version == 2) { "Fitted brow v2 requires a shared v2 scaffold. Use v1 with older scaffolds." }
+        require(scaffold.version == 2) { "Fitted brow v${instance.version} requires a shared v2 scaffold. Use v1 with older scaffolds." }
         val upstream = activeBefore(instance).filter { it.config["scaffold"] == JsonPrimitive(scaffold.id) &&
             it.targets.any(instance.targets::contains) }
         require(upstream.all { previous -> when (previous.type) {
             "body/legacy" -> previous.version in 1..2
-            "face/legacy", "face/fitted", "face.depth-turn", "eye/legacy" -> previous.version == 1
-            "eye/fitted" -> previous.version == 2
+            "face/legacy", "face.depth-turn", "eye/legacy" -> previous.version == 1
+            "face/fitted" -> previous.version == 1 || modern && previous.version == 3
+            "eye/fitted" -> previous.version == 2 || modern && previous.version == 5
             else -> false
-        } }) { "Fitted brow v2 requires compatible body, head and eye bindings before the brow. Use v1 with other preceding bindings." }
+        } }) { "Fitted brow v${instance.version} requires compatible body, head and eye bindings before the brow. Use v1 with other preceding bindings." }
         val eye = upstream.lastOrNull { it.type == "eye/fitted" }
         val corrections = WorkspaceSettingsCodec.decodeRecipe(scaffold.config["corrections"])
         val tuning = upstream.mapNotNull { RigLegacyBindings.find(it.type)?.let { spec -> spec to it } }
@@ -109,7 +123,9 @@ internal object RigBrowFittedModifier {
                     tuning.browNearGrow, tuning.browShift, tuning.browTilt, tuning.faceLeanDown, tuning.faceLeanUp).map(::JsonPrimitive)))
             }
         }
-        return ModifierAlgorithmContext(JsonObject(measurements.values + mapOf("before_structure" to before, "structure" to after,
+        val providers = if (modern) mapOf("fitted_face_provider" to
+            (head?.takeIf { it.type == RigLegacyBindings.FITTED_FACE }?.id?.let(::JsonPrimitive) ?: JsonNull)) else emptyMap()
+        return ModifierAlgorithmContext(JsonObject(measurements.values + providers + mapOf("before_structure" to before, "structure" to after,
             "legacy_face" to (motion ?: JsonNull), "styled_face" to (styled ?: JsonNull))),
             mapOf("before_meshes" to beforeMeshes, "source_meshes" to afterMeshes))
     }
