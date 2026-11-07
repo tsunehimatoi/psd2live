@@ -40,6 +40,9 @@ internal object RigCheekModifier {
             changeWrites = CheekCarrierAlgorithm.WRITES, authorContext = { requireNotNull(source).capture(it, carriers = true) })
     }
 
+    fun sourceMoodParametersAvailable(source: RigModifierSource, scaffold: RigModifierInstance): Boolean =
+        source.expressionIds(scaffold).none { it in MoodChannels.parameters }
+
     private fun RigModifierSource.applicable() = RigModules.EXPRESSION_CHEEK.applies(RecipeSubject.of(analysis))
 
     private fun RigModifierSource.capture(instance: RigModifierInstance, carriers: Boolean = false): ModifierAlgorithmContext {
@@ -48,7 +51,7 @@ internal object RigCheekModifier {
         require(instance.outputAliases.keys.none { it.startsWith("parameter-folder:") }) {
             "Use cheek v1 for legacy parameter folder order"
         }
-        require(expressionIds(scaffold).none { it in MoodChannels.parameters }) {
+        require(sourceMoodParametersAvailable(this, scaffold)) {
             "Use cheek v1 when source expressions use the standard mood parameters"
         }
         val preceding = activeBefore(instance).filter {

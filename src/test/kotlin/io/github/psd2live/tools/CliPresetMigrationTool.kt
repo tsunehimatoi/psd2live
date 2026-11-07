@@ -59,7 +59,8 @@ class CliPresetMigrationTool {
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4,
             "brow.shape" to 5, "brow.lid-coupling" to 7, "brow.blink" to 5, "brow.spring" to 6,
             "eye.smile" to 4, "eye.wide" to 4, "eye.gaze-lid" to 4, "eye.emotion" to 4,
-            "eye.aftershock" to 5, "eye.squash" to 5, "mouth/fitted" to 6)
+            "eye.aftershock" to 5, "eye.squash" to 5, "mouth/fitted" to 6, "mouth.outline" to 8,
+            "mouth.vowel" to 7, "mouth.capture" to 6, "expression.cheek" to 3, "expression.gloom" to 3)
         for ((type, version) in versions) {
             val instance = stack.instances.single { it.type == type }
             assertEquals(version, instance.version, type)

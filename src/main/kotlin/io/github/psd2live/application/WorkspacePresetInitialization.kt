@@ -43,6 +43,7 @@ import io.github.psd2live.algorithms.binding.LegacyFaceV2Algorithm
 import io.github.psd2live.algorithms.binding.LidFadeV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthCaptureV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthCaptureV5Algorithm
+import io.github.psd2live.algorithms.binding.MouthCaptureV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV7Algorithm
@@ -62,6 +63,7 @@ import io.github.psd2live.algorithms.binding.MouthOutlineV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV7Algorithm
+import io.github.psd2live.algorithms.binding.MouthOutlineV8Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV7Algorithm
@@ -70,6 +72,7 @@ import io.github.psd2live.algorithms.binding.MouthTongueV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV6Algorithm
+import io.github.psd2live.algorithms.binding.MouthVowelV7Algorithm
 import io.github.psd2live.algorithms.binding.NeckV3Algorithm
 import io.github.psd2live.algorithms.binding.RibbonsResidualAlgorithm
 import io.github.psd2live.algorithms.binding.RibbonsV4Algorithm
@@ -205,9 +208,10 @@ internal object WorkspacePresetInitialization {
                 RigModules.EXPRESSION_GLOOM.id to GloomCarrierAlgorithm.VERSION).filterKeys { it in plannedTypes }
             val headAndEye = packages(headVersions)
             val brow = stack.instances.singleOrNull { it.type == RigModules.BROW_FITTED.id }
+            val source by lazy { RigModifierSource.of(model) }
             val sharedBrow = completeEyePair && headAndEye.isNotEmpty() && brow != null &&
                 brow.targets.toSet() == scaffold.targets.toSet() &&
-                RigBrowFittedModifier.requiresSharedFrames(RigModifierSource.of(model), scaffold,
+                RigBrowFittedModifier.requiresSharedFrames(source, scaffold,
                     stack.instances.take(stack.index(brow.id)).filter { it.config["scaffold"] == JsonPrimitive(scaffold.id) }, brow)
             if (headAndEye.isEmpty()) headAndEye else if (sharedBrow) {
                 val eyeShape = setOf(RigModules.EYE_SMILE.id, RigModules.EYE_WIDE.id, RigModules.EYE_GAZE_LID.id, RigModules.EYE_EMOTION.id)
@@ -228,8 +232,11 @@ internal object WorkspacePresetInitialization {
                         RigModules.EYE_SQUASH.id to EyeSquashV5Algorithm.VERSION,
                     )
                     val frameBindings = packages(headVersions + sharedVersions.filterKeys { it in plannedTypes })
-                    if (frameBindings.isEmpty()) frameBindings else
-                        frameBindings + packages(sourceMouthVersions(model.analysis, config, types, sharedBrow = true))
+                    if (frameBindings.isEmpty()) frameBindings else {
+                        val moods = if (RigCheekModifier.sourceMoodParametersAvailable(source, scaffold))
+                            packages(moodVersions) else emptyMap()
+                        frameBindings + packages(sourceMouthVersions(model.analysis, config, types, sharedBrow = true)) + moods
+                    }
                 } else emptyMap()
             } else if (singleEyeClosedMouth) {
                 val mouth = sourceMouthVersions(model.analysis, config, types, singleEye = true)
@@ -456,8 +463,15 @@ internal object WorkspacePresetInitialization {
         }
         if (singleEye) return emptyMap()
         if (analysis.layers.any { it.semantic.tag == SemanticTag.MOUTH_CLOSE }) return emptyMap()
-        if (sharedBrow) return mapOf(RigModules.MOUTH_FITTED.id to MouthFittedV6Algorithm.VERSION)
-            .filterKeys { it in types }
+        if (sharedBrow) return buildMap {
+            if (RigModules.MOUTH_FITTED.id !in types) return@buildMap
+            put(RigModules.MOUTH_FITTED.id, MouthFittedV6Algorithm.VERSION)
+            if (RigModules.MOUTH_OUTLINE.id !in types) return@buildMap
+            put(RigModules.MOUTH_OUTLINE.id, MouthOutlineV8Algorithm.VERSION)
+            if (RigModules.MOUTH_VOWEL.id !in types) return@buildMap
+            put(RigModules.MOUTH_VOWEL.id, MouthVowelV7Algorithm.VERSION)
+            if (RigModules.MOUTH_CAPTURE.id in types) put(RigModules.MOUTH_CAPTURE.id, MouthCaptureV6Algorithm.VERSION)
+        }
         val withInterior = RigModules.MOUTH_TONGUE.id in types || RigModules.MOUTH_DEPTH.id in types
         return mapOf(
             RigModules.MOUTH_FITTED.id to MouthFittedV3Algorithm.VERSION,
