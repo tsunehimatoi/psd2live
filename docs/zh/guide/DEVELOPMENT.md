@@ -174,6 +174,8 @@ PSD2LIVE_TOOLS=1 PSD2LIVE_SAMPLE=ds ./gradlew test --tests "io.github.psd2live.t
 | `ReadmeShotsTool` | 打开真实编辑器窗口，在开始页选「完整」预设后导入 `PSD2LIVE_SAMPLE`，再用「按网格拆分图层」接受全部拆分，等模拟烘焙完，提交自动骨架，再截取各工作区与画布各模式的窗口帧（不截屏），并把工程存为 `project.psd2live`；`PSD2LIVE_SHOT_REUSE=1` 重开已存的工程，`PSD2LIVE_SHOT_W` / `_H` 设窗口大小。用于首页截图 | `readme-shots/<示例>/*.png`、`project.psd2live` |
 | `ReadmeShowcaseTool` | 首页测试图：`meshStress`、`meshParams`、`meshWrap` 为合成图层的网格（孔洞与细桥、边缘层数 × 填充算法、包络宽度）；`rigHead`、`rigFace`、`rigBody` 为两个示例的头部、五官与骨架预设姿态；`rigKnee` 为 `PSD2LIVE_KNEE_SAMPLE`（工程或 PSD）的膝盖弯折；`bodyOrbit` 给 `PSD2LIVE_ORBIT_PROJECTS` 中各工程临时加一段身体 X / Y 上下、左右、椭圆运动的动作，按物理开、关各导出 PNG 帧（`PSD2LIVE_ORBIT` 设幅度，`PSD2LIVE_ORBIT_PERIOD` 设每轮秒数） | `readme-plates/*.png`、`readme-orbit/<工程>-{on,off}/` |
 
+`modifier legacy template` 行统计兼容模板的构建次数。`modifier template consumer` 行记录同一批构建的实际调用方，包含对前序修改器模板的请求。统计总耗时时只计算其中一组。
+
 | 环境变量 | 作用 |
 | --- | --- |
 | `PSD2LIVE_SAMPLE` | 示例名（`tml`、`ds`）或 PSD 路径，默认 `tml`；`CommitPerfTool.desktop` 也接受 `.psd2live` 工程 |

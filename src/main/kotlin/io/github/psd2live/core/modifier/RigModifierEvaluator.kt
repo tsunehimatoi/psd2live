@@ -4,6 +4,7 @@ import io.github.psd2live.format.model.Parameter
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.format.model.Deformer
 import io.github.psd2live.core.GeneratedOverrideIssue
+import io.github.psd2live.core.RigBuildProfile
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
@@ -223,8 +224,8 @@ internal class RigModifierEvaluator(
                 require(previous == null) { "Modifiers $previous and ${instance.id} are mutually exclusive on ${target.id}" }
             } }
             validateTargets(current, instance)
-            definition.validate(current, instance)
-            val declared = io.github.psd2live.core.RigBuildProfile.stage("modifier parameters: ${instance.type}") { definition.parameters(instance) }
+            RigBuildProfile.modifierStage("validation", instance.type) { definition.validate(current, instance) }
+            val declared = RigBuildProfile.modifierStage("parameters", instance.type) { definition.parameters(instance) }
             require(declared.map { it.id }.distinct().size == declared.size) { "${instance.id} declares duplicate parameters" }
             val existing = current.parameters.associateBy { it.id }
             val resolved = declared.associate { parameter ->
@@ -236,7 +237,7 @@ internal class RigModifierEvaluator(
             }
             io.github.psd2live.core.RigBuildProfile.count("modifier cache misses")
             val before = current
-            val capturedContext = capture(instance)
+            val capturedContext = RigBuildProfile.modifierStage("input", instance.type) { capture(instance) }
             val authorContext = if (definition.upstreamInputs || definition.plugin is ReadingModifierAlgorithmPlugin) {
                 val providers = definition.providers(instance)
                 val capabilities = (definition.requires + definition.optionalUpstream).sorted().flatMap { required ->
@@ -254,7 +255,7 @@ internal class RigModifierEvaluator(
             val generated = if (cached != null) {
                 io.github.psd2live.core.RigBuildProfile.count("modifier dependency cache hits")
                 cached.patch.apply(before)
-            } else io.github.psd2live.core.RigBuildProfile.stage("modifier evaluate: ${instance.type}") {
+            } else RigBuildProfile.modifierStage("evaluate", instance.type) {
                 val plugin = definition.plugin
                 when (plugin) {
                     is ReadingModifierAlgorithmPlugin -> {

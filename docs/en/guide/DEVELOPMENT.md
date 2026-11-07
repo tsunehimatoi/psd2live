@@ -170,6 +170,8 @@ PSD2LIVE_TOOLS=1 PSD2LIVE_SAMPLE=ds ./gradlew test --tests "io.github.psd2live.t
 | `ReadmeShotsTool` | Opens the real editor window, imports `PSD2LIVE_SAMPLE` with the Full preset picked on the start page, accepts every split Split Layers by Mesh offers, waits for the simulation bakes, commits an automatic skeleton, then captures the window's own frames (not the screen) of each workspace and canvas mode, and saves the project as `project.psd2live`; `PSD2LIVE_SHOT_REUSE=1` reopens the saved project, `PSD2LIVE_SHOT_W` / `_H` set the window size. For the project page screenshots | `readme-shots/<sample>/*.png`, `project.psd2live` |
 | `ReadmeShowcaseTool` | Test plates for the project page: `meshStress`, `meshParams` and `meshWrap` mesh synthetic layers (holes and thin bridges, edge rings × fill, wrap widths); `rigHead`, `rigFace` and `rigBody` show both samples' head, facial and skeleton preset poses; `rigKnee` bends the knee of `PSD2LIVE_KNEE_SAMPLE` (a project or PSD); `bodyOrbit` adds a body X / Y clip (up and down, side to side, ellipse) to each project in `PSD2LIVE_ORBIT_PROJECTS` and exports PNG frames with physics on and off (`PSD2LIVE_ORBIT` amplitudes, `PSD2LIVE_ORBIT_PERIOD` seconds a round) | `readme-plates/*.png`, `readme-orbit/<project>-{on,off}/` |
 
+The `modifier legacy template` rows count compatibility template builds. The `modifier template consumer` rows attribute those same builds to the modifier that requested them, including requests for an earlier modifier’s template. Use either group for totals.
+
 | Variable | Effect |
 | --- | --- |
 | `PSD2LIVE_SAMPLE` | Example name (`tml`, `ds`) or a PSD path; `tml` by default. `CommitPerfTool.desktop` also accepts a `.psd2live` project |
