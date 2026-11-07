@@ -26,7 +26,7 @@ import io.github.psd2live.core.mesh.signedAreaTwice
 import io.github.psd2live.core.mesh.snap
 import io.github.psd2live.core.mesh.triangleEdges
 import io.github.psd2live.core.mesh.validDomain
-import org.umamo.format.art.analyzeAlpha
+import org.umamo.format.art.BinaryAlphaMask
 import org.umamo.format.art.simplified
 import kotlin.math.abs
 import kotlin.math.acos
@@ -93,12 +93,6 @@ internal object AdaptiveMeshGenerator {
 	private const val MAX_QUALITY_REFINEMENT_POINTS = 512
 	private const val MAX_INTERIOR_SAMPLES = 1_200
 	private const val MAX_INTERNAL_EDGE_FACTOR = 1.72
-
-	/** Occupancy is read from the hardened alpha; enclosed transparency stays empty. */
-	private class SolidAlphaMask(val width: Int, val height: Int, val rgba: ByteArray) {
-		fun isSolid(x: Int, y: Int): Boolean = x in 0 until width && y in 0 until height &&
-			(rgba[(y * width + x) * 4 + 3].toInt() and 0xff) != 0
-	}
 
 	/** [spacing] controls the edge guides; [interiorSpacing] controls the interior fill.
 	 * The default interior step is 35% larger (about 45% fewer bulk samples for a large region).
@@ -190,16 +184,15 @@ internal object AdaptiveMeshGenerator {
 		wrapRadius: Double = 0.0,
 	): Result? {
 		val threshold = alphaThreshold.coerceIn(1, 255)
-		val geometryRgba = RigBuildProfile.stage("mesh: alpha mask") {
+		val solidMask = RigBuildProfile.stage("mesh: alpha mask") {
 			AlphaEdgePreprocessor.geometryMask(width, height, rgba, threshold)
 		}
 		// Wrapping only adds to the traced mask, so whatever the source paints stays inside the mesh.
-		if (wrapRadius > 0.0) MeshWrap.close(width, height, geometryRgba, wrapRadius)
+		if (wrapRadius > 0.0) MeshWrap.close(solidMask, wrapRadius)
 		// One-pixel tolerance can simplify a one-pixel rectangle into a triangle, clipping half
 		// of a hairline before meshing even starts. Keep subpixel contour accuracy here.
-		val rings = RigBuildProfile.stage("mesh: trace alpha rings") {
-			analyzeAlpha(width, height, geometryRgba, 1, contourEpsilon = 0f)
-		}?.contours ?: return null
+		val rings = RigBuildProfile.stage("mesh: trace alpha rings") { solidMask.contours() }
+		if (rings.isEmpty()) return null
 		// Derive both precisions from the same exact rings. The coarser guides suppress raster staircase curvature.
 		val fitSources = HashMap<IntArray, IntArray>(rings.size)
 		val contours = rings.map { ring ->
@@ -215,7 +208,6 @@ internal object AdaptiveMeshGenerator {
 		}
 		if (outerContours.isEmpty()) return null
 
-		val solidMask = SolidAlphaMask(width, height, geometryRgba)
 		val budgetSpacing = sqrt(width.toDouble() * height / (1_200.0 * 0.8660254037844386))
 		val edgeSpacing = max(6.0 * unit, spacing)
 		val gridSpacing = max(max(6.0 * unit, interiorSpacing), budgetSpacing)
@@ -1270,7 +1262,7 @@ internal object AdaptiveMeshGenerator {
 		return pointSquared < radiusSquared - max(1e-7, radiusSquared * 1e-10)
 	}
 
-	private fun sampleInterior(mask: SolidAlphaMask, spacing: Double): List<Point> {
+	private fun sampleInterior(mask: BinaryAlphaMask, spacing: Double): List<Point> {
 		val points = mutableListOf<Point>()
 		val rowStep = spacing * 0.8660254037844386
 		var row = 0
@@ -1278,7 +1270,7 @@ internal object AdaptiveMeshGenerator {
 		while (y < mask.height) {
 			var x = spacing * 0.5 + if ((row and 1) == 0) 0.0 else spacing * 0.5
 			while (x < mask.width) {
-				if (mask.isSolid(floor(x).toInt(), floor(y).toInt())) points += Point(x, y)
+				if (mask.isOpaque(floor(x).toInt(), floor(y).toInt())) points += Point(x, y)
 				x += spacing
 			}
 			row++

@@ -1,11 +1,12 @@
 package io.github.psd2live.core
 
+import org.umamo.format.art.BinaryAlphaMask
 import kotlin.math.ceil
 
 /** Converts soft/feathered source alpha into the binary mask used to trace a mesh. */
 internal object AlphaEdgePreprocessor {
 	/** Uses the same two rounded [1,2,1] passes on both axes. The source texture stays untouched. */
-	fun geometryMask(width: Int, height: Int, rgba: ByteArray, threshold: Int): ByteArray {
+	fun geometryMask(width: Int, height: Int, rgba: ByteArray, threshold: Int): BinaryAlphaMask {
 		val pixelCount = width * height
 		val horizontal = ByteArray(pixelCount)
 		val blurred = ByteArray(pixelCount)
@@ -51,13 +52,16 @@ internal object AlphaEdgePreprocessor {
 		// If the requested threshold is above the blurred core, the source test below
 		// preserves every original pixel at that threshold.
 		val hardThreshold = maxOf(threshold, (percentile95 * 0.45 + 0.5).toInt())
-		val result = ByteArray(pixelCount * 4)
-		for (index in 0 until pixelCount) {
-			val offset = index * 4 + 3
-			val alpha = rgba[offset].toInt() and 0xff
-			// Keep bright hairlines and never bridge pixels that are transparent in the source.
-			if (alpha >= threshold && (alpha >= hardThreshold || (blurred[index].toInt() and 0xff) >= hardThreshold))
-				result[offset] = -1
+		val result = BinaryAlphaMask(width, height)
+		for (y in 0 until height) {
+			val row = y * width
+			for (x in 0 until width) {
+				val index = row + x
+				val alpha = rgba[index * 4 + 3].toInt() and 0xff
+				// Keep bright hairlines and never bridge pixels transparent in the source.
+				if (alpha >= threshold && (alpha >= hardThreshold || (blurred[index].toInt() and 0xff) >= hardThreshold))
+					result.add(x, y)
+			}
 		}
 		return result
 	}

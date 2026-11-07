@@ -1,5 +1,6 @@
 package io.github.psd2live.core
 
+import org.umamo.format.art.BinaryAlphaMask
 import kotlin.math.ceil
 import kotlin.math.max
 
@@ -27,10 +28,12 @@ internal object MeshWrap {
 		if (!wrap.isFinite() || wrap <= 0f) 0.0 else wrap.coerceAtMost(range.endInclusive) * unit / 2.0
 
 	/**
-	 * Closes the nonzero alpha of [rgba] ([width] x [height]) at [radius] working pixels in place: pixels the
-	 * closing adds become opaque, painted ones keep their alpha. False when nothing changed.
+	 * Closes [source] at [radius] working pixels in place. Painted pixels stay opaque.
+	 * Returns false when nothing changed.
 	 */
-	fun close(width: Int, height: Int, rgba: ByteArray, radius: Double): Boolean {
+	fun close(source: BinaryAlphaMask, radius: Double): Boolean {
+		val width = source.width
+		val height = source.height
 		if (!(radius >= 0.5) || width <= 0 || height <= 0) return false
 		val pad = ceil(radius).toInt() + 1
 		val w = width + pad * 2
@@ -39,7 +42,7 @@ internal object MeshWrap {
 		var any = false
 		for (y in 0 until height) {
 			val row = (y + pad) * w + pad
-			for (x in 0 until width) if (rgba[(y * width + x) * 4 + 3].toInt() != 0) { mask[row + x] = true; any = true }
+			for (x in 0 until width) if (source.isOpaque(x, y)) { mask[row + x] = true; any = true }
 		}
 		if (!any) return false
 		val limit = radius * radius
@@ -51,8 +54,7 @@ internal object MeshWrap {
 		for (y in 0 until height) {
 			val row = (y + pad) * w + pad
 			for (x in 0 until width) {
-				val offset = (y * width + x) * 4 + 3
-				if (rgba[offset].toInt() == 0 && toOutside[row + x] > limit) { rgba[offset] = -1; changed = true }
+				if (!source.isOpaque(x, y) && toOutside[row + x] > limit) { source.add(x, y); changed = true }
 			}
 		}
 		return changed

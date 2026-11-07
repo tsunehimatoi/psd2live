@@ -17,9 +17,11 @@ class AlphaEdgePreprocessorTest {
             if (index % 4 == 3) alpha[index / 4].toByte() else 0x7f
         }
         val before = source.copyOf()
-        val expected = ByteArray(source.size)
-        for (index in opaque) expected[index * 4 + 3] = -1
-        assertContentEquals(expected, AlphaEdgePreprocessor.geometryMask(width, height, source, threshold))
+        val expected = BooleanArray(alpha.size)
+        for (index in opaque) expected[index] = true
+        val mask = AlphaEdgePreprocessor.geometryMask(width, height, source, threshold)
+        val actual = BooleanArray(alpha.size) { index -> mask.isOpaque(index % width, index / width) }
+        assertContentEquals(expected, actual)
         assertContentEquals(before, source)
     }
 }
