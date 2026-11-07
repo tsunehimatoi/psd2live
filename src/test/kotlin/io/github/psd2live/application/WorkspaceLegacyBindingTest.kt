@@ -1077,6 +1077,64 @@ class WorkspaceLegacyBindingTest {
         assertEquals(1, RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.last().version)
     }
 
+    @Test fun independentCheekPreservesRecommendedPreset(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
+        val builder = WorkspacePreviewBuilder()
+        val stack = WorkspaceModifierPlan.initial(builder.build(art), WorkspaceModifierPlan.RECOMMENDED_GROUP)
+        val locked = stack.instances.single { it.type == "expression.cheek" }
+        assertEquals(1, locked.version)
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 2))
+        fun withStack(candidate: RigModifierStack) = art.copy(rigEdits = art.rigEdits.copy(modifierStack = candidate.toJson()))
+        val expected = builder.build(withStack(stack))
+        val upgraded = stack.copy(instances = stack.instances.map {
+            if (it.id == locked.id) it.copy(version = 2, plugin = artifact.reference) else it
+        })
+        val current = builder.build(withStack(upgraded))
+        val report = assertNotNull(current.rig.modifierReport).getValue("entries").jsonArray
+            .single { it.jsonObject.getValue("id").jsonPrimitive.content == locked.id }.jsonObject
+        assertEquals("active", report.getValue("status").jsonPrimitive.content, report.toString())
+        val before = assertNotNull(expected.rig.modifierOutput)
+        val after = assertNotNull(current.rig.modifierOutput)
+        assertEquals(before.parameterTree, after.parameterTree)
+        for ((original, upgradedMesh) in before.meshes.zip(after.meshes)) {
+            assertEquals(original, upgradedMesh, original.id)
+        }
+        assertEquals(before, after)
+        assertEquals(RigIrCompiler.compile(expected), RigIrCompiler.compile(current))
+
+        val prefix = stack.instances.takeWhile { it.id != locked.id }
+        val preceding = assertNotNull(builder.build(withStack(stack.copy(instances = prefix))).rig.modifierOutput)
+        val legacy = assertNotNull(builder.build(withStack(stack.copy(instances = prefix + locked))).rig.modifierOutput)
+        val instance = upgraded.instances.single { it.id == locked.id }
+        val definition = RigCheekModifier.definition(RigModifierSource.of(current))
+        val directory = Files.createTempDirectory("cheek-package-")
+        val preferences = Preferences.userRoot().node("cheek-package/" + UUID.randomUUID())
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            for (name in artifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val installed = store.install(staging.toString())
+            assertEquals(instance.plugin, installed.reference)
+            val external = instance.copy(type = installed.manifest.algorithms.single().type)
+            val adapter = ModifierPluginCatalog.definitions(store, captured = listOf(definition)).single {
+                it.type == external.type && it.version == external.version
+            }
+            val providers = prefix.filter { it.type in adapter.requires }.map {
+                ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+            }
+            val context = adapter.authorContext(external).withUpstream(providers)
+            assertTrue(legacy.meshes.any { mesh -> mesh.channels.values.any { grid -> grid.axes.any { it.parameter == "ParamCheek" } } })
+            assertEquals(legacy, (adapter.plugin as ContextualModifierAlgorithmPlugin).evaluate(preceding, external, context) {})
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
     @Test fun independentMouthJawPreservesRecommendedPreset(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
         val builder = WorkspacePreviewBuilder()

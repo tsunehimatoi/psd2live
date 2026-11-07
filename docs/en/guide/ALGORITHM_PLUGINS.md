@@ -54,6 +54,8 @@ Mouth spring v2 adds lower-face settling after the mouth opens. It uses the fitt
 
 Cheek-lid coupling v2 is selectable by version. It requires a shared v2 scaffold, fitted eyes v2, and a fitted mouth with a live mouth form grid. Use v1 with edited lid meshes or parent frames, fitted head turn, or preceding gaze or brow-lid coupling.
 
+Cheek color v2 adds blush and skin warmth to a shared v2 scaffold. Use v1 when another mood already applies, the target has an authored multiply-color grid, or the added color axis requires rebuilding a deformer.
+
 Skirt sway v2 is selectable for topwear or bottomwear attached under the torso. It uses a shared source frame and preserves the existing skirt mesh, physics and simulation bindings in compatible presets.
 
 Arm swing v2 is selectable for the original hanging-arm frames of a shared v2 scaffold, with body and face bindings on that scaffold. Use v1 if an arm has been reparented or its neutral lattice edited.

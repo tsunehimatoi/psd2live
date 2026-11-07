@@ -1718,3 +1718,32 @@ tasks.register("pluginMouthDepth") {
         """.trimIndent())
     }
 }
+
+val cheekWorkerJar = registerIsolatedBindingWorker(
+    "cheek", "cheek", "worker-cheek", "io.github.psd2live.algorithms.binding.CheekWorker",
+)
+
+tasks.register("pluginCheekV2") {
+    dependsOn(cheekWorkerJar)
+    val output = layout.buildDirectory.dir("plugin-cheek-v2")
+    val packageVersion = project.version.toString()
+    inputs.file(cheekWorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        cheekWorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.65787072657373696f6e2e636865656b.v2"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Cheek",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/color","aliases":["expression.cheek"],"version":2,"name":"Cheek","category":"expression",
+               "targets":["mesh"],"requires":["rig.scaffold"],"contextVersion":2,
+               "reads":["mesh","parameter","hierarchy"],"writes":["mesh","parameter","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
