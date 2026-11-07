@@ -25,12 +25,14 @@ import io.github.psd2live.algorithms.binding.MouthCaptureV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthCaptureV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV6Algorithm
+import io.github.psd2live.algorithms.binding.MouthDepthV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV6Algorithm
+import io.github.psd2live.algorithms.binding.MouthJawV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV5Algorithm
@@ -38,7 +40,9 @@ import io.github.psd2live.algorithms.binding.MouthOutlineV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV7Algorithm
+import io.github.psd2live.algorithms.binding.MouthSpringV8Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV4Algorithm
+import io.github.psd2live.algorithms.binding.MouthTongueV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV6Algorithm
 import io.github.psd2live.algorithms.binding.SkirtAlgorithm
@@ -304,16 +308,18 @@ internal object WorkspacePresetInitialization {
         if (mouth.source == null || mouth.layered || mouth.rig?.fit?.layered != null || context.faceTurn(measurement) == null)
             return emptyMap()
         if (mouth.closedLine) return closedMouthVersions(types)
-        if (RigModules.MOUTH_TONGUE.id in types || RigModules.MOUTH_DEPTH.id in types ||
-            analysis.layers.any { it.semantic.tag == SemanticTag.MOUTH_CLOSE }) return emptyMap()
+        if (analysis.layers.any { it.semantic.tag == SemanticTag.MOUTH_CLOSE }) return emptyMap()
+        val withInterior = RigModules.MOUTH_TONGUE.id in types || RigModules.MOUTH_DEPTH.id in types
         return mapOf(
             RigModules.MOUTH_FITTED.id to MouthFittedV3Algorithm.VERSION,
             RigModules.MOUTH_OUTLINE.id to MouthOutlineV7Algorithm.VERSION,
             RigModules.MOUTH_VOWEL.id to MouthVowelV6Algorithm.VERSION,
             RigModules.MOUTH_CAPTURE.id to MouthCaptureV5Algorithm.VERSION,
-            RigModules.MOUTH_JAW.id to MouthJawV3Algorithm.VERSION,
+            RigModules.MOUTH_TONGUE.id to MouthTongueV5Algorithm.VERSION,
+            RigModules.MOUTH_JAW.id to if (withInterior) MouthJawV7Algorithm.VERSION else MouthJawV3Algorithm.VERSION,
             RigModules.MOUTH_CHEEK_LID.id to MouthCheekLidV5Algorithm.VERSION,
-            RigModules.MOUTH_SPRING.id to MouthSpringV4Algorithm.VERSION,
+            RigModules.MOUTH_DEPTH.id to MouthDepthV3Algorithm.VERSION,
+            RigModules.MOUTH_SPRING.id to if (withInterior) MouthSpringV8Algorithm.VERSION else MouthSpringV4Algorithm.VERSION,
         ).filterKeys { it in types }
     }
 
