@@ -3824,7 +3824,7 @@ object RigBuilder {
 	}
 
 	/** Alpha-weighted centre of every source column, with transparent gaps linearly bridged. */
-	private fun eyelashCenterline(layer: ClassifiedLayer): FloatArray? {
+	internal fun eyelashCenterline(layer: ClassifiedLayer): FloatArray? {
 		val width = layer.source.raster.width
 		val height = layer.source.raster.height
 		if (width <= 0 || height <= 0) return null
@@ -3866,7 +3866,7 @@ object RigBuilder {
 		return centerline[left] + (centerline[right] - centerline[left]) * (sourceX - left)
 	}
 
-	private fun matchingEyeWhiteBounds(
+	internal fun matchingEyeWhiteBounds(
 		layer: ClassifiedLayer,
 		eyeWhites: List<ClassifiedLayer>,
 	): List<Bounds> {

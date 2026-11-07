@@ -959,3 +959,55 @@ tasks.register("pluginBrowFittedV2") {
         """.trimIndent())
     }
 }
+
+val eyeLegacy = sourceSets.create("eyeLegacy")
+kotlin.target.compilations.named("eyeLegacy") {
+    associateWith(kotlin.target.compilations.getByName("main"))
+}
+val eyeLegacyClassesJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("eye-legacy")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    from(eyeLegacy.output)
+}
+val eyeLegacyElements = configurations.create("eyeLegacyElements") {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+}
+artifacts.add(eyeLegacyElements.name, eyeLegacyClassesJar)
+
+val eyeLegacyWorkerJar by tasks.registering(Jar::class) {
+    dependsOn(workerJar)
+    archiveClassifier.set("worker-eye-legacy")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest { attributes["Main-Class"] = "io.github.psd2live.algorithms.binding.EyeLegacyWorker" }
+    from(eyeLegacy.output)
+    from(workerJar.flatMap { it.archiveFile }.map { zipTree(it) }) { exclude("META-INF/MANIFEST.MF") }
+}
+
+tasks.register("pluginEyeLegacy") {
+    dependsOn(eyeLegacyWorkerJar)
+    val output = layout.buildDirectory.dir("plugin-eye-legacy")
+    val packageVersion = project.version.toString()
+    inputs.file(eyeLegacyWorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        eyeLegacyWorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6579652f6c6567616379.v2"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Legacy eyes (source)",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/legacy","aliases":["eye/legacy"],"version":2,"name":"Legacy eyes (source)","category":"eye",
+               "targets":["mesh"],"requires":["rig.scaffold"],"contextVersion":2,
+               "exclusiveFamily":"base:eye","reads":["*"],"writes":["mesh","deformer","parameter","relations","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}

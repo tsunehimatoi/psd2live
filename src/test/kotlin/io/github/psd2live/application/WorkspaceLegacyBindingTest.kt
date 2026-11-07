@@ -51,7 +51,7 @@ class WorkspaceLegacyBindingTest {
 
     /** Small public procedural art with distinct eye, brow, mouth, hair and torso inputs. */
     private fun document(eyeDetails: Boolean = false, mouthDetails: Boolean = false, expressionDetails: Boolean = false, skinDetails: Boolean = false, outfitDetails: Boolean = false, sideLock: Boolean = false, bangOverlay: Boolean = false,
-                         chestDetail: Boolean = false, thinMouth: Boolean = false, pairedBrows: Boolean = false): WorkspaceDocument {
+                         chestDetail: Boolean = false, thinMouth: Boolean = false, pairedBrows: Boolean = false, bilateralEyes: Boolean = false): WorkspaceDocument {
         data class Shape(val id: String, val tag: SemanticTag, val side: Side, val x: Int, val y: Int, val w: Int, val h: Int, val role: PartRole? = null)
         val shapes = listOf(
             Shape("iris", SemanticTag.IRIDES, Side.LEFT, 37, 19, 5, 10),
@@ -66,8 +66,13 @@ class WorkspaceLegacyBindingTest {
             Shape("back", SemanticTag.BACK_HAIR, Side.NONE, 12, 5, 40, 50),
             Shape("top", SemanticTag.TOPWEAR, Side.NONE, 12, 46, 40, 32),
         )
-        val rightFeatures = if (pairedBrows) shapes.filter { it.tag in setOf(SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYEBROW) }
-            .map { it.copy(id = "${it.id}-right", side = Side.RIGHT, x = 64 - it.x - it.w) } else emptyList()
+        val rightTags = buildSet {
+            if (pairedBrows || bilateralEyes) addAll(listOf(SemanticTag.EYEWHITE, SemanticTag.EYELASH))
+            if (pairedBrows) add(SemanticTag.EYEBROW)
+            if (bilateralEyes) addAll(listOf(SemanticTag.EYE_CLOSE, SemanticTag.IRIDES))
+        }
+        val rightFeatures = shapes.filter { it.tag in rightTags }
+            .map { it.copy(id = "${it.id}-right", side = Side.RIGHT, x = 64 - it.x - it.w) }
         val allShapes = shapes + rightFeatures + (if (eyeDetails) listOf(
             Shape("lid", SemanticTag.EYELASH, Side.LEFT, 34, 18, 12, 2, PartRole.LID),
             Shape("lid-shadow", SemanticTag.EYELASH, Side.LEFT, 34, 20, 12, 2, PartRole.SHADOW),
@@ -111,7 +116,7 @@ class WorkspaceLegacyBindingTest {
             val channels = byteArrayOf((color shr 16).toByte(), (color shr 8).toByte(), color.toByte(), 255.toByte())
             WorkspaceSourceLayer(
                 LayerId(shape.id), shape.id, "", SourceLayerKind.Raster, true, index, LayerBounds(shape.x, shape.y, shape.w, shape.h),
-                1f, false, LayerBlend.Normal, ChannelMask.ALL, LayerRaster(shape.w, shape.h, ByteArray(shape.w * shape.h * 4) { channels[it % 4] }),
+                1f, shape.id == "iris-right", LayerBlend.Normal, ChannelMask.ALL, LayerRaster(shape.w, shape.h, ByteArray(shape.w * shape.h * 4) { channels[it % 4] }),
                 null, null, false)
         }, emptyList())
         val config = RigModifierPipeline.ordinaryConfig(PipelineConfig(atlasSize = 128, meshSpacing = 6, recipe = RigRecipe.Legacy,
@@ -627,6 +632,96 @@ class WorkspaceLegacyBindingTest {
         f.edit("modifier_apply", buildJsonObject { put("id", "mouth.cheek-lid") })
         assertEquals(expected, RigIrCompiler.compile(f.now.model))
         assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
+    @Test fun legacyEyeSourceMatchesLockedBindingWithAndWithoutOrdinaryHeadTurn(): Unit = runBlocking {
+        for (head in listOf(false, true)) {
+            val source = document(bilateralEyes = true)
+            val f = Fixture(source)
+            val reference = Fixture(source)
+            for (fixture in listOf(f, reference)) {
+                fixture.install()
+                fixture.group(if (head) listOf("body/legacy", "face/legacy") else emptyList())
+            }
+            val config = buildJsonObject {
+                put("scaffold", "structure")
+                putJsonObject("tuning") { put("gazeX", 17f); put("gazeY", 22f) }
+            }
+            val addition = f.addition("eye/legacy", "eye", config = config)
+            reference.edit("modifier_add", addition)
+            val original = reference.now.model
+            val oldStack = RigModifierStack.fromJson(reference.now.document.rigEdits.modifierStack!!)
+            val locked = oldStack.instances.last()
+            assertEquals(1, locked.version)
+            assertEquals(BuiltinModifierPlugins.reference("eye/legacy", 1), locked.plugin)
+            val input = assertNotNull(f.now.model.rig.modifierOutput)
+            assertEquals(listOf(mesh(f, "lash-right").id), mesh(f, "iris-right").maskedBy)
+            f.edit("modifier_add", JsonObject(addition + ("version" to JsonPrimitive(2))))
+            val actual = f.now.model
+            val expected = RigIrCompiler.compile(original)
+            val compiled = RigIrCompiler.compile(actual)
+            assertEquals(expected.parameters, compiled.parameters)
+            assertEquals(expected.parameterTree, compiled.parameterTree)
+            assertEquals(expected.parameterLinks, compiled.parameterLinks)
+            for ((before, after) in expected.meshes.zip(compiled.meshes)) assertEquals(before, after, before.id)
+            for ((before, after) in expected.deformers.zip(compiled.deformers)) assertEquals(before, after, before.id)
+            assertEquals(expected, compiled)
+            assertEquals(listOf(mesh(f, "white-right").id), mesh(f, "iris-right").maskedBy)
+            val stack = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
+            val instance = stack.instances.last()
+            val artifact = assertNotNull(BundledAlgorithmArtifacts.find("eye/legacy", 2))
+            assertEquals(artifact.reference, instance.plugin)
+            val poses = listOf(
+                mapOf(StandardParameters.EYE_L_OPEN to 0f, StandardParameters.EYE_R_OPEN to .63f,
+                    StandardParameters.EYE_BALL_X to -.7f, StandardParameters.EYE_BALL_Y to .4f, StandardParameters.EYE_BALL_FORM to 1f),
+                mapOf(StandardParameters.EYE_L_OPEN to .2f, StandardParameters.EYE_R_OPEN to 0f,
+                    StandardParameters.EYE_BALL_X to .9f, StandardParameters.EYE_BALL_Y to -.35f, StandardParameters.EYE_BALL_FORM to -1f),
+            ).map { pose -> if (!head) pose else pose + mapOf(StandardParameters.ANGLE_X to 29f,
+                StandardParameters.ANGLE_Y to -17f, StandardParameters.ANGLE_Z to 12f) }
+            val evaluator = CpuDeformationEvaluator()
+            for (pose in poses) {
+                val before = evaluator.evaluate(original.rig.puppet, pose)
+                val after = evaluator.evaluate(actual.rig.puppet, pose)
+                assertEquals(before.worldPositions.keys, after.worldPositions.keys)
+                for ((id, points) in before.worldPositions) assertContentEquals(points, after.worldPositions.getValue(id), id.raw)
+                assertEquals(before.opacity, after.opacity)
+            }
+            if (head) {
+                val directory = Files.createTempDirectory("legacy-eye-package-")
+                val preferences = Preferences.userRoot().node("legacy-eye-package/" + UUID.randomUUID())
+                val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+                try {
+                    val staging = Files.createDirectory(directory.resolve("package"))
+                    Files.write(staging.resolve("plugin.json"), artifact.bytes)
+                    for (name in artifact.manifest.files.keys) {
+                        assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                    }
+                    val providers = stack.instances.dropLast(1).map { provider ->
+                        ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
+                            provider.id, provider.config, provider.outputAliases, provider.plugin)
+                    }
+                    val definition = RigLegacyEyeDefinition.definition(RigModifierSource.of(actual))
+                    val context = definition.authorContext(instance).withUpstream(providers)
+                    repeat(2) {
+                        val installed = store.install(staging.toString())
+                        assertEquals(artifact.reference, installed.reference)
+                        val result = ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(), input,
+                            instance, {}, store, context = context, declaredParameters = definition.parameters(instance))
+                        assertEquals(actual.rig.modifierOutput, result)
+                        ModifierPluginWorkers.stop(installed.reference)
+                        store.uninstall(installed.reference)
+                        assertTrue(store.snapshot().none { it.reference == installed.reference })
+                    }
+                } finally {
+                    store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+                    preferences.removeNode()
+                    ModifierPluginStore.deleteTree(directory)
+                }
+            }
+            f.edit("modifier_apply", buildJsonObject { put("id", "eye") })
+            assertEquals(expected, RigIrCompiler.compile(f.now.model))
+            assertEquals(expected, RigIrCompiler.compile(WorkspacePreviewBuilder().build(f.now.document)))
+        }
     }
 
     @Test fun eyeSquashSourceMatchesLockedVersionAndAppliesWithWideLids(): Unit = runBlocking {

@@ -69,6 +69,7 @@ dependencies {
 	implementation(project(":algorithms:swing"))
 	implementation(project(":algorithms:simulation"))
 	implementation(project(":algorithms:binding"))
+	implementation(project(path = ":algorithms:binding", configuration = "eyeLegacyElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "eyeFittedElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "eyeSquashElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "bodyLegacyV2Elements"))
@@ -282,7 +283,11 @@ tasks.processResources {
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-body-legacy-v2")) {
         into("algorithm-plugins/body-legacy-v2")
     }
+    dependsOn(":algorithms:binding:pluginEyeLegacy")
     dependsOn(":algorithms:binding:pluginEyeFitted")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-legacy")) {
+        into("algorithm-plugins/eye-legacy")
+    }
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-fitted")) {
         into("algorithm-plugins/eye-fitted")
     }
