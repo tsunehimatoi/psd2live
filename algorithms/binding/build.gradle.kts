@@ -19,6 +19,8 @@ tasks.withType<Test>().configureEach { useJUnitPlatform(); filter.isFailOnNoMatc
 
 val neckWorkerClasses = listOf("**/NeckAlgorithm*.class", "**/NeckInputs*.class", "**/NeckWorker*.class")
 
+val bustWorkerClasses = listOf("**/BustBindingAlgorithm*.class", "**/BustBindingInputs*.class", "**/BustBindingWorker*.class")
+
 val workerJar by tasks.registering(Jar::class) {
     dependsOn(configurations.runtimeClasspath)
     archiveClassifier.set("worker")
@@ -29,7 +31,7 @@ val workerJar by tasks.registering(Jar::class) {
     from(sourceSets.main.get().output)
     from(configurations.runtimeClasspath.map { files -> files.map { if (it.isDirectory) it else zipTree(it) } })
     exclude("META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA")
-    exclude(neckWorkerClasses)
+    exclude(neckWorkerClasses + bustWorkerClasses)
 }
 
 tasks.register("pluginPackage") {
@@ -290,7 +292,7 @@ val hairChainsWorkerJar by tasks.registering(Jar::class) {
     from(sourceSets.main.get().output)
     from(configurations.runtimeClasspath.map { files -> files.map { if (it.isDirectory) it else zipTree(it) } })
     exclude("META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA")
-    exclude(neckWorkerClasses)
+    exclude(neckWorkerClasses + bustWorkerClasses)
 }
 
 tasks.register("pluginHairChains") {
@@ -348,6 +350,42 @@ tasks.register("pluginFaceNeck") {
                "targets":["mesh"],"requires":["rig.scaffold","face/legacy"],"contextVersion":2,
                "reads":["mesh","deformer","parameter"],"writes":["mesh","relations"],
                "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
+val bustWorkerJar by tasks.registering(Jar::class) {
+    dependsOn(workerJar)
+    archiveClassifier.set("worker-body-bust")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest { attributes["Main-Class"] = "io.github.psd2live.algorithms.binding.BustBindingWorker" }
+    from(sourceSets.main.get().output) { include(bustWorkerClasses) }
+    from(workerJar.flatMap { it.archiveFile }.map { zipTree(it) }) { exclude("META-INF/MANIFEST.MF") }
+}
+
+tasks.register("pluginBust") {
+    dependsOn(bustWorkerJar)
+    val output = layout.buildDirectory.dir("plugin-bust")
+    val packageVersion = project.version.toString()
+    inputs.file(bustWorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        bustWorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.626f64792e62757374.v2"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Chest bounce",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/bust","aliases":["body.bust"],"version":2,"name":"Chest bounce","category":"body",
+               "targets":["mesh"],"requires":["rig.scaffold","body/legacy","face/legacy"],"contextVersion":2,
+               "reads":["mesh","deformer","parameter","hierarchy","physics","textures"],"writes":["mesh","parameter","hierarchy","physics"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter","physics"],
                "configSchema":{"type":"object"},"defaults":{}}]}
         """.trimIndent())
     }

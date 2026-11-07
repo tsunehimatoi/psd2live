@@ -220,6 +220,10 @@ tasks.processResources {
             into("algorithm-plugins/scaffold-$revision")
         }
     }
+    dependsOn(":algorithms:binding:pluginBust")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-bust")) {
+        into("algorithm-plugins/body-bust")
+    }
     dependsOn(":algorithms:binding:pluginHairChains")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-hair-chains")) {
         into("algorithm-plugins/hair-chains")

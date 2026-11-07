@@ -43,7 +43,8 @@ class WorkspaceLegacyBindingTest {
     }
 
     /** Small public procedural art with distinct eye, brow, mouth, hair and torso inputs. */
-    private fun document(eyeDetails: Boolean = false, mouthDetails: Boolean = false, expressionDetails: Boolean = false, skinDetails: Boolean = false, outfitDetails: Boolean = false, sideLock: Boolean = false, bangOverlay: Boolean = false): WorkspaceDocument {
+    private fun document(eyeDetails: Boolean = false, mouthDetails: Boolean = false, expressionDetails: Boolean = false, skinDetails: Boolean = false, outfitDetails: Boolean = false, sideLock: Boolean = false, bangOverlay: Boolean = false,
+                         chestDetail: Boolean = false): WorkspaceDocument {
         data class Shape(val id: String, val tag: SemanticTag, val side: Side, val x: Int, val y: Int, val w: Int, val h: Int, val role: PartRole? = null)
         val shapes = listOf(
             Shape("iris", SemanticTag.IRIDES, Side.LEFT, 37, 19, 5, 10),
@@ -86,9 +87,10 @@ class WorkspaceLegacyBindingTest {
             Shape("tail", SemanticTag.TAIL, Side.NONE, 53, 51, 9, 24),
             Shape("wing", SemanticTag.WINGS, Side.RIGHT, 48, 45, 13, 15),
         ) else emptyList()
+        val chestShapes = if (chestDetail) listOf(Shape("chest-panel", SemanticTag.TOPWEAR, Side.NONE, 26, 48, 12, 15)) else emptyList()
         val classified = if (bangOverlay) listOf(allShapes.single { it.id == "front" }.copy(h = 24)) +
             allShapes.filterNot { it.id == "front" } + skinShapes + outfitShapes
-        else allShapes + skinShapes + outfitShapes
+        else allShapes + skinShapes + outfitShapes + chestShapes
         val source = WorkspaceSourceArt(64, 80, classified.mapIndexed { index, shape ->
             val color = if (!bangOverlay) 0xffffff else when (shape.tag) {
                 SemanticTag.FRONT_HAIR, SemanticTag.BACK_HAIR -> 0x725672
@@ -818,6 +820,77 @@ class WorkspaceLegacyBindingTest {
         assertEquals(result, RigIrCompiler.compile(f.builder.build(f.now.document)))
         f.edit("modifier_apply", buildJsonObject { put("id", "outfit.creature") })
         assertEquals(result, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
+    @Test fun chestBounceV2MatchesLegacyWorkerAndAppliedOutput(): Unit = runBlocking<Unit> {
+        suspend fun fixture(version: Int): Fixture {
+            val f = Fixture(document(outfitDetails = true, chestDetail = true)); f.install()
+            f.group(listOf("body/legacy", "face/legacy"))
+            val request = f.addition("body.bust", "chest", config = buildJsonObject {
+                put("scaffold", "structure")
+                putJsonObject("dependencies") {
+                    put("body/legacy", "body")
+                    put("face/legacy", "face")
+                }
+                putJsonObject("values") { put("bounce", 140f) }
+            })
+            f.edit("modifier_add", JsonObject(request + ("version" to JsonPrimitive(version))))
+            return f
+        }
+        val legacy = fixture(1)
+        val direct = fixture(2)
+        val expected = RigIrCompiler.compile(legacy.now.model)
+        val actual = RigIrCompiler.compile(direct.now.model)
+        val ids = setOf("ParamBustY", "ParamBustX")
+        val snapshot = assertNotNull(direct.now.model.modifierEvaluation)
+        val instance = snapshot.stack.instances.last()
+        val before = snapshot.outputs[snapshot.outputs.lastIndex - 1]
+        assertEquals(expected.parameters.filter { it.id in ids }, actual.parameters.filter { it.id in ids })
+        assertEquals(expected.parameterTree, actual.parameterTree)
+        assertEquals(expected.physics, actual.physics)
+        assertTrue(actual.physics.groups.any { it.id == instance.outputId("physics:PhysicsBustY") })
+        val top = mesh(direct, "chest-panel").id.raw
+        val actualTop = actual.meshes.single { it.id == top }
+        val originalTop = before.meshes.single { it.id == top }
+        assertEquals(originalTop, actualTop.copy(shapes = originalTop.shapes))
+        assertEquals(ids, expected.meshes.single { it.id == top }.shapes.filter { it.parameter in ids }.map { it.parameter }.toSet(), "legacy fixture needs a chest shape")
+        assertEquals(ids, actualTop.shapes.filter { it.parameter in ids }.map { it.parameter }.toSet())
+        assertTrue(actual.meshes.single { it.id == mesh(direct, "ribbon").id.raw }.shapes.none { it.parameter in ids })
+        assertTrue(actual.meshes.single { it.id == mesh(direct, "pendant").id.raw }.shapes.none { it.parameter in ids })
+        val pose = mapOf(ParameterId("ParamBustY") to -.6f, ParameterId("ParamBustX") to .5f)
+        compare(legacy.now.model, direct.now.model, listOf(emptyMap(), pose, pose + (StandardParameters.BODY_X to 5f)))
+
+        val reference = assertNotNull(instance.plugin)
+        val packageEntry = ModifierPluginStore.shared.snapshot().single { it.reference == reference }
+        val providers = RigLegacyBindings.providers(instance).map { (capability, id) ->
+            val provider = snapshot.stack.instances.single { it.id == id }
+            ModifierUpstreamCapability(capability, provider.type, provider.version, provider.targets, provider.id,
+                provider.config, provider.outputAliases, provider.plugin)
+        }
+        val source = RigModifierSource.of(direct.now.model)
+        val definition = RigBustModifier.definition(source)
+        val context = definition.authorContext(instance).withUpstream(providers)
+        try {
+            val fromWorker = ModifierPluginWorkers.evaluate(packageEntry, packageEntry.manifest.algorithms.single(),
+                before, instance, {}, context = context, declaredParameters = definition.parameters(instance))
+            assertEquals(snapshot.outputs.last(), fromWorker)
+        } finally {
+            ModifierPluginWorkers.stop(reference)
+        }
+
+        val (slot, group) = RigModifierPhysics.entries(instance, actual).entries.first()
+        val rule = Physics3Json.setting(group)
+        val editedRule = rule.copy(segments = rule.segments.map { it.copy(delay = it.delay * 1.2f) })
+        direct.edit("modifier_update", buildJsonObject {
+            put("id", instance.id)
+            put("type", instance.type)
+            put("config", JsonObject(instance.config + ("physics" to buildJsonObject { put(slot, editedRule.toJson()) })))
+        })
+        val edited = RigIrCompiler.compile(direct.now.model)
+        assertEquals(Physics3Json.group(editedRule), edited.physics.groups.single { it.id == group.id })
+        direct.edit("modifier_apply", buildJsonObject { put("id", instance.id) })
+        assertEquals(edited, RigIrCompiler.compile(direct.now.model))
+        assertEquals(edited, RigIrCompiler.compile(direct.builder.build(direct.now.document)))
     }
 
     @Test fun separateClothingInstancesOwnOnlyTheirTargetsAndTheirOwnPhysics(): Unit = runBlocking<Unit> {

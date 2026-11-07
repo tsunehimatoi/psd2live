@@ -20,7 +20,9 @@ internal object BuiltinModifierPlugins {
     fun definitions(source: RigModifierSource?): List<RigModifierDefinition> = listOf(
         SwingAlgorithmPlugin.definition, SimulationAlgorithmPlugin.definition,
         PhysicsAlgorithmPlugin.definition, MotionAlgorithmPlugin.definition,
-    ) + RigSourceModifiers.definitions(source) + hairChains(source) + RigNeckModifier.definition(source)
+    ) + RigSourceModifiers.definitions(source) + listOf(
+        hairChains(source), RigNeckModifier.definition(source), RigBustModifier.definition(source),
+    )
 
     private fun hairChains(source: RigModifierSource?): RigModifierDefinition {
         val legacy = RigLegacyBindings.definition(RigLegacyBindings.spec("hair/chains"), source)
