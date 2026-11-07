@@ -2255,3 +2255,39 @@ tasks.register("pluginMouthVowelV4") {
         """.trimIndent())
     }
 }
+
+val mouthCaptureV3WorkerJar = registerIsolatedBindingWorker(
+    "mouthCaptureV3", "mouth-capture-v3", "worker-mouth-capture-v3", "io.github.psd2live.algorithms.binding.MouthCaptureV3Worker",
+)
+
+kotlin.target.compilations.named("mouthCaptureV3") {
+    associateWith(kotlin.target.compilations.getByName("mouthCapture"))
+}
+mouthCaptureV3WorkerJar.configure {
+    from(sourceSets["mouthCapture"].output)
+}
+
+tasks.register("pluginMouthCaptureV3") {
+    dependsOn(mouthCaptureV3WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-capture-v3")
+    val packageVersion = project.version.toString()
+    inputs.file(mouthCaptureV3WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthCaptureV3WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682e63617074757265.v3"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Mouth capture",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/capture","aliases":["mouth.capture"],"version":3,"name":"Mouth capture","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","mouth/fitted"],"contextVersion":2,
+               "reads":["canvas","mesh","parameter","hierarchy"],"writes":["mesh","parameter","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
