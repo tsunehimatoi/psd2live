@@ -136,7 +136,8 @@ internal class WorkspaceSourceImporter(
         var built = RigBuildProfile.stage("source import: preview build (wall time)") {
             if (choices == null) build(document) else {
                 val prepared = runInterruptible(Dispatchers.Default) {
-                    WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct.cancellable(context), choices)
+                    WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct.cancellable(context), choices,
+                        preferSourceBody = true)
                 }
                 document = prepared.first
                 prepared.second

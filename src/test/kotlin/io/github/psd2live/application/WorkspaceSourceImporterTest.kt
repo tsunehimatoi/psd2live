@@ -1,6 +1,8 @@
 package io.github.psd2live.application
 
+import io.github.psd2live.core.RigIrCompiler
 import io.github.psd2live.core.RigPreviewModel
+import io.github.psd2live.core.modifier.BuiltinModifierPlugins
 import io.github.psd2live.project.WorkspaceRevisions
 import io.github.psd2live.project.rawConfig
 import io.github.psd2live.scenario.Characters
@@ -41,6 +43,13 @@ class WorkspaceSourceImporterTest {
                 assertTrue(stack.instances.any { it.type == "face/fitted" })
                 assertTrue(stack.instances.none { it.type == "face/legacy" || it.type == "face.depth-turn" })
                 assertTrue(installed.model.rig.puppet.deformers.isNotEmpty())
+                val body = stack.instances.single { it.type == "body/legacy" }
+                assertEquals(2, body.version)
+                assertEquals(assertNotNull(BuiltinModifierPlugins.reference(body.type, 2)), body.plugin)
+                val legacy = body.copy(version = 1, plugin = assertNotNull(BuiltinModifierPlugins.reference(body.type, 1)))
+                val locked = stack.copy(instances = stack.instances.map { if (it.id == body.id) legacy else it })
+                val reference = installed.document.copy(rigEdits = installed.document.rigEdits.copy(modifierStack = locked.toJson()))
+                assertEquals(RigIrCompiler.compile(builder.build(reference)), RigIrCompiler.compile(installed.model))
             }
             val rebuilt = builder.build(installed.document)
             assertEquals(io.github.psd2live.core.RigIrCompiler.compile(installed.model),

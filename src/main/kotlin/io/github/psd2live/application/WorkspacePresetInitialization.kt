@@ -1,5 +1,6 @@
 package io.github.psd2live.application
 
+import io.github.psd2live.algorithms.binding.LegacyBodyV2Algorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.recipe.*
@@ -13,7 +14,8 @@ internal object WorkspacePresetInitialization {
                choices: WorkspaceInitialPreset = WorkspaceInitialPreset()): WorkspaceDocument = prepare(document, work, choices).first
 
     fun prepare(document: WorkspaceDocument, work: WorkspaceRasterWork,
-                choices: WorkspaceInitialPreset = WorkspaceInitialPreset()): Pair<WorkspaceDocument, RigPreviewModel> {
+                choices: WorkspaceInitialPreset = WorkspaceInitialPreset(),
+                preferSourceBody: Boolean = false): Pair<WorkspaceDocument, RigPreviewModel> {
         val config = document.config()
         var stack = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack))
         require(stack.instances.isEmpty()) { "Initialize presets only into an empty stack" }
@@ -44,6 +46,9 @@ internal object WorkspacePresetInitialization {
             put("group", "$group-standard")
             put("targets", JsonArray(targets.map { buildJsonObject { put("kind", it.kind); put("id", it.id) } }))
         }, types).first
+        val scaffold = stack.instances.singleOrNull { it.type == RigSourceModifiers.SCAFFOLD && it.version == 2 }
+        val bodyPlugin = if (preferSourceBody && scaffold != null)
+            BuiltinModifierPlugins.reference(LegacyBodyV2Algorithm.TYPE, LegacyBodyV2Algorithm.VERSION) else null
         stack = stack.copy(instances = stack.instances.map { entry ->
             val spec = RigLegacyBindings.find(entry.type)
             val settings = buildJsonObject {
@@ -68,7 +73,12 @@ internal object WorkspacePresetInitialization {
                     }
                 }
             }
-            entry.copy(config = settings, presetGroup = group)
+            val configured = entry.copy(config = settings, presetGroup = group)
+            if (bodyPlugin != null && scaffold != null && entry.type == LegacyBodyV2Algorithm.TYPE && entry.version == 1 &&
+                settings["scaffold"] == JsonPrimitive(scaffold.id) && entry.targets.toSet() == scaffold.targets.toSet()) {
+                val independent = configured.copy(version = LegacyBodyV2Algorithm.VERSION, plugin = bodyPlugin)
+                independent.takeIf(ModifierPluginCatalog::available) ?: configured
+            } else configured
         })
         model = build()
         val available = model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }
