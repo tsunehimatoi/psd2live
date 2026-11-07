@@ -13,18 +13,24 @@ object GeometryResidual {
         val actual = current.drawables.single { it.id == id }
         val old = previous.drawables.single { it.id == id }; val next = desired.drawables.single { it.id == id }
         val mesh = requireNotNull(actual.mesh)
-        val live = current.parameters.associateBy { it.id }
-        val axes = unionAxes((actual.geometryGrid?.axes.orEmpty() + geometryAxes(previous, old) + geometryAxes(desired, next))
+        val live = current.parameters.associate { it.id to it.default }
+        val oldBranch = branch(previous, old)
+        val nextBranch = branch(desired, next)
+        val axes = unionAxes((actual.geometryGrid?.axes.orEmpty() + geometryAxes(old, oldBranch) + geometryAxes(next, nextBranch))
             .filter { it.parameterId in live })
+        val oldProjection = previous.copy(drawables = listOf(old), deformers = oldBranch.asReversed())
+        val nextProjection = desired.copy(drawables = listOf(next), deformers = nextBranch.asReversed())
+        val oldDefaults = previous.parameters.associate { it.id to it.default }
+        val nextDefaults = desired.parameters.associate { it.id to it.default }
         val mapping = requireNotNull(drawableSpaceMapping(current, emptyMap(), id))
         val indices = (0 until mesh.vertexCount).toSet()
         val coordinates = coordinates(axes, mesh.positions.size)
         val cells = coordinates.map { coordinate ->
             checkpoint()
-            val pose = live.mapValues { it.value.default } + axes.indices.associate { axes[it].parameterId to axes[it].keys[coordinate[it]] }
-            val before = transfer(world(previous, old, pose), previousSources)
-            val after = transfer(world(desired, next, pose), desiredSources)
-            val authored = local(current, actual, pose)
+            val pose = live + axes.indices.associate { axes[it].parameterId to axes[it].keys[coordinate[it]] }
+            val before = transfer(world(oldProjection, old, pose, oldDefaults), previousSources)
+            val after = transfer(world(nextProjection, next, pose, nextDefaults), desiredSources)
+            val authored = local(actual, pose, live)
             val oldLocal = mapping.worldToLocalLinearized(before, mesh.positions, before, indices)
             val newLocal = mapping.worldToLocalLinearized(after, mesh.positions, after, indices)
             val reconstructed = mapping.localToWorld(newLocal)
@@ -56,18 +62,21 @@ object GeometryResidual {
         val base = generated.drawables.single { it.id == id }
         val mesh = requireNotNull(actual.mesh)
         require(base.mesh?.vertexCount == mesh.vertexCount) { "Generation residual needs the same vertices on both drawables" }
-        val live = authored.parameters.associateBy { it.id }
-        val axes = unionAxes((actual.geometryGrid?.axes.orEmpty() + geometryAxes(generated, base)).filter { it.parameterId in live })
+        val live = authored.parameters.associate { it.id to it.default }
+        val branch = branch(generated, base)
+        val axes = unionAxes((actual.geometryGrid?.axes.orEmpty() + geometryAxes(base, branch)).filter { it.parameterId in live })
+        val projection = generated.copy(drawables = listOf(base), deformers = branch.asReversed())
+        val defaults = generated.parameters.associate { it.id to it.default }
         val mapping = requireNotNull(drawableSpaceMapping(authored, emptyMap(), id))
         val indices = (0 until mesh.vertexCount).toSet()
         val count = sources?.size ?: mesh.vertexCount
         var changed = false
         val cells = coordinates(axes, count * 2).map { coordinate ->
             checkpoint()
-            val pose = live.mapValues { it.value.default } + axes.indices.associate { axes[it].parameterId to axes[it].keys[coordinate[it]] }
-            val before = world(generated, base, pose)
+            val pose = live + axes.indices.associate { axes[it].parameterId to axes[it].keys[coordinate[it]] }
+            val before = world(projection, base, pose, defaults)
             val generatedLocal = mapping.worldToLocalLinearized(before, mesh.positions, before, indices)
-            val own = local(authored, actual, pose)
+            val own = local(actual, pose, live)
             val delta = FloatArray(own.size) { own[it] - generatedLocal[it] }
             val moved = if (sources == null) delta else transfer(delta, sources)
             if (moved.any { kotlin.math.abs(it) > 1e-6f }) changed = true
@@ -131,36 +140,38 @@ object GeometryResidual {
         }
     }
 
-    private fun geometryAxes(model: PuppetModel, drawable: Drawable): List<KeyformAxis> {
-        val axes = drawable.geometryGrid?.axes.orEmpty().toMutableList()
+    /** Only this chain can affect a drawable's space at any of the sampled poses. */
+    private fun branch(model: PuppetModel, drawable: Drawable): List<Deformer> = buildList {
         var parent = drawable.parentDeformerId
         val seen = mutableSetOf<DeformerId>()
         while (parent != null) {
             require(seen.add(parent)) { "Generation migration parent hierarchy contains a cycle" }
             val deformer = requireNotNull(model.deformers.singleOrNull { it.id == parent }) { "Generation migration parent is missing" }
-            axes += when (deformer) {
+            add(deformer)
+            parent = deformer.parent
+        }
+    }
+
+    private fun geometryAxes(drawable: Drawable, branch: List<Deformer>): List<KeyformAxis> =
+        drawable.geometryGrid?.axes.orEmpty() + branch.flatMap { deformer ->
+            when (deformer) {
                 is Deformer.Warp -> deformer.geometryGrid?.axes.orEmpty()
                 is Deformer.Rotation -> deformer.geometryGrid?.axes.orEmpty()
             }
-            parent = deformer.parent
         }
-        return axes
-    }
 
-    private fun world(model: PuppetModel, drawable: Drawable, pose: Map<ParameterId, Float>): FloatArray {
-        return requireNotNull(drawableSpaceMapping(model, pose, drawable.id)) { "Generation migration parent cannot be evaluated" }
-            .localToWorld(local(model, drawable, pose))
-    }
+    private fun world(model: PuppetModel, drawable: Drawable, pose: Map<ParameterId, Float>, defaults: Map<ParameterId, Float>): FloatArray =
+        requireNotNull(drawableSpaceMapping(model, pose, drawable.id)) { "Generation migration parent cannot be evaluated" }
+            .localToWorld(local(drawable, pose, defaults))
 
-    private fun local(model: PuppetModel, drawable: Drawable, pose: Map<ParameterId, Float>): FloatArray {
+    private fun local(drawable: Drawable, pose: Map<ParameterId, Float>, defaults: Map<ParameterId, Float>): FloatArray {
         val mesh = requireNotNull(drawable.mesh)
         val local = mesh.positions.copyOf()
         val grid = drawable.geometryGrid
         if (grid != null) {
-            val parameters = model.parameters.associateBy { it.id }
             val corners = requireNotNull(gridCorners(grid) { id ->
                 val axis = grid.axes.single { it.parameterId == id }
-                (pose[id] ?: parameters[id]?.default ?: 0f).coerceIn(axis.keys.first(), axis.keys.last())
+                (pose[id] ?: defaults[id] ?: 0f).coerceIn(axis.keys.first(), axis.keys.last())
             })
             for (corner in corners) {
                 val values = grid.cellsByLinearIndex[corner.linearIndex]?.form?.positionDeltas ?: continue
