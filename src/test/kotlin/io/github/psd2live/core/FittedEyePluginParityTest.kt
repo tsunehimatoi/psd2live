@@ -2,6 +2,7 @@ package io.github.psd2live.core
 
 import io.github.psd2live.algorithms.binding.BindingProjection
 import io.github.psd2live.algorithms.binding.EyeFittedAlgorithm
+import io.github.psd2live.algorithms.binding.EyeScaffoldTransition
 import io.github.psd2live.algorithms.binding.ScaffoldAlgorithm
 import io.github.psd2live.algorithms.binding.ScaffoldPartsContext
 import io.github.psd2live.algorithms.binding.ScaffoldParts
@@ -21,6 +22,7 @@ import org.umamo.runtime.model.Deformer
 import org.umamo.runtime.model.DeformerId
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -53,7 +55,8 @@ class FittedEyePluginParityTest {
         assertTrue(eyeIds.isNotEmpty())
         val targets = scaffold.layerIdByDrawableId.keys.map { ModifierTarget("mesh", it) }
         val provider = RigModifierInstance("structure", "rig.scaffold", 2, targets,
-            outputAliases = scaffold.puppet.deformers.associate { "shared/deformer:${it.id.raw}" to it.id.raw })
+            outputAliases = scaffold.puppet.deformers.associate { "shared/deformer:${it.id.raw}" to it.id.raw } +
+                scaffold.puppet.parts.associate { "shared/part:${it.id.raw}" to it.id.raw })
         val instance = RigModifierInstance("fitted", "eye/fitted", EyeFittedAlgorithm.VERSION, targets,
             config = buildJsonObject { put("scaffold", provider.id) })
         val primary = scaffold.layerIdByDrawableId.entries.associate { it.value to it.key }
@@ -62,8 +65,13 @@ class FittedEyePluginParityTest {
             val id = primary[layer.source.id.raw] ?: return@mapNotNull null
             ScaffoldParts.Material(org.umamo.runtime.model.DrawableId(id), RigBuilder.scaffoldSlot(layer, analysis.anchors), layer.source.order)
         }, label = { it })
-        val captured = ScaffoldAlgorithm.captureSource(scaffold.puppet, targets.associate { it.id to it.id },
-            organization, sourceMeasurements.frames, sourceMeasurements.branches, RigBuilder.scaffoldMeshInputs(analysis, atlas, oldConfig, cache, primary))
+        val materialConfig = RigModifierPipeline.ordinaryConfig(neutralConfig).copy(meshOnly = true)
+        val materials = RigOrdinaryMaterials.of(RigBuilder.build(analysis, atlas, materialConfig, cache), analysis)
+        val captured = ScaffoldAlgorithm.captureSource(materials.puppet, targets.associate { it.id to it.id }, organization,
+            sourceMeasurements.frames, sourceMeasurements.branches, RigBuilder.scaffoldMeshInputs(analysis, atlas, oldConfig, cache, primary))
+        val production = RigModifierSource(analysis, atlas, materialConfig, materials.layerIdByDrawableId,
+            materialBase = materials.puppet, meshCache = cache)
+        val ordinary = production.scaffoldContext(provider)
         val context = RigFittedEyeSource.capture(instance, provider, analysis, neutralConfig, captured, requireNotNull(sourceMeasurements.eyes),
             scaffold.layerIdByDrawableId, primary)
         val sourceScaffold = ScaffoldAlgorithm().buildSource(captured)
@@ -81,17 +89,34 @@ class FittedEyePluginParityTest {
             val staticLegacy = BindingProjection.retain(scaffold.puppet, emptySet())
             assertNotEquals(deformerFrames(nativeDeformers), deformerFrames(staticLegacy.deformers.associateBy { it.id }))
         }
-        val sourceMeshes = sourceScaffold.drawables.associateBy { it.id }
-        val scaffoldIr = PuppetIr.toIr(BindingProjection.retain(scaffold.puppet.copy(
-            deformers = sourceScaffold.deformers,
-            drawables = scaffold.puppet.drawables.map { drawable ->
-                val sourceMesh = sourceMeshes.getValue(drawable.id)
-                drawable.copy(parentDeformerId = sourceMesh.parentDeformerId, mesh = sourceMesh.mesh, geometryGrid = sourceMesh.geometryGrid)
-            }), emptySet()))
-        val before = scaffoldIr.copy(parameters = emptyList(), parameterLinks = emptyList(), parameterTree = emptyList(),
-            meshes = scaffoldIr.meshes.map { if (it.id in eyeIds) it.copy(channels = emptyMap(), maskedBy = emptyList(),
-                opacity = layers.getValue(scaffold.layerIdByDrawableId.getValue(it.id)).source.opacity) else it })
-        val changes = EyeFittedAlgorithm().changes(before, instance, context) {}
+        val allBefore = ScaffoldAlgorithm().evaluate(PuppetIr.toIr(materials.puppet), provider, ordinary) {}
+        val planned = EyeScaffoldTransition.plan(allBefore, provider, eyeIds, ordinary, captured)
+        val transition = assertIs<EyeScaffoldTransition.Result.Ready>(planned, planned.toString())
+        val before = transition.changes.apply(allBefore)
+        assertEquals(deformerFrames(sourceDeformers), deformerFrames(PuppetIr.toPuppet(before).deformers.associateBy { it.id }))
+        assertEquals(allBefore.meshes.filter { it.id !in eyeIds }, before.meshes.filter { it.id !in eyeIds })
+        if (source == null) {
+            val changedFrame = transition.changes.deformers.updated.first().before.id
+            val changedMesh = transition.changes.meshes.updated.first().before
+            val dependent = allBefore.copy(meshes = allBefore.meshes + changedMesh.copy(id = "SharedDependent", parent = changedFrame))
+            val shared = assertIs<EyeScaffoldTransition.Result.Blocked>(
+                EyeScaffoldTransition.plan(dependent, provider, eyeIds, ordinary, captured))
+            assertEquals(EyeScaffoldTransition.Reason.SHARED_FRAME, shared.reason)
+            assertTrue(changedFrame in shared.ids)
+            val geometry = requireNotNull(changedMesh.geometry)
+            val pins = VertexGroup("TransitionPins", changedMesh.id, "pin", Floats.wrap(FloatArray(geometry.positions.size / 2) { 1f }))
+            val editedUvs = Floats.wrap(geometry.uvs.shared().copyOf().also { it[0] += 0.0001f })
+            val edited = allBefore.copy(meshes = allBefore.meshes.map {
+                if (it.id == changedMesh.id) it.copy(geometry = geometry.copy(uvs = editedUvs)) else it
+            })
+            assertEquals(EyeScaffoldTransition.Result.Blocked(EyeScaffoldTransition.Reason.AUTHORED_MESH, setOf(changedMesh.id)),
+                EyeScaffoldTransition.plan(edited, provider, eyeIds, ordinary, captured))
+            val indexed = allBefore.copy(authoring = allBefore.authoring.copy(vertexGroups = listOf(pins)))
+            val blocked = assertIs<EyeScaffoldTransition.Result.Blocked>(
+                EyeScaffoldTransition.plan(indexed, provider, eyeIds, ordinary, captured))
+            assertEquals(EyeScaffoldTransition.Result.Blocked(EyeScaffoldTransition.Reason.INDEXED_MESH, setOf(changedMesh.id)), blocked)
+        }
+        val changes = EyeFittedAlgorithm().changes(before, instance.copy(targets = targets.filter { it.id in eyeIds }), context) {}
         val actual = changes.apply(before)
         val eyeNames = RigFittedEyeSource.parameterNames().keys
         assertEquals(expected.parameters.filter { it.id in eyeNames }, actual.parameters)
@@ -114,7 +139,7 @@ class FittedEyePluginParityTest {
                 meshes = before.meshes.map { if (it.id == lash.id) it.copy(geometry = authored) else it },
                 authoring = before.authoring.copy(vertexGroups = listOf(group)),
             )
-            val rebound = EyeFittedAlgorithm().changes(authoredInput, instance, context) {}.apply(authoredInput)
+            val rebound = EyeFittedAlgorithm().changes(authoredInput, instance.copy(targets = targets.filter { it.id in eyeIds }), context) {}.apply(authoredInput)
             val reboundLash = rebound.meshes.single { it.id == lash.id }
             assertEquals(authored, reboundLash.geometry)
             assertTrue(reboundLash.offsets?.axes.orEmpty().isNotEmpty())
