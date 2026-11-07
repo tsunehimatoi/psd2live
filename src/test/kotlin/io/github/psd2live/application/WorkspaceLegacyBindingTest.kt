@@ -1080,7 +1080,7 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
-    @Test fun mouthTongueAndJawReplayAfterFittedSourceBindings(): Unit = runBlocking {
+    @Test fun mouthSpringReplaysAfterSourceTongueJawAndDepth(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
         val preset = WorkspaceModelPresetLibrary.shared.get("modern-dynamic")
         val choices = preset.choices.copy(frontHair = WorkspaceInitialHair.CLASSIC, backHair = WorkspaceInitialHair.CLASSIC)
@@ -1089,6 +1089,8 @@ class WorkspaceLegacyBindingTest {
         val recipe = baseline.recipe.copy(modules = baseline.recipe.modules + mapOf(
             RigModules.MOUTH_TONGUE.id to ModuleChoice(true),
             RigModules.MOUTH_JAW.id to ModuleChoice(true, values = mapOf("share" to 24f)),
+            RigModules.MOUTH_DEPTH.id to ModuleChoice(true, values = mapOf("depth" to 143f)),
+            RigModules.MOUTH_SPRING.id to ModuleChoice(true),
         ))
         val config = baseline.copy(recipe = recipe, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
@@ -1097,15 +1099,19 @@ class WorkspaceLegacyBindingTest {
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val tongue = stack.instances.single { it.type == "mouth.tongue" }
         val jaw = stack.instances.single { it.type == "mouth.jaw" }
+        val depth = stack.instances.single { it.type == "mouth.interior-depth" }
+        val spring = stack.instances.single { it.type == "mouth.spring" }
         assertEquals(1, tongue.version)
         assertEquals(1, jaw.version)
+        assertEquals(1, spring.version)
         val versions = mapOf("mouth/fitted" to 3, "mouth.outline" to 3, "mouth.vowel" to 4, "mouth.capture" to 3,
-            tongue.type to 3, jaw.type to 4)
-        fun lock(tongueVersion: Int, jawVersion: Int = 4): WorkspaceDocument {
+            tongue.type to 3, jaw.type to 4, depth.type to 3, spring.type to 5)
+        fun lock(tongueVersion: Int, jawVersion: Int = 4, springVersion: Int = 5): WorkspaceDocument {
             val selected = stack.copy(instances = stack.instances.map { instance ->
                 val version = when (instance.id) {
                     tongue.id -> tongueVersion
                     jaw.id -> jawVersion
+                    spring.id -> springVersion
                     else -> versions[instance.type] ?: return@map instance
                 }
                 instance.copy(version = version, plugin = assertNotNull(BundledAlgorithmArtifacts.find(instance.type, version)).reference)
@@ -1116,6 +1122,8 @@ class WorkspaceLegacyBindingTest {
         assertContains(requireNotNull(rejected.message), "compatible fitted mouth and capture providers")
         val unsupportedJaw = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(lock(3, 3)) }
         assertContains(requireNotNull(unsupportedJaw.message), "Use mouth jaw v1 after other mouth modules")
+        val unsupportedSpring = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(lock(3, springVersion = 4)) }
+        assertContains(requireNotNull(unsupportedSpring.message), "requires a compatible jaw binding")
         val document = lock(3)
         val expected = assertNotNull(legacy.modifierEvaluation).outputs
         val jawIndex = stack.index(jaw.id)
@@ -1124,6 +1132,20 @@ class WorkspaceLegacyBindingTest {
         val jawMeshes = expected[jawIndex].meshes.associateBy { it.id }
         tongueMeshes.forEach { assertEquals(it, jawMeshes.getValue(it.id), it.id) }
         assertTrue(expected[jawIndex - 1].meshes.any { it.offsets != jawMeshes.getValue(it.id).offsets })
+        val depthIndex = stack.index(depth.id)
+        val springIndex = stack.index(spring.id)
+        assertTrue(depthIndex < springIndex)
+        val beforeDepth = expected[depthIndex - 1]
+        val afterDepth = expected[depthIndex]
+        val afterSpring = expected[springIndex]
+        val depthCarriers = afterDepth.deformers.filter { deformer -> beforeDepth.deformers.none { it.id == deformer.id } }
+        val shaded = afterDepth.meshes.zip(beforeDepth.meshes).mapNotNull { (after, before) ->
+            after.takeIf { Channel.MULTIPLY_COLOR in after.channels && after.channels != before.channels }
+        }
+        assertTrue(depthCarriers.isNotEmpty())
+        assertTrue(shaded.isNotEmpty())
+        assertTrue(depthCarriers.all { it in afterSpring.deformers })
+        assertTrue(shaded.all { it in afterSpring.meshes })
         fun verify(model: RigPreviewModel) {
             val evaluation = assertNotNull(model.modifierEvaluation)
             assertEquals(versions.keys, evaluation.entries.filter { it.instance.type in versions }.mapTo(hashSetOf()) { it.instance.type })
@@ -1141,7 +1163,7 @@ class WorkspaceLegacyBindingTest {
             RigStageCache.enabled = cache
         }
 
-        for (selected in listOf(tongue, jaw)) {
+        for (selected in listOf(tongue, jaw, spring)) {
             val artifact = assertNotNull(BundledAlgorithmArtifacts.find(selected.type, versions.getValue(selected.type)))
             val directory = Files.createTempDirectory("mouth-composition-package-")
             val preferences = Preferences.userRoot().node("mouth-composition-package/${UUID.randomUUID()}")
@@ -1157,15 +1179,22 @@ class WorkspaceLegacyBindingTest {
                 val evaluation = assertNotNull(actual.modifierEvaluation)
                 val instance = evaluation.entries[index].instance.copy(type = installed.manifest.algorithms.single().type)
                 val owner = RigModifierSource.of(actual)
-                val definition = if (selected.id == jaw.id) RigMouthJawModifier.tongueDefinition(owner)
-                    else RigMouthTongueModifier.fittedDefinition(owner)
+                val definition = when (selected.id) {
+                    jaw.id -> RigMouthJawModifier.tongueDefinition(owner)
+                    spring.id -> RigMouthSpringModifier.tongueDefinition(owner)
+                    else -> RigMouthTongueModifier.fittedDefinition(owner)
+                }
                 val adapter = ModifierPluginCatalog.definitions(store, captured = listOf(definition)).single {
                     it.type == instance.type && it.version == instance.version
                 }
                 val context = assertNotNull(evaluation.readAlgorithms[instance.id]).context
                 assertEquals(3, context.upstream.single { it.type == "mouth/fitted" }.version)
                 assertEquals(3, context.upstream.single { it.type == "mouth.capture" }.version)
-                if (selected.id == jaw.id) assertEquals(3, context.upstream.single { it.type == "mouth.tongue" }.version)
+                if (selected.id != tongue.id) assertEquals(3, context.upstream.single { it.type == "mouth.tongue" }.version)
+                if (selected.id == spring.id) {
+                    assertEquals(4, context.upstream.single { it.type == "mouth.jaw" }.version)
+                    assertEquals(3, context.upstream.single { it.type == depth.type && it.instanceId == depth.id }.version)
+                }
                 assertEquals(expected[index], (adapter.plugin as ContextualModifierAlgorithmPlugin).evaluate(
                     evaluation.outputs[index - 1], instance, context) {})
             } finally {
