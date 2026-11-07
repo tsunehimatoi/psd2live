@@ -1,5 +1,6 @@
 package io.github.psd2live.application
 
+import io.github.psd2live.algorithms.binding.BrowLegacyV2Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV2Algorithm
 import io.github.psd2live.algorithms.binding.FittedFaceV2Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV2Algorithm
@@ -329,6 +330,132 @@ class WorkspaceLegacyBindingTest {
         val tongue = current.meshes.single { it.name == "tongue" }
         assertTrue(tongue.maskedBy.isNotEmpty())
         assertTrue(tongue.channels.isNotEmpty())
+    }
+
+    @Test fun legacyBrowV2KeepsV1DefaultAndMatchesTheLiveHeadBindings(): Unit = runBlocking {
+        suspend fun evaluate(head: String?, headVersion: Int, scaffoldVersion: Int, version: Int?, withBrow: Boolean = true): Fixture {
+            val art = document().let { if (withBrow) it else it.copy(deletedLayerIds = setOf("brow")) }
+            val fixture = Fixture(art, scaffoldVersion)
+            fixture.install()
+            val entries = listOf(fixture.addition("rig.scaffold", "structure")) +
+                listOfNotNull(head?.let {
+                    JsonObject(fixture.addition(it, "head") + ("version" to JsonPrimitive(headVersion)))
+                }) + fixture.addition("brow/legacy", "brow", config = buildJsonObject {
+                    put("scaffold", "structure")
+                    putJsonObject("tuning") { put("browLift", 24f) }
+                }).let { if (version == null) it else JsonObject(it + ("version" to JsonPrimitive(version))) }
+            fixture.edit("modifier_add_group", buildJsonObject {
+                put("group", "brow"); put("entries", JsonArray(entries))
+            })
+            return fixture
+        }
+
+        for ((head, headVersion, scaffoldVersion) in listOf(
+            Triple(null, 1, 1), Triple("face/legacy", 1, 2), Triple("face/fitted", 1, 2), Triple("face/fitted", 2, 2),
+        )) {
+            val old = evaluate(head, headVersion, scaffoldVersion, null)
+            val current = evaluate(head, headVersion, scaffoldVersion, 2)
+            assertEquals(1, RigModifierStack.fromJson(old.now.document.rigEdits.modifierStack!!).instances.last().version)
+            val expected = assertNotNull(old.now.model.rig.modifierOutput)
+            val actual = assertNotNull(current.now.model.rig.modifierOutput)
+            val meshes = expected.meshes.associateBy { it.id }
+            val deformers = expected.deformers.associateBy { it.id }
+            val label = "head=$head@$headVersion, scaffold=$scaffoldVersion"
+            assertEquals(expected.copy(meshes = emptyList(), deformers = emptyList()),
+                actual.copy(meshes = emptyList(), deformers = emptyList()), label)
+            assertEquals(expected.meshes.map { it.id }, actual.meshes.map { it.id }, label)
+            assertEquals(expected.deformers.map { it.id }, actual.deformers.map { it.id }, label)
+            actual.meshes.forEach {
+                val previous = meshes.getValue(it.id)
+                assertTrue(previous == it, "$label mesh ${it.name}")
+            }
+            actual.deformers.forEach { assertEquals(deformers[it.id], it, "$label deformer ${it.name}") }
+            if (head == "face/legacy" || head == "face/fitted" && headVersion == 2) verifyLegacyBrowWorker(current)
+        }
+
+        val old = evaluate(null, 1, 2, null, withBrow = false)
+        val current = evaluate(null, 1, 2, 2, withBrow = false)
+        val output = assertNotNull(current.now.model.rig.modifierOutput)
+        assertEquals(old.now.model.rig.modifierOutput, output)
+        assertTrue(output.meshes.none { it.name == "brow" })
+        assertTrue(setOf("ParamBrowLY", "ParamBrowRY").all { id -> output.parameters.any { it.id == id } })
+    }
+
+    private suspend fun verifyLegacyBrowWorker(fixture: Fixture) {
+        val evaluated = assertNotNull(fixture.now.model.modifierEvaluation).outputs
+        val before = evaluated[evaluated.lastIndex - 1]
+        val after = evaluated.last()
+        val stack = RigModifierStack.fromJson(fixture.now.document.rigEdits.modifierStack!!)
+        val (scaffold, head, brow) = stack.instances
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(BrowLegacyV2Algorithm.TYPE, BrowLegacyV2Algorithm.VERSION))
+        assertEquals(artifact.reference, brow.plugin)
+        val owner = RigModifierSource.of(fixture.now.model)
+        val directory = Files.createTempDirectory("legacy-brow-v2-")
+        val preferences = Preferences.userRoot().node("legacy-brow-v2/${UUID.randomUUID()}")
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            artifact.manifest.files.keys.forEach { name ->
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val installed = store.install(staging.toString())
+            val worker = ModifierPluginCatalog.definitions(store, BuiltinModifierPlugins.definitions(owner))
+                .single { it.type == BrowLegacyV2Algorithm.ENTRYPOINT }
+            val instance = brow.copy(type = worker.type, plugin = installed.reference)
+            val providers = listOf(scaffold, head).map {
+                ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+            }
+            val context = worker.authorContext(instance).withUpstream(providers)
+            val algorithm = worker.plugin as ContextualModifierAlgorithmPlugin
+            assertEquals(after, algorithm.evaluate(before, instance, context, {}))
+            assertFailsWith<IllegalArgumentException> {
+                BrowLegacyV2Algorithm.changes(before, brow, context.withUpstream(emptyList())) {}
+            }
+            assertFailsWith<IllegalArgumentException> {
+                BrowLegacyV2Algorithm.changes(before, brow, context.withUpstream(listOf(providers.first().copy(version = 3)))) {}
+            }
+            val mesh = before.meshes.single { it.name == "brow" }
+            val geometry = assertNotNull(mesh.geometry)
+            val moved = geometry.copy(positions = io.github.psd2live.format.model.Floats.of(
+                geometry.positions.toArray().also { it[0] += .01f }))
+            val edited = before.copy(meshes = before.meshes.map { if (it.id == mesh.id) it.copy(geometry = moved, opacity = .6f) else it })
+            val newMesh = algorithm.evaluate(edited, instance, context, {}).meshes.single { it.id == mesh.id }
+            assertEquals(moved, newMesh.geometry)
+            assertEquals(.6f, newMesh.opacity)
+            assertEquals(after.meshes.single { it.id == mesh.id }.offsets, newMesh.offsets)
+            assertFailsWith<IllegalArgumentException> {
+                val reparented = before.copy(meshes = before.meshes.map { if (it.id == mesh.id) it.copy(parent = null) else it })
+                BrowLegacyV2Algorithm.changes(reparented, brow, context) {}
+            }
+            val turnTuning = JsonObject(brow.config + ("tuning" to buildJsonObject { put("browTilt", 18f) }))
+            assertFailsWith<IllegalArgumentException> {
+                BrowLegacyV2Algorithm.changes(before, brow.copy(config = turnTuning), context) {}
+            }
+            store.uninstall(installed.reference)
+            assertEquals(installed.reference, store.install(staging.toString()).reference)
+
+            val current = fixture.now
+            val history = fixture.runtime.history()
+            val historyStore = WorkspaceStore(directory.resolve("project"))
+            historyStore.persistHistory(current.projectId, history)
+            val archive = directory.resolve("brow.psd2live")
+            val repository = ProjectRepository(writeHeadCache = false)
+            repository.save(ProjectSaveCapture(current.projectId, history, JsonObject(emptyMap()), null, historyStore), archive)
+            repository.open(archive).use { opened ->
+                val restored = opened.history.head().snapshot
+                assertEquals(brow, RigModifierStack.fromJson(restored.rigEdits.modifierStack!!).instances.last())
+                assertEquals(after, fixture.builder.build(restored).rig.modifierOutput)
+            }
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+
+        val expected = RigIrCompiler.compile(fixture.now.model)
+        fixture.edit("modifier_apply", buildJsonObject { put("id", "brow") })
+        assertEquals(expected, RigIrCompiler.compile(WorkspacePreviewBuilder().build(fixture.now.document)))
     }
 
     @Test fun legacyBasesKeepTheOriginalSingleAxisAndCombinedMotions(): Unit = runBlocking<Unit> {

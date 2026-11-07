@@ -983,3 +983,32 @@ tasks.register("pluginFaceLegacyV2") {
         """.trimIndent())
     }
 }
+
+val browLegacyV2WorkerJar = registerIsolatedBindingWorker(
+    "browLegacyV2", "brow-legacy-v2", "worker-brow-legacy-v2", "io.github.psd2live.algorithms.binding.BrowLegacyV2Worker",
+)
+
+tasks.register("pluginBrowLegacyV2") {
+    dependsOn(browLegacyV2WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-brow-legacy-v2")
+    val packageVersion = project.version.toString()
+    inputs.file(browLegacyV2WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        browLegacyV2WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.62726f772f6c6567616379.v2"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Legacy brow binding",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/binding","aliases":["brow/legacy"],"version":2,"name":"Legacy brow binding","category":"brow",
+               "targets":["mesh"],"requires":["rig.scaffold"],"contextVersion":2,"exclusiveFamily":"base:brow",
+               "reads":["mesh","deformer","parameter","hierarchy"],"writes":["mesh","parameter","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
