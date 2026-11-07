@@ -1036,6 +1036,35 @@ tasks.register("pluginBrowShapeV3") {
     }
 }
 
+val browShapeV5WorkerJar = registerIsolatedBindingWorker(
+    "browShapeV5", "brow-shape-v5", "worker-brow-shape-v5", "io.github.psd2live.algorithms.binding.BrowShapeV5Worker",
+)
+
+tasks.register("pluginBrowShapeV5") {
+    dependsOn(browShapeV5WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-brow-shape-v5")
+    val packageVersion = project.version.toString()
+    inputs.file(browShapeV5WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        browShapeV5WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.62726f772e7368617065.v5"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Brow shapes",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/shape","aliases":["brow.shape"],"version":5,"name":"Brow shapes","category":"brow",
+               "targets":["mesh"],"requires":["rig.scaffold","brow/fitted"],"contextVersion":2,
+               "reads":["*"],"writes":["mesh","deformer","part","parameter","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val browShapeV4WorkerJar = registerIsolatedBindingWorker(
     "browShapeV4", "brow-shape-v4", "worker-brow-shape-v4", "io.github.psd2live.algorithms.binding.BrowShapeV4Worker",
 )

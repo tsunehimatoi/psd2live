@@ -3,8 +3,10 @@ package io.github.psd2live.core.modifier
 import io.github.psd2live.algorithms.binding.BrowShapeAlgorithm
 import io.github.psd2live.algorithms.binding.BrowShapeV3Algorithm
 import io.github.psd2live.algorithms.binding.BrowShapeV4Algorithm
+import io.github.psd2live.algorithms.binding.BrowShapeV5Algorithm
 import io.github.psd2live.algorithms.binding.BrowShapeInputs
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
+import io.github.psd2live.core.ClassifiedLayer
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.RigTuning
 import io.github.psd2live.core.SemanticTag
@@ -25,6 +27,8 @@ import org.umamo.runtime.model.Drawable
 import org.umamo.runtime.model.DrawableId
 import org.umamo.runtime.model.DeformerId
 import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.serialization.json.jsonPrimitive
 
 internal object RigBrowShapeModifier {
@@ -45,6 +49,57 @@ internal object RigBrowShapeModifier {
 
     fun fittedDefinition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, BrowShapeV3Algorithm.VERSION, fittedAlgorithm)
+
+    private val sharedFrameAlgorithm = object : ChangingModifierAlgorithmPlugin by BrowShapeV5Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = RigLegacyBindings.specs.filter { !it.expressionToggles && !it.seeThrough }
+            .mapTo(linkedSetOf()) { it.type } - BrowShapeAlgorithm.TYPE
+        override val canonicalOptInType = BrowShapeAlgorithm.TYPE
+    }
+
+    fun sharedFrameDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val fitted = fittedDefinition(source)
+        return fitted.copy(version = BrowShapeV5Algorithm.VERSION, plugin = sharedFrameAlgorithm,
+            parameters = { instance -> BrowShapeAlgorithm.parameters(requireNotNull(source).capture(instance, BrowShapeV5Algorithm.VERSION)) },
+            changeWrites = setOf("mesh", "deformer", "part", "parameter", "hierarchy"),
+            authorContext = { requireNotNull(source).captureSharedFrames(it) })
+    }
+
+    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val scaffold = provider(instance)
+        val prefix = activeBefore(instance).filter {
+            it.config["scaffold"] == JsonPrimitive(scaffold.id) && it.targets.any(instance.targets::contains) &&
+                RigLegacyBindings.find(it.type)?.let { spec -> !spec.expressionToggles && !spec.seeThrough } == true
+        }
+        val face = prefix.single { it.type == "face/fitted" && it.version == 3 }
+        val eye = prefix.single { it.type == "eye/fitted" && it.version == 5 }
+        require(prefix.any { it.id == instance.config.getValue("base").jsonPrimitive.content && it.type == "brow/fitted" && it.version == 4 })
+        val (before, old) = RigFittedMouthModuleSource.context(this, scaffold, prefix, null)
+        val (after, next) = RigFittedMouthModuleSource.context(this, scaffold, prefix + instance, null)
+        val witnessTags = setOf(SemanticTag.EYEBROW, SemanticTag.IRIDES, SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYE_CLOSE)
+        fun candidates(context: RigBuilder.RigContext): Map<String, ClassifiedLayer> {
+            val layers = context.analysis.layers.associateBy { it.source.id.raw }
+            return instance.targets.mapNotNull { target ->
+                val layer = layers[layersByMesh[target.id]] ?: return@mapNotNull null
+                (target.id to layer).takeIf { layer.semantic.tag in witnessTags && layer.source.id.raw in atlas.placementByLayerId }
+            }.toMap()
+        }
+        val prior = candidates(old)
+        val desired = candidates(next)
+        require(prior.keys == desired.keys)
+        val brows = prior.filterValues { it.semantic.tag == SemanticTag.EYEBROW }.keys
+        require(brows.isNotEmpty())
+        val axes = prefix.flatMapTo(hashSetOf()) { RigLegacyBindings.spec(it.type).parameters }
+        return ModifierAlgorithmContext(buildJsonObject {
+            put("face", face.id)
+            put("eye", eye.id)
+            put("group", tr("model.group.brows"))
+        }, mapOf(
+            "before" to outlineShellSource(old, before, prior, axes, includeFaceLean = true, projectedMeshes = brows),
+            "after" to outlineShellSource(next, after, desired, axes + RigLegacyBindings.spec(instance.type).parameters,
+                includeFaceLean = true, projectedMeshes = brows),
+        ))
+    }
 
     private val fallbackAlgorithm = object : ReadingModifierAlgorithmPlugin by BrowShapeV4Algorithm(),
         ModifierOptionalUpstream, ModifierVersionSelection {
@@ -102,8 +157,12 @@ internal object RigBrowShapeModifier {
     }
 
     private fun RigModifierSource.capture(instance: RigModifierInstance, version: Int): BrowShapeInputs {
-        val fitted = version == BrowShapeV3Algorithm.VERSION
-        val browVersions = if (fitted) 1..3 else 1..2
+        val fitted = version in setOf(BrowShapeV3Algorithm.VERSION, BrowShapeV5Algorithm.VERSION)
+        val browVersions = when (version) {
+            BrowShapeV5Algorithm.VERSION -> 4..4
+            BrowShapeV3Algorithm.VERSION -> 1..3
+            else -> 1..2
+        }
         val eyeVersions = if (fitted) setOf(2, 5) else setOf(2)
         val scaffold = provider(instance)
         require(scaffold.version == 2) { "Brow shape v$version requires a shared v2 scaffold" }
