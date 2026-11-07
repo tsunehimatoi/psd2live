@@ -1,6 +1,10 @@
 package io.github.psd2live.core
 
 import io.github.psd2live.algorithms.binding.BodyStance
+import io.github.psd2live.algorithms.binding.EyeFittedInputs
+import io.github.psd2live.algorithms.binding.EyeWideInputs
+import io.github.psd2live.core.modifier.ModifierSourceBounds
+import io.github.psd2live.core.modifier.RigSourceCapture
 import io.github.psd2live.algorithms.binding.LegacyBodyMotion
 import io.github.psd2live.algorithms.binding.TorsoFrame
 import io.github.psd2live.core.RigSourceMeasurements.meshFramedAnalysis
@@ -1152,6 +1156,51 @@ object RigBuilder {
         }.toMap()
         return io.github.psd2live.algorithms.binding.LidFadeInputs.encode(targets)
     }
+
+    /** Eye widening reads only the art, original target topology and its source coordinate frame. */
+    internal fun eyeWideSourceInputs(
+        analysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig, cache: PreviewMeshCache,
+        targetLayers: Map<String, String>, parentId: (String, String) -> String,
+    ): io.github.psd2live.core.modifier.ModifierAlgorithmContext {
+        val context = rigContext(analysis, config, cache, neutralScaffold = true)
+        val artwork = context.analysis.layers.filter { it.semantic.tag in eyeMeshTags && it.opaquePixels > 0 }
+        val byLayer = artwork.associateBy { it.source.id.raw }
+        val firstWhite = artwork.firstOrNull { it.semantic.tag == SemanticTag.EYEWHITE }
+        val space = firstWhite?.let { context.headSpaceFor(it, config) }
+        val alignment = space?.let {
+            val radians = it.angleDegrees * kotlin.math.PI.toFloat() / 180f
+            EyeFittedInputs.Alignment(it.pivotX, it.pivotY, kotlin.math.cos(radians), kotlin.math.sin(radians))
+        }
+        val moves = mapOf(Side.LEFT to "eye.L", Side.RIGHT to "eye.R").mapKeys { it.key.name }.mapValues { (_, feature) ->
+            context.rigMoves(config, feature) { x, y -> space?.toAligned(x, y) ?: (x to y) }
+        }
+        val topology = LinkedHashMap<String, ScaffoldMeshContext.Material>()
+        val targets = targetLayers.mapNotNull { (id, layerId) ->
+            val layer = byLayer[layerId] ?: return@mapNotNull null
+            val placement = atlas.placementByLayerId[layerId] ?: return@mapNotNull null
+            val aligned = context.rigLayer(layer)
+            val (parent, frame) = context.parentAndFrame(layer, config)
+            topology.getOrPut(layerId) {
+                val mesh = buildGridMesh(layer, frame, context.headSpaceFor(layer, config), config, cache,
+                    MeshResolution.unitScale(config, context.analysis.source))
+                val raw = ScaffoldMesh.RawMesh(mesh.rigPositions, LayerTexture.packed(layer, placement, atlas).bind(mesh.mesh.uvs), mesh.mesh.indices)
+                ScaffoldMeshContext.Material(layerId, layerId, raw, ScaffoldMesh.Geometry.Zero)
+            }
+            val override = config.layerOverrides[layerId]
+            val preset = (override?.type ?: layer.semantic.type) == LayerType.PRESET
+            val automaticOpacity = preset || (override?.parameter ?: layer.semantic.parameter).isBlank()
+            id to EyeWideInputs.Target(layerId, parent?.raw?.let { parentId(id, it) },
+                ModifierSourceBounds(frame.left, frame.top, frame.right, frame.bottom),
+                aligned.centroidX, aligned.centroidY, preset, automaticOpacity, layer.source.opacity.coerceIn(0f, 1f))
+        }.toMap()
+        val source = RigSourceCapture.capture(artwork, targets.mapValues { it.value.layer })
+        val stamps = artwork.filter { it.semantic.tag == SemanticTag.EYELASH }
+            .associate { it.source.id.raw to io.github.psd2live.core.fit.EyeArtworkFitting.stamp(it) }
+        return EyeWideInputs(context.faceRig.centerX, alignment, stamps, moves, config.recipe.eyeParts, targets,
+            config.rigTuning.irisJellySquash, config.rigTuning.irisJellyStretch).encode(
+            source, ScaffoldMeshContext.capture(topology.values.toList()).resources.getValue("source_meshes"))
+    }
+
 
     /** Captures the fitted crease, source iris topology and its neutral frame without binding motion. */
     internal fun eyeSquashSourceInputs(

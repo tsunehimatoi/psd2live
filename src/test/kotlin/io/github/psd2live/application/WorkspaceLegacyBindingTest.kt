@@ -869,6 +869,95 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun independentEyeWideMatchesLockedVersionWithPreviousEyeModules(): Unit = runBlocking {
+        compareEyeWide("face/legacy", composed = true, worker = true)
+    }
+
+    @Test fun independentEyeWideMatchesLockedVersionWithFittedHead(): Unit = runBlocking {
+        compareEyeWide("face/fitted")
+    }
+
+    private suspend fun compareEyeWide(head: String, composed: Boolean = false, worker: Boolean = false) {
+        val f = Fixture(document(eyeDetails = true, bilateralEyes = true)); f.install()
+        f.group(listOf("body/legacy", head, "eye/fitted"))
+        val config = buildJsonObject { put("scaffold", "structure"); put("base", "eye") }
+        if (composed) for (type in listOf("eye.smile", "eye.squash", "eye.lid-fade", "eye.emotion", "eye.aftershock")) {
+            f.edit("modifier_add", f.addition(type, type, config = config))
+        }
+        val wideConfig = JsonObject(config + ("values" to buildJsonObject { put("lift", 32f) }))
+        val previous = assertNotNull(f.now.model.rig.modifierOutput)
+        f.edit("modifier_add", f.addition("eye.wide", "old-wide", config = wideConfig))
+        assertEquals(1, RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.last().version)
+        val expected = assertNotNull(f.now.model.rig.modifierOutput)
+        val legacyPreview = f.now.model
+        f.edit("modifier_remove", buildJsonObject { put("id", "old-wide") })
+        val addition = f.addition("eye.wide", "wide", config = wideConfig)
+        f.edit("modifier_add", JsonObject(addition + ("version" to JsonPrimitive(2))))
+        val actual = assertNotNull(f.now.model.rig.modifierOutput)
+        assertEquals(expected.parameters, actual.parameters)
+        assertEquals(expected.meshes.map { it.id }, actual.meshes.map { it.id })
+        for ((old, new) in expected.meshes.zip(actual.meshes)) {
+            assertEquals(old.parent, new.parent, old.id)
+            assertEquals(old.offsets?.axes, new.offsets?.axes, old.id)
+            assertEquals(old.offsets, new.offsets, "geometry of " + old.id)
+            assertEquals(old.channels, new.channels, old.id)
+        }
+        assertTrue(expected == actual, "The complete generated IR must match the historical widening")
+        val evaluator = CpuDeformationEvaluator()
+        val pose = mapOf(StandardParameters.ANGLE_X to 20f, StandardParameters.ANGLE_Y to -12f,
+            StandardParameters.EYE_BALL_X to .6f, StandardParameters.EYE_BALL_Y to -.4f,
+            StandardParameters.EYE_L_OPEN to 1.75f, StandardParameters.EYE_R_OPEN to 2f)
+        val left = evaluator.evaluate(legacyPreview.rig.puppet, pose)
+        val right = evaluator.evaluate(f.now.model.rig.puppet, pose)
+        for ((id, positions) in left.worldPositions) assertContentEquals(positions, right.worldPositions.getValue(id), id.raw)
+        assertEquals(left.opacity, right.opacity)
+        val white = mesh(f, "white")
+        val neutral = evaluator.evaluate(f.now.model.rig.puppet, pose + (StandardParameters.EYE_L_OPEN to 1f))
+        assertTrue(!neutral.worldPositions.getValue(white.id).contentEquals(right.worldPositions.getValue(white.id)))
+        assertEquals(0f, right.opacity.getValue(mesh(f, "close").id))
+        val stack = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
+        val instance = stack.instances.last()
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find("eye.wide", 2))
+        assertEquals(artifact.reference, instance.plugin)
+        if (worker) {
+            val directory = Files.createTempDirectory("eye-wide-package-")
+            val preferences = Preferences.userRoot().node("eye-wide-package/" + UUID.randomUUID())
+            val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+            try {
+                val staging = Files.createDirectory(directory.resolve("package"))
+                Files.write(staging.resolve("plugin.json"), artifact.bytes)
+                for (name in artifact.manifest.files.keys) {
+                    assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                }
+                val providers = stack.instances.dropLast(1).map { provider ->
+                    ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
+                        provider.id, provider.config, provider.outputAliases, provider.plugin)
+                }
+                val definition = RigEyeWideModifier.definition(RigModifierSource.of(f.now.model))
+                val context = definition.authorContext(instance).withUpstream(providers)
+                repeat(2) {
+                    val installed = store.install(staging.toString())
+                    assertEquals(artifact.reference, installed.reference)
+                    val result = ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(),
+                        previous, instance, {}, store, context = context, declaredParameters = definition.parameters(instance))
+                    assertEquals(actual, result)
+                    ModifierPluginWorkers.stop(installed.reference)
+                    store.uninstall(installed.reference)
+                    assertTrue(store.snapshot().none { it.reference == installed.reference })
+                }
+            } finally {
+                store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+                preferences.removeNode()
+                ModifierPluginStore.deleteTree(directory)
+            }
+        }
+        val compiled = RigIrCompiler.compile(f.now.model)
+        f.edit("modifier_apply", buildJsonObject { put("id", "wide") })
+        assertEquals(compiled, RigIrCompiler.compile(f.now.model))
+        assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(f.now.document)))
+    }
+
+
     @Test fun eyeSquashSourceMatchesLockedVersionAndAppliesWithWideLids(): Unit = runBlocking {
         compareEyeSquash()
     }
@@ -944,6 +1033,25 @@ class WorkspaceLegacyBindingTest {
         widenedLidsFadingLinesAndHighlightsCompose("eye.lid-fade", 2)
     }
 
+    @Test fun independentEyeWideComposesWithLaterFadeAndHighlight(): Unit = runBlocking {
+        widenedLidsFadingLinesAndHighlightsCompose("eye.lid-fade", 2, wideVersion = 2)
+    }
+
+    @Test fun independentEyeWideRejectsEarlierHighlightAtomically(): Unit = runBlocking {
+        val f = Fixture(document(eyeDetails = true)); f.install()
+        f.group(listOf("face/legacy", "eye/fitted"))
+        val config = buildJsonObject { put("scaffold", "structure"); put("base", "eye") }
+        f.edit("modifier_add", f.addition("eye.highlight", "highlight", config = JsonObject(config + ("dependencies" to buildJsonObject {
+            put("face/legacy", "face")
+        }))))
+        val before = f.now
+        val error = assertFailsWith<WorkspaceBatchEditException> {
+            f.edit("modifier_add", JsonObject(f.addition("eye.wide", "wide", config = config) + ("version" to JsonPrimitive(2))))
+        }
+        assertContains(error.message.orEmpty(), "cannot lower coupled lid, highlight or brow bindings")
+        assertEquals(before, f.now)
+    }
+
     @Test fun packagedLidFadeMatchesTheNativeRecipeAndSurvivesApplyingItsPrefix(): Unit = runBlocking {
         val artifact = requireNotNull(BundledAlgorithmArtifacts.find("eye.lid-fade", 2))
         widenedLidsFadingLinesAndHighlightsCompose(artifact.manifest.algorithms.single().type, 2)
@@ -953,7 +1061,7 @@ class WorkspaceLegacyBindingTest {
         widenedLidsFadingLinesAndHighlightsCompose("eye.lid-fade", 1)
     }
 
-    private suspend fun widenedLidsFadingLinesAndHighlightsCompose(fadeType: String, fadeVersion: Int) {
+    private suspend fun widenedLidsFadingLinesAndHighlightsCompose(fadeType: String, fadeVersion: Int, wideVersion: Int = 1) {
         val f = Fixture(document(eyeDetails = true)); f.install()
         f.group(listOf("body/legacy", "face/legacy", "eye/fitted", "brow/fitted", "mouth/fitted", "hair/legacy"))
         val modules = listOf("eye.wide", "eye.lid-fade", "eye.highlight")
@@ -969,8 +1077,12 @@ class WorkspaceLegacyBindingTest {
                 put("scaffold", "structure"); put("base", "eye")
                 if (type == "eye.highlight") putJsonObject("dependencies") { put("face/legacy", "face") }
             })
-            f.edit("modifier_add", if (type == "eye.lid-fade")
-                JsonObject(addition + ("version" to JsonPrimitive(fadeVersion))) else addition)
+            val version = when (type) {
+                "eye.lid-fade" -> fadeVersion
+                "eye.wide" -> wideVersion
+                else -> null
+            }
+            f.edit("modifier_add", if (version == null) addition else JsonObject(addition + ("version" to JsonPrimitive(version))))
             try { compare(native(f.document, recipe(modules.take(index + 1))), f.now.model, poses) }
             catch (error: Throwable) { throw AssertionError("Stage $type: ${error.message}", error) }
         }

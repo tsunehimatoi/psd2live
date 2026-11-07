@@ -20,6 +20,8 @@ Legacy face v2 is also available by explicit version selection. It computes head
 
 Depth turn v2 is selectable by version. Its shell-turn mode requires a source-aware shared v2 scaffold and legacy face v1 or v2, with optional body v1 or v2. Fitted face and depth turn are mutually exclusive.
 
+Eye widening v2 extends fitted eye opening and opacity from source measurements. Use v1 with preceding eye highlights, brow blink, or lid coupling.
+
 ## Install and remove
 
 Binding structure has separate packages for algorithm revisions 1 and 2. Build them with `./gradlew :algorithms:binding:pluginScaffold1 :algorithms:binding:pluginScaffold2`; outputs are `algorithms/binding/build/plugin-scaffold-1` and `plugin-scaffold-2`. Package IDs are `builtin.7269672e73636166666f6c64.v1` and `.v2`, each exposing `/structure` in its namespace with stable alias `rig.scaffold`. The revisions retain per-target and shared hierarchy semantics respectively.
