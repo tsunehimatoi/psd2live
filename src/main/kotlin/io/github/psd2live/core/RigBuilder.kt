@@ -1103,6 +1103,14 @@ object RigBuilder {
 			buildWithContext(inputAnalysis, atlas, config, meshCache, context, ids, onBindingInput)
 		}
 
+    /** Generate a raw CLI rig in canvas space, with source mesh poses and no structural scaffold. */
+    internal fun buildSourceWithoutDeformers(input: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig,
+                                             meshCache: PreviewMeshCache): BuiltRig = RigBuildProfile.stage("build: source without deformers") {
+        require(!config.generateDeformers && !config.meshOnly && config.rigEdits == RigEditOverlay.Empty)
+        val context = rigContext(input, config, meshCache)
+        buildWithContext(input, atlas, config, meshCache, context, emptyMap(), sourceWithoutDeformers = true)
+    }
+
 	internal fun canBuildMaterials(config: PipelineConfig): Boolean = config.meshOnly && !config.generateDeformers &&
 		!config.deferRig && config.rigPendingLayerIds.isEmpty() && !PrimitiveResolution.of(config.rigEdits).active
 
@@ -1777,6 +1785,7 @@ object RigBuilder {
 		stableDrawableIds: Map<String, DrawableId>,
         onBindingInput: ((() -> PuppetModel) -> Unit)? = null,
 		materialsOnly: Boolean = false,
+        sourceWithoutDeformers: Boolean = false,
 	): BuiltRig {
         val generatedLips = generatedMouthLips(inputAnalysis)
 		val analysis = context.analysis
@@ -1799,7 +1808,7 @@ object RigBuilder {
 		val baseLayers = if (!v2) analysis.layers
 			else analysis.layers.filterNot { resolution.isPartLayer(it.source.id.raw) } + passengers.filterNot { resolution.isPartLayer(it.source.id.raw) }
 		// The face lean rewrites each warp's own grid and nothing else, so it commutes with the re-parenting below.
-		val leaned = if (materialsOnly) emptyList() else faceTurnAndLean(context, config, stages)
+		val leaned = if (materialsOnly || sourceWithoutDeformers) emptyList() else faceTurnAndLean(context, config, stages)
 
 		val deformers = if (config.parentOverrides.isEmpty()) leaned else {
 			val deformerById = rawDeformers.associateBy { it.id.raw }
@@ -2057,6 +2066,15 @@ object RigBuilder {
 			deformPaths = builtDeformPaths,
 		)
 		if (RigBuildProfile.recording) RigBuildProfile.add("assembly: masks, parts, parameters, model", System.nanoTime() - assemblyStart)
+        if (sourceWithoutDeformers) {
+            // Ordinary blend bindings can still require local Cubism shape carriers.
+            val unbound = assembled.withDerivedRenderRoot().let { withoutLegacyHairSway(it, config) }.let(CubismBlendShapes::lawful)
+            val bound = UvBinding.bind(unbound, inputAnalysis, atlas) { classifiedByDrawable[it.id] }.puppet
+            val (x, y) = faceRig.coordinateSpace.toCanvas(faceRig.centerX, faceRig.centerY)
+            return BuiltRig(bound, pageByDrawable, sourceBoundsByDrawable, layerIdByDrawable, x, y,
+                faceRig.radiusX, faceRig.radiusY, warnings, faceRig.initialAngleZ, unbound,
+                seeThrough = seeThrough(bound), copiedDrawableIds = generatedCopies.toSet())
+        }
 		val skeleton = config.rigEdits.skeleton?.takeIf { it.enabled && shouldBuildDeformers }
 		// Bound meshes the journal places under deformers of its own: skinned after it replays (see [SkeletonCanvasSkin]).
 		val canvasSkinned = skeleton?.let { SkeletonCanvasSkin.placedByRecords(config.rigEdits) }.orEmpty()

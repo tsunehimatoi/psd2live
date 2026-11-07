@@ -106,6 +106,24 @@ class PSD2LivePipeline {
         return material.copy(rig = built, config = explicit, runtimeBundle = previewBundle(material.analysis, material.atlas, built, explicit))
     }
 
+    /** Assemble standalone mesh motion directly from source when no structural deformers are requested. */
+    internal fun buildRawWithoutDeformers(source: SourceArt, config: PipelineConfig,
+                                          progress: ProgressListener): RigPreviewModel {
+        require(!config.meshOnly && !config.generateDeformers && standaloneSource(config))
+        val analysis = RigGenerationSource.analyze(source, config)
+        val inputs = generationInputs(analysis, config, progress)
+        val base = RigBuilder.buildSourceWithoutDeformers(inputs.analyses.geometry, inputs.atlas, inputs.generationConfig, meshCache)
+        val finished = base.withDrawOrderOverrides(config.drawOrderOverrides).withSeeThrough(SeeThroughLayers.Settings.of(config))
+        val (atlas, rig) = RigLayerDeletion.compact(inputs.atlas, inputs.visible, inputs.visible, finished, config)
+        return RigPreviewModel(inputs.visible, atlas, rig, config,
+            previewBundle(inputs.visible, atlas, rig, config), PreviewRigSources.of(base, inputs.bindingKey),
+            generationAtlas = inputs.atlas.takeIf { it !== atlas })
+    }
+
+    private fun standaloneSource(config: PipelineConfig): Boolean =
+        config.rigEdits == RigEditOverlay.Empty && config.generationSource == null && config.meshSource == null &&
+            !config.deferRig && config.rigPendingLayerIds.isEmpty()
+
     private fun buildPreviewInputs(analysis: PipelineAnalysis, config: PipelineConfig, progress: ProgressListener,
                                    previousAtlas: PackedAtlas?, ordinaryMaterials: Boolean): RigPreviewModel {
         if (config.rigEdits.modifierStack != null) {
@@ -675,10 +693,11 @@ class PSD2LivePipeline {
 	): PipelineResult {
 		progress.update(tr("progress.readPsd"), 0.04)
 		val source = readPsd(psd)
-		val standaloneMesh = config.meshOnly && config.rigEdits == RigEditOverlay.Empty &&
-			config.generationSource == null && config.meshSource == null && !config.deferRig && config.rigPendingLayerIds.isEmpty()
-		val model = if (standaloneMesh) buildRawMeshExport(source, config, building(progress))
-			else buildPreview(source, config, building(progress))
+        val model = when {
+            config.meshOnly && standaloneSource(config) -> buildRawMeshExport(source, config, building(progress))
+            !config.generateDeformers && standaloneSource(config) -> buildRawWithoutDeformers(source, config, building(progress))
+            else -> buildPreview(source, config, building(progress))
+        }
 		return export(model, psd.fileName.toString(), outputDirectory, progress)
 	}
 
