@@ -73,7 +73,8 @@ internal object RigModifierPipeline {
         val context = listOf(artwork, config.copy(rigEdits = config.rigEdits.copy(modifierStack = null)),
             io.github.psd2live.i18n.I18n.currentLanguage)
         val result = ModifierPluginStore.shared.withArchivedBundles(stack.pluginReferences()) {
-            RigModifierAlgorithms.evaluator(source).evaluate(input, stack, pipeline.modifierCache, context) {
+            RigModifierAlgorithms.evaluator(source).evaluate(input, stack, pipeline.modifierCache, context,
+                reuseCapturedAuthorInputs = true) {
                 if (Thread.currentThread().isInterrupted) throw CancellationException("Modifier evaluation cancelled")
                 progress.update("Evaluating modifier stack", .85)
             }

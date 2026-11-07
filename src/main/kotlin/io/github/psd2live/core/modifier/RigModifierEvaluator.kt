@@ -141,11 +141,14 @@ internal class RigModifierEvaluator(
 ) {
     fun evaluate(authored: RigIR, stack: RigModifierStack,
                  cache: RigModifierEvaluationCache? = null, context: Any = Unit,
+                 reuseCapturedAuthorInputs: Boolean = false,
                  checkpoint: () -> Unit = {}): RigModifierResult = ModifierReadAhead().use {
-        evaluate(authored, stack, cache, context, it, checkpoint)
+        evaluate(authored, stack, cache, context, reuseCapturedAuthorInputs, it, checkpoint)
     }
 
+    // Reuse captures only when the caller's context keys all author inputs outside the evaluated prefix.
     private fun evaluate(authored: RigIR, stack: RigModifierStack, cache: RigModifierEvaluationCache?, context: Any,
+                         reuseCapturedAuthorInputs: Boolean,
                          ahead: ModifierReadAhead, checkpoint: () -> Unit): RigModifierResult {
         val pluginRevision = ModifierPluginStore.shared.revision.value
         val definitions = resolveDefinitions(stack)
@@ -165,7 +168,7 @@ internal class RigModifierEvaluator(
         }
         val reuse = saved?.stack?.instances?.zip(stack.instances)?.takeWhile { (a, b) ->
             a == b && saved.stack.overrides[a.id].orEmpty() == stack.overrides[b.id].orEmpty() &&
-                (saved.authorContexts[a.id]?.let { it == capture(b) } ?: true)
+                (reuseCapturedAuthorInputs || (saved.authorContexts[a.id]?.let { it == capture(b) } ?: true))
         }?.size ?: 0
         val outputs = ArrayList<RigIR>()
         val instanceIds = stack.instances.mapTo(HashSet()) { it.id }
@@ -189,8 +192,12 @@ internal class RigModifierEvaluator(
                 continue
             }
             if (index < reuse) {
-                io.github.psd2live.core.RigBuildProfile.count("modifier cache hits")
+                RigBuildProfile.count("modifier cache hits")
                 val entry = saved!!.entries[index]
+                if (reuseCapturedAuthorInputs) saved.authorContexts[instance.id]?.let {
+                    authorContexts[instance.id] = it
+                    if (it != ModifierAlgorithmContext.Empty) RigBuildProfile.count("modifier author context cache hits")
+                }
                 current = saved.outputs[index]
                 entries += entry
                 outputs += current

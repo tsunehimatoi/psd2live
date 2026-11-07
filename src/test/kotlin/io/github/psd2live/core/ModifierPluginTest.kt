@@ -416,6 +416,33 @@ class ModifierPluginTest {
         assertEquals(2, calls)
     }
 
+    @Test fun capturedAuthorInputsAreReusedOnlyWithinTheSameSourceAndPrefix() {
+        var captures = 0
+        var opacity = 1
+        val source = RigModifierDefinition("source", 1, evaluate = { rig, _, _ -> rig }, authorContext = {
+            captures++
+            ModifierAlgorithmContext(resources = mapOf("opacity" to ModifierAlgorithmResource(byteArrayOf(opacity.toByte()))))
+        })
+        val suffix = RigModifierDefinition("suffix", 1, evaluate = { rig, _, _ -> rig })
+        val evaluator = RigModifierEvaluator(RigModifierRegistry(listOf(source, suffix)))
+        val rig = RigIR(Canvas(1f, 1f), emptyList(), meshes = listOf(Mesh("body", "Body", null, geometry = null, offsets = null)))
+        val targets = listOf(ModifierTarget("mesh", "body"))
+        val prefix = RigModifierStack().add("source", 1, targets)
+        val complete = prefix.add("suffix", 1, targets)
+        val cache = RigModifierEvaluationCache()
+        fun evaluate(stack: RigModifierStack, revision: String) =
+            evaluator.evaluate(rig, stack, cache, revision, reuseCapturedAuthorInputs = true)
+        evaluate(prefix, "first")
+        evaluate(complete, "first")
+        assertEquals(1, captures)
+        opacity = 2
+        evaluate(complete, "second")
+        assertEquals(2, captures)
+        assertEquals(2, cache.snapshot!!.authorContexts.getValue("m1").resources.getValue("opacity").read()[0].toInt())
+        evaluate(complete.update("m1") { it.copy(config = buildJsonObject { put("changed", true) }) }, "second")
+        assertEquals(3, captures)
+    }
+
     @Test fun simulationFingerprintIgnoresUnrelatedMeshesButTracksCarriers() {
         val body = Mesh("body", "Body", "parent", geometry = null, offsets = null)
         val eye = Mesh("eye", "Eye", null, geometry = null, offsets = null)
