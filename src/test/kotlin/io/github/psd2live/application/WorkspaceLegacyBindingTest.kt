@@ -1080,32 +1080,50 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
-    @Test fun mouthTongueV3ReplaysAfterFittedSourceBindings(): Unit = runBlocking {
+    @Test fun mouthTongueAndJawReplayAfterFittedSourceBindings(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
         val preset = WorkspaceModelPresetLibrary.shared.get("modern-dynamic")
         val choices = preset.choices.copy(frontHair = WorkspaceInitialHair.CLASSIC, backHair = WorkspaceInitialHair.CLASSIC)
         val baseline = choices.configure(WorkspacePresetBaseline.configure(art.config(), preset.id))
             .copy(hairSimulationFront = false, hairSimulationBack = false)
-        val recipe = baseline.recipe.copy(modules = baseline.recipe.modules + (RigModules.MOUTH_TONGUE.id to ModuleChoice(true)))
+        val recipe = baseline.recipe.copy(modules = baseline.recipe.modules + mapOf(
+            RigModules.MOUTH_TONGUE.id to ModuleChoice(true),
+            RigModules.MOUTH_JAW.id to ModuleChoice(true, values = mapOf("share" to 24f)),
+        ))
         val config = baseline.copy(recipe = recipe, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
         val (initialized, legacy) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
             preferSourceBindings = true)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val tongue = stack.instances.single { it.type == "mouth.tongue" }
+        val jaw = stack.instances.single { it.type == "mouth.jaw" }
         assertEquals(1, tongue.version)
-        val versions = mapOf("mouth/fitted" to 3, "mouth.outline" to 3, "mouth.vowel" to 4, "mouth.capture" to 3, tongue.type to 3)
-        fun lock(tongueVersion: Int): WorkspaceDocument {
+        assertEquals(1, jaw.version)
+        val versions = mapOf("mouth/fitted" to 3, "mouth.outline" to 3, "mouth.vowel" to 4, "mouth.capture" to 3,
+            tongue.type to 3, jaw.type to 4)
+        fun lock(tongueVersion: Int, jawVersion: Int = 4): WorkspaceDocument {
             val selected = stack.copy(instances = stack.instances.map { instance ->
-                val version = if (instance.id == tongue.id) tongueVersion else versions[instance.type] ?: return@map instance
+                val version = when (instance.id) {
+                    tongue.id -> tongueVersion
+                    jaw.id -> jawVersion
+                    else -> versions[instance.type] ?: return@map instance
+                }
                 instance.copy(version = version, plugin = assertNotNull(BundledAlgorithmArtifacts.find(instance.type, version)).reference)
             })
             return initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = selected.toJson()))
         }
         val rejected = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(lock(2)) }
         assertContains(requireNotNull(rejected.message), "compatible fitted mouth and capture providers")
+        val unsupportedJaw = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(lock(3, 3)) }
+        assertContains(requireNotNull(unsupportedJaw.message), "Use mouth jaw v1 after other mouth modules")
         val document = lock(3)
         val expected = assertNotNull(legacy.modifierEvaluation).outputs
+        val jawIndex = stack.index(jaw.id)
+        val tongueMeshes = expected[jawIndex - 1].meshes.filter { mesh -> mesh.shapes.any { it.parameter == "ParamTongueOut" } }
+        assertTrue(tongueMeshes.isNotEmpty())
+        val jawMeshes = expected[jawIndex].meshes.associateBy { it.id }
+        tongueMeshes.forEach { assertEquals(it, jawMeshes.getValue(it.id), it.id) }
+        assertTrue(expected[jawIndex - 1].meshes.any { it.offsets != jawMeshes.getValue(it.id).offsets })
         fun verify(model: RigPreviewModel) {
             val evaluation = assertNotNull(model.modifierEvaluation)
             assertEquals(versions.keys, evaluation.entries.filter { it.instance.type in versions }.mapTo(hashSetOf()) { it.instance.type })
@@ -1123,33 +1141,38 @@ class WorkspaceLegacyBindingTest {
             RigStageCache.enabled = cache
         }
 
-        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(tongue.type, 3))
-        val directory = Files.createTempDirectory("mouth-tongue-v3-package-")
-        val preferences = Preferences.userRoot().node("mouth-tongue-v3-package/${UUID.randomUUID()}")
-        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
-        try {
-            val staging = Files.createDirectory(directory.resolve("package"))
-            Files.write(staging.resolve("plugin.json"), artifact.bytes)
-            for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+        for (selected in listOf(tongue, jaw)) {
+            val artifact = assertNotNull(BundledAlgorithmArtifacts.find(selected.type, versions.getValue(selected.type)))
+            val directory = Files.createTempDirectory("mouth-composition-package-")
+            val preferences = Preferences.userRoot().node("mouth-composition-package/${UUID.randomUUID()}")
+            val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+            try {
+                val staging = Files.createDirectory(directory.resolve("package"))
+                Files.write(staging.resolve("plugin.json"), artifact.bytes)
+                for (name in artifact.manifest.files.keys) {
+                    assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                }
+                val installed = store.install(staging.toString())
+                val index = stack.index(selected.id)
+                val evaluation = assertNotNull(actual.modifierEvaluation)
+                val instance = evaluation.entries[index].instance.copy(type = installed.manifest.algorithms.single().type)
+                val owner = RigModifierSource.of(actual)
+                val definition = if (selected.id == jaw.id) RigMouthJawModifier.tongueDefinition(owner)
+                    else RigMouthTongueModifier.fittedDefinition(owner)
+                val adapter = ModifierPluginCatalog.definitions(store, captured = listOf(definition)).single {
+                    it.type == instance.type && it.version == instance.version
+                }
+                val context = assertNotNull(evaluation.readAlgorithms[instance.id]).context
+                assertEquals(3, context.upstream.single { it.type == "mouth/fitted" }.version)
+                assertEquals(3, context.upstream.single { it.type == "mouth.capture" }.version)
+                if (selected.id == jaw.id) assertEquals(3, context.upstream.single { it.type == "mouth.tongue" }.version)
+                assertEquals(expected[index], (adapter.plugin as ContextualModifierAlgorithmPlugin).evaluate(
+                    evaluation.outputs[index - 1], instance, context) {})
+            } finally {
+                store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+                preferences.removeNode()
+                ModifierPluginStore.deleteTree(directory)
             }
-            val installed = store.install(staging.toString())
-            val index = stack.index(tongue.id)
-            val evaluation = assertNotNull(actual.modifierEvaluation)
-            val instance = evaluation.entries[index].instance.copy(type = installed.manifest.algorithms.single().type)
-            val definition = RigMouthTongueModifier.fittedDefinition(RigModifierSource.of(actual))
-            val adapter = ModifierPluginCatalog.definitions(store, captured = listOf(definition)).single {
-                it.type == instance.type && it.version == instance.version
-            }
-            val context = assertNotNull(evaluation.readAlgorithms[instance.id]).context
-            assertEquals(3, context.upstream.single { it.type == "mouth/fitted" }.version)
-            assertEquals(3, context.upstream.single { it.type == "mouth.capture" }.version)
-            assertEquals(expected[index], (adapter.plugin as ContextualModifierAlgorithmPlugin).evaluate(
-                evaluation.outputs[index - 1], instance, context) {})
-        } finally {
-            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
-            preferences.removeNode()
-            ModifierPluginStore.deleteTree(directory)
         }
     }
 
