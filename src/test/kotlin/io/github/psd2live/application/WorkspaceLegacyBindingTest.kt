@@ -7927,6 +7927,91 @@ class WorkspaceLegacyBindingTest {
             }
         }
     }
+    @Test fun modernTonguePreservesOpenAndClosedSourceMotion(): Unit = runBlocking {
+        for ((closed, hasTongue) in listOf(false to true, true to true, false to false)) {
+            val art = document(eyeDetails = true, mouthDetails = hasTongue, pairedBrows = !closed, bilateralEyes = !closed,
+                closedMouth = closed)
+            val choices = WorkspaceInitialPreset(clothing = false)
+            val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+                .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+            val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+            val requested = mapOf("body/legacy" to 2, "face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 3,
+                "mouth/fitted" to 1, "mouth.outline" to 1, "mouth.vowel" to 1, "mouth.capture" to 1) +
+                if (hasTongue) mapOf("mouth.tongue" to 1) else emptyMap()
+            val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
+                requestedVersions = requested)
+            val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+            val locked = stack.instances.singleOrNull { it.type == "mouth.tongue" }
+            assertEquals(hasTongue, locked != null)
+            val fitted = if (closed) 5 else 3
+            val outline = if (closed) 6 else 7
+            val versions = mapOf("mouth/fitted" to fitted, "mouth.outline" to outline, "mouth.vowel" to 6,
+                "mouth.capture" to 5, "mouth.tongue" to 5)
+            val candidate = stack.copy(instances = stack.instances.map { instance ->
+                val version = versions[instance.type] ?: return@map instance
+                instance.copy(version = version, plugin = assertNotNull(BundledAlgorithmArtifacts.find(instance.type, version)).reference)
+            })
+            val upgraded = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = candidate.toJson()))
+            val actual = WorkspacePreviewBuilder().build(upgraded)
+            val compiled = RigIrCompiler.compile(baseline, tileArt = true)
+            if (locked == null) {
+                val actualIr = RigIrCompiler.compile(actual, tileArt = true)
+                assertTrue(actualIr.parameters.none { it.id == "ParamTongueOut" })
+                assertFaceEquals(compiled, actualIr)
+                continue
+            }
+            val index = stack.index(locked.id)
+            val instance = candidate.instances[index]
+            val reference = assertNotNull(baseline.modifierEvaluation).outputs
+            val before = reference[index - 1]
+            val expected = reference[index]
+            val tongue = expected.meshes.single { it.name == "tongue" }
+            val tongueForm = tongue.shapes.single { it.parameter == "ParamTongueOut" }.shapes.filterNotNull().single()
+            assertTrue(tongueForm.deltas.shared().any { it != 0f })
+            assertTrue(tongueForm.opacity > 0f)
+            assertTrue(before.meshes.single { it.id == tongue.id }.shapes.none { it.parameter == "ParamTongueOut" })
+            if (closed) {
+                val drawing = expected.meshes.single { it.name == "mouth-closed" }
+                assertEquals(0f, drawing.shapes.single { it.parameter == "ParamTongueOut" }.shapes.filterNotNull().single().opacity)
+            }
+            fun verify(model: RigPreviewModel) {
+                val evaluation = assertNotNull(model.modifierEvaluation)
+                assertEquals(ModifierStatus.ACTIVE, evaluation.entries[index].status)
+                for (stage in index - 1 until stack.instances.size) {
+                    assertFaceEquals(reference[stage], evaluation.outputs[stage])
+                }
+                assertFaceEquals(compiled, RigIrCompiler.compile(model, tileArt = true))
+            }
+            verify(actual)
+            val cache = RigStageCache.enabled
+            RigStageCache.enabled = false
+            try { verify(WorkspacePreviewBuilder().build(upgraded)) } finally { RigStageCache.enabled = cache }
+
+            val artifact = assertNotNull(BundledAlgorithmArtifacts.find(instance.type, instance.version))
+            val root = Files.createTempDirectory("modern-tongue-package-")
+            val preferences = Preferences.userRoot().node("modern-tongue/" + UUID.randomUUID())
+            val store = ModifierPluginStore(root.resolve("installed"), preferences)
+            try {
+                BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+                val worker = store.snapshot().single()
+                val evaluation = assertNotNull(actual.modifierEvaluation)
+                val context = assertNotNull(evaluation.readAlgorithms[instance.id]).context
+                for ((type, version) in versions - instance.type) {
+                    val provider = context.upstream.single { it.type == type }
+                    assertEquals(version, provider.version)
+                    assertEquals(BundledAlgorithmArtifacts.find(type, version)?.reference, provider.plugin)
+                }
+                val definition = RigMouthTongueModifier.modernDefinition(RigModifierSource.of(actual))
+                assertFaceEquals(expected, ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(),
+                    before, instance, {}, store, context = context, declaredParameters = definition.parameters(instance)))
+            } finally {
+                store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+                preferences.removeNode()
+                ModifierPluginStore.deleteTree(root)
+            }
+        }
+    }
+
     @Test fun fittedMouthV3PreservesTheFallbackHeadTurnWithOneEye(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true,
             creatureDetails = true).copy(deletedLayerIds = setOf("wing-left"))

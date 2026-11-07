@@ -3375,6 +3375,40 @@ tasks.register("pluginMouthTongueV4") {
     }
 }
 
+val mouthTongueV5WorkerJar = registerIsolatedBindingWorker(
+    "mouthTongueV5", "mouth-tongue-v5", "worker-mouth-tongue-v5", "io.github.psd2live.algorithms.binding.MouthTongueV5Worker",
+)
+kotlin.target.compilations.named("mouthTongueV5") {
+    associateWith(kotlin.target.compilations.getByName("mouthTongue"))
+}
+mouthTongueV5WorkerJar.configure {
+    from(sourceSets["mouthTongue"].output)
+}
+
+tasks.register("pluginMouthTongueV5") {
+    dependsOn(mouthTongueV5WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-tongue-v5")
+    inputs.file(mouthTongueV5WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", project.version.toString())
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthTongueV5WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682e746f6e677565.v5"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"${project.version}","name":"Mouth tongue after fitted capture",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/tongue","aliases":["mouth.tongue"],"version":5,"name":"Mouth tongue after fitted capture","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","mouth/fitted","mouth.capture"],"contextVersion":2,
+               "reads":["mesh","parameter","hierarchy","canvas"],"writes":["mesh","parameter","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val mouthJawV4WorkerJar = registerIsolatedBindingWorker(
     "mouthJawV4", "mouth-jaw-v4", "worker-mouth-jaw-v4", "io.github.psd2live.algorithms.binding.MouthJawV4Worker",
 )
