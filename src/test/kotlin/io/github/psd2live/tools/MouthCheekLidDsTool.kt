@@ -18,19 +18,17 @@ class MouthCheekLidDsTool {
 
     private fun verify(jawVersion: Int): Unit = runBlocking {
         requireTools()
-        val config = PipelineConfig(meshSpacing = 64)
+        val config = PipelineConfig(meshSpacing = 40)
         val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
         val overlay = RigEditOverlay(modifierStack = RigModifierStack().toJson())
         val document = WorkspaceDocument(source, emptyMap(), emptySet(), emptyMap(), emptyMap(), overlay,
             WorkspaceSettingsCodec.encode(config.copy(rigEdits = overlay)))
-        val analysis = RigGenerationSource.prepare(RigGenerationSource.analyze(source, config), config)
-        val bindings = CliPresetBindings(analysis, config)
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4,
             "mouth/fitted" to 6, "mouth.outline" to 8, "mouth.vowel" to 7, "mouth.capture" to 6, "mouth.jaw" to jawVersion, "mouth.cheek-lid" to 1,
             "eye.smile" to 4, "eye.wide" to 4, "eye.gaze-lid" to 4, "eye.emotion" to 4, "eye.aftershock" to 5, "eye.squash" to 5,
             "brow.shape" to 5, "brow.lid-coupling" to 7, "brow.blink" to 5, "brow.spring" to 6)
         val (planned, historical) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
-            WorkspaceInitialPreset(clothing = false), requestedVersions = versions, cliBindings = bindings)
+            WorkspaceInitialPreset(clothing = false), requestedVersions = versions)
         val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
         val entry = stack.instances.single { it.type == "mouth.cheek-lid" }
         val index = stack.index(entry.id)
@@ -53,6 +51,10 @@ class MouthCheekLidDsTool {
             return "$fields meshes=$changes deformers=" + after.deformers.filter { it != oldDef[it.id] }.map { it.id }
         }
         val previous = expected[index - 1]
+        val hair = stack.instances.single { it.type == "hair/chains" }
+        assertTrue(previous.deformers.any {
+            hair.localOutputName(it.id)?.startsWith("shared/deformer:SourceChain:") == true
+        }, "Workspace must use source chain carrier IDs")
         val stage = expected[index]
         val beforeMeshes = previous.meshes.associateBy { it.id }
         assertEquals(setOf("ArtMeshEyelashL", "ArtMeshEyelashR", "ArtMeshEyewhiteL", "ArtMeshEyewhiteR"),
