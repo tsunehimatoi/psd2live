@@ -14,6 +14,8 @@ Legacy eyes v2 is selectable by version. It requires the complete target set of 
 
 Fitted brows v2 is available through explicit version selection in the add panel. It requires a shared v2 scaffold and supports compatible preceding body, head turn, and eye versions. Recommended presets use fitted brows v1.
 
+Legacy face v2 is also available by explicit version selection. It computes head turn from source measurements and supports the full target set of a source-aware shared v2 scaffold, with an optional legacy body v1 or v2 on that same scaffold. Recommended presets use legacy face v1.
+
 ## Install and remove
 
 Binding structure has separate packages for algorithm revisions 1 and 2. Build them with `./gradlew :algorithms:binding:pluginScaffold1 :algorithms:binding:pluginScaffold2`; outputs are `algorithms/binding/build/plugin-scaffold-1` and `plugin-scaffold-2`. Package IDs are `builtin.7269672e73636166666f6c64.v1` and `.v2`, each exposing `/structure` in its namespace with stable alias `rig.scaffold`. The revisions retain per-target and shared hierarchy semantics respectively.

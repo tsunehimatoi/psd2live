@@ -954,3 +954,32 @@ tasks.register("pluginEyeLegacy") {
         """.trimIndent())
     }
 }
+
+val faceLegacyV2WorkerJar = registerIsolatedBindingWorker(
+    "faceLegacyV2", "face-legacy-v2", "worker-face-legacy-v2", "io.github.psd2live.algorithms.binding.LegacyFaceV2Worker",
+)
+
+tasks.register("pluginFaceLegacyV2") {
+    dependsOn(faceLegacyV2WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-face-legacy-v2")
+    val packageVersion = project.version.toString()
+    inputs.file(faceLegacyV2WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        faceLegacyV2WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.666163652f6c6567616379.v2"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Legacy face binding",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/binding","aliases":["face/legacy"],"version":2,"name":"Legacy face binding","category":"face",
+               "targets":["mesh"],"requires":["rig.scaffold"],"contextVersion":2,"exclusiveFamily":"base:face",
+               "reads":["*"],"writes":["mesh","deformer","hierarchy","relations","parameter"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}

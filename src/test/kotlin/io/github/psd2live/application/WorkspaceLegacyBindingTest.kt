@@ -3,6 +3,7 @@ package io.github.psd2live.application
 import io.github.psd2live.algorithms.binding.MouthFittedV2Algorithm
 import io.github.psd2live.algorithms.binding.FittedFaceV2Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV2Algorithm
+import io.github.psd2live.algorithms.binding.LegacyFaceV2Algorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.recipe.RigRecipe
@@ -1594,6 +1595,126 @@ class WorkspaceLegacyBindingTest {
             if (actual.deformers.map { it.id } != legacy.deformers.map { it.id }) add("deformer order")
         }
         assertTrue(differences.isEmpty(), differences.joinToString())
+    }
+
+    @Test fun independentLegacyFaceKeepsHeadMotionWithOrWithoutBody(): Unit = runBlocking {
+        for (bodyVersion in listOf(null, 1, 2)) {
+            val previous = legacyFaceFixture(null, bodyVersion)
+            val current = legacyFaceFixture(2, bodyVersion)
+            val prior = assertNotNull(previous.now.model.modifierEvaluation)
+            val direct = assertNotNull(current.now.model.modifierEvaluation)
+            assertEquals(1, prior.stack.instances.last().version)
+            assertEquals(BuiltinModifierPlugins.reference("face/legacy", 1), prior.stack.instances.last().plugin)
+            assertEquals(BundledAlgorithmArtifacts.find("face/legacy", 2)?.reference, direct.stack.instances.last().plugin)
+            assertFaceEquals(prior.outputs.last(), direct.outputs.last())
+            val expected = RigIrCompiler.compile(previous.now.model)
+            assertFaceEquals(expected, RigIrCompiler.compile(current.now.model))
+            current.edit("modifier_apply", buildJsonObject { put("id", if (bodyVersion == null) "structure" else "body") })
+            assertFaceEquals(expected, RigIrCompiler.compile(WorkspacePreviewBuilder().build(current.now.document)))
+            current.edit("modifier_apply", buildJsonObject { put("id", "face") })
+            assertFaceEquals(expected, RigIrCompiler.compile(WorkspacePreviewBuilder().build(current.now.document)))
+        }
+    }
+
+    @Test fun independentLegacyFaceRejectsAnOlderTemplateScaffold(): Unit = runBlocking {
+        val fixture = legacyFaceFixture(2, null)
+        val model = fixture.now.model
+        val stack = assertNotNull(model.modifierEvaluation).stack
+        val (scaffold, face) = stack.instances
+        val oldScaffold = scaffold.copy(plugin = assertNotNull(scaffold.plugin).copy(version = "1.0.40"))
+        val oldStack = stack.copy(instances = listOf(oldScaffold, face))
+        val config = model.config.copy(rigEdits = model.config.rigEdits.copy(modifierStack = oldStack.toJson()))
+        val definition = RigLegacyFaceDefinition.definition(RigModifierSource.of(model.copy(config = config)))
+        val failure = assertFailsWith<IllegalArgumentException> { definition.authorContext(face) }
+        assertEquals("Legacy face v2 requires a source-aware shared scaffold package", failure.message)
+    }
+
+    @Test fun installedLegacyFaceV2MergesAuthoredGeometryLikeV1(): Unit = runBlocking {
+        val fixture = legacyFaceFixture(2, 2)
+        val evaluation = assertNotNull(fixture.now.model.modifierEvaluation)
+        val (scaffold, body, face) = evaluation.stack.instances
+        val source = RigModifierSource.of(fixture.now.model)
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find("face/legacy", 2))
+        val directory = Files.createTempDirectory("face-legacy-v2-")
+        val preferences = Preferences.userRoot().node("face-legacy-v2/${UUID.randomUUID()}")
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            artifact.manifest.files.keys.forEach { name ->
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val entry = store.install(staging.toString())
+            val worker = ModifierPluginCatalog.definitions(store, BuiltinModifierPlugins.definitions(source))
+                .single { it.type == LegacyFaceV2Algorithm.ENTRYPOINT }
+            val instance = face.copy(type = worker.type, plugin = entry.reference)
+            val upstream = listOf(scaffold, body).map {
+                ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+            }
+            val context = worker.authorContext(instance).withUpstream(upstream)
+            assertEquals(setOf("materials", "source_meshes"), context.resources.keys)
+            val plugin = worker.plugin as ContextualModifierAlgorithmPlugin
+            val before = evaluation.outputs[evaluation.outputs.lastIndex - 1]
+            assertFaceEquals(evaluation.outputs.last(), plugin.evaluate(before, instance, context, {}))
+            val id = RigSourceModifiers.deformerId(scaffold, face.targets.first().id, io.github.psd2live.algorithms.binding.ScaffoldHead.faceId.raw)
+            val warp = before.deformers.single { it.id == id } as io.github.psd2live.format.model.Deformer.Warp
+            val lattice = requireNotNull(warp.lattice)
+            val authored = warp.copy(lattice = lattice.copy(cells = lattice.cells.map { cell ->
+                cell.copy(form = cell.form.copy(points = io.github.psd2live.format.model.Floats.of(
+                    cell.form.points.toArray().also { it[0] += .01f })))
+            }))
+            val faceMesh = before.meshes.single { it.id == mesh(fixture, "face").id.raw }
+            val geometry = requireNotNull(faceMesh.geometry)
+            val moved = geometry.copy(positions = io.github.psd2live.format.model.Floats.of(
+                geometry.positions.toArray().also { it[0] += .01f }))
+            val edited = before.copy(deformers = before.deformers.map { if (it.id == id) authored else it },
+                meshes = before.meshes.map { if (it.id == faceMesh.id) it.copy(geometry = moved) else it })
+            val legacyInstance = face.copy(version = 1, plugin = BuiltinModifierPlugins.reference("face/legacy", 1))
+            val legacy = RigSourceBinding.apply(edited, legacyInstance, source, {})
+            val fromWorker = plugin.evaluate(edited, instance, context, {})
+            assertFaceEquals(legacy, fromWorker)
+            assertNotEquals(evaluation.outputs.last().deformers.single { it.id == id }, fromWorker.deformers.single { it.id == id })
+            assertNotEquals(evaluation.outputs.last().meshes.single { it.id == faceMesh.id }, fromWorker.meshes.single { it.id == faceMesh.id })
+            store.uninstall(entry.reference)
+            assertTrue(store.snapshot().none { it.reference == entry.reference })
+            assertEquals(entry.reference, store.install(staging.toString()).reference)
+            val reinstalled = ModifierPluginCatalog.definitions(store, BuiltinModifierPlugins.definitions(source))
+                .single { it.type == LegacyFaceV2Algorithm.ENTRYPOINT }.plugin as ContextualModifierAlgorithmPlugin
+            assertFaceEquals(fromWorker, reinstalled.evaluate(edited, instance, context, {}))
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
+    private suspend fun legacyFaceFixture(faceVersion: Int?, bodyVersion: Int?): Fixture {
+        val fixture = Fixture(document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true))
+        fixture.install()
+        fixture.edit("modifier_add", fixture.addition("rig.scaffold", "structure", config = buildJsonObject {
+            put("featureDisplacement", true)
+        }))
+        if (bodyVersion != null) {
+            val body = fixture.addition("body/legacy", "body", config = buildJsonObject {
+                put("scaffold", "structure"); put("strength", .75f)
+                putJsonObject("tuning") { put("faceLeanUp", 11f); put("breathLift", 4.25f) }
+            })
+            fixture.edit("modifier_add", JsonObject(body + ("version" to JsonPrimitive(bodyVersion))))
+        }
+        val face = fixture.addition("face/legacy", "face", config = buildJsonObject {
+            put("scaffold", "structure"); put("strength", .85f)
+            putJsonObject("tuning") { put("faceTurn", 13f); put("earFade", 43f) }
+        })
+        fixture.edit("modifier_add", if (faceVersion == null) face else JsonObject(face + ("version" to JsonPrimitive(faceVersion))))
+        return fixture
+    }
+
+    private fun assertFaceEquals(expected: io.github.psd2live.format.model.RigIR, actual: io.github.psd2live.format.model.RigIR) {
+        assertEquals(expected.deformers.map { it.id }, actual.deformers.map { it.id })
+        for ((left, right) in expected.deformers.zip(actual.deformers)) assertEquals(left, right, left.name)
+        assertEquals(expected.meshes.map { it.id }, actual.meshes.map { it.id })
+        for ((left, right) in expected.meshes.zip(actual.meshes)) assertEquals(left, right, left.name)
+        assertEquals(expected.copy(deformers = emptyList(), meshes = emptyList()), actual.copy(deformers = emptyList(), meshes = emptyList()))
     }
 
     @Test fun independentBodyKeepsLegacyHeadAndBodyMotion(): Unit = runBlocking<Unit> {
