@@ -772,6 +772,11 @@ class WorkspaceLegacyBindingTest {
                 rigEdits = initialized.rigEdits.copy(modifierStack = locked.toJson())))
             val expected = assertNotNull(reference.modifierEvaluation).outputs
             val result = assertNotNull(actual.modifierEvaluation).outputs
+            val talk = result.last().clips.single { it.name == "Talk" }
+            val parameters = result.last().parameters.mapTo(HashSet()) { it.id }
+            val originalTalk = MotionPresets.tracks("Talk", config.rigEdits.skeleton, MotionPresetSettings.of(config, "Talk"))
+                .filter { it.parameterId in parameters }
+            assertEquals(originalTalk.map(MotionGenerator::curve), talk.curves)
             for ((index, entry) in stack.instances.withIndex()) {
                 assertTrue(expected[index] == result[index], "Default mouth binding differs at ${entry.type}, interior=$interior, tongue=$tongue")
             }

@@ -260,7 +260,8 @@ internal object WorkspacePresetInitialization {
             })
         }
         model = build("binding preview")
-        val available = model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }
+        val parameters = model.rig.puppet.parameters.associateBy { it.id.raw }
+        val available = parameters.keys
         val claimed = model.rig.modifierOutput!!.physics.groups.flatMapTo(HashSet()) { it.outputs.map { output -> output.parameter } }
         if (config.generatePhysics) for (rule in PhysicsGenerator.presetRules(
             PhysicsGenerator.Presets(config.physicsFrontHair, config.physicsBackHair, config.physicsEyeJelly), available)) {
@@ -280,10 +281,17 @@ internal object WorkspacePresetInitialization {
             val settings = MotionPresetSettings.of(config, name)
             if (!enabled || settings.deleted || settings.disabled) continue
             val tracks = MotionPresets.tracks(name, config.rigEdits.skeleton, settings,
-                if (name == "Idle" && config.exportIncludePhysics) claimed else emptySet()).filter { it.parameterId in available }
-            if (tracks.isEmpty()) continue
-            val clip = MotionClips.fromTracks("template", name, null, MotionPresets.loops(name), tracks,
-                MotionPresets.duration(name, tracks, settings))
+                if (name == "Idle" && config.exportIncludePhysics) claimed else emptySet())
+            val curves = tracks.filter { it.parameterId in available }.distinctBy { it.parameterId }
+            if (curves.isEmpty()) continue
+            // Speech uses an intentional jump where two syllables share a timestamp.
+            val ranges = curves.associate { curve ->
+                val parameter = parameters.getValue(curve.parameterId)
+                curve.parameterId to MotionParameterRange(parameter.min, parameter.max, parameter.repeat)
+            }
+            val clip = MotionClip("template", name, loop = MotionPresets.loops(name),
+                duration = MotionPresets.duration(name, tracks, settings).takeIf { it > 0f } ?: 2f,
+                curves = curves, capturedRanges = ranges)
             stack = stack.add("motion", 1, targets, MotionClips.toJson(clip.copy(parameterRoles =
                 if (name == "Blink") mapOf("EyeBlink" to listOf("ParamEyeLOpen", "ParamEyeROpen").filter { it in available }) else emptyMap())), group)
         }
