@@ -7,7 +7,10 @@ import io.github.psd2live.algorithms.binding.MouthSpringV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV8Algorithm
+import io.github.psd2live.algorithms.binding.MouthSpringV9Algorithm
+import io.github.psd2live.core.CharacterAnalyzer
 import io.github.psd2live.core.PartRole
+import io.github.psd2live.core.PhysicsGenerator
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.recipe.RigModules
@@ -110,6 +113,43 @@ internal object RigMouthSpringModifier {
             parameters = { MouthSpringAlgorithm.parameters(capture(it)) }, resolveParameter = { _, _, _ -> null },
             plugin = algorithm, upstreamInputs = true, changeWrites = MouthSpringAlgorithm.WRITES,
             authorContext = ::capture)
+    }
+
+    fun sharedFrameDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val projected = object : ChangingModifierAlgorithmPlugin by MouthSpringV9Algorithm(),
+            ModifierOptionalUpstream, ModifierVersionSelection {
+            override val canonicalOptInType = MouthSpringAlgorithm.TYPE
+            override val optionalUpstream = RigLegacyBindings.specs.filter { !it.expressionToggles && !it.seeThrough }
+                .mapTo(linkedSetOf()) { it.type } - setOf(MouthSpringAlgorithm.TYPE, "mouth/fitted", "mouth.jaw")
+        }
+        val contexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
+        fun capture(instance: RigModifierInstance) = contexts.getOrPut(instance) { requireNotNull(source).captureSharedFrames(instance) }
+        return definition(source).copy(version = MouthSpringV9Algorithm.VERSION, plugin = projected,
+            parameters = { instance -> RigIrBinary.decode(capture(instance).resources.getValue("after").read())
+                .parameters.filter { it.id == "ParamMouthSpring" } },
+            changeWrites = setOf("mesh", "deformer", "part", "parameter", "hierarchy", "physics"),
+            authorContext = ::capture)
+    }
+
+    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val scaffold = provider(instance)
+        val prefix = bindingPredecessors(instance, scaffold)
+        require(prefix.any { it.id == instance.config.getValue("base").jsonPrimitive.content &&
+            it.type == "mouth/fitted" && it.version == 6 }) { "Mouth spring v9 requires a shared fitted mouth v6" }
+        val providers = setOf("mouth.outline", "mouth.vowel", "mouth.capture", "mouth.jaw", "mouth.cheek-lid")
+        require(prefix.none { it.type.startsWith("mouth.") && it.type !in providers }) {
+            "Mouth spring v9 requires the shared open-mouth source chain"
+        }
+        val face = setOf(SemanticTag.FACE, SemanticTag.NOSE, SemanticTag.FACE_DETAIL)
+        return captureBindingTransition(instance, scaffold, prefix, face + CharacterAnalyzer.MOUTH_TAGS,
+            projectedTags = face, values = buildJsonObject {
+                put("group", tr("model.group.physics"))
+                put("physics", PhysicsGenerator.moduleRules(setOf("ParamMouthOpenY", "ParamMouthForm", "ParamMouthSpring"))
+                    .single { it.id == PhysicsGenerator.MOUTH_SPRING_ID }.toJson())
+                putJsonObject("providers") {
+                    providers.forEach { type -> put(type, prefix.single { it.type == type }.id) }
+                }
+            })
     }
 
     private fun RigModifierSource.capture(instance: RigModifierInstance, version: Int = MouthSpringAlgorithm.VERSION): ModifierAlgorithmContext {

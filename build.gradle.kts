@@ -123,6 +123,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "mouthSpringV6Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthSpringV7Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthSpringV8Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "mouthSpringV9Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "bodyLegacyV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "armSwingElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "armSwingV3Elements"))
@@ -843,6 +844,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginMouthSpringV7")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-spring-v7")) {
         into("algorithm-plugins/mouth-spring-v7")
+    }
+    dependsOn(":algorithms:binding:pluginMouthSpringV9")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-spring-v9")) {
+        into("algorithm-plugins/mouth-spring-v9")
     }
     dependsOn(":algorithms:binding:pluginMouthSpringV8")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-spring-v8")) {
