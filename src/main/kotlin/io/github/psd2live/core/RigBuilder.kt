@@ -1575,13 +1575,6 @@ object RigBuilder {
 		val faceRig = context.faceRig
 		val shouldBuildDeformers = context.deformersEnabled
 		val warnings = mutableListOf<String>()
-		val headPartId = PartId("PartHead")
-		val facePartId = PartId("PartFace")
-		val frontHairPartId = PartId("PartHairFront")
-		val backHairPartId = PartId("PartHairBack")
-		val headAccessoryPartId = PartId("PartHeadAccessories")
-		val bodyPartId = PartId("PartBody")
-		val extraPartId = PartId("PartExtra")
 		val rawDeformers = context.deformers
 		val stages = stagesOf(meshCache)
 		// Version 2 art primitives (see [PrimitiveResolution]): the drawable loop builds the layers the journal
@@ -1798,10 +1791,6 @@ object RigBuilder {
 		// Masks are generated among the resolved drawables: a passenger never masks, a part does.
 		val maskSources = if (!v2) drawables else drawables.filterNot { it.id in ghostIds } + partDrawables
 		val maskTargets = if (!v2) drawables else drawables + partDrawables
-		val drawableByTagSide = maskSources.groupBy { drawable ->
-			val semantic = classifiedByDrawable.getValue(drawable.id).semantic
-			semantic.tag to semantic.side
-		}
 		// The mouth's inside clips what is in the mouth; a layered mouth's lips and lines lie over it and clip nothing.
 		val mouthMasks = maskSources.filter { drawable ->
             drawable.id !in lipOwnerById &&
