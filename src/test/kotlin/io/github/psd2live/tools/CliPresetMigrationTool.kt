@@ -13,10 +13,17 @@ import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.format.model.Mesh as RigIRMesh
 import io.github.psd2live.format.model.RigIR
+import io.github.psd2live.history.WorkspaceHistoryTree
+import io.github.psd2live.project.ProjectArchive
+import io.github.psd2live.project.ProjectRepository
+import io.github.psd2live.project.ProjectSaveCapture
 import io.github.psd2live.project.WorkspaceDocument
+import io.github.psd2live.project.WorkspaceRevisions
 import io.github.psd2live.project.WorkspaceSettingsCodec
+import io.github.psd2live.project.WorkspaceStore
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -94,8 +101,8 @@ class CliPresetMigrationTool {
                     WorkspaceDocumentOperation("modifier_apply", buildJsonObject { put("id", outline.id) }), converted, after)
                 val remaining = RigModifierStack.fromJson(assertNotNull(applied.rigEdits.modifierStack))
                 assertTrue(remaining.instances.none { it.id == outline.id })
-                assertEquals(newIr, RigIrCompiler.compile(WorkspacePreviewBuilder().build(applied), tileArt = true, simulations = true))
-                report.appendText("\nApplied the raster-producing prefix and rebuilt from its checkpoint.\n")
+                verifyConvertedArchive(sample, document, converted, applied, newIr)
+                report.appendText("\nApplied the raster-producing prefix and reopened both revisions from the archive.\n")
             }
         } catch (failure: WorkspaceModifierConversionMismatch) {
             report.writeText(failure.message.orEmpty() + "\n" + failure.objects + "\n")
@@ -111,6 +118,38 @@ class CliPresetMigrationTool {
             val templates = RigBuildProfile.snapshot().filterKeys { it.startsWith("modifier legacy") || it.startsWith("modifier template consumer") }
             report.appendText(templates.entries.joinToString("\n", prefix = "\n") { (stage, value) -> "$stage ${value.second}" })
             RigBuildProfile.reset()
+        }
+    }
+
+    private suspend fun verifyConvertedArchive(sample: Sample, original: WorkspaceDocument, converted: WorkspaceDocument,
+                                               applied: WorkspaceDocument, expected: RigIR) {
+        val root = Files.createTempDirectory("psd2live-project-")
+        try {
+            val store = WorkspaceStore(root.resolve("live"))
+            val revision = WorkspaceRevisions.of(original)
+            val history = WorkspaceHistoryTree(original, revision, revision)
+            val convertedRevision = WorkspaceRevisions.of(converted)
+            val convertedNode = history.commit(history.head().node.id, converted, convertedRevision, convertedRevision,
+                "Convert presets", "user").node.id
+            val appliedRevision = WorkspaceRevisions.of(applied)
+            history.commit(convertedNode, applied, appliedRevision, appliedRevision, "Apply mouth outline", "user")
+            val projectId = "converted-rig"
+            val state = history.state()
+            store.persistHistory(projectId, state)
+            val repository = ProjectRepository(writeHeadCache = false)
+            val file = output("cli-preset-migration").resolve("converted-${sample.name}.psd2live").toPath()
+            repository.save(ProjectSaveCapture(projectId, state, JsonObject(emptyMap()), sample.path, store), file)
+            repository.open(file).use { reopened ->
+                val before = reopened.history.checkout(convertedNode).snapshot
+                assertEquals(convertedRevision, WorkspaceRevisions.of(before))
+                fun compile(model: RigPreviewModel) = RigIrCompiler.compile(model, tileArt = true, simulations = true)
+                assertEquals(expected, compile(WorkspacePreviewBuilder().build(before)))
+                val head = reopened.history.checkout(state.headNodeId).snapshot
+                assertEquals(appliedRevision, WorkspaceRevisions.of(head))
+                assertEquals(expected, compile(WorkspacePreviewBuilder().build(head)))
+            }
+        } finally {
+            ProjectArchive.deleteTemporaryDirectory(root)
         }
     }
 
