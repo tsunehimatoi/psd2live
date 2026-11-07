@@ -247,9 +247,11 @@ internal class RigModifierSource(
         RigClosedMouthShellProjection.capture(this, materialBase, instance)
 
     fun outlineShellSource(context: RigBuilder.RigContext, config: PipelineConfig, layers: Map<String, ClassifiedLayer>,
-                           parameters: Set<ParameterId>): ModifierAlgorithmResource =
+                           parameters: Set<ParameterId>, includeFaceLean: Boolean = false,
+                           projectedMeshes: Set<String> = layers.keys): ModifierAlgorithmResource =
         ModifierAlgorithmResource(io.github.psd2live.format.compile.RigIrBinary.encode(PuppetIr.toIr(
-            RigBuilder.closedMouthShellProjection(context, config, atlas, meshCache, materialBase, layers, parameters))))
+            RigBuilder.closedMouthShellProjection(context, config, atlas, meshCache, materialBase, layers, parameters, includeFaceLean)
+                .let { projection -> projection.copy(drawables = projection.drawables.filter { it.id.raw in projectedMeshes }) })))
     private val staticModels = java.util.IdentityHashMap<PuppetModel, PuppetModel>()
     fun static(model: PuppetModel) = staticModels.getOrPut(model) { restricted(model, emptySet()) }
 

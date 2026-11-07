@@ -3588,7 +3588,7 @@ object RigBuilder {
 	/** Projects the closed-mouth fallback's source meshes and arm frames without building the complete rig. */
 	internal fun closedMouthShellProjection(context: RigContext, config: PipelineConfig, atlas: PackedAtlas,
 	                                      cache: PreviewMeshCache, material: PuppetModel,
-	                                      layers: Map<String, ClassifiedLayer>, kept: Set<ParameterId>): PuppetModel {
+	                                      layers: Map<String, ClassifiedLayer>, kept: Set<ParameterId>, includeFaceLean: Boolean = false): PuppetModel {
 		val switches = io.github.psd2live.algorithms.binding.ExpressionChannels.catalog(context.analysis.layers.mapNotNull { layer ->
 			val override = config.layerOverrides[layer.source.id.raw]
 			val type = override?.type ?: layer.semantic.type
@@ -3607,7 +3607,8 @@ object RigBuilder {
 			meshLoweringSource(layer, context, config, atlas, cache, original)
 		}
 		val parameters = standardParameters(context, config) + moduleParameters(context, config, emptyList())
-		val model = material.copy(parameters = parameters, deformers = context.deformers, drawables = drawables,
+		val deformers = if (includeFaceLean) faceTurnAndLean(context, config, stagesOf(cache)) else context.deformers
+		val model = material.copy(parameters = parameters, deformers = deformers, drawables = drawables,
 			parameterTree = StandardParameters.tree(), parameterLinks = emptyList())
 		val projected = CubismBlendShapes.lawful(withoutLegacyHairSway(model, config))
 		return BindingProjection.retain(projected, kept, mapOf(StandardParameters.MOUTH_OPEN to 1f))

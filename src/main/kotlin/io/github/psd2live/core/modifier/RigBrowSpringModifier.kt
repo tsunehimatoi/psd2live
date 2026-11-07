@@ -4,9 +4,12 @@ import io.github.psd2live.algorithms.binding.BrowSpringAlgorithm
 import io.github.psd2live.algorithms.binding.BrowSpringInputs
 import io.github.psd2live.algorithms.binding.BrowSpringV3Algorithm
 import io.github.psd2live.algorithms.binding.BrowSpringV4Algorithm
+import io.github.psd2live.algorithms.binding.BrowSpringV5Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
+import io.github.psd2live.core.PipelineConfig
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.RigTuning
+import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.recipe.BaseChoice
 import io.github.psd2live.core.recipe.ModuleChoice
 import io.github.psd2live.core.recipe.RigModules
@@ -14,6 +17,7 @@ import io.github.psd2live.core.recipe.RigRecipe
 import io.github.psd2live.project.WorkspaceSettingsCodec
 import io.github.psd2live.i18n.tr
 import kotlinx.serialization.json.*
+import org.umamo.runtime.model.ParameterId
 
 internal object RigBrowSpringModifier {
     private val algorithm = object : ReadingModifierAlgorithmPlugin by BrowSpringAlgorithm(),
@@ -40,6 +44,15 @@ internal object RigBrowSpringModifier {
     fun fittedDefinition(source: RigModifierSource?): RigModifierDefinition =
         composedDefinition(source, BrowSpringV4Algorithm.VERSION, fitted)
 
+    fun fallbackDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val implementation = object : ReadingModifierAlgorithmPlugin by BrowSpringV5Algorithm(), ModifierVersionSelection, ModifierOptionalUpstream {
+            override val canonicalOptInType = BrowSpringAlgorithm.TYPE
+            override val optionalUpstream = RigLegacyBindings.specs.filter { !it.expressionToggles && !it.seeThrough }
+                .mapTo(linkedSetOf()) { it.type } - setOf(BrowSpringAlgorithm.TYPE, "brow/fitted")
+        }
+        return composedDefinition(source, BrowSpringV5Algorithm.VERSION, implementation).copy(
+            changeWrites = BrowSpringV4Algorithm.writes + "deformer")
+    }
     private fun composedDefinition(source: RigModifierSource?, version: Int,
                                    algorithm: ReadingModifierAlgorithmPlugin): RigModifierDefinition {
         val cache = HashMap<RigModifierInstance, BrowSpringInputs>()
@@ -50,13 +63,17 @@ internal object RigBrowSpringModifier {
             parameters = { BrowSpringAlgorithm.parameters(capture(it)) },
             authorContext = { instance ->
                 val inputs = capture(instance)
-                val layers = requireNotNull(source).analysis.layers.associateBy { it.source.id.raw }
-                val names = JsonObject(inputs.targets.keys.associateWith { mesh ->
-                    val layer = layers.getValue(source.layersByMesh.getValue(mesh))
-                    JsonPrimitive(tr("model.deformer.meshShape", layer.source.name))
-                })
                 val context = inputs.encode()
-                ModifierAlgorithmContext(JsonObject(context.values + ("carrier_names" to names)), context.resources)
+                if (version == BrowSpringV5Algorithm.VERSION) {
+                    requireNotNull(source).captureFallback(instance, inputs, context)
+                } else {
+                    val layers = requireNotNull(source).analysis.layers.associateBy { it.source.id.raw }
+                    val names = JsonObject(inputs.targets.keys.associateWith { mesh ->
+                        val layer = layers.getValue(source.layersByMesh.getValue(mesh))
+                        JsonPrimitive(tr("model.deformer.meshShape", layer.source.name))
+                    })
+                    ModifierAlgorithmContext(JsonObject(context.values + ("carrier_names" to names)), context.resources)
+                }
             },
         )
     }
@@ -77,7 +94,7 @@ internal object RigBrowSpringModifier {
 
     private fun RigModifierSource.capture(instance: RigModifierInstance, version: Int = BrowSpringAlgorithm.VERSION): BrowSpringInputs {
         val composed = version >= BrowSpringV3Algorithm.VERSION
-        val modern = version == BrowSpringV4Algorithm.VERSION
+        val modern = version >= BrowSpringV4Algorithm.VERSION
         val name = "Brow spring v${instance.version}"
         val scaffold = provider(instance)
         require(scaffold.version == 2) { "$name requires a shared v2 scaffold" }
@@ -93,7 +110,7 @@ internal object RigBrowSpringModifier {
             "$name requires a compatible fitted brow provider"
         }
         require(preceding.none {
-            it.type in setOf(BrowSpringAlgorithm.TYPE, BrowSpringAlgorithm.ENTRYPOINT, BrowSpringV3Algorithm.ENTRYPOINT, BrowSpringV4Algorithm.ENTRYPOINT) ||
+            it.type in setOf(BrowSpringAlgorithm.TYPE, BrowSpringAlgorithm.ENTRYPOINT, BrowSpringV3Algorithm.ENTRYPOINT, BrowSpringV4Algorithm.ENTRYPOINT, BrowSpringV5Algorithm.ENTRYPOINT) ||
                 !composed && it.type in setOf("brow.blink", "brow.lid-coupling")
         }) {
             if (composed) "$name requires a brow without a preceding spring binding"
@@ -113,7 +130,11 @@ internal object RigBrowSpringModifier {
             else -> 2..2
         }
         require(eye == null || eye.version in eyeVersions) { "$name requires compatible fitted eyes" }
-        val shapeVersions = if (modern) 1..3 else 1..2
+        val shapeVersions = when (version) {
+            BrowSpringV5Algorithm.VERSION -> 4..4
+            BrowSpringV4Algorithm.VERSION -> 1..3
+            else -> 1..2
+        }
         require(shape == null || shape.version in shapeVersions) { "$name requires a compatible brow shape" }
         val corrections = WorkspaceSettingsCodec.decodeRecipe(scaffold.config["corrections"])
         val byArea = state.values.filter { RigLegacyBindings.spec(it.type).isBase }.associateBy { RigLegacyBindings.spec(it.type).area }
@@ -143,5 +164,39 @@ internal object RigBrowSpringModifier {
             instance.targets.associate { it.id to layersByMesh.getValue(it.id) }, kept, eye?.id, shape?.id) { mesh, parent ->
             ScaffoldBinding.deformerId(scaffold, mesh, parent)
         }
+    }
+
+    private fun RigModifierSource.captureFallback(instance: RigModifierInstance, inputs: BrowSpringInputs,
+                                                   context: ModifierAlgorithmContext): ModifierAlgorithmContext {
+        if (inputs.targets.isEmpty()) return context
+        val scaffold = provider(instance)
+        val targets = instance.targets.filter { it.id in inputs.targets }
+        val prior = activeBefore(instance).filter {
+            it.config["scaffold"] == JsonPrimitive(scaffold.id) && it.targets.any(targets::contains) &&
+                RigLegacyBindings.find(it.type)?.let { spec -> !spec.expressionToggles && !spec.seeThrough } == true
+        }
+        require(prior.all { it.targets.containsAll(targets) }) { "Brow spring v5 requires shared fitted source frames" }
+        val (previous, before) = RigFittedMouthModuleSource.context(this, scaffold, prior, null)
+        val (desired, after) = RigFittedMouthModuleSource.context(this, scaffold, prior + instance, null)
+        require(before.faceTurn(previous) == null && after.faceTurn(desired) == null) {
+            "Brow spring v5 requires a fallback head turn"
+        }
+        val axes = prior.flatMapTo(hashSetOf()) { RigLegacyBindings.spec(it.type).parameters }
+        val browIds = targets.mapTo(hashSetOf()) { it.id }
+        val eyeTags = setOf(SemanticTag.IRIDES, SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYE_CLOSE)
+        fun project(phase: RigBuilder.RigContext, config: PipelineConfig,
+                    parameters: Set<ParameterId>): ModifierAlgorithmResource {
+            val layers = phase.analysis.layers.associateBy { it.source.id.raw }
+            // Eye keyforms witness the ordinary blink axes when lowering the brow's local shapes.
+            val selected = instance.targets.mapNotNull { target ->
+                val layer = layersByMesh[target.id]?.let(layers::get) ?: return@mapNotNull null
+                (target.id to layer).takeIf { layer.semantic.tag in eyeTags || target.id in browIds }
+            }.toMap()
+            return outlineShellSource(phase, config, selected, parameters, includeFaceLean = true, projectedMeshes = browIds)
+        }
+        return ModifierAlgorithmContext(context.values, context.resources + mapOf(
+            "springBefore" to project(before, previous, axes),
+            "springAfter" to project(after, desired, axes + RigLegacyBindings.spec(instance.type).parameters),
+        ))
     }
 }

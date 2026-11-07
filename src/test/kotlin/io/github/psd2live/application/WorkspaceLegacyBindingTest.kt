@@ -4707,6 +4707,75 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun singleEyeBrowSpringMatchesHistoricSourceAndInstalledWorker(): Unit = runBlocking {
+        for (blinkVersion in listOf(1, 4)) {
+            val art = document(eyeDetails = true, mouthDetails = true, closedMouth = true)
+            val choices = WorkspaceInitialPreset()
+            val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+                .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+            val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+            val upstream = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 3, "brow.shape" to 4,
+                "brow.lid-coupling" to 6, "brow.blink" to blinkVersion,
+                "eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3, "eye.emotion" to 3,
+                "eye.highlight" to 3, "eye.aftershock" to 4, "eye.squash" to 4)
+            val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
+                requestedVersions = upstream + ("brow.spring" to 1))
+            val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+            val locked = stack.instances.single { it.type == "brow.spring" }
+            val index = stack.index(locked.id)
+            assertEquals(1, locked.version)
+            for ((type, version) in upstream) assertEquals(version, stack.instances.single { it.type == type }.version)
+            val reference = assertNotNull(baseline.modifierEvaluation).outputs
+            val before = reference[index - 1]
+            val expected = reference[index]
+            val spring = expected.parameters.single { it.id == "ParamBrowLSpring" }
+            assertTrue(spring.blend)
+            assertFalse(before.parameters.any { it.id == spring.id })
+            fun candidate(version: Int): Pair<WorkspaceDocument, RigModifierInstance> {
+                val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, version))
+                val instance = locked.copy(version = version, plugin = artifact.reference)
+                val selected = stack.copy(instances = stack.instances.map { if (it.id == locked.id) instance else it })
+                return initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = selected.toJson())) to instance
+            }
+            val error = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(candidate(4).first) }
+            assertContains(error.message.orEmpty(), "requires a compatible brow shape")
+            val (document, instance) = candidate(5)
+            val compiled = RigIrCompiler.compile(baseline, tileArt = true)
+            fun verify(model: RigPreviewModel) {
+                val evaluation = assertNotNull(model.modifierEvaluation)
+                assertEquals(ModifierStatus.ACTIVE, evaluation.entries[index].status)
+                for (stage in index - 1 until stack.instances.size) assertFaceEquals(reference[stage], evaluation.outputs[stage])
+                assertFaceEquals(compiled, RigIrCompiler.compile(model, tileArt = true))
+            }
+            val actual = WorkspacePreviewBuilder().build(document).also(::verify)
+            val cache = RigStageCache.enabled
+            RigStageCache.enabled = false
+            try { verify(WorkspacePreviewBuilder().build(document)) } finally { RigStageCache.enabled = cache }
+
+            val artifact = assertNotNull(BundledAlgorithmArtifacts.find(instance.type, instance.version))
+            val root = Files.createTempDirectory("single-eye-brow-spring-package-")
+            val preferences = Preferences.userRoot().node("single-eye-brow-spring/" + UUID.randomUUID())
+            val store = ModifierPluginStore(root.resolve("installed"), preferences)
+            try {
+                BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+                val worker = store.snapshot().single()
+                val context = assertNotNull(assertNotNull(actual.modifierEvaluation).readAlgorithms[instance.id]).context
+                for ((type, version) in upstream.filterKeys { it in setOf("face/fitted", "eye/fitted", "brow/fitted", "brow.shape", "brow.lid-coupling", "brow.blink") }) {
+                    val provider = context.upstream.first { it.type == type }
+                    assertEquals(version, provider.version)
+                    assertEquals(stack.instances.single { it.type == type }.plugin, provider.plugin)
+                }
+                assertFaceEquals(expected, ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(),
+                    before, instance, {}, store, context = context,
+                    declaredParameters = RigBrowSpringModifier.fallbackDefinition(RigModifierSource.of(actual)).parameters(instance)))
+            } finally {
+                store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+                preferences.removeNode()
+                ModifierPluginStore.deleteTree(root)
+            }
+        }
+    }
+
     @Test fun browLidCouplingSkipsTheEyeWithNoBrowAndKeepsItsOrdinaryAxis(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true, bilateralEyes = true)
         val choices = WorkspaceInitialPreset(clothing = true)
