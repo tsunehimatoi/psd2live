@@ -97,7 +97,21 @@ class ModifierPerfTool {
                         else instance
                     })
                     val reference = captured.document.copy(rigEdits = overlay.copy(modifierStack = locked.toJson()))
-                    val replay = PSD2LivePipeline().buildPreview(reference.source, reference.config())
+                    fun measured(label: String, document: io.github.psd2live.project.WorkspaceDocument): RigPreviewModel {
+                        RigBuildProfile.reset()
+                        val started = System.nanoTime()
+                        val preview = PSD2LivePipeline().buildPreview(document.source, document.config())
+                        report.appendLine("$label rebuild: %.1f ms".format((System.nanoTime() - started) / 1e6))
+                        val stages = RigBuildProfile.snapshot()
+                        report.appendLine("$label legacy templates: " +
+                            stages.filterKeys { it.startsWith("modifier legacy template:") }.values.sumOf { it.second })
+                        for (stage in listOf("modifier legacy template: $type", "modifier evaluate: $type")) {
+                            stages[stage]?.let { (time, calls) -> report.appendLine("$label $stage: %.1f ms x%d".format(time, calls)) }
+                        }
+                        return preview
+                    }
+                    measured("current", captured.document)
+                    val replay = measured("locked $baseline", reference)
                     val expected = RigIrCompiler.compile(captured.model, tileArt = true)
                     val actual = RigIrCompiler.compile(replay, tileArt = true)
                     val detail = if (expected == actual) "identical complete IR" else
@@ -105,6 +119,17 @@ class ModifierPerfTool {
                     report.appendLine("locked baseline $baseline: $detail")
                     output("modifier-perf").resolve("report.txt").writeText(report.toString())
                     if (expected != actual) fail("Locked baseline $baseline $detail")
+                    if (setting("PSD2LIVE_VERIFY", "0") == "1") {
+                        val enabled = RigStageCache.enabled
+                        try {
+                            RigStageCache.enabled = false
+                            val cold = PSD2LivePipeline().buildPreview(reference.source, reference.config())
+                            val coldIr = RigIrCompiler.compile(cold, tileArt = true)
+                            if (expected != coldIr) fail("Uncached locked baseline $baseline differs in ${differingFields(expected, coldIr)}")
+                            report.appendLine("uncached locked baseline $baseline: identical complete IR")
+                            output("modifier-perf").resolve("report.txt").writeText(report.toString())
+                        } finally { RigStageCache.enabled = enabled }
+                    }
                 }
             }
         } finally {

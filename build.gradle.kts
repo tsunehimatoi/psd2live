@@ -71,6 +71,7 @@ dependencies {
 	implementation(project(":algorithms:binding"))
 	implementation(project(path = ":algorithms:binding", configuration = "eyeLegacyElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "eyeFittedElements"))
+	implementation(project(path = ":algorithms:binding", configuration = "eyeFittedV4Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "eyeSquashElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "eyeWideElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "eyeSmileElements"))
@@ -315,6 +316,10 @@ tasks.processResources {
     }
     dependsOn(":algorithms:binding:pluginEyeLegacy")
     dependsOn(":algorithms:binding:pluginEyeFitted")
+    dependsOn(":algorithms:binding:pluginEyeFittedV4")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-fitted-v4")) {
+        into("algorithm-plugins/eye-fitted-v4")
+    }
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-legacy")) {
         into("algorithm-plugins/eye-legacy")
     }

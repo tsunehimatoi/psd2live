@@ -3,6 +3,7 @@ package io.github.psd2live.core
 import io.github.psd2live.algorithms.binding.BindingProjection
 import io.github.psd2live.algorithms.binding.EyeFittedAlgorithm
 import io.github.psd2live.algorithms.binding.EyeFittedSourceAlgorithm
+import io.github.psd2live.algorithms.binding.EyeFittedV4Algorithm
 import io.github.psd2live.algorithms.binding.EyeScaffoldTransition
 import io.github.psd2live.algorithms.binding.ScaffoldAlgorithm
 import io.github.psd2live.algorithms.binding.ScaffoldPartsContext
@@ -161,7 +162,7 @@ class FittedEyePluginParityTest {
             val previous = RigModifierAlgorithms.registry.definition(instance.copy(version = 2))
             assertEquals(2, previous.version)
             assertFalse(previous.plugin is EyeFittedSourceAlgorithm)
-            verifyWorker(adapter, allBefore, live, instance)
+            verifyWorker(adapter, author, live, stack)
             val body = RigModifierInstance("body", "body/legacy", 1, targets, config = instance.config)
             val head = RigModifierInstance("head", "face/fitted", 1, targets, config = instance.config)
             val mixed = stack.copy(instances = listOf(provider, body, head, instance))
@@ -184,6 +185,26 @@ class FittedEyePluginParityTest {
             }
             assertEquals("Fitted eye v3 requires head turn to be built from the fitted source scaffold", blockedHead.message)
 
+            val headV4 = instance.copy(version = EyeFittedV4Algorithm.VERSION)
+            val legacyHead = mixed.copy(instances = prefix.instances + instance.copy(version = 2))
+            val v4Stack = mixed.copy(instances = prefix.instances + headV4)
+            val mixedOwner = owner(v4Stack)
+            val legacyResult = RigModifierAlgorithms.evaluator(owner(legacyHead)).evaluate(author, legacyHead).rig
+            val fittedHeadResult = RigModifierAlgorithms.evaluator(mixedOwner).evaluate(author, v4Stack).rig
+            assertTrue(legacyResult == fittedHeadResult, "Fitted eye v4 differs from the mixed v2 result")
+            val preceding = listOf(
+                ModifierUpstreamCapability("face/legacy", head.type, head.version, targets, head.id, head.config),
+                ModifierUpstreamCapability("body/legacy", body.type, body.version, targets, body.id, body.config),
+            )
+            verifyWorker(mixedOwner, author, fittedHeadResult, v4Stack, EyeFittedV4Algorithm.ENTRYPOINT)
+            val eyeMesh = coarseTurn.meshes.first { it.id in eyeIds }
+            val sharedHead = coarseTurn.copy(meshes = coarseTurn.meshes + eyeMesh.copy(id = "AuthoredHeadMesh"))
+            val capture = requireNotNull(RigFittedEyeHeadSource.capture(mixedOwner, headV4))
+            val sharedFailure = assertFailsWith<IllegalArgumentException> {
+                EyeFittedV4Algorithm().changes(sharedHead, headV4, capture.withUpstream(capture.upstream + preceding)) {}
+            }
+            assertEquals("Fitted eye v4 cannot move a head frame shared with additional authored objects", sharedFailure.message)
+
             val (lash, indexedLash) = before.meshes.filter { layers[scaffold.layerIdByDrawableId[it.id]]?.semantic?.tag == SemanticTag.EYELASH }
             val geometry = assertNotNull(lash.geometry)
             val editedUvs = geometry.uvs.shared().copyOf().also { it[0] += 0.0001f }
@@ -205,12 +226,14 @@ class FittedEyePluginParityTest {
 
     private fun verifyWorker(
         owner: RigModifierSource, input: io.github.psd2live.format.model.RigIR, expected: io.github.psd2live.format.model.RigIR,
-        instance: RigModifierInstance,
+        stack: RigModifierStack,
+        entrypoint: String = EyeFittedSourceAlgorithm.ENTRYPOINT,
     ) {
         val directory = Files.createTempDirectory("fitted-eye-package-")
         val preferences = Preferences.userRoot().node("fitted-eye-package/${UUID.randomUUID()}")
         val store = ModifierPluginStore(directory.resolve("installed"), preferences)
-        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(EyeFittedSourceAlgorithm.TYPE, EyeFittedAlgorithm.VERSION))
+        val instance = stack.instances.last()
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(instance.type, instance.version))
         try {
             val staging = Files.createDirectory(directory.resolve("package"))
             val manifest = Json.parseToJsonElement(artifact.bytes.decodeToString()).jsonObject
@@ -227,10 +250,15 @@ class FittedEyePluginParityTest {
             repeat(2) {
                 val entry = store.install(staging.toString())
                 val worker = ModifierPluginCatalog.definitions(store, captured = definitions)
-                    .single { it.type == EyeFittedSourceAlgorithm.ENTRYPOINT }
-                val installed = instance.copy(type = worker.type, plugin = entry.reference)
-                assertEquals(expected, worker.plugin.let { it as ContextualModifierAlgorithmPlugin }
-                    .evaluate(input, installed, worker.authorContext(installed), {}))
+                    .single { it.type == entrypoint }
+                // Resolve upstream aliases through the same ordered evaluator used by the application.
+                val installed = definitions.map {
+                    if (it.type == instance.type && it.version == instance.version)
+                        worker.copy(type = it.type, pluginReference = null)
+                    else it
+                }
+                val evaluator = RigModifierEvaluator(RigModifierRegistry(installed))
+                assertEquals(expected, evaluator.evaluate(input, stack).rig)
                 ModifierPluginWorkers.stop(entry.reference)
                 store.uninstall(entry.reference)
             }

@@ -2,9 +2,24 @@ package io.github.psd2live.core.modifier
 
 import io.github.psd2live.algorithms.binding.EyeFittedAlgorithm
 import io.github.psd2live.algorithms.binding.EyeFittedSourceAlgorithm
+import io.github.psd2live.algorithms.binding.EyeFittedV4Algorithm
 
-/** Source-only v3 entry for an explicit version selection; persisted v2 instances retain their definition. */
+/** Explicit source eye versions coexist with the compatibility version. */
 internal object RigFittedEyeDefinition {
+    fun mixedDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val standalone = definition(source)
+        val algorithm = object : ChangingModifierAlgorithmPlugin by EyeFittedV4Algorithm(), ModifierOptionalUpstream, ModifierVersionSelection {
+            override val optionalUpstream = EyeFittedSourceAlgorithm.HEAD_TURN + "body/legacy"
+            override val canonicalOptInType = EyeFittedSourceAlgorithm.TYPE
+        }
+        return standalone.copy(version = EyeFittedV4Algorithm.VERSION,
+            evaluate = { _, _, _ -> error("Fitted eye v4 requires captured scaffold inputs") },
+            plugin = algorithm, authorContext = { instance ->
+                val owner = requireNotNull(source)
+                RigFittedEyeHeadSource.capture(owner, instance) ?: RigFittedEyeSource.captureTransition(owner, instance)
+            })
+    }
+
     fun definition(source: RigModifierSource?): RigModifierDefinition {
         val legacy = RigLegacyBindings.definition(RigLegacyBindings.spec(EyeFittedSourceAlgorithm.TYPE), source)
         val algorithm = object : ChangingModifierAlgorithmPlugin by EyeFittedSourceAlgorithm(), ModifierOptionalUpstream, ModifierVersionSelection {
