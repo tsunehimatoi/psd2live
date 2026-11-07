@@ -1667,6 +1667,41 @@ tasks.register("pluginMouthVowel") {
     }
 }
 
+val mouthVowelV3WorkerJar = registerIsolatedBindingWorker(
+    "mouthVowelV3", "mouth-vowel-v3", "worker-mouth-vowel-v3", "io.github.psd2live.algorithms.binding.MouthVowelV3Worker",
+)
+kotlin.target.compilations.named("mouthVowelV3") {
+    associateWith(kotlin.target.compilations.getByName("mouthVowel"))
+}
+mouthVowelV3WorkerJar.configure {
+    from(sourceSets["mouthVowel"].output)
+}
+
+tasks.register("pluginMouthVowelV3") {
+    dependsOn(mouthVowelV3WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-vowel-v3")
+    val packageVersion = project.version.toString()
+    inputs.file(mouthVowelV3WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthVowelV3WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682e766f77656c.v3"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Mouth vowels with fitted outline",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/vowel","aliases":["mouth.vowel"],"version":3,"name":"Mouth vowels with fitted outline","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","mouth/fitted"],"contextVersion":2,
+               "reads":["mesh","parameter","hierarchy"],"writes":["mesh","parameter","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val mouthJawWorkerJar = registerIsolatedBindingWorker(
     "mouthJaw", "mouth-jaw", "worker-mouth-jaw", "io.github.psd2live.algorithms.binding.MouthJawWorker",
 )
