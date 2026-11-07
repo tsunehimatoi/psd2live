@@ -23,7 +23,7 @@ internal object RigFittedMouthModernSource {
         val layers = instance.targets.associate { it.id to byId.getValue(owner.layersByMesh.getValue(it.id)) }
         val local = layers.filterValues { it.semantic.tag in CharacterAnalyzer.MOUTH_TAGS ||
             it.semantic.tag in setOf(SemanticTag.FACE, SemanticTag.NOSE, SemanticTag.FACE_DETAIL) }
-        val styled = layers.filterValues { layer ->
+        val styleCandidates = layers.filterValues { layer ->
             layer.semantic.tag in setOf(SemanticTag.FRONT_HAIR, SemanticTag.BACK_HAIR, SemanticTag.EARWEAR) ||
                 layer.semantic.tag == SemanticTag.HEADWEAR &&
                 layer.semantic.role !in setOf(PartRole.RIBBON, PartRole.PENDANT, PartRole.ANIMAL)
@@ -31,6 +31,15 @@ internal object RigFittedMouthModernSource {
         val fitted = new.fittedMouth(after)
         require(fitted?.source != null && local.isNotEmpty()) { "Fitted mouth v3 requires source mouth measurements" }
         require(!closedDrawing || fitted.closedLine) { "Fitted mouth v4 requires a separate closed drawing" }
+        val styled = if (styleCandidates.isNotEmpty() && !fitted.closedLine &&
+            old.faceTurn(before) == null && new.faceTurn(after) == null) {
+            // An open-mouth fit can keep the preceding shell turn when no styled field was built.
+            require(RigBuilder.headTurnMeasurements(old.faceRig, before) == RigBuilder.headTurnMeasurements(new.faceRig, after) &&
+                styleCandidates.values.all { old.parentAndFrame(it, before) == new.parentAndFrame(it, after) }) {
+                "Fitted mouth v3 cannot migrate the fallback head turn frames"
+            }
+            emptyMap()
+        } else styleCandidates
         val stationary = if (!closedDrawing) emptyMap() else layers.filter { (id, layer) ->
             id !in local && id !in styled && old.parentAndFrame(layer, before) != new.parentAndFrame(layer, after)
         }
