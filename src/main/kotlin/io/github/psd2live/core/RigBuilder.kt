@@ -13,6 +13,7 @@ import io.github.psd2live.algorithms.binding.ScaffoldFramesContext
 import io.github.psd2live.algorithms.binding.ScaffoldBody
 import io.github.psd2live.algorithms.binding.ScaffoldHead
 import io.github.psd2live.algorithms.binding.ScaffoldMesh
+import io.github.psd2live.algorithms.binding.NeckInputs
 import io.github.psd2live.algorithms.binding.ScaffoldMeshContext
 import io.github.psd2live.algorithms.binding.ScaffoldParts
 import io.github.psd2live.algorithms.binding.ScaffoldPairs
@@ -1112,6 +1113,43 @@ object RigBuilder {
             ScaffoldMeshContext.Material(id, layer.source.id.raw, raw, geometry)
         }
         return ScaffoldMeshContext.capture(materials)
+    }
+
+    /** Captures the neck's source topology and neutral frames without evaluating any binding stage. */
+    internal fun neckSourceInputs(
+        analysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig, cache: PreviewMeshCache,
+        targetLayers: Map<String, String>, primaryByLayer: Map<String, String>,
+        parentId: (String, String) -> String,
+    ): io.github.psd2live.core.modifier.ModifierAlgorithmContext {
+        val context = rigContext(analysis, config.copy(generateDeformers = false), cache)
+        val face = context.faceRig
+        val (px, py) = face.coordinateSpace.toCanvas(face.centerX, face.mouthLineY)
+        val neck = context.analysis.layers.filter { it.semantic.tag == SemanticTag.NECK && it.opaquePixels > 0 }
+        val bases = neck.filter { it.semantic.role == null }
+        val masks = bases.sortedBy { it.source.order }.mapNotNull { layer ->
+            primaryByLayer[layer.source.id.raw]?.takeIf { layer.source.id.raw in atlas.placementByLayerId }
+        }
+        val byLayer = neck.associateBy { it.source.id.raw }
+        val materials = LinkedHashMap<String, ScaffoldMeshContext.Material>()
+        val targets = LinkedHashMap<String, NeckInputs.Target>()
+        val canApply = context.analysis.layers.any { it.semantic.tag == SemanticTag.FACE && it.opaquePixels > 0 }
+        if (canApply) for ((target, layerId) in targetLayers) {
+            val layer = byLayer[layerId] ?: continue
+            val canonical = primaryByLayer.getValue(layerId)
+            val placement = atlas.placementByLayerId[layer.source.id.raw] ?: continue
+            val (parent, frame) = context.parentAndFrame(layer, config)
+            materials.getOrPut(canonical) {
+                val raw = buildGridMesh(layer, Bounds(0f, 0f, 1f, 1f), null, config, cache,
+                    MeshResolution.unitScale(config, context.analysis.source))
+                ScaffoldMeshContext.Material(canonical, layerId, ScaffoldMesh.RawMesh(raw.rigPositions,
+                    LayerTexture.packed(layer, placement, atlas).bind(raw.mesh.uvs), raw.mesh.indices), ScaffoldMesh.Geometry.Zero)
+            }
+            targets[target] = NeckInputs.Target(canonical,
+                context.rigLayer(layer).bounds, frame, parent?.let { parentId(target, it.raw) },
+                layer.semantic.role == PartRole.SHADOW)
+        }
+        return NeckInputs(px, py, bases.map { it.bounds }.reduceOrNull(Bounds::union),
+            masks, targets).encode(ScaffoldMeshContext.capture(materials.values.toList()))
     }
 
     private fun scaffoldStanding(stance: BodyStance): ScaffoldBody.Standing? = stance.legsFrame?.let { frame ->

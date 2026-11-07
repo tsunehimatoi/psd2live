@@ -17,6 +17,8 @@ dependencies {
 }
 tasks.withType<Test>().configureEach { useJUnitPlatform(); filter.isFailOnNoMatchingTests = false }
 
+val neckWorkerClasses = listOf("**/NeckAlgorithm*.class", "**/NeckInputs*.class", "**/NeckWorker*.class")
+
 val workerJar by tasks.registering(Jar::class) {
     dependsOn(configurations.runtimeClasspath)
     archiveClassifier.set("worker")
@@ -27,6 +29,7 @@ val workerJar by tasks.registering(Jar::class) {
     from(sourceSets.main.get().output)
     from(configurations.runtimeClasspath.map { files -> files.map { if (it.isDirectory) it else zipTree(it) } })
     exclude("META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA")
+    exclude(neckWorkerClasses)
 }
 
 tasks.register("pluginPackage") {
@@ -287,6 +290,7 @@ val hairChainsWorkerJar by tasks.registering(Jar::class) {
     from(sourceSets.main.get().output)
     from(configurations.runtimeClasspath.map { files -> files.map { if (it.isDirectory) it else zipTree(it) } })
     exclude("META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA")
+    exclude(neckWorkerClasses)
 }
 
 tasks.register("pluginHairChains") {
@@ -308,6 +312,42 @@ tasks.register("pluginHairChains") {
                "requires":["rig.scaffold","body/legacy","face/legacy"],"exclusiveFamily":"base:hair",
                "reads":["*"],"writes":["mesh","deformer","hierarchy","parameter","physics"],
                "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter","physics"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
+val neckWorkerJar by tasks.registering(Jar::class) {
+    dependsOn(workerJar)
+    archiveClassifier.set("worker-face-neck")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest { attributes["Main-Class"] = "io.github.psd2live.algorithms.binding.NeckWorker" }
+    from(sourceSets.main.get().output) { include(neckWorkerClasses) }
+    from(workerJar.flatMap { it.archiveFile }.map { zipTree(it) }) { exclude("META-INF/MANIFEST.MF") }
+}
+
+tasks.register("pluginFaceNeck") {
+    dependsOn(neckWorkerJar)
+    val output = layout.buildDirectory.dir("plugin-face-neck")
+    val packageVersion = project.version.toString()
+    inputs.file(neckWorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        neckWorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.666163652e6e65636b.v2"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Neck tilt",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/tilt","aliases":["face.neck"],"version":2,"name":"Neck tilt","category":"face",
+               "targets":["mesh"],"requires":["rig.scaffold","face/legacy"],"contextVersion":2,
+               "reads":["mesh","deformer","parameter"],"writes":["mesh","relations"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
                "configSchema":{"type":"object"},"defaults":{}}]}
         """.trimIndent())
     }

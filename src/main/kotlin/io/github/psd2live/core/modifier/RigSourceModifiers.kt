@@ -14,7 +14,7 @@ import org.umamo.runtime.model.*
 /** Immutable source inputs captured with the candidate, never the editor's current selection or a previous output. */
 internal class RigModifierSource(
     internal val analysis: PipelineAnalysis,
-    private val atlas: PackedAtlas,
+    internal val atlas: PackedAtlas,
     private val config: PipelineConfig,
     internal val layersByMesh: Map<String, String>,
     copiedMeshes: Set<String> = emptySet(),
@@ -27,7 +27,7 @@ internal class RigModifierSource(
     val physicsOrder: List<String> get() = config.rigEdits.physicsOrder
     private val stack by lazy { RigModifierStack.fromJson(requireNotNull(config.rigEdits.modifierStack)) }
     private val parameterDefinitions = java.util.IdentityHashMap<PuppetModel, List<io.github.psd2live.format.model.Parameter>>()
-    private val primaryByLayer = layersByMesh.entries.sortedBy { it.key in copiedMeshes }.groupBy { it.value }.mapValues { it.value.first().key }
+    internal val primaryByLayer = layersByMesh.entries.sortedBy { it.key in copiedMeshes }.groupBy { it.value }.mapValues { it.value.first().key }
     private val projections = java.util.IdentityHashMap<PuppetModel, MutableMap<String, PuppetModel>>()
     private fun generated(strength: Float = 1f, tuning: RigTuning = RigTuning(), headStrength: Float = 1f,
                           recipe: RigRecipe = RigRecipe.Legacy, outline: RigModifierInstance? = null,

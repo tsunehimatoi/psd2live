@@ -677,7 +677,20 @@ class WorkspaceLegacyBindingTest {
         assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
     }
 
-    @Test fun skinClippingAndNeckFollowAreExplicitAndSurvivePrefixApplication(): Unit = runBlocking<Unit> {
+    @Test fun skinClippingAndLegacyNeckFollowSurvivePrefixApplication(): Unit = runBlocking {
+        skinClippingAndNeckFollowSurvivePrefixApplication(1)
+    }
+
+    @Test fun skinClippingAndSourceNeckFollowSurvivePrefixApplication(): Unit = runBlocking {
+        skinClippingAndNeckFollowSurvivePrefixApplication(2)
+    }
+
+    @Test fun skinClippingAndPackagedNeckFollowSurvivePrefixApplication(): Unit = runBlocking {
+        val artifact = requireNotNull(BundledAlgorithmArtifacts.find("face.neck", 2))
+        skinClippingAndNeckFollowSurvivePrefixApplication(2, artifact.manifest.algorithms.single().type)
+    }
+
+    private suspend fun skinClippingAndNeckFollowSurvivePrefixApplication(neckVersion: Int, neckType: String = "face.neck") {
         val f = Fixture(document(expressionDetails = true, skinDetails = true)); f.install()
         f.group(listOf("body/legacy", "face/legacy", "eye/fitted", "brow/fitted", "mouth/fitted", "hair/legacy"))
         val poses = listOf(emptyMap(), mapOf(StandardParameters.ANGLE_Z to 25f),
@@ -696,9 +709,13 @@ class WorkspaceLegacyBindingTest {
         }), "clipping must not rewrite authored geometry, channels, deformers or other sidecars")
         val face = mesh(f, "face").id
         skin.forEach { assertEquals(listOf(face), mesh(f, it).maskedBy, it) }
-        f.edit("modifier_add", f.addition("face.neck", "neck", config = buildJsonObject {
+        val addition = f.addition(neckType, "neck", config = buildJsonObject {
             put("scaffold", "structure"); putJsonObject("dependencies") { put("face/legacy", "face") }
-        }))
+        })
+        f.edit("modifier_add", JsonObject(addition + ("version" to JsonPrimitive(neckVersion))))
+        val neck = RigModifierStack.fromJson(requireNotNull(f.now.document.rigEdits.modifierStack)).instances.last()
+        assertEquals(neckVersion, neck.version)
+        assertEquals("builtin.666163652e6e65636b.v$neckVersion", neck.plugin?.id)
         assertEquals(listOf(mesh(f, "neck").id), mesh(f, "neck-shadow").maskedBy)
         val recipe = base.copy(modules = base.modules + mapOf("face.skin-clip" to ModuleChoice(true), "face.neck" to ModuleChoice(true)))
         val original = native(f.document, recipe)
