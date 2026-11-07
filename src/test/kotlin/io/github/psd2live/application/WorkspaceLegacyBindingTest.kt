@@ -116,7 +116,8 @@ class WorkspaceLegacyBindingTest {
         bases = RigModules.areas.associate { it.id to (choices[it.id] ?: BaseChoice(it.legacy.id, it.legacy.version)) },
         modules = RigModules.modules.associate { it.id to ModuleChoice(false, it.version) })
 
-    private fun compare(native: RigPreviewModel, actual: RigPreviewModel, poses: List<Map<ParameterId, Float>>, aliases: Map<String, String> = emptyMap()) {
+    private fun compare(native: RigPreviewModel, actual: RigPreviewModel, poses: List<Map<ParameterId, Float>>,
+                        aliases: Map<String, String> = emptyMap(), targets: Set<DrawableId>? = null) {
         val evaluator = CpuDeformationEvaluator()
         fun canvas(model: PuppetModel, mesh: Drawable): DrawableMesh {
             val geometry = requireNotNull(mesh.mesh)
@@ -125,6 +126,7 @@ class WorkspaceLegacyBindingTest {
         }
         var referenceRig = RigIdRemap(parameters = aliases.mapKeys { ParameterId(it.key) }.mapValues { ParameterId(it.value) }).model(native.rig.puppet)
         for (mesh in actual.rig.puppet.drawables) {
+            if (targets != null && mesh.id !in targets) continue
             val original = native.rig.puppet.drawables.single { it.id == mesh.id }
             val plan = RasterMeshJournal.prepare(canvas(native.rig.puppet, original), canvas(actual.rig.puppet, mesh))
             val texture = RasterMeshJournal.TextureCoordinates(native.rig.puppet, original)
@@ -140,6 +142,7 @@ class WorkspaceLegacyBindingTest {
             val expected = expectedFrame.worldPositions
             val shown = shownFrame.worldPositions
             for ((id, points) in shown) {
+                if (targets != null && id !in targets) continue
                 val reference = expected.getValue(id)
                 val error = points.indices.maxOf { abs(points[it] - reference[it]) }
                 assertTrue(error < .03f, "${id.raw}: difference $error at $pose")
@@ -857,28 +860,112 @@ class WorkspaceLegacyBindingTest {
     }
 
     @Test fun hairChainsReplaceTheNativeSwayBranchAndKeepOutputsAfterApplication(): Unit = runBlocking<Unit> {
-        val f = Fixture(document()); f.install()
-        f.group(listOf("body/legacy", "face/legacy", "eye/fitted", "brow/fitted", "mouth/fitted", "hair/chains"))
-        val stack = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
-        val instance = stack.instances.single { it.type == "hair/chains" }
-        val expected = RigIrCompiler.compile(f.now.model)
-        val aliases = RigModifierSource.of(f.now.model).chains(instance).flatMap { it.aliases.entries }.associate { it.key to it.value }
-        assertTrue(aliases.isNotEmpty())
-        assertTrue(expected.parameters.none { it.id in setOf("ParamHairFront", "ParamHairBack") || it.id in aliases })
-        val nativeRecipe = fittedRecipe(mapOf("eye" to BaseChoice("eye/fitted", 2), "brow" to BaseChoice("brow/fitted"),
-            "mouth" to BaseChoice("mouth/fitted"), "hair" to BaseChoice("hair/chains")))
-        val swing = aliases.values.mapIndexed { index, value -> ParameterId(value) to if (index % 2 == 0) .7f else -.6f }.toMap()
-        compare(native(f.document, nativeRecipe), f.now.model, listOf(emptyMap(), swing,
-            swing + mapOf(StandardParameters.ANGLE_X to 20f, StandardParameters.ANGLE_Z to -15f, StandardParameters.BODY_X to 5f)), aliases)
-        assertTrue(expected.physics.groups.isNotEmpty())
-        val capture = f.now
-        assertFailsWith<WorkspaceBatchEditException> { f.edit("modifier_add", f.addition("hair/legacy", "competing")) }
-        assertEquals(capture.state, f.now.state)
-        f.edit("modifier_apply", buildJsonObject { put("id", "mouth") })
-        assertEquals(expected, RigIrCompiler.compile(f.now.model))
-        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
-        f.edit("modifier_apply", buildJsonObject { put("id", "hair") })
-        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+        for (version in 1..2) {
+            val f = Fixture(document()); f.install()
+            f.group(listOf("body/legacy", "face/legacy", "eye/fitted", "brow/fitted", "mouth/fitted"))
+            val beforeHair = requireNotNull(f.now.model.rig.modifierOutput)
+            val config = buildJsonObject {
+                put("scaffold", "structure")
+                putJsonObject("dependencies") { put("body/legacy", "body"); put("face/legacy", "face") }
+            }
+            f.edit("modifier_add", JsonObject(f.addition("hair/chains", "hair", config = config) +
+                ("version" to JsonPrimitive(version))))
+            val stack = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
+            val instance = stack.instances.single { it.type == "hair/chains" }
+            val expected = RigIrCompiler.compile(f.now.model)
+            val source = RigModifierSource.of(f.now.model)
+            val aliases = source.chains(instance).flatMap { it.aliases.entries }.associate { it.key to it.value }
+            val hairMeshes = if (version == 1) null else
+                io.github.psd2live.algorithms.binding.HairChainsInputs.decode(source.hairChainsContext(instance))
+                    .layers.flatMapTo(HashSet()) { layer -> layer.meshes.map(::DrawableId) }
+            if (hairMeshes != null) {
+                val afterHair = requireNotNull(f.now.model.rig.modifierOutput)
+                assertEquals(beforeHair.meshes.filter { DrawableId(it.id) !in hairMeshes },
+                    afterHair.meshes.filter { DrawableId(it.id) !in hairMeshes })
+            }
+            assertTrue(aliases.isNotEmpty())
+            assertTrue(expected.parameters.none { it.id in setOf("ParamHairFront", "ParamHairBack") || it.id in aliases })
+            val nativeRecipe = fittedRecipe(mapOf("eye" to BaseChoice("eye/fitted", 2), "brow" to BaseChoice("brow/fitted"),
+                "mouth" to BaseChoice("mouth/fitted"), "hair" to BaseChoice("hair/chains")))
+            val swing = aliases.values.mapIndexed { index, value -> ParameterId(value) to if (index % 2 == 0) .7f else -.6f }.toMap()
+            compare(native(f.document, nativeRecipe), f.now.model, listOf(emptyMap(), swing,
+                swing + mapOf(StandardParameters.ANGLE_X to 20f, StandardParameters.ANGLE_Z to -15f, StandardParameters.BODY_X to 5f)), aliases, hairMeshes)
+            assertTrue(expected.physics.groups.isNotEmpty())
+            val capture = f.now
+            assertFailsWith<WorkspaceBatchEditException> { f.edit("modifier_add", f.addition("hair/legacy", "competing")) }
+            assertEquals(capture.state, f.now.state)
+            f.edit("modifier_apply", buildJsonObject { put("id", "mouth") })
+            assertEquals(expected, RigIrCompiler.compile(f.now.model))
+            assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+            f.edit("modifier_apply", buildJsonObject { put("id", "hair") })
+            assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+        }
+    }
+
+    @Test fun independentHairChainsMatchLegacyHierarchyAndMotion(): Unit = runBlocking<Unit> {
+        suspend fun fixture(version: Int): Pair<Fixture, io.github.psd2live.format.model.RigIR> {
+            val f = Fixture(document(sideLock = true, bangOverlay = true))
+            f.install()
+            f.group(listOf("body/legacy", "face/legacy"))
+            val input = requireNotNull(f.now.model.rig.modifierOutput)
+            val config = buildJsonObject {
+                put("scaffold", "structure")
+                putJsonObject("dependencies") { put("body/legacy", "body"); put("face/legacy", "face") }
+                putJsonObject("values") { put("swing", 145f); put("softness", 70f) }
+                putJsonObject("tuning") { put("frontHairTurn", 3f); put("backHairTilt", -1.5f) }
+            }
+            f.edit("modifier_add", JsonObject(f.addition("hair/chains", "hair", config = config) +
+                ("version" to JsonPrimitive(version))))
+            return f to input
+        }
+        val (legacy) = fixture(1)
+        val (direct, input) = fixture(2)
+        val expected = RigIrCompiler.compile(legacy.now.model)
+        val actual = RigIrCompiler.compile(direct.now.model)
+        val instances = RigModifierStack.fromJson(direct.now.document.rigEdits.modifierStack!!).instances
+        val instance = instances.last()
+        fun owned(id: String) = instance.localOutputName(id) != null
+        val parameters = actual.parameters.filter { owned(it.id) }
+        assertTrue(parameters.isNotEmpty())
+        assertEquals(expected.parameters.filter { owned(it.id) }, parameters)
+        val branches = actual.deformers.filter { owned(it.id) }
+        assertTrue(branches.size >= 2)
+        assertEquals(expected.deformers.filter { owned(it.id) }.associate { it.id to it.parent },
+            branches.associate { it.id to it.parent })
+        assertEquals(expected.meshes.associate { it.id to it.parent }, actual.meshes.associate { it.id to it.parent })
+        assertEquals(expected.physics.groups, actual.physics.groups)
+        val parameterIds = actual.parameters.mapTo(HashSet()) { it.id }
+        assertTrue(actual.physics.groups.all { group ->
+            group.outputs.all { it.parameter in parameterIds && owned(it.parameter) } &&
+                group.inputs.all { it.parameter in parameterIds }
+        })
+        val sway = parameters.mapIndexed { index, p -> ParameterId(p.id) to if (index % 2 == 0) .7f else -.6f }.toMap()
+        compare(legacy.now.model, direct.now.model, listOf(emptyMap(), sway,
+            sway + mapOf(StandardParameters.ANGLE_X to 20f, StandardParameters.ANGLE_Z to -15f, StandardParameters.BODY_X to 5f)))
+        val reference = requireNotNull(instance.plugin)
+        val entry = ModifierPluginStore.shared.snapshot().single { it.reference == reference }
+        val context = RigModifierSource.of(direct.now.model).hairChainsContext(instance).withUpstream(instances.dropLast(1).map {
+            ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+        })
+        try {
+            val fromWorker = ModifierPluginWorkers.evaluate(entry, entry.manifest.algorithms.single(), input, instance, {}, context = context)
+            assertEquals(direct.now.model.rig.modifierOutput, fromWorker)
+        } finally {
+            ModifierPluginWorkers.stop(reference)
+        }
+        val (slot, group) = RigModifierPhysics.entries(instance, actual).entries.first()
+        val rule = Physics3Json.setting(group)
+        val edit = rule.copy(segments = rule.segments.map { it.copy(delay = it.delay * 1.2f) })
+        direct.edit("modifier_update", buildJsonObject {
+            put("id", instance.id)
+            put("type", instance.type)
+            put("config", JsonObject(instance.config + ("physics" to buildJsonObject { put(slot, edit.toJson()) })))
+        })
+        val edited = RigIrCompiler.compile(direct.now.model)
+        assertEquals(actual, edited.copy(physics = actual.physics))
+        assertEquals(edit, Physics3Json.setting(edited.physics.groups.single { it.id == group.id }))
+        direct.edit("modifier_apply", buildJsonObject { put("id", "hair") })
+        assertEquals(edited, RigIrCompiler.compile(direct.builder.build(direct.now.document)))
     }
 
     @Test fun chainIdentitiesAndEditedPhysicsSurviveUnrelatedNativeRenumbering(): Unit = runBlocking<Unit> {

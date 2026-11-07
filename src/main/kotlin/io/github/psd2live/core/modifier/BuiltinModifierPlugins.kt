@@ -1,5 +1,6 @@
 package io.github.psd2live.core.modifier
 
+import io.github.psd2live.algorithms.binding.HairChainsAlgorithm
 import kotlinx.serialization.json.*
 
 /** Individually versioned, in-process entries. Null document references remain legacy aliases, never rewritten on read. */
@@ -19,7 +20,15 @@ internal object BuiltinModifierPlugins {
     fun definitions(source: RigModifierSource?): List<RigModifierDefinition> = listOf(
         SwingAlgorithmPlugin.definition, SimulationAlgorithmPlugin.definition,
         PhysicsAlgorithmPlugin.definition, MotionAlgorithmPlugin.definition,
-    ) + RigSourceModifiers.definitions(source)
+    ) + RigSourceModifiers.definitions(source) + hairChains(source)
+
+    private fun hairChains(source: RigModifierSource?): RigModifierDefinition {
+        val legacy = RigLegacyBindings.definition(RigLegacyBindings.spec("hair/chains"), source)
+        val algorithm = HairChainsAlgorithm()
+        return legacy.copy(version = 2, parameters = { emptyList() }, upstreamInputs = true,
+            changeWrites = HairChainsAlgorithm.WRITES, evaluate = algorithm::evaluate, plugin = algorithm,
+            authorContext = { requireNotNull(source).hairChainsContext(it) })
+    }
 
     private val implementations by lazy {
         listOf(SwingAlgorithmPlugin::class.java, SimulationAlgorithmPlugin::class.java,

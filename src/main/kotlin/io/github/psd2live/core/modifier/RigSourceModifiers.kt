@@ -13,13 +13,13 @@ import org.umamo.runtime.model.*
 
 /** Immutable source inputs captured with the candidate, never the editor's current selection or a previous output. */
 internal class RigModifierSource(
-    private val analysis: PipelineAnalysis,
+    internal val analysis: PipelineAnalysis,
     private val atlas: PackedAtlas,
     private val config: PipelineConfig,
-    private val layersByMesh: Map<String, String>,
+    internal val layersByMesh: Map<String, String>,
     copiedMeshes: Set<String> = emptySet(),
     private val materialBase: PuppetModel,
-    private val meshCache: PreviewMeshCache = PreviewMeshCache(),
+    internal val meshCache: PreviewMeshCache = PreviewMeshCache(),
 ) {
     fun resolveRasters(input: RigIR, outputs: List<ModifierRasterOutput>, checkpoint: () -> Unit): RigIR =
         RigModifierRasterAssets.attach(input, outputs, config, checkpoint)
@@ -53,7 +53,7 @@ internal class RigModifierSource(
         mouthThickness = outline?.let { RigLegacyBindings.values(it)["thickness"] } ?: 1.5f,
         mouthColor = outline?.let(RigLegacyBindings::outlineColor))
 
-    private fun sourceConfig() = RigModifierPipeline.ordinaryConfig(config).copy(meshOnly = false, generateDeformers = true,
+    internal fun sourceConfig() = RigModifierPipeline.ordinaryConfig(config).copy(meshOnly = false, generateDeformers = true,
         deferRig = false, rigPendingLayerIds = emptySet(), parentOverrides = emptyMap(),
         rigEdits = RigEditOverlay(splitDrawableIds = primaryByLayer))
 
@@ -143,7 +143,7 @@ internal class RigModifierSource(
     }
     private val loweredExpressionParameters by lazy { generated(recipe = expressionRecipe).puppet.parameters }
 
-    private fun expressionIds(instance: RigModifierInstance) = instance.targets.mapNotNullTo(linkedSetOf()) {
+    internal fun expressionIds(instance: RigModifierInstance) = instance.targets.mapNotNullTo(linkedSetOf()) {
         expressionLayers[layersByMesh[it.id]]?.let { layer -> ParameterId(layer.parameter) }
     }
 
@@ -538,7 +538,7 @@ internal class RigModifierSource(
     private val activePrefixes = HashMap<String, List<RigModifierInstance>>()
 
     /** Mirror ordered dependency eligibility, so a paused module cannot leak into a later source transition. */
-    private fun activeBefore(instance: RigModifierInstance): List<RigModifierInstance> = activePrefixes.getOrPut(instance.id) {
+    internal fun activeBefore(instance: RigModifierInstance): List<RigModifierInstance> = activePrefixes.getOrPut(instance.id) {
         val available = stack.appliedCapabilities.toMutableList()
         val active = stack.appliedCapabilities.filter { it.id != null }.mapTo(ArrayList()) {
             RigModifierInstance(requireNotNull(it.id), it.type, it.version, it.targets, config = it.config,

@@ -4,12 +4,13 @@ import java.security.MessageDigest
 // Binding kernels use the GPL engine; they are separate from the MIT API/format modules.
 plugins { `java-library`; kotlin("jvm") }
 group = "io.github.psd2live.algorithms"
-version = "1.0.53"
+version = "1.0.54"
 kotlin { jvmToolchain(21) }
 dependencies {
     api(project(":umamo"))
     api(project(":algorithm-api"))
     implementation(project(":format-compile"))
+    api(project(":algorithms:physics"))
     implementation(project(":algorithm-worker"))
     implementation(project(":targets:cubism"))
     testImplementation(kotlin("test"))
@@ -256,6 +257,43 @@ tasks.register("pluginGloom") {
              "algorithms":[{"type":"$id/gloom","aliases":["expression.gloom"],"version":1,"name":"Gloom","category":"expression",
                "targets":["mesh"],"requires":["rig.scaffold"],"reads":["*"],"writes":["mesh","parameter","hierarchy"],
                "composableKinds":["mesh","parameter","hierarchy"],"configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
+// Separate entrypoint and package identity for the independent hair binding.
+val hairChainsWorkerJar by tasks.registering(Jar::class) {
+    dependsOn(configurations.runtimeClasspath)
+    archiveClassifier.set("hair-chains-worker")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest { attributes["Main-Class"] = "io.github.psd2live.algorithms.binding.HairChainsWorker" }
+    from(sourceSets.main.get().output)
+    from(configurations.runtimeClasspath.map { files -> files.map { if (it.isDirectory) it else zipTree(it) } })
+    exclude("META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA")
+}
+
+tasks.register("pluginHairChains") {
+    dependsOn(hairChainsWorkerJar)
+    val output = layout.buildDirectory.dir("plugin-hair-chains")
+    inputs.file(hairChainsWorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", project.version.toString())
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        hairChainsWorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"builtin.686169722f636861696e73.v2","version":"${project.version}","name":"Hair chains",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"builtin.686169722f636861696e73.v2/chains","aliases":["hair/chains"],
+               "version":2,"name":"Hair chains","category":"hair","contextVersion":2,"targets":["mesh"],
+               "requires":["rig.scaffold","body/legacy","face/legacy"],"exclusiveFamily":"base:hair",
+               "reads":["*"],"writes":["mesh","deformer","hierarchy","parameter","physics"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter","physics"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
         """.trimIndent())
     }
 }

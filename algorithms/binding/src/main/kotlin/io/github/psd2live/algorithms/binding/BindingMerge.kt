@@ -331,7 +331,7 @@ object BindingMerge {
             a.cells.zip(b.cells).all { (left, right) -> left.coordinate.contentEquals(right.coordinate) && sameForm(left.form, right.form) }
     }
 
-    private fun warpDelta(actual: KeyformGrid<WarpLatticeForm>?, before: KeyformGrid<WarpLatticeForm>?, after: KeyformGrid<WarpLatticeForm>?,
+    internal fun warpDelta(actual: KeyformGrid<WarpLatticeForm>?, before: KeyformGrid<WarpLatticeForm>?, after: KeyformGrid<WarpLatticeForm>?,
                           defaults: Map<ParameterId, Float>, checkpoint: () -> Unit): KeyformGrid<WarpLatticeForm> {
         require(actual != null && before != null && after != null) { "Binding needs complete Warp lattices" }
         fun same(a: KeyformGrid<WarpLatticeForm>, b: KeyformGrid<WarpLatticeForm>) =
