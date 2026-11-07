@@ -98,7 +98,8 @@ internal object WorkspacePresetInitialization {
             stack = stack.add("motion", 1, targets, MotionClips.toJson(clip.copy(parameterRoles =
                 if (name == "Blink") mapOf("EyeBlink" to listOf("ParamEyeLOpen", "ParamEyeROpen").filter { it in available }) else emptyMap())), group)
         }
-        model = build()
+        // Physics and clips reference the binding parameters without changing the rest geometry.
+        // All simulation presets can therefore plan against the same evaluated binding.
         val selected = buildList {
             val present = PhysicsGenerator.Presets.present(model.analysis)
             if (present.frontHair && choices.frontHair == WorkspaceInitialHair.SIMULATION) add("front_hair")
@@ -108,12 +109,11 @@ internal object WorkspacePresetInitialization {
         for (preset in selected) {
             stack = WorkspaceModifierPlan.simulationPreset(model, stack, targets, preset, allowNoLooseClothing = true).first
         }
-        stack = stack.copy(instances = stack.instances.map { it.copy(presetGroup = group) })
-        stack = WorkspaceModifierSimulation.prepare(current(), stack, work, pipeline = pipeline)
-        model = build()
-        stack = stack.copy(instances = stack.instances.map { WorkspaceModifierEdits.captureParameterProviders(it, model, stopAtConsumer = true) })
+        stack = stack.copy(instances = stack.instances.map {
+            WorkspaceModifierEdits.captureParameterProviders(it.copy(presetGroup = group), model, stopAtConsumer = true)
+        })
         RigModifierAlgorithms.evaluator().validateOrder(stack)
-        // Provider metadata is validated against the same cached prefix before publishing the candidate.
+        stack = WorkspaceModifierSimulation.prepare(current(), stack, work, pipeline = pipeline)
         return current() to build().also { work.checkpoint(); it.runtimeBundle.materialize(); work.checkpoint() }
     }
 }
