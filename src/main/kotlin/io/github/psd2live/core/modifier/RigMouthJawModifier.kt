@@ -4,6 +4,7 @@ import io.github.psd2live.algorithms.binding.MouthJawAlgorithm
 import io.github.psd2live.algorithms.binding.MouthJawV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV5Algorithm
+import io.github.psd2live.algorithms.binding.MouthJawV6Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldMesh
 import io.github.psd2live.algorithms.binding.ScaffoldMeshContext
 import io.github.psd2live.core.*
@@ -45,6 +46,15 @@ internal object RigMouthJawModifier {
     fun closedDefinition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthJawV5Algorithm.VERSION, closedAlgorithm)
 
+    private val closedTongueAlgorithm = object : ReadingModifierAlgorithmPlugin by MouthJawV6Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = MouthJawV5Algorithm.optionalUpstream
+        override val canonicalOptInType = MouthJawAlgorithm.TYPE
+    }
+
+    fun closedTongueDefinition(source: RigModifierSource?): RigModifierDefinition =
+        definition(source, MouthJawV6Algorithm.VERSION, closedTongueAlgorithm)
+
     fun fittedDefinition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthJawV3Algorithm.VERSION, fittedAlgorithm)
 
@@ -65,7 +75,7 @@ internal object RigMouthJawModifier {
             item.config["scaffold"] == JsonPrimitive(scaffold.id) && item.targets.any(instance.targets::contains) &&
                 RigLegacyBindings.find(item.type)?.let { !it.expressionToggles && !it.seeThrough } == true
         }
-        val closedDrawing = version == MouthJawV5Algorithm.VERSION
+        val closedDrawing = version in MouthJawV5Algorithm.VERSION..MouthJawV6Algorithm.VERSION
         val sourceBinding = version >= MouthJawV3Algorithm.VERSION
         val fittedVersions = when {
             closedDrawing -> 4..4

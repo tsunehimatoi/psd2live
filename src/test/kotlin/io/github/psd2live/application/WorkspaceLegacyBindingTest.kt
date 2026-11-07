@@ -1971,6 +1971,19 @@ class WorkspaceLegacyBindingTest {
         }
         assertEquals(compiled, RigIrCompiler.compile(tonguePreview, tileArt = true))
         assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(lockedTongue), tileArt = true))
+        val jawTongueArtifact = assertNotNull(BundledAlgorithmArtifacts.find("mouth.jaw", 6))
+        val jawTongueStack = tongueStack.copy(instances = tongueStack.instances.mapIndexed { i, entry ->
+            if (i == jawIndex) entry.copy(version = 6, plugin = jawTongueArtifact.reference) else entry
+        })
+        val lockedJawTongue = document.copy(rigEdits = document.rigEdits.copy(modifierStack = jawTongueStack.toJson()))
+        val jawTonguePreview = WorkspacePreviewBuilder().build(lockedJawTongue)
+        val jawTongueEvaluation = assertNotNull(jawTonguePreview.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, jawTongueEvaluation.entries[jawIndex].status)
+        for (stage in jawIndex until stack.instances.size) {
+            assertTrue(reference[stage] == jawTongueEvaluation.outputs[stage], stack.instances[stage].type)
+        }
+        assertEquals(compiled, RigIrCompiler.compile(jawTonguePreview, tileArt = true))
+        assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(lockedJawTongue), tileArt = true))
         val instance = candidate.instances[index]
         val definition = RigFittedMouthDefinition.closedDefinition(RigModifierSource.of(actual))
         val context = definition.authorContext(instance).withUpstream(candidate.instances.take(index).map {
@@ -2047,6 +2060,27 @@ class WorkspaceLegacyBindingTest {
             val tongueDefinition = RigMouthTongueModifier.closedDefinition(RigModifierSource.of(tonguePreview))
             assertEquals(tongueAfter, ModifierPluginWorkers.evaluate(tongueWorker, tongueWorker.manifest.algorithms.single(),
                 tongueBefore, tongueInstance, {}, store, context = tongueContext, declaredParameters = tongueDefinition.parameters(tongueInstance)))
+            val jawTongueInstance = jawTongueStack.instances[jawIndex]
+            val jawTongueStaging = Files.createDirectory(directory.resolve("jaw-tongue-package"))
+            Files.write(jawTongueStaging.resolve("plugin.json"), jawTongueArtifact.bytes)
+            for (name in jawTongueArtifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(jawTongueArtifact.resource + name)).use { Files.copy(it, jawTongueStaging.resolve(name)) }
+            }
+            val jawTongueWorker = store.install(jawTongueStaging.toString())
+            assertEquals(jawTongueArtifact.reference, jawTongueWorker.reference)
+            val jawTongueContext = assertNotNull(jawTongueEvaluation.readAlgorithms[jawTongueInstance.id]).context
+            val sourceTongue = jawTongueContext.upstream.single { it.type == "mouth.tongue" }
+            assertEquals(4, sourceTongue.version)
+            assertEquals(tongueArtifact.reference, sourceTongue.plugin)
+            assertEquals(jawAfter, ModifierPluginWorkers.evaluate(jawTongueWorker, jawTongueWorker.manifest.algorithms.single(),
+                jawBefore, jawTongueInstance, {}, store, context = jawTongueContext))
+            val mismatched = jawTongueContext.withUpstream(jawTongueContext.upstream.map {
+                if (it == sourceTongue) it.copy(config = JsonObject(it.config - "dependencies")) else it
+            })
+            val jawTongueDefinition = RigMouthJawModifier.closedTongueDefinition(RigModifierSource.of(jawTonguePreview))
+            assertFailsWith<IllegalArgumentException> {
+                (jawTongueDefinition.plugin as ReadingModifierAlgorithmPlugin).changes(jawBefore, jawTongueInstance, mismatched) {}
+            }
         } finally {
             store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
             preferences.removeNode()
