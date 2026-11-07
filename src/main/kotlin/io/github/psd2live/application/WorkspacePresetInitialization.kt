@@ -80,6 +80,7 @@ import io.github.psd2live.algorithms.binding.MouthVowelV7Algorithm
 import io.github.psd2live.algorithms.binding.NeckV3Algorithm
 import io.github.psd2live.algorithms.binding.RibbonsResidualAlgorithm
 import io.github.psd2live.algorithms.binding.RibbonsV4Algorithm
+import io.github.psd2live.algorithms.binding.RibbonsV5Algorithm
 import io.github.psd2live.algorithms.binding.SkirtAlgorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.fit.HairKind
@@ -336,6 +337,13 @@ internal object WorkspacePresetInitialization {
                         val mouth = upstream.singleOrNull { it.type == RigModules.MOUTH_FITTED.id }?.version
                         val skirt = upstream.singleOrNull { it.type == RigModules.OUTFIT_SKIRT.id }?.version
                         when {
+                            mouth == MouthFittedV6Algorithm.VERSION && (skirt == null || skirt == SkirtAlgorithm.VERSION) ->
+                                RibbonsV5Algorithm.VERSION to buildMap {
+                                    put(RigModules.EYE_FITTED.id, EyeFittedV5Algorithm.VERSION)
+                                    put(RigModules.BROW_FITTED.id, BrowFittedV4Binding.VERSION)
+                                    put(RigModules.MOUTH_FITTED.id, mouth)
+                                    if (skirt != null) put(RigModules.OUTFIT_SKIRT.id, skirt)
+                                }
                             mouth == MouthFittedV3Algorithm.VERSION && skirt == SkirtAlgorithm.VERSION ->
                                 RibbonsV4Algorithm.VERSION to (RibbonsResidualAlgorithm.PROFILE + (RigModules.MOUTH_FITTED.id to mouth))
                             mouth == MouthFittedV4Algorithm.VERSION && skirt == null ->

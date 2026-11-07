@@ -98,6 +98,12 @@ class RibbonsDsTool {
             assertEquals(historicalEvaluation.outputs[stage], actual.outputs[stage], stack.instances[stage].type)
         }
         assertEquals(RigIrCompiler.compile(historical, tileArt = true), RigIrCompiler.compile(model, tileArt = true))
+        val (_, defaultModel) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct, preset)
+        val defaultStage = assertNotNull(defaultModel.modifierEvaluation).entries.single { it.instance.type == entry.type }
+        assertEquals(5, defaultStage.instance.version)
+        assertEquals(selected.plugin, defaultStage.instance.plugin)
+        assertEquals(ModifierStatus.ACTIVE, defaultStage.status)
+        assertEquals(RigIrCompiler.compile(model, tileArt = true), RigIrCompiler.compile(defaultModel, tileArt = true))
 
         val artifact = assertNotNull(BundledAlgorithmArtifacts.find(entry.type, 5))
         val directory = Files.createTempDirectory("ribbons-ds-")
