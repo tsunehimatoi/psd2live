@@ -23,7 +23,6 @@ internal class RigModifierSource(
 ) {
     fun resolveRasters(input: RigIR, outputs: List<ModifierRasterOutput>, checkpoint: () -> Unit): RigIR =
         RigModifierRasterAssets.attach(input, outputs, config, checkpoint)
-
     val physicsOrder: List<String> get() = config.rigEdits.physicsOrder
     private val stack by lazy { RigModifierStack.fromJson(requireNotNull(config.rigEdits.modifierStack)) }
     private val parameterDefinitions = java.util.IdentityHashMap<PuppetModel, List<io.github.psd2live.format.model.Parameter>>()
@@ -400,7 +399,8 @@ internal class RigModifierSource(
         val originals = layers.filterValues { it.semantic.tag in CharacterAnalyzer.MOUTH_TAGS ||
             it.semantic.tag in setOf(SemanticTag.FACE, SemanticTag.NOSE, SemanticTag.FACE_DETAIL) }
             .mapValues { (_, layer) -> RigBuilder.fittedMouthSourceMesh(layer, context, native, atlas, meshCache) }
-        val source = input.copy(drawables = input.drawables.map { drawable ->
+        val headSource = RigBuilder.fittedMouthHeadSource(input, layers, context, native, atlas, meshCache)
+        val source = headSource.copy(drawables = headSource.drawables.map { drawable ->
             val data = originals[drawable.id.raw] ?: return@map drawable
             val layer = layers.getValue(drawable.id.raw)
             if (layer.semantic.tag !in CharacterAnalyzer.MOUTH_TAGS) return@map drawable

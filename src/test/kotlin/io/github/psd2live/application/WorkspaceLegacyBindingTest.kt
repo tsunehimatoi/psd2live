@@ -1198,6 +1198,21 @@ class WorkspaceLegacyBindingTest {
             mapOf(StandardParameters.ANGLE_X to 45f, StandardParameters.ANGLE_Y to -14f,
                 StandardParameters.ANGLE_Z to 12f, StandardParameters.BODY_X to 5f)))
         assertTrue(FormChannel.DRAW_ORDER in mesh(f, "front").channelGrids.gridsByChannel)
+        fun fittedMouthOutput(model: RigPreviewModel): io.github.psd2live.format.model.RigIR {
+            val evaluated = requireNotNull(model.modifierEvaluation)
+            val index = evaluated.entries.indexOfFirst { it.instance.type == "mouth/fitted" }
+            return evaluated.outputs[index]
+        }
+        val warmMouth = fittedMouthOutput(f.now.model)
+        val cacheEnabled = RigStageCache.enabled
+        val coldMouth = try {
+            RigStageCache.enabled = false
+            fittedMouthOutput(PSD2LivePipeline().buildPreview(f.now.document.source, f.now.document.config()))
+        } finally {
+            RigStageCache.enabled = cacheEnabled
+        }
+        assertEquals(warmMouth.deformers, coldMouth.deformers)
+        assertEquals(warmMouth.meshes, coldMouth.meshes)
         val expected = RigIrCompiler.compile(f.now.model)
         f.edit("modifier_apply", buildJsonObject { put("id", "hair") })
         assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
