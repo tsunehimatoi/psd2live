@@ -54,15 +54,17 @@ Eye highlight v2 computes parallax and fade from source measurements and the fit
 
 Mouth vowels v2 adds the five standard vowel parameters and their fitted shapes. It requires a shared source scaffold and a compatible fitted mouth. Use v1 with a separate closed-mouth drawing, preceding mouth modules or edited mouth topology or frames.
 
-Mouth capture v2 adds mouth-tracking keyforms using the original mesh and a compatible fitted mouth. It can follow an outline or vowel modifier. Use v1 for separate closed-mouth drawings, edited or lowered meshes, or other preceding mouth modules.
+Mouth capture v2 adds mouth-tracking keyforms using the original mesh and a compatible fitted mouth. It can follow an outline or vowel modifier. Capture v3 also supports fitted mouth v3 with outline v3 and vowel v4. Use v1 for separate closed-mouth drawings, edited or lowered meshes, or other preceding mouth modules.
 
-Fitted mouth v3 is available by version with the shared v2 source scaffold and a fitted head turn. It evaluates the source mouth measurements and recomputes the head lattices and local shapes affected by the mouth landmarks. Outline v3 and vowel v4 can follow fitted mouth v3. Older independent versions such as capture v2 and jaw v2 still require fitted mouth v1 or v2.
+Fitted mouth v3 is available by version with the shared v2 source scaffold and a fitted head turn. It evaluates the source mouth measurements and recomputes the head lattices and local shapes affected by the mouth landmarks. Outline v3, vowel v4, capture v3 and jaw v3 can follow fitted mouth v3.
 
 Mouth outline v3 is available by version. With the shared v2 source scaffold and a fitted mouth, it generates outlines from the original pixels and lip measurements and recomputes the head lattices, hair chains, headwear and neck shapes affected by the mouth landmarks. Use v1 for edited source meshes or combinations with a private head-turn carrier. Presets still select v1, and downstream vowel v1 still builds a compatibility template for the preceding outline.
 
 Mouth vowel v3 can follow outline v3 on the same shared scaffold. It generates five vowel keyforms directly from the source mouth measurements. Vowel v4 also supports fitted mouth v3. Use v1 for separate closed-mouth drawings, edited source meshes or other preceding mouth modules.
 
-Mouth jaw v2 is opt-in. It uses a shared v2 source scaffold and a compatible fitted mouth to add opening motion to the face, nose and details below the mouth. Ordinary and fitted head turns, mouth outlines, vowels and capture can precede it. Use v1 for separately drawn lip layers, edited target meshes or combinations that need another deformation carrier.
+Mouth jaw v2 is opt-in. It uses a shared v2 source scaffold and a compatible fitted mouth to add opening motion to the face, nose and details below the mouth. Ordinary and fitted head turns, mouth outlines, vowels and capture can precede it. Jaw v3 uses the source measurements from fitted mouth v3. Use v1 for separately drawn lip layers, edited target meshes, preceding tongue motion or combinations that need another deformation carrier.
+
+Mouth cheek-lid coupling v4 supports fitted mouth v3 and fitted eyes v2. It computes the lid coupling from source measurements and preserves compatible head-turn deformers.
 
 Mouth tongue v2 adds tongue-out forms to a fitted mouth with a tongue layer and a preceding capture modifier. It supports a single mouth drawing on the original source mesh. Use v1 for layered lips or a separate closed-mouth drawing.
 
@@ -70,7 +72,7 @@ Mouth interior depth v2 adds parallax to teeth and other interior layers and sha
 
 Mouth spring v2 adds lower-face settling after the mouth opens. It uses the fitted mouth and jaw on a shared source scaffold and honors the physics toggle. Use v1 for separate closed-mouth drawings, edited target geometry or combinations with a preceding tongue modifier.
 
-Mouth spring v3 is selectable by version and supports preceding tongue, cheek-lid coupling and interior depth in the modern preset. If lower-face geometry has been moved into a deformer, v3 replays and checks the source allocation before adding spring motion. It requires the original fitted artwork and a shared v2 scaffold.
+Mouth spring v3 is selectable by version and supports preceding tongue, cheek-lid coupling and interior depth in the modern preset. If lower-face geometry has been moved into a deformer, v3 replays and checks the source allocation before adding spring motion. V4 also supports fitted mouth v3 and jaw v3. These versions require the original fitted artwork and a shared v2 scaffold.
 
 Cheek-lid coupling v2 is selectable by version. It requires a shared v2 scaffold, fitted eyes v2, and a fitted mouth with a live mouth form grid. Use v1 with edited lid meshes or parent frames, fitted head turn, or preceding gaze or brow-lid coupling.
 
@@ -84,7 +86,7 @@ Gloom v3 can recreate that deformer for face and nose meshes on a shared v2 scaf
 
 Skirt sway v2 is selectable for topwear or bottomwear attached under the torso. It uses a shared source frame and preserves the existing skirt mesh, physics and simulation bindings in compatible presets.
 
-Arm swing v2 is selectable for the original hanging-arm frames of a shared v2 scaffold, with body and face bindings on that scaffold. Use v1 if an arm has been reparented or its neutral lattice edited.
+Arm swing v2 is selectable for the original hanging-arm frames of a shared v2 scaffold, with body and face bindings on that scaffold. V3 recomputes the arm frames from preceding fitted bindings and transfers the new swing keyforms when the parent frame of paired gloves has moved. Use v1 if an arm has been reparented, its neutral lattice edited, or existing authored keyforms would need to be transferred.
 
 Ribbon and pendant sway v2 is selectable for targets that share a source frame. It adds motion and physics at the source attachments and preserves simulation bakes in compatible presets. Use v1 for targets with different source frames.
 
