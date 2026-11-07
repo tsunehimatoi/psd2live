@@ -8,6 +8,7 @@ import io.github.psd2live.algorithms.binding.MouthOutlineHeadAttachment
 import io.github.psd2live.algorithms.binding.MouthOutlineV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV6Algorithm
+import io.github.psd2live.algorithms.binding.MouthOutlineV7Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
 import io.github.psd2live.algorithms.binding.ScaffoldFramesContext
 import io.github.psd2live.algorithms.binding.ScaffoldMesh
@@ -59,7 +60,17 @@ internal object RigFittedMouthOutlineDefinition {
             authorContext = { requireNotNull(source).capture(it, closedMouthVersion = 5) })
     }
 
-    private fun RigModifierSource.capture(instance: RigModifierInstance, closedMouthVersion: Int? = null): ModifierAlgorithmContext {
+    fun orderedDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val ordered = object : ReadingModifierAlgorithmPlugin by MouthOutlineV7Algorithm(), ModifierVersionSelection, ModifierOptionalUpstream {
+            override val canonicalOptInType = TYPE
+            override val optionalUpstream = RigLegacyBindings.specs.filter { !it.expressionToggles && !it.seeThrough }
+                .mapTo(linkedSetOf()) { it.type } - setOf(TYPE, "mouth/fitted")
+        }
+        return definition(source).copy(version = MouthOutlineV7Algorithm.VERSION, plugin = ordered,
+            authorContext = { requireNotNull(source).capture(it, orderedHair = true) })
+    }
+
+    private fun RigModifierSource.capture(instance: RigModifierInstance, closedMouthVersion: Int? = null, orderedHair: Boolean = false): ModifierAlgorithmContext {
         val scaffold = provider(instance)
         require(scaffold.version == 2) { "Fitted mouth outline requires a shared v2 scaffold" }
         val prefix = activeBefore(instance).filter { entry ->
@@ -75,6 +86,7 @@ internal object RigFittedMouthOutlineDefinition {
         val head = prefix.lastOrNull { it.type == "face/fitted" || it.type == "face.depth-turn" }
         val body = prefix.singleOrNull { it.type == "body/legacy" }
         val (previous, before) = RigFittedMouthModuleSource.context(this, scaffold, prefix, null)
+        require(!orderedHair || before.fittedMouth(previous)?.closedLine != true) { "Ordered fitted outline requires an open drawing" }
         val values = RigLegacyBindings.values(instance)
         val recipe = previous.recipe.copy(modules = previous.recipe.modules + (TYPE to ModuleChoice(true, instance.version, values)))
         val desired = previous.copy(recipe = recipe, mouthOutlineEnabled = true, mouthThickness = values["thickness"] ?: 1.5f,
@@ -223,6 +235,17 @@ internal object RigFittedMouthOutlineDefinition {
         }
         val captured = MouthOutlineV3Algorithm.capture(outline.encode(), oldInputs, newInputs, neutral, textures, headFrames,
             componentSources, componentMeshes, stationarySources, hairSources, attachments)
+        if (orderedHair && hairSources.isNotEmpty()) {
+            val lastHair = instance.targets.indexOfLast { it.id in hairSources }
+            val ordered = instance.targets.take(lastHair + 1).associate { target ->
+                target.id to desiredByLayer.getValue(owners.getValue(target.id).layer)
+            }
+            val parameters = prefix.flatMapTo(hashSetOf()) { RigLegacyBindings.spec(it.type).parameters }
+            return ModifierAlgorithmContext(captured.values, captured.resources + mapOf(
+                "outlineHairBefore" to outlineShellSource(before, previous, ordered, parameters),
+                "outlineHairAfter" to outlineShellSource(after, desired, ordered, parameters),
+            ))
+        }
         if (closedMouthVersion != 5 || before.faceTurn(previous) != null || after.faceTurn(desired) != null) return captured
         val shell = owners.filterKeys { it !in fitted && it !in hairSources }.mapValues { (_, owner) ->
             desiredByLayer.getValue(owner.layer)

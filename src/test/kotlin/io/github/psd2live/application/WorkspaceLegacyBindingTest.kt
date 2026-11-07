@@ -7684,6 +7684,74 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun fittedOutlineV7PreservesOrderedHairBranches(): Unit = runBlocking {
+        for (details in listOf(false, true)) {
+            verifyOrderedOutline(document(eyeDetails = true, mouthDetails = details, pairedBrows = true, bilateralEyes = true))
+        }
+    }
+
+    private suspend fun verifyOrderedOutline(art: WorkspaceDocument) {
+        val choices = WorkspaceInitialPreset(clothing = false)
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, legacy) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
+            choices, requestedVersions = mapOf(
+                "mouth/fitted" to 3, "mouth.outline" to 1))
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val locked = stack.instances.single { it.type == "mouth.outline" }
+        val index = stack.index(locked.id)
+        assertEquals(3, stack.instances.single { it.type == "mouth/fitted" }.version)
+        assertEquals(2, stack.instances.single { it.type == "hair/chains" }.version)
+        assertEquals(1, locked.version)
+        val expected = assertNotNull(legacy.modifierEvaluation).outputs
+        val previous = expected[index - 1]
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 7))
+        val instance = locked.copy(version = 7, plugin = artifact.reference)
+        val upgraded = stack.copy(instances = stack.instances.map { if (it.id == locked.id) instance else it })
+        val document = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = upgraded.toJson()))
+        val finalIr = RigIrCompiler.compile(legacy, tileArt = true)
+        fun verify(model: RigPreviewModel) {
+            val evaluation = assertNotNull(model.modifierEvaluation)
+            assertEquals(ModifierStatus.ACTIVE, evaluation.entries[index].status, evaluation.entries[index].toString())
+            assertFaceEquals(previous, evaluation.outputs[index - 1])
+            for (stage in index until stack.instances.size) {
+                val reference = expected[stage]
+                val result = evaluation.outputs[stage]
+                val meshes = reference.meshes.zip(result.meshes).filter { (old, new) -> old != new }.map { it.first.name }
+                val deformers = reference.deformers.zip(result.deformers).filter { (old, new) -> old != new }.map { it.first.name }
+                assertTrue(reference == result, "${stack.instances[stage].type}: meshes=$meshes, deformers=$deformers")
+            }
+            assertFaceEquals(finalIr, RigIrCompiler.compile(model, tileArt = true))
+        }
+        val actual = WorkspacePreviewBuilder().build(document).also(::verify)
+        val cache = RigStageCache.enabled
+        try {
+            RigStageCache.enabled = false
+            verify(PSD2LivePipeline().buildPreview(document.source, document.config()))
+        } finally {
+            RigStageCache.enabled = cache
+        }
+
+        val root = Files.createTempDirectory("fitted-outline-order-package-")
+        val preferences = Preferences.userRoot().node("fitted-outline-order/" + UUID.randomUUID())
+        val store = ModifierPluginStore(root.resolve("installed"), preferences)
+        try {
+            BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+            val plugin = store.snapshot().single()
+            val worker = plugin.manifest.algorithms.single()
+            val captured = assertNotNull(assertNotNull(actual.modifierEvaluation).readAlgorithms[instance.id]).context
+            assertTrue(captured.values.getValue("hair").jsonObject.isNotEmpty())
+            val output = ModifierPluginWorkers.evaluate(plugin, worker, previous, instance, {}, store, context = captured,
+                resolveRasters = { rig, rasters, checkpoint -> RigModifierRasterAssets.attach(rig, rasters, actual.config, checkpoint) })
+            assertFaceEquals(expected[index], output)
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(root)
+        }
+    }
+
     @Test fun fittedMouthV3PreservesTheFallbackHeadTurnWithOneEye(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true,
             creatureDetails = true).copy(deletedLayerIds = setOf("wing-left"))

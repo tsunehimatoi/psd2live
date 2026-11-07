@@ -2859,6 +2859,40 @@ tasks.register("pluginMouthOutlineV6") {
     }
 }
 
+val mouthOutlineV7WorkerJar = registerIsolatedBindingWorker(
+    "mouthOutlineV7", "mouth-outline-v7", "worker-mouth-outline-v7", "io.github.psd2live.algorithms.binding.MouthOutlineV7Worker",
+)
+kotlin.target.compilations.named("mouthOutlineV7") {
+    associateWith(kotlin.target.compilations.getByName("mouthOutlineV3"))
+}
+mouthOutlineV7WorkerJar.configure {
+    from(sourceSets["mouthOutlineV3"].output)
+    from(sourceSets.main.get().output) { include(neckWorkerClasses) }
+}
+
+tasks.register("pluginMouthOutlineV7") {
+    dependsOn(mouthOutlineV7WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-outline-v7")
+    inputs.file(mouthOutlineV7WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", project.version.toString())
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthOutlineV7WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682e6f75746c696e65.v7"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"${project.version}","name":"Fitted mouth outline",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/outline","aliases":["mouth.outline"],"version":7,"contextVersion":2,"name":"Fitted mouth outline","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","mouth/fitted"],"exclusiveFamily":"mouth.outline",
+               "reads":["*"],"writes":["mesh","deformer","part","hierarchy","textures","authoring"],
+               "composableKinds":["mesh","deformer","part","hierarchy"],"configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val mouthFittedV3WorkerJar = registerIsolatedBindingWorker(
     "mouthFittedV3", "mouth-fitted-v3", "worker-mouth-fitted-v3", "io.github.psd2live.algorithms.binding.MouthFittedV3Worker",
 )
