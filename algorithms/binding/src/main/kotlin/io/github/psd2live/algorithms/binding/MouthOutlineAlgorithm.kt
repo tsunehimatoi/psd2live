@@ -15,20 +15,26 @@ import org.umamo.runtime.model.*
 import java.util.UUID
 
 /** Builds outline ribbons from the source trace, neutral scaffold contour and declared motion providers. */
-class MouthOutlineAlgorithm : ChangingModifierAlgorithmPlugin {
-    override fun changes(input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext,
+class MouthOutlineAlgorithm : ReadingModifierAlgorithmPlugin {
+    override fun changes(input: ModifierEvaluationInput, instance: RigModifierInstance,
                          checkpoint: () -> Unit): ModifierModelChanges {
+        val context = input.context
         val captured = MouthOutlineInputs.decode(context)
-        require(instance.targets.all { it.kind == "mesh" } &&
-            captured.targets.keys.all { id -> instance.targets.any { it.id == id } })
+        val targets = instance.targets.mapTo(HashSet()) { it.id }
+        require(instance.targets.all { it.kind == "mesh" } && targets.containsAll(captured.targets.keys))
         val thickness = instance.config["values"]?.jsonObject?.get("thickness")?.jsonPrimitive?.float ?: 1.5f
         val color = instance.config["color"]?.jsonPrimitive?.int
         require(thickness in .5f..8f && (color == null || color in 0..0xffffff))
-        val model = PuppetIr.toPuppet(input.copy(meshes = input.meshes.filter { it.id in captured.targets }))
+        if (captured.targets.isEmpty()) return ModifierModelChanges()
+        val source = captured.targets.keys.associateWith { requireNotNull(input.mesh(it)) { "Missing outline owner: $it" } }
+        // Lowering observes the axes and shape kinds on the surrounding rig, while the geometry conversion
+        // only needs the captured owners. Textures and authored sidecars are attached by the host.
+        val model = PuppetIr.toPuppet(RigIR(input.canvas, input.parameters, parts = input.parts,
+            deformers = input.deformers, meshes = source.values.toList(), glues = input.glues))
         val live = model.drawables.associateBy { it.id.raw }
-        val source = input.meshes.associateBy { it.id }
         val fitted = captured.fitted?.rig()
         val head = captured.head?.rig(checkpoint)
+        val topologies = HashMap<String, MouthOutlineInputs.Topology>()
         val rasters = buildList {
             for ((id, target) in captured.targets) {
                 checkpoint()
@@ -47,8 +53,10 @@ class MouthOutlineAlgorithm : ChangingModifierAlgorithmPlugin {
                 val raster = captured.artwork.raster(layer)
                 val rgb = color ?: MouthOutlineRaster.perimeterColor(raster.width, raster.height, raster.rgba(),
                     captured.alphaThreshold, checkpoint)
-                val positions = target.sourcePositions.toFloatArray()
-                val triangles = target.sourceTriangles.toIntArray()
+                val topology = target.topology?.let { digest -> topologies.getOrPut(digest) { captured.topology(target, checkpoint) } }
+                    ?: captured.topology(target, checkpoint)
+                val positions = topology.positions
+                val triangles = topology.triangles
                 val neutral = if (target.contourOwner) MouthContour.ownerContour(positions, triangles) else null
                 val columns = MouthContour.uniformColumns(neutral?.positions ?: positions, neutral?.triangles ?: triangles)
                 if (columns.size < 2) continue

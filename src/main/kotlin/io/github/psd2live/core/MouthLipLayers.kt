@@ -49,15 +49,7 @@ internal object MouthLipLayers {
             return input.copy(layers = originals)
         // Version 2 records: superseded layers never feed the face rig, and parts own no ribbons (their meshes are pinned).
         val resolution = PrimitiveResolution.of(config.rigEdits)
-        val layout = (input.calibration ?: input).let { if (resolution.active) it.copy(layers = resolution.aggregates(it.layers)) else it }
-            .let { analysis ->
-                if (config.rigPendingLayerIds.isEmpty()) analysis else {
-                    val layers = analysis.layers.filterNot { it.source.id.raw in config.rigPendingLayerIds }
-                    analysis.copy(layers = layers, anchors = if (layers.any { it.opaquePixels > 0 }) CharacterAnalyzer.anchorsFor(layers) else analysis.anchors)
-                }
-            }
-        val faceRig = NinePoseFaceRig.from(layout)
-        val headSpace = faceRig.coordinateSpace
+        val headSpace = rasterAlignment(input, config, resolution)
         // A depth front copies exactly the selected mesh, including its already authored mouth motion.
         val depthFronts = DepthSplit.frontLayerIds(config)
         val unitScale = MeshResolution.unitScale(config, input.source)
@@ -74,6 +66,15 @@ internal object MouthLipLayers {
             }
         }
         return input.copy(layers = layers)
+    }
+
+    internal fun rasterAlignment(input: PipelineAnalysis, config: PipelineConfig, resolution: PrimitiveResolution): HeadCoordinateSpace {
+        val layout = (input.calibration ?: input).let { if (resolution.active) it.copy(layers = resolution.aggregates(it.layers)) else it }
+        val framed = if (config.rigPendingLayerIds.isEmpty()) layout else {
+            val layers = layout.layers.filterNot { it.source.id.raw in config.rigPendingLayerIds }
+            layout.copy(layers = layers, anchors = if (layers.any { it.opaquePixels > 0 }) CharacterAnalyzer.anchorsFor(layers) else layout.anchors)
+        }
+        return NinePoseFaceRig.from(framed).coordinateSpace
     }
 
     /** Dense raster contour used to paint the ribbon, distinct from scaffold topology. */

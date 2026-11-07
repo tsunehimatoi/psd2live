@@ -1,11 +1,12 @@
 package io.github.psd2live.core
 
 import io.github.psd2live.algorithms.binding.MouthOutlineAlgorithm
+import io.github.psd2live.algorithms.binding.MouthOutlineInputs
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.project.rawConfig
 import io.github.psd2live.scenario.Characters
 import io.github.psd2live.targets.cubism.PuppetIr
-import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.*
 import io.github.psd2live.core.recipe.BaseChoice
 import io.github.psd2live.core.recipe.ModuleChoice
 import io.github.psd2live.core.recipe.RigModules
@@ -31,12 +32,10 @@ class MouthOutlinePluginParityTest {
         val layer = analysis.layers.single { it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && it.semantic.role == null }
         val layerId = layer.source.id.raw
         val id = source.layerIdByDrawableId.entries.single { it.value == layerId }.key
-        val geometry = RigBuilder.rigContext(analysis, config, cache)
         val target = ModifierTarget("mesh", id)
         val provider = "fitted".takeIf { fitted }
         val capture = RigMouthOutlineSource.capture(analysis, config,
-            mapOf(id to RigMouthOutlineSource.Owner(layerId, id, fittedProvider = provider)),
-            geometry.faceRig.coordinateSpace, cache = cache)
+            mapOf(id to RigMouthOutlineSource.Owner(layerId, id, fittedProvider = provider)), cache = cache)
         val instance = RigModifierInstance("outline", "mouth.outline", 1, listOf(target),
             config = JsonObject(emptyMap()))
         val input = PuppetIr.toIr(source.puppet)
@@ -44,8 +43,36 @@ class MouthOutlinePluginParityTest {
         val context = capture.encode()
         if (fitted) assertFailsWith<IllegalArgumentException> { candidate.changes(input, instance, context) {} }
         val upstream = provider?.let { listOf(ModifierUpstreamCapability("mouth/fitted", "mouth/fitted", 1, listOf(target), it)) }.orEmpty()
-        val changes = candidate.changes(input, instance, context.withUpstream(upstream)) {}
+        val captured = context.withUpstream(upstream)
+        val observation = ModifierEvaluationInput(input, captured)
+        val changes = candidate.changes(observation, instance) {}
         assertEquals(2, changes.rasters.size)
+        val encodedTarget = captured.values.getValue("targets").jsonObject.getValue(id).jsonObject
+        val digest = encodedTarget.getValue("topology").jsonPrimitive.content
+        assertTrue("sourcePositions" !in encodedTarget && "sourceTriangles" !in encodedTarget)
+        assertFailsWith<IllegalArgumentException> {
+            MouthOutlineInputs.decode(ModifierAlgorithmContext(captured.values, captured.resources - digest, upstream))
+        }
+        val topology = capture.topology(capture.targets.getValue(id)) {}
+        val legacyTarget = JsonObject((encodedTarget - "topology") + mapOf(
+            "sourcePositions" to JsonArray(topology.positions.map(::JsonPrimitive)),
+            "sourceTriangles" to JsonArray(topology.triangles.map(::JsonPrimitive))))
+        val legacy = ModifierAlgorithmContext(JsonObject(captured.values + mapOf("schema" to JsonPrimitive("mouth-outline/1"),
+            "targets" to JsonObject(mapOf(id to legacyTarget)))), captured.resources - digest, upstream)
+        val legacyRasters = candidate.changes(input, instance, legacy) {}.rasters
+        assertEquals(changes.rasters.size, legacyRasters.size)
+        changes.rasters.zip(legacyRasters).forEach { (current, old) ->
+            assertEquals(current.owner, old.owner)
+            assertEquals(current.mesh, old.mesh)
+            assertEquals(current.layer, old.layer)
+            assertEquals(current.paths, old.paths)
+            assertEquals(current.uvSpace, old.uvSpace)
+            assertContentEquals(current.pixels.read(), old.pixels.read())
+        }
+        val reads = observation.reads()
+        assertEquals(setOf(ModifierReadKey("mesh", id)), reads.keys.filter { it.section == "mesh" }.toSet())
+        assertTrue(reads.matches(input.copy(meshes = input.meshes.map { if (it.id == id) it else it.copy(opacity = .5f) }), captured))
+        assertFalse(reads.matches(input.copy(meshes = input.meshes.map { if (it.id == id) it.copy(opacity = .5f) else it }), captured))
 
         val legacyConfig = config.copy(mouthOutlineEnabled = true)
         val prepared = MouthLipLayers.prepare(analysis, legacyConfig, cache)

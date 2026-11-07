@@ -6,7 +6,7 @@ import io.github.psd2live.algorithms.binding.MouthOutlineMotion
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.i18n.tr
 
-/** Host capture for the outline candidate. No rig or native ribbon is generated to populate it. */
+/** Captures source measurements and topology for the outline candidate. */
 internal object RigMouthOutlineSource {
     data class Owner(
         val layer: String,
@@ -20,7 +20,6 @@ internal object RigMouthOutlineSource {
         analysis: PipelineAnalysis,
         config: PipelineConfig,
         owners: Map<String, Owner>,
-        rasterAlignment: HeadCoordinateSpace,
         head: MouthFittedInputs.Head? = null,
         cache: PreviewMeshCache? = null,
         checkpoint: () -> Unit = {},
@@ -30,6 +29,7 @@ internal object RigMouthOutlineSource {
         val layered = original.any { it.semantic.tag in tags && it.semantic.role in io.github.psd2live.core.fit.FittedMouth.LIPS }
         val excluded = config.rigPendingLayerIds + DepthSplit.frontLayerIds(config)
         val split = PrimitiveResolution.of(config.rigEdits)
+        val rasterAlignment by lazy { MouthLipLayers.rasterAlignment(analysis, config, split) }
         val unitScale = MeshResolution.unitScale(config, analysis.source)
         val outlineConfig = config.copy(mouthOutlineEnabled = true)
         // The outline mesh footprint also determines the native ribbon's frame and aperture.
@@ -39,6 +39,8 @@ internal object RigMouthOutlineSource {
         val bindings = linkedMapOf<String, String>()
         val layers = linkedMapOf<String, ModifierSourceLayer>()
         val resources = linkedMapOf<String, ModifierAlgorithmResource>()
+        val topologies = linkedMapOf<String, ModifierAlgorithmResource>()
+        val topologyByLayer = hashMapOf<String, String>()
         val traces = hashMapOf<String, List<MouthColumn>>()
         if (!layered && !config.meshOnly && !config.deferRig) for ((id, owner) in owners) {
             checkpoint()
@@ -55,7 +57,12 @@ internal object RigMouthOutlineSource {
             val aperture = geometry.rigLayer(framed).bounds
             val alignment = geometry.headSpaceFor(framed, outlineConfig)
             // The native opening uses the outline-specific edge margin and the selected mouth recipe's density.
-            val neutral = RigBuilder.mouthOutlineSourceMesh(framed, alignment, outlineConfig, cache, unitScale)
+            val topology = topologyByLayer.getOrPut(owner.layer) {
+                val neutral = RigBuilder.mouthOutlineSourceMesh(framed, alignment, outlineConfig, cache, unitScale)
+                val resource = MouthOutlineInputs.Topology(neutral.rigPositions, neutral.mesh.indices).resource()
+                topologies.putIfAbsent(resource.digest, resource)
+                resource.digest
+            }
             layers.getOrPut(owner.layer) {
                 val pixels = ModifierAlgorithmResource(source.raster.rgba)
                 resources.putIfAbsent(pixels.digest, pixels)
@@ -66,17 +73,18 @@ internal object RigMouthOutlineSource {
             }
             bindings[id] = owner.layer
             targets[id] = MouthOutlineInputs.Target(owner.canonical, frame.observation(), aperture.observation(),
-                alignment?.observation(), neutral.rigPositions.toList(), neutral.mesh.indices.toList(),
-                columns, source.name + " / " + tr("mouth.upperLip"), source.name + " / " + tr("mouth.lowerLip"),
-                source.groupPath, source.visible, sides, owner.fittedProvider, owner.headOnMesh, owner.contourOwner,
-                rasterAlignment.observation())
+                alignment?.observation(), rasterColumns = columns, upperName = source.name + " / " + tr("mouth.upperLip"),
+                lowerName = source.name + " / " + tr("mouth.lowerLip"), groupPath = source.groupPath,
+                sourceVisible = source.visible, sides = sides, fittedProvider = owner.fittedProvider,
+                headOnMesh = owner.headOnMesh, contourOwner = owner.contourOwner,
+                rasterAlignment = rasterAlignment.observation(), topology = topology)
         }
         val tuning = config.rigTuning
         val fitted = if (targets.values.any { it.fittedProvider != null }) geometry.fittedMouth(outlineConfig)?.source else null
         return MouthOutlineInputs(ModifierSourceInputs(layers.values.toList(), resources, bindings), targets,
             config.alphaThreshold, if (config.mouthShape == "custom") config.mouthCurve else MouthCurve.preset(config.mouthShape),
             MouthOutlineMotion.Tuning(tuning.mouthClosedNarrow, tuning.mouthFormWiden, tuning.mouthSeam,
-                tuning.mouthSmileBase, tuning.mouthSmile), fitted, head)
+                tuning.mouthSmileBase, tuning.mouthSmile), fitted, head, topologies)
     }
 
     private fun Bounds.observation() = ModifierSourceBounds(left, top, right, bottom)
