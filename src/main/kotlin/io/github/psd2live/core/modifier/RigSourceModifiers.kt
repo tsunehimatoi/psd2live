@@ -352,8 +352,6 @@ internal class RigModifierSource(
             instances.dropLast(1).any { !it.type.endsWith("/legacy") }) {
             moodTemplate(instances, scaffold, state)?.let { return it }
         }
-
-
             var tuning = RigTuning()
             for (spec in RigLegacyBindings.specs) state[spec.type]?.let { tuning = RigLegacyBindings.tuning(it, tuning) }
             val bodyStrength = state["body/legacy"]?.let(RigLegacyBindings::strength) ?: 1f
@@ -394,25 +392,27 @@ internal class RigModifierSource(
         val previous = template(instances.dropLast(1), scaffold)
         val input = requireNotNull(previous.bindingInput) { "Fitted mouth requires captured upstream source geometry" }.invoke()
         val context = RigBuilder.rigContext(analysis, native, meshCache)
-        val sourceLayers = analysis.layers.associateBy { it.source.id.raw }
+        val sourceLayers = context.analysis.layers.associateBy { it.source.id.raw }
         val layers = input.drawables.mapNotNull { mesh ->
             sourceLayers[layersByMesh[mesh.id.raw]]?.let { mesh.id.raw to it }
         }.toMap()
-        val byId = input.drawables.associateBy { it.id.raw }
-        val frames = layers.mapValues { (id, _) ->
-            byId.getValue(id).parentDeformerId?.let { requireNotNull(context.resolveFrame(it, native)) } ?: context.character
-        }
+        val frames = layers.mapValues { (_, layer) -> context.parentAndFrame(layer, native).second }
+        val originals = layers.filterValues { it.semantic.tag in CharacterAnalyzer.MOUTH_TAGS ||
+            it.semantic.tag in setOf(SemanticTag.FACE, SemanticTag.NOSE, SemanticTag.FACE_DETAIL) }
+            .mapValues { (_, layer) -> RigBuilder.fittedMouthSourceMesh(layer, context, native, atlas, meshCache) }
+        val source = input.copy(drawables = input.drawables.map { drawable ->
+            val data = originals[drawable.id.raw] ?: return@map drawable
+            val layer = layers.getValue(drawable.id.raw)
+            if (layer.semantic.tag !in CharacterAnalyzer.MOUTH_TAGS) return@map drawable
+            drawable.copy(parentDeformerId = context.parentAndFrame(layer, native).first, mesh = data.mesh,
+                geometryGrid = null, blendShapes = emptyList())
+        })
         val headProvider = instances.lastOrNull { it.type in setOf("face/fitted", "face.depth-turn") }?.id
-        val captured = RigFittedMouthSource.capture(context, native, input, layers, frames,
+        val captured = RigFittedMouthSource.capture(context, native, source, layers, frames,
             input.drawables.map { it.id.raw }, headProvider)
-        val sourceMeshes = scaffoldContext(provider(instances.last())).resources["source_meshes"]
-        val inputs = if (sourceMeshes == null) captured else captured.copy(sourceVertices =
-            io.github.psd2live.algorithms.binding.MouthFittedInputs.SourceVertices(sourceMeshes,
-                layers.keys.associateWith { id ->
-                    io.github.psd2live.algorithms.binding.MouthFittedInputs.SourceVertexTarget(id, byId.getValue(id).parentDeformerId?.raw)
-                }))
         var bindingInput: PuppetModel? = null
-        val result = io.github.psd2live.algorithms.binding.MouthFittedAlgorithm().project(input, layers.keys, inputs,
+        val result = io.github.psd2live.algorithms.binding.MouthFittedAlgorithm().project(source, layers.keys, captured,
+            sourcePositions = originals.mapValues { (_, data) -> data.rigPositions },
             checkpoint = { if (Thread.currentThread().isInterrupted) throw java.util.concurrent.CancellationException() },
             onBindingInput = { bindingInput = it })
         RigBuildProfile.count("modifier direct fitted mouth")

@@ -70,8 +70,9 @@ class MouthFittedAlgorithm : ChangingModifierAlgorithmPlugin {
         checkpoint: () -> Unit = {},
         onBindingInput: ((PuppetModel) -> Unit)? = null,
         tongueId: (DrawableId) -> String = { "${it.raw}_Out" },
+        sourcePositions: Map<String, FloatArray> = emptyMap(),
     ): PuppetModel {
-        val posed = sourceCandidate(source, targets, inputs, checkpoint, tongueId)
+        val posed = sourceCandidate(source, targets, inputs, checkpoint, sourcePositions, tongueId)
         onBindingInput?.invoke(posed)
         return lower(posed, inputs, checkpoint)
     }
@@ -85,6 +86,7 @@ class MouthFittedAlgorithm : ChangingModifierAlgorithmPlugin {
         targets: Set<String>,
         inputs: MouthFittedInputs,
         checkpoint: () -> Unit,
+        sourcePositions: Map<String, FloatArray> = emptyMap(),
         tongueId: (DrawableId) -> String,
     ): PuppetModel {
         val mouth = inputs.source?.rig()
@@ -114,13 +116,14 @@ class MouthFittedAlgorithm : ChangingModifierAlgorithmPlugin {
                 (layer.tag in setOf("FACE", "NOSE") || layer.tag == "FACE_DETAIL" && mouth.fit.toMouth(layer.centroidX, layer.centroidY).second > 0f)
             val raw = vertexInputs?.targets?.get(original.id.raw)?.takeIf { it.parent == original.parentDeformerId?.raw }
                 ?.let { rawMeshes.getValue(it.canonical) }
-            val positions = if (raw != null && matchesSource(raw, geometry, layer.frame, checkpoint)) raw.rigPositions
+            val positions = sourcePositions[original.id.raw] ?: if (raw != null && matchesSource(raw, geometry, layer.frame, checkpoint)) raw.rigPositions
                 else positions(geometry.positions, layer.frame)
             val grid = when {
                 mouth != null && follow != null -> if (layer.tag == "MOUTH_CLOSE") mouth.closedGrid(positions, layer.frame, mouthForm)
                     else mouth.grid(positions, layer.frame, mouthForm, mouthOpen, follow, inputs.chin)
                 mouth != null && faceSkin -> mouth.faceGrid(positions, layer.frame, mouthForm, mouthOpen, inputs.chin)
                 layer.tag in openTags && inputs.fallback != null -> fallbackGrid(positions, layer, inputs.fallback)
+                layer.tag in tags && original.geometryGrid == null -> KeyformGrid(emptyList(), listOf(KeyformCell(IntArray(0), MeshDeltaForm(FloatArray(positions.size)))))
                 else -> original.geometryGrid
             }
             val masks = if (layer.tag in components || covered && layer.tag in openTags &&

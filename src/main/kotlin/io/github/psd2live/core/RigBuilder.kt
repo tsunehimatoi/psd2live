@@ -3185,6 +3185,22 @@ object RigBuilder {
 		return Deformer.Warp(id, name, parent, part, rows, 3, true, grid)
 	}
 
+	/** Uses the fitted recipe's mesh density and the native aligned source coordinates. */
+	internal fun fittedMouthSourceMesh(layer: ClassifiedLayer, context: RigContext, config: PipelineConfig,
+	                                  atlas: PackedAtlas, cache: PreviewMeshCache): MeshData {
+		val (parent, frame) = context.parentAndFrame(layer, config)
+		val space = context.headSpaceFor(layer, config)
+		val raw = buildGridMesh(layer, frame, space, config, cache,
+			MeshResolution.unitScale(config, context.analysis.source))
+		val contour = config.mouthOutlineEnabled && layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) &&
+			context.fittedMouth(config)?.layered != true
+		val data = if (contour) mouthContourMesh(raw, layer, frame, space) else raw
+		val placement = atlas.placementByLayerId.getValue(layer.source.id.raw)
+		val positions = if (parent == null) data.rigPositions else data.mesh.positions
+		val uvs = LayerTexture.packed(layer, placement, atlas).bind(data.mesh.uvs)
+		return MeshData(DrawableMesh(positions, uvs, data.mesh.indices), data.rigPositions)
+	}
+
 	/** Raw mouth topology for the outline binding, before replacing the opening with shared columns. */
 	internal fun mouthOutlineSourceMesh(
 		layer: ClassifiedLayer,

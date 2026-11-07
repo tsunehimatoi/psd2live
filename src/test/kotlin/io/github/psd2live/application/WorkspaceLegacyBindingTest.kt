@@ -342,6 +342,16 @@ class WorkspaceLegacyBindingTest {
         assertEquals(expected, RigIrCompiler.compile(f.now.model))
     }
 
+    @Test fun fittedMouthMatchesNativeBeforeAddingHair(): Unit = runBlocking<Unit> {
+        val f = Fixture(document()); f.install()
+        val recipe = fittedRecipe(mapOf("eye" to BaseChoice("eye/fitted", 2), "brow" to BaseChoice("brow/fitted"), "mouth" to BaseChoice("mouth/fitted")))
+        val original = native(f.document, recipe)
+        f.group(listOf("body/legacy", "face/legacy", "eye/fitted", "brow/fitted", "mouth/fitted"))
+        compare(original, f.now.model, listOf(emptyMap(),
+            mapOf(StandardParameters.ANGLE_X to 20f, StandardParameters.ANGLE_Y to -12f,
+                StandardParameters.MOUTH_OPEN to .6f, StandardParameters.MOUTH_FORM to -.5f)),
+            targets = setOf(mesh(f, "mouth").id))
+    }
     @Test fun fittedBaseValuesAreIndependentOfLegacySlidersAndMutuallyExclusiveWithOtherBases(): Unit = runBlocking<Unit> {
         val f = Fixture(document()); f.install()
         f.group(listOf("eye/fitted"))
