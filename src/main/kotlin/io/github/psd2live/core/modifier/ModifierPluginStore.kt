@@ -168,36 +168,48 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
     }
 
     fun install(source: String, ref: String? = null): InstalledModifierPlugin = stage(source, ref) { directory, commit ->
-        val checked = inspectDirectory(directory, commit)
-        synchronized(lock) {
-            checkCancelled()
-            checkDependencies(installed + checked)
-            installed.firstOrNull { it.reference.digest == checked.reference.digest }?.let { return@synchronized it }
-            require(installed.none { it.reference.id == checked.reference.id && it.reference.version == checked.reference.version }) {
-                "This plugin version is already installed with different contents; use a new package version"
-            }
-            require(installed.none { it.reference.id != checked.reference.id && it.manifest.algorithms.any { old -> checked.manifest.algorithms.any { it.type == old.type } } }) {
-                "Another plugin owns this algorithm type"
-            }
-            val resolution = ModifierPluginDependencies.resolve(checked.reference,
-                packages().filterNot { it.reference == checked.reference } + checked)
-            require(resolution.available) { resolution.issues.joinToString("; ") }
-            Files.writeString(directory.resolve(".dependencies"), codec.encodeToString(kotlinx.serialization.builtins.ListSerializer(ModifierPluginReference.serializer()), resolution.dependencies))
-            val destination = root.resolve(checked.reference.digest)
-            if (Files.exists(destination)) {
-                // A damaged installation is not active. Retain it outside the catalog until cleanup succeeds.
-                val damaged = root.resolve(".damaged-${checked.reference.digest}-${System.nanoTime()}")
-                Files.move(destination, damaged, ATOMIC_MOVE)
-                runCatching { deleteTree(damaged) }
-            }
-            Files.move(directory, destination, ATOMIC_MOVE)
-            val result = checked.copy(directory = destination, dependencyLock = resolution.dependencies, reference = checked.reference.copy(
-                dependencyDigests = resolution.dependencies.associate { "${it.id}@${it.version}" to it.digest }))
-            installed = installed + result
-            loadProblems.removeAll { it.startsWith(checked.reference.digest + ":") }
-            changes.value++
-            result
+        publish(inspectDirectory(directory, commit))
+    }
+
+    /** The bundled copier already wrote into an isolated directory on the store's volume. */
+    fun installBundled(directory: Path, expected: ModifierPluginReference): InstalledModifierPlugin {
+        require(directory.parent == root && directory.fileName.toString().startsWith(".bundled-"))
+        require(listOf(".dependencies", ".origin").none { Files.exists(directory.resolve(it), NOFOLLOW_LINKS) }) {
+            "Bundled plugin archives must not contain installation metadata"
         }
+        val checked = inspectDirectory(directory, null)
+        require(checked.reference == expected) { "Bundled algorithm checksum mismatch: ${expected.id}" }
+        return publish(checked)
+    }
+
+    private fun publish(checked: InstalledModifierPlugin): InstalledModifierPlugin = synchronized(lock) {
+        checkCancelled()
+        checkDependencies(installed + checked)
+        installed.firstOrNull { it.reference.digest == checked.reference.digest }?.let { return@synchronized it }
+        require(installed.none { it.reference.id == checked.reference.id && it.reference.version == checked.reference.version }) {
+            "This plugin version is already installed with different contents; use a new package version"
+        }
+        require(installed.none { it.reference.id != checked.reference.id && it.manifest.algorithms.any { old -> checked.manifest.algorithms.any { it.type == old.type } } }) {
+            "Another plugin owns this algorithm type"
+        }
+        val resolution = ModifierPluginDependencies.resolve(checked.reference,
+            packages().filterNot { it.reference == checked.reference } + checked)
+        require(resolution.available) { resolution.issues.joinToString("; ") }
+        Files.writeString(checked.directory.resolve(".dependencies"), codec.encodeToString(kotlinx.serialization.builtins.ListSerializer(ModifierPluginReference.serializer()), resolution.dependencies))
+        val destination = root.resolve(checked.reference.digest)
+        if (Files.exists(destination)) {
+            // A damaged installation is not active. Retain it outside the catalog until cleanup succeeds.
+            val damaged = root.resolve(".damaged-${checked.reference.digest}-${System.nanoTime()}")
+            movePackage(destination, damaged)
+            runCatching { deleteTree(damaged) }
+        }
+        movePackage(checked.directory, destination)
+        val result = checked.copy(directory = destination, dependencyLock = resolution.dependencies, reference = checked.reference.copy(
+            dependencyDigests = resolution.dependencies.associate { "${it.id}@${it.version}" to it.digest }))
+        installed = installed + result
+        loadProblems.removeAll { it.startsWith(checked.reference.digest + ":") }
+        changes.value++
+        result
     }
 
     fun setEnabled(reference: ModifierPluginReference, enabled: Boolean) = synchronized(lock) {
@@ -223,7 +235,7 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
         runCatching { deleteTree(trash) }
     }
 
-    /** Windows scanners can briefly retain a directory handle after its worker exits. No state changes until rename succeeds. */
+    /** Windows scanners can briefly retain a package directory handle. Publish catalog changes only after rename. */
     private fun movePackage(source: Path, destination: Path) {
         for (attempt in 0..6) {
             checkCancelled()

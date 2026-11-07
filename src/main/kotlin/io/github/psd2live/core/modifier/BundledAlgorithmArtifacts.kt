@@ -1,5 +1,6 @@
 package io.github.psd2live.core.modifier
 
+import io.github.psd2live.core.RigBuildProfile
 import kotlinx.serialization.json.Json
 import java.nio.file.Files
 
@@ -27,20 +28,19 @@ internal object BundledAlgorithmArtifacts {
     fun find(type: String, version: Int): Artifact? = artifacts.singleOrNull { artifact ->
         artifact.manifest.algorithms.any { it.version == version && type in it.aliases }
     }
-    fun retain(store: ModifierPluginStore) {
-        for (artifact in artifacts) {
-            if (store.snapshot().any { it.reference == artifact.reference }) continue
+    fun retain(store: ModifierPluginStore) = RigBuildProfile.stage("plugin load: retain bundled packages") {
+        val retained = store.snapshot().mapTo(HashSet()) { it.reference }
+        for (artifact in artifacts.filterNot { it.reference in retained }) {
             Files.createDirectories(store.root)
             val staging = Files.createTempDirectory(store.root, ".bundled-")
             try {
                 Files.write(staging.resolve("plugin.json"), artifact.bytes)
-                artifact.manifest.files.forEach { (name, expected) ->
-                    val bytes = requireNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { it.readAllBytes() }
-                    require(ModifierPluginStore.hash(bytes) == expected) { "Bundled algorithm checksum mismatch: $name" }
+                for (name in artifact.manifest.files.keys) {
                     val path = ModifierPluginStore.inside(staging, name)
-                    Files.createDirectories(path.parent); Files.write(path, bytes)
+                    Files.createDirectories(path.parent)
+                    requireNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, path) }
                 }
-                require(store.install(staging.toString()).reference == artifact.reference)
+                store.installBundled(staging, artifact.reference)
             } finally { ModifierPluginStore.deleteTree(staging) }
         }
     }
