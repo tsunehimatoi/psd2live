@@ -6640,6 +6640,48 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun classicPresetSelectsSourceOutlineOnlyWithCompatibleProviders(): Unit = runBlocking {
+        val art = document(mouthDetails = true, closedMouth = true)
+        val choices = WorkspaceModelPresetLibrary.shared.get("legacy").choices
+        suspend fun initialize(
+            artwork: WorkspaceDocument, versions: Map<String, Int> = emptyMap(),
+            thickness: Float = 1.5f, color: Int? = null,
+        ): Pair<RigModifierInstance, RigPreviewModel> {
+            val config = WorkspacePresetBaseline.configure(artwork.config(), "legacy")
+                .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()), mouthThickness = thickness, mouthColor = color)
+            val source = artwork.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+            val (initialized, model) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
+                preferSourceBindings = true, requestedVersions = versions)
+            val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+            return stack.instances.single { it.type == "mouth.outline" } to model
+        }
+        val (selected, model) = initialize(art)
+        assertEquals(4, selected.version)
+        assertEquals(BuiltinModifierPlugins.reference(selected.type, 4), selected.plugin)
+        val (v1, baseline) = initialize(art, mapOf("mouth.outline" to 1))
+        assertEquals(1, v1.version)
+        assertEquals(RigIrCompiler.compile(baseline, tileArt = true), RigIrCompiler.compile(model, tileArt = true))
+        assertEquals(1, initialize(art, mapOf("face/legacy" to 1)).first.version)
+        assertEquals(1, initialize(art, mapOf("mouth/legacy" to 1)).first.version)
+        val editedMesh = art.copy(meshOverrides = mapOf("mouth" to MeshSettings(maxEdgeDistance = 10f)))
+        assertEquals(1, initialize(editedMesh).first.version)
+        val (styled, styledModel) = initialize(art, thickness = 4.25f, color = 0x1A7EC0)
+        val (_, styledLegacy) = initialize(art, mapOf("mouth.outline" to 1), thickness = 4.25f, color = 0x1A7EC0)
+        assertEquals(4, styled.version)
+        assertEquals(RigIrCompiler.compile(styledLegacy, tileArt = true), RigIrCompiler.compile(styledModel, tileArt = true))
+        val styledAssets = styledModel.rig.modifierRasterAssets
+        assertEquals(2, styledAssets.size)
+        assertEquals(styledLegacy.rig.modifierRasterAssets, styledAssets)
+        assertNotEquals(model.rig.modifierRasterAssets.map { it.rgba }, styledAssets.map { it.rgba })
+        fun outlineOutput(model: RigPreviewModel) = assertNotNull(model.modifierEvaluation).let { evaluation ->
+            evaluation.outputs[evaluation.entries.indexOfFirst { it.instance.type == "mouth.outline" }]
+        }
+        val defaultOutput = outlineOutput(model)
+        val styledOutput = outlineOutput(styledModel)
+        assertEquals(defaultOutput.deformers, styledOutput.deformers)
+        assertEquals(defaultOutput.meshes.single { it.name == "mouth" }, styledOutput.meshes.single { it.name == "mouth" })
+    }
+
     @Test fun mouthOutlineV2UsesCapturedLegacyMouthAndReplaysWithoutSwitchingTheDefault(): Unit = runBlocking {
         suspend fun fixture(): Fixture = Fixture(document()).also { it.install(); it.group(listOf("mouth/legacy")) }
         suspend fun add(f: Fixture, type: String) {

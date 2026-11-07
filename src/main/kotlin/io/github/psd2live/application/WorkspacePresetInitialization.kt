@@ -4,6 +4,8 @@ import io.github.psd2live.algorithms.binding.BrowLegacyV2Algorithm
 import io.github.psd2live.algorithms.binding.EyeLegacySourceAlgorithm
 import io.github.psd2live.algorithms.binding.LegacyBodyV2Algorithm
 import io.github.psd2live.algorithms.binding.LegacyFaceV2Algorithm
+import io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm
+import io.github.psd2live.algorithms.binding.MouthOutlineV4Algorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.recipe.*
@@ -85,6 +87,17 @@ internal object WorkspacePresetInitialization {
                 if (!config.recipe.modern && config.rigTuning == RigTuning() && config.rigEdits.authoringJournal.isEmpty()) {
                     put(EyeLegacySourceAlgorithm.TYPE, EyeLegacySourceAlgorithm.VERSION)
                     put(BrowLegacyV2Algorithm.TYPE, BrowLegacyV2Algorithm.VERSION)
+                    val faceVersion = lockedVersions[LegacyFaceV2Algorithm.TYPE]?.first ?: LegacyFaceV2Algorithm.VERSION
+                    val mouthVersion = lockedVersions[MouthLegacyAlgorithm.TYPE]?.first
+                        ?: stack.instances.singleOrNull { it.type == MouthLegacyAlgorithm.TYPE }?.version
+                    if (MouthOutlineV4Algorithm.TYPE !in lockedVersions &&
+                        stack.instances.any { it.type == MouthOutlineV4Algorithm.TYPE } &&
+                        (lockedVersions[RigSourceModifiers.SCAFFOLD]?.first ?: scaffold.version) == 2 &&
+                        faceVersion == LegacyFaceV2Algorithm.VERSION && mouthVersion == MouthLegacyAlgorithm.VERSION &&
+                        ModifierPluginCatalog.available(LegacyFaceV2Algorithm.TYPE, LegacyFaceV2Algorithm.VERSION) &&
+                        supportsClassicOutline(model.analysis, config)) {
+                        put(MouthOutlineV4Algorithm.TYPE, MouthOutlineV4Algorithm.VERSION)
+                    }
                 }
             }
         } else emptyMap()
@@ -171,5 +184,20 @@ internal object WorkspacePresetInitialization {
             WorkspaceModifierSimulation.prepare(current(), stack, work, pipeline = pipeline)
         }
         return current() to build("final preview").also { work.checkpoint(); it.runtimeBundle.materialize(); work.checkpoint() }
+    }
+
+    private fun supportsClassicOutline(analysis: PipelineAnalysis, config: PipelineConfig): Boolean {
+        if (config.rigEdits.copy(modifierStack = null) != RigEditOverlay.Empty ||
+            config.meshOverrides.isNotEmpty() || config.parentOverrides.isNotEmpty() ||
+            config.deferRig || config.rigPendingLayerIds.isNotEmpty()) return false
+        val mouthLayers = analysis.layers.filter {
+            it.semantic.tag == SemanticTag.MOUTH || it.semantic.tag == SemanticTag.MOUTH_OPEN
+        }
+        if (mouthLayers.any { it.semantic.role != null }) return false
+        val artwork = mouthLayers.filter { it.opaquePixels > 0 }
+        if (artwork.isEmpty()) return false
+        val alignment = MouthLipLayers.rasterAlignment(analysis, config, PrimitiveResolution.Inactive)
+        val unitScale = MeshResolution.unitScale(config, analysis.source)
+        return artwork.all { MouthLipLayers.trace(it, config, unitScale, alignment).size >= 2 }
     }
 }
