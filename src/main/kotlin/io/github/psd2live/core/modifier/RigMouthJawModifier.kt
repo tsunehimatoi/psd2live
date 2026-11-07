@@ -6,6 +6,7 @@ import io.github.psd2live.algorithms.binding.MouthJawV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV7Algorithm
+import io.github.psd2live.algorithms.binding.MouthJawV8Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldMesh
 import io.github.psd2live.algorithms.binding.ScaffoldMeshContext
 import io.github.psd2live.core.*
@@ -65,6 +66,35 @@ internal object RigMouthJawModifier {
 
     fun definition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthJawAlgorithm.VERSION, algorithm)
+
+    fun sharedFrameDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val projected = object : ChangingModifierAlgorithmPlugin by MouthJawV8Algorithm,
+            ModifierOptionalUpstream, ModifierVersionSelection {
+            override val canonicalOptInType = MouthJawAlgorithm.TYPE
+            override val optionalUpstream = RigLegacyBindings.specs.filter { !it.expressionToggles && !it.seeThrough }
+                .mapTo(linkedSetOf()) { it.type } - setOf(MouthJawAlgorithm.TYPE, "mouth/fitted")
+        }
+        return modernDefinition(source).copy(version = MouthJawV8Algorithm.VERSION, plugin = projected,
+            authorContext = { requireNotNull(source).captureSharedFrames(it) })
+    }
+
+    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val scaffold = provider(instance)
+        val prefix = bindingPredecessors(instance, scaffold)
+        require(prefix.any { it.id == instance.config.getValue("base").jsonPrimitive.content &&
+            it.type == "mouth/fitted" && it.version == 6 }) { "Mouth jaw v8 requires a shared fitted mouth v6" }
+        val providers = setOf("mouth.outline", "mouth.vowel", "mouth.capture")
+        require(prefix.none { it.type.startsWith("mouth.") && it.type !in providers }) {
+            "Mouth jaw v8 requires the shared open-mouth outline, vowel and capture chain"
+        }
+        val face = setOf(SemanticTag.FACE, SemanticTag.NOSE, SemanticTag.FACE_DETAIL)
+        return captureBindingTransition(instance, scaffold, prefix, face + CharacterAnalyzer.MOUTH_TAGS,
+            projectedTags = face, values = buildJsonObject {
+                putJsonObject("providers") {
+                    providers.forEach { type -> put(type, prefix.single { it.type == type }.id) }
+                }
+            })
+    }
 
     private fun definition(source: RigModifierSource?, version: Int, algorithm: ReadingModifierAlgorithmPlugin): RigModifierDefinition =
         RigLegacyBindings.definition(RigLegacyBindings.spec(MouthJawAlgorithm.TYPE), source).copy(
