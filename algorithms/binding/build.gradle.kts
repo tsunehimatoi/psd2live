@@ -2220,3 +2220,38 @@ tasks.register("pluginMouthFittedV3") {
         """.trimIndent())
     }
 }
+
+val mouthVowelV4WorkerJar = registerIsolatedBindingWorker(
+    "mouthVowelV4", "mouth-vowel-v4", "worker-mouth-vowel-v4", "io.github.psd2live.algorithms.binding.MouthVowelV4Worker",
+)
+kotlin.target.compilations.named("mouthVowelV4") {
+    associateWith(kotlin.target.compilations.getByName("mouthVowel"))
+}
+mouthVowelV4WorkerJar.configure {
+    from(sourceSets["mouthVowel"].output)
+}
+
+tasks.register("pluginMouthVowelV4") {
+    dependsOn(mouthVowelV4WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-vowel-v4")
+    val packageVersion = project.version.toString()
+    inputs.file(mouthVowelV4WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthVowelV4WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682e766f77656c.v4"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Mouth vowels with fitted source",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/vowel","aliases":["mouth.vowel"],"version":4,"name":"Mouth vowels with fitted source","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","mouth/fitted"],"contextVersion":2,
+               "reads":["canvas","mesh","parameter","hierarchy"],"writes":["mesh","parameter","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
