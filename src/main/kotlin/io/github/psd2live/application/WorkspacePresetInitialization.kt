@@ -8,7 +8,9 @@ import io.github.psd2live.algorithms.binding.BrowLegacyV2Algorithm
 import io.github.psd2live.algorithms.binding.BrowLidV5Algorithm
 import io.github.psd2live.algorithms.binding.BrowShapeV3Algorithm
 import io.github.psd2live.algorithms.binding.BrowSpringV4Algorithm
+import io.github.psd2live.algorithms.binding.BustBindingV3Algorithm
 import io.github.psd2live.algorithms.binding.CheekCarrierAlgorithm
+import io.github.psd2live.algorithms.binding.CreatureResidualAlgorithm
 import io.github.psd2live.algorithms.binding.EyeAftershockV4Algorithm
 import io.github.psd2live.algorithms.binding.EyeEmotionV3Algorithm
 import io.github.psd2live.algorithms.binding.EyeFittedV5Algorithm
@@ -232,25 +234,30 @@ internal object WorkspacePresetInitialization {
             } else configured
         })
         if (fittedSources.isNotEmpty()) {
-            val ribbons = stack.instances.singleOrNull { it.type == RigModules.OUTFIT_RIBBONS.id && it.version == 1 }
-            if (ribbons != null) {
-                val upstream = stack.instances.take(stack.index(ribbons.id))
-                val profile = RibbonsResidualAlgorithm.PROFILE + mapOf(
-                    RigSourceModifiers.SCAFFOLD to 2, LegacyBodyV2Algorithm.TYPE to LegacyBodyV2Algorithm.VERSION,
-                    RigLegacyBindings.FITTED_FACE to FittedFaceV3Algorithm.VERSION)
-                val compatible = profile.all { (type, version) -> upstream.any {
-                    it.type == type && it.version == version && it.targets.containsAll(ribbons.targets)
-                } }
-                if (compatible) {
-                    val version = RibbonsResidualAlgorithm.VERSION
-                    val plugin = BuiltinModifierPlugins.reference(ribbons.type, version)
-                    if (plugin != null && ModifierPluginCatalog.available(ribbons.type, version, plugin)) {
-                        stack = stack.copy(instances = stack.instances.map {
-                            if (it.id == ribbons.id) it.copy(version = version, plugin = plugin) else it
-                        })
+            val fittedBody = mapOf(RigSourceModifiers.SCAFFOLD to 2, LegacyBodyV2Algorithm.TYPE to LegacyBodyV2Algorithm.VERSION,
+                RigLegacyBindings.FITTED_FACE to FittedFaceV3Algorithm.VERSION)
+            stack = stack.copy(instances = stack.instances.mapIndexed { index, entry ->
+                val upstream = stack.instances.take(index)
+                val (version, profile) = when {
+                    entry.type == RigModules.OUTFIT_RIBBONS.id && entry.version == 1 ->
+                        RibbonsResidualAlgorithm.VERSION to RibbonsResidualAlgorithm.PROFILE
+                    entry.type == RigModules.OUTFIT_CREATURE.id && entry.version == 1 ->
+                        CreatureResidualAlgorithm.VERSION to CreatureResidualAlgorithm.PROFILE
+                    entry.type == RigModules.BODY_BUST.id && entry.version == 2 && completeEyePair -> {
+                        val mouth = upstream.singleOrNull { it.type == RigModules.MOUTH_FITTED.id }?.version
+                        if (mouth != MouthFittedV3Algorithm.VERSION && mouth != MouthFittedV4Algorithm.VERSION) return@mapIndexed entry
+                        BustBindingV3Algorithm.VERSION to mapOf(RigModules.EYE_FITTED.id to EyeFittedV5Algorithm.VERSION,
+                            RigModules.MOUTH_FITTED.id to mouth)
                     }
+                    else -> return@mapIndexed entry
                 }
-            }
+                val compatible = (fittedBody + profile).all { (type, required) -> upstream.any {
+                    it.type == type && it.version == required && it.targets.containsAll(entry.targets)
+                } }
+                if (!compatible) return@mapIndexed entry
+                val plugin = BuiltinModifierPlugins.reference(entry.type, version) ?: return@mapIndexed entry
+                if (ModifierPluginCatalog.available(entry.type, version, plugin)) entry.copy(version = version, plugin = plugin) else entry
+            })
         }
         model = build("binding preview")
         val available = model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }

@@ -6509,12 +6509,13 @@ class WorkspaceLegacyBindingTest {
             val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
                 .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
             val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-            val (initialized, _) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+            val (initialized, prepared) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
             val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
             val bust = stack.instances.single { it.type == "body.bust" }
             val index = stack.index(bust.id)
             val artifact = assertNotNull(BundledAlgorithmArtifacts.find(bust.type, 3))
-            val selected = bust.copy(version = 3, plugin = artifact.reference)
+            assertEquals(3, bust.version)
+            assertEquals(artifact.reference, bust.plugin)
             val legacy = bust.copy(version = 1, plugin = assertNotNull(BuiltinModifierPlugins.reference(bust.type, 1)))
             fun document(instance: RigModifierInstance): WorkspaceDocument = initialized.copy(
                 rigEdits = initialized.rigEdits.copy(modifierStack = stack.copy(instances = stack.instances.map {
@@ -6525,7 +6526,6 @@ class WorkspaceLegacyBindingTest {
             val expected = assertNotNull(baseline.modifierEvaluation).outputs
             assertTrue(expected[index].meshes.single { it.name == "chest-panel" }.shapes.any { it.parameter == "ParamBustY" })
             val output = RigIrCompiler.compile(baseline, tileArt = true)
-            val upgraded = document(selected)
             fun verify(model: RigPreviewModel) {
                 val evaluation = assertNotNull(model.modifierEvaluation)
                 assertEquals(ModifierStatus.ACTIVE, evaluation.entries[index].status)
@@ -6537,11 +6537,11 @@ class WorkspaceLegacyBindingTest {
                 }
                 assertFaceEquals(output, RigIrCompiler.compile(model, tileArt = true))
             }
-            val actual = builder.build(upgraded).also(::verify)
+            val actual = prepared.also(::verify)
             val cache = RigStageCache.enabled
             try {
                 RigStageCache.enabled = false
-                verify(PSD2LivePipeline().buildPreview(upgraded.source, upgraded.config()))
+                verify(PSD2LivePipeline().buildPreview(initialized.source, initialized.config()))
             } finally {
                 RigStageCache.enabled = cache
             }
@@ -6552,12 +6552,12 @@ class WorkspaceLegacyBindingTest {
                 BundledAlgorithmArtifacts.retain(store, listOf(artifact))
                 val plugin = store.snapshot().single()
                 val evaluation = assertNotNull(actual.modifierEvaluation)
-                val context = assertNotNull(evaluation.readAlgorithms[selected.id]).context
+                val context = assertNotNull(evaluation.readAlgorithms[bust.id]).context
                 assertTrue("bustBefore" in context.resources && "bustAfter" in context.resources)
                 val definition = RigBustModifier.fittedDefinition(RigModifierSource.of(actual))
                 assertFaceEquals(expected[index], ModifierPluginWorkers.evaluate(plugin, plugin.manifest.algorithms.single(),
-                    evaluation.outputs[index - 1], selected, {}, store, context = context,
-                    declaredParameters = definition.parameters(selected)))
+                    evaluation.outputs[index - 1], bust, {}, store, context = context,
+                    declaredParameters = definition.parameters(bust)))
             } finally {
                 ModifierPluginWorkers.stop(artifact.reference)
                 preferences.removeNode()
@@ -6746,12 +6746,13 @@ class WorkspaceLegacyBindingTest {
         val source = art.copy(source = raster, settings = WorkspaceSettingsCodec.encode(config))
         val (initialized, prepared) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
         val fresh = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        assertEquals(3, fresh.instances.single { it.type == "outfit.creature" }.version)
         val stack = fresh.copy(instances = fresh.instances.map { entry ->
-            if (entry.type != "outfit.creature" || entry.version == 1) entry
+            if (entry.type != "outfit.creature") entry
             else entry.copy(version = 1, plugin = assertNotNull(BuiltinModifierPlugins.reference(entry.type, 1)))
         })
         fun documentFor(replay: RigModifierStack) = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = replay.toJson()))
-        val baseline = if (fresh == stack) prepared else WorkspacePreviewBuilder().build(documentFor(stack))
+        val baseline = WorkspacePreviewBuilder().build(documentFor(stack))
         val profile = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 3,
             "mouth/fitted" to 4, "outfit.skirt" to 2, "outfit.ribbons" to 3)
         assertEquals(profile, stack.instances.filter { it.type in profile }.associate { it.type to it.version })
@@ -6796,7 +6797,10 @@ class WorkspaceLegacyBindingTest {
         assertEquals(candidate, WorkspaceModifierSimulation.prepare(documentFor(candidate), candidate, WorkspaceRasterWork.Direct, allowRebake = false))
         val full = WorkspacePreviewBuilder().build(documentFor(candidate))
         assertTrue(expected.outputs == assertNotNull(full.modifierEvaluation).outputs)
-        assertTrue(RigIrCompiler.compile(baseline, tileArt = true) == RigIrCompiler.compile(full, tileArt = true))
+        val expectedIR = RigIrCompiler.compile(baseline, tileArt = true)
+        assertEquals(fresh, candidate)
+        assertTrue(expectedIR == RigIrCompiler.compile(full, tileArt = true))
+        assertTrue(expectedIR == RigIrCompiler.compile(prepared, tileArt = true))
     }
 
     @Test fun creatureV2KeepsLegacyBindingAndRunsInstalledWorker(): Unit = runBlocking {
