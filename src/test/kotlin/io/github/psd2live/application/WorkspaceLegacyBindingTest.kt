@@ -187,10 +187,18 @@ class WorkspaceLegacyBindingTest {
 
     @Test fun fittedBrowPreservesStyledHeadTurnInMixedStack(): Unit = runBlocking {
         val document = document(pairedBrows = true)
-        suspend fun bind(version: Int): RigPreviewModel {
+        suspend fun bind(version: Int, bodyVersion: Int): RigPreviewModel {
             val f = Fixture(document)
             f.install()
-            f.group(listOf("body/legacy", "face/fitted", "eye/fitted"))
+            f.edit("modifier_add_group", buildJsonObject {
+                put("group", "legacy")
+                putJsonArray("entries") {
+                    add(f.addition("rig.scaffold", "structure"))
+                    add(JsonObject(f.addition("body/legacy", "body") + ("version" to JsonPrimitive(bodyVersion))))
+                    add(f.addition("face/fitted", "face"))
+                    add(f.addition("eye/fitted", "eye"))
+                }
+            })
             val before = f.now.model
             val face = before.rig.puppet.deformers.filterIsInstance<Deformer.Warp>().single { it.name == io.github.psd2live.i18n.tr("model.deformer.face") }
             assertTrue(face.geometryGrid!!.axes.single { it.parameterId == StandardParameters.ANGLE_X }.keys.size > 3)
@@ -208,9 +216,9 @@ class WorkspaceLegacyBindingTest {
             return f.now.model
         }
 
-        val legacy = bind(1)
-        val independent = bind(2)
-        assertEquals(RigIrCompiler.compile(legacy), RigIrCompiler.compile(independent))
+        val legacy = RigIrCompiler.compile(bind(version = 1, bodyVersion = 1))
+        assertEquals(legacy, RigIrCompiler.compile(bind(version = 2, bodyVersion = 1)))
+        assertEquals(legacy, RigIrCompiler.compile(bind(version = 2, bodyVersion = 2)))
     }
 
     @Test fun fittedBrowRetainsAuthoredGeometryAfterHeadTurnIsApplied(): Unit = runBlocking {

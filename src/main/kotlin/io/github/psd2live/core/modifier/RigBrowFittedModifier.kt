@@ -33,10 +33,11 @@ internal object RigBrowFittedModifier {
         require(scaffold.version == 2) { "Fitted brow v2 requires a shared v2 scaffold. Use v1 with older scaffolds." }
         val upstream = activeBefore(instance).filter { it.config["scaffold"] == JsonPrimitive(scaffold.id) &&
             it.targets.any(instance.targets::contains) }
-        require(upstream.all { previous -> previous.version == when (previous.type) {
-            "body/legacy", "face/legacy", "face/fitted", "face.depth-turn", "eye/legacy" -> 1
-            "eye/fitted" -> 2
-            else -> 0
+        require(upstream.all { previous -> when (previous.type) {
+            "body/legacy" -> previous.version in 1..2
+            "face/legacy", "face/fitted", "face.depth-turn", "eye/legacy" -> previous.version == 1
+            "eye/fitted" -> previous.version == 2
+            else -> false
         } }) { "Fitted brow v2 requires compatible body, head and eye bindings before the brow. Use v1 with other preceding bindings." }
         val eye = upstream.lastOrNull { it.type == "eye/fitted" }
         val corrections = WorkspaceSettingsCodec.decodeRecipe(scaffold.config["corrections"])
