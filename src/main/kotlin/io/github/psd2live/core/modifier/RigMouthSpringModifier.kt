@@ -3,6 +3,7 @@ package io.github.psd2live.core.modifier
 import io.github.psd2live.algorithms.binding.MouthSpringAlgorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV4Algorithm
+import io.github.psd2live.algorithms.binding.MouthSpringV5Algorithm
 import io.github.psd2live.core.PartRole
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.SemanticTag
@@ -36,6 +37,19 @@ internal object RigMouthSpringModifier {
         override val canonicalOptInType = MouthSpringAlgorithm.TYPE
     }
 
+    private val tongueAlgorithm = object : ReadingModifierAlgorithmPlugin by MouthSpringV5Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = MouthSpringV5Algorithm.optionalUpstream
+        override val canonicalOptInType = MouthSpringAlgorithm.TYPE
+    }
+
+    fun tongueDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val contexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
+        fun capture(instance: RigModifierInstance) = contexts.getOrPut(instance) { requireNotNull(source).capture(instance, MouthSpringV5Algorithm.VERSION) }
+        return definition(source).copy(version = MouthSpringV5Algorithm.VERSION,
+            parameters = { MouthSpringV5Algorithm.parameters(capture(it)) }, plugin = tongueAlgorithm, authorContext = ::capture)
+    }
+
     fun fullDefinition(source: RigModifierSource?): RigModifierDefinition {
         val contexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
         fun capture(instance: RigModifierInstance) = contexts.getOrPut(instance) { requireNotNull(source).capture(instance, MouthSpringV3Algorithm.VERSION) }
@@ -62,7 +76,8 @@ internal object RigMouthSpringModifier {
 
     private fun RigModifierSource.capture(instance: RigModifierInstance, version: Int = MouthSpringAlgorithm.VERSION): ModifierAlgorithmContext {
         val full = version >= MouthSpringV3Algorithm.VERSION
-        val sourceVersions = 1..if (version == MouthSpringV4Algorithm.VERSION) 3 else 2
+        val sourceVersions = if (version >= MouthSpringV4Algorithm.VERSION) 1..3 else 1..2
+        val jawVersions = if (version == MouthSpringV5Algorithm.VERSION) 1..4 else sourceVersions
         val scaffold = provider(instance)
         require(scaffold.version == 2) { "Mouth spring v$version requires a shared v2 scaffold" }
         val preceding = activeBefore(instance).filter { item ->
@@ -72,9 +87,10 @@ internal object RigMouthSpringModifier {
         val baseId = instance.config.getValue("base").jsonPrimitive.content
         val jawId = instance.config.getValue("dependencies").jsonObject.getValue("mouth.jaw").jsonPrimitive.content
         val base = requireNotNull(preceding.singleOrNull { it.id == baseId && it.type == "mouth/fitted" && it.version in sourceVersions })
-        val jaw = requireNotNull(preceding.singleOrNull { it.id == jawId && it.type == "mouth.jaw" && it.version in sourceVersions &&
-            it.config["base"] == JsonPrimitive(baseId) })
+        val jaw = requireNotNull(preceding.singleOrNull { it.id == jawId && it.type == "mouth.jaw" && it.version in jawVersions &&
+            it.config["base"] == JsonPrimitive(baseId) }) { "Mouth spring v$version requires a compatible jaw binding" }
         val optional = when (version) {
+            MouthSpringV5Algorithm.VERSION -> MouthSpringV5Algorithm.optionalUpstream
             MouthSpringV4Algorithm.VERSION -> MouthSpringV4Algorithm.optionalUpstream
             MouthSpringV3Algorithm.VERSION -> MouthSpringV3Algorithm.optionalUpstream
             else -> MouthSpringAlgorithm.optionalUpstream
@@ -115,7 +131,7 @@ internal object RigMouthSpringModifier {
         }
         val resource = ModifierAlgorithmResource(RigIrBinary.encode(RigIR(Canvas(1f, 1f), emptyList(), meshes = skin)))
         val providers = preceding.filter { it.type in optional }
-        return if (version == MouthSpringV4Algorithm.VERSION) {
+        return if (version >= MouthSpringV4Algorithm.VERSION) {
             MouthSpringV4Algorithm.context(measurements, lippedSkin, name, folder, physics, providers, resource)
         } else {
             MouthSpringV3Algorithm.context(measurements, lippedSkin, name, folder, physics, providers, resource)
