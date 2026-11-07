@@ -1,5 +1,6 @@
 package io.github.psd2live.application
 
+import io.github.psd2live.algorithms.binding.MouthFittedV2Algorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.recipe.RigRecipe
@@ -12,6 +13,9 @@ import kotlinx.serialization.json.*
 import org.umamo.format.art.*
 import org.umamo.render.eval.CpuDeformationEvaluator
 import org.umamo.runtime.model.*
+import java.nio.file.Files
+import java.util.UUID
+import java.util.prefs.Preferences
 import kotlin.math.abs
 import kotlin.test.*
 
@@ -1178,6 +1182,65 @@ class WorkspaceLegacyBindingTest {
         val moved = RigIrCompiler.compile(f.now.model)
         f.edit("modifier_apply", buildJsonObject { put("id", "ribbons") })
         assertEquals(moved, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
+    @Test fun fittedMouthV2UsesTheLiveScaffoldWithoutSwitchingTheDefault(): Unit = runBlocking<Unit> {
+        val f = Fixture(document())
+        f.install()
+        f.edit("modifier_add", f.addition("rig.scaffold", "structure"))
+        val scaffold = RigIrCompiler.compile(f.now.model)
+        val request = f.addition("mouth/fitted", "mouth")
+        f.edit("modifier_add", request)
+        val legacy = RigIrCompiler.compile(f.now.model)
+        assertEquals(1, RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.last().version)
+        f.edit("modifier_remove", buildJsonObject { put("id", "mouth") })
+        f.edit("modifier_add", JsonObject(request + mapOf("id" to JsonPrimitive("mouth-v2"), "version" to JsonPrimitive(2))))
+        val actual = RigIrCompiler.compile(f.now.model)
+        val mouthId = f.now.model.rig.layerIdByDrawableId.entries.single { it.value == "mouth" }.key
+        assertEquals(legacy.meshes.single { it.id == mouthId }, actual.meshes.single { it.id == mouthId })
+        assertEquals(scaffold.meshes.filter { it.id != mouthId }, actual.meshes.filter { it.id != mouthId })
+        assertEquals(scaffold.deformers, actual.deformers)
+        assertEquals(actual, RigIrCompiler.compile(WorkspacePreviewBuilder().build(f.now.document)))
+        val evaluation = requireNotNull(f.now.model.modifierEvaluation)
+        val stack = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
+        val structure = stack.instances.first()
+        val instance = stack.instances.last()
+        val upstream = ModifierUpstreamCapability(structure.type, structure.type, structure.version, structure.targets,
+            structure.id, structure.config, structure.outputAliases, structure.plugin)
+        val directory = Files.createTempDirectory("fitted-mouth-v2-")
+        val preferences = Preferences.userRoot().node("fitted-mouth-v2/${UUID.randomUUID()}")
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val artifact = assertNotNull(BundledAlgorithmArtifacts.find(MouthFittedV2Algorithm.TYPE, MouthFittedV2Algorithm.VERSION))
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            artifact.manifest.files.keys.forEach { name ->
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val entry = store.install(staging.toString())
+            val owner = RigModifierSource.of(f.now.model)
+            val worker = ModifierPluginCatalog.definitions(store, BuiltinModifierPlugins.definitions(owner))
+                .single { it.type == MouthFittedV2Algorithm.ENTRYPOINT }
+            val installed = instance.copy(type = worker.type, plugin = entry.reference)
+            val context = worker.authorContext(installed).withUpstream(listOf(upstream))
+            val plugin = worker.plugin as ContextualModifierAlgorithmPlugin
+            val before = evaluation.outputs.first()
+            assertEquals(evaluation.outputs.last(), plugin.evaluate(before, installed, context, {}))
+            val mouth = before.meshes.single { it.id == mouthId }
+            val geometry = requireNotNull(mouth.geometry)
+            val moved = geometry.copy(positions = io.github.psd2live.format.model.Floats.of(
+                geometry.positions.toArray().also { it[0] += .01f }))
+            val authored = before.copy(meshes = before.meshes.map { if (it.id == mouthId) it.copy(geometry = moved) else it })
+            assertEquals(moved, plugin.evaluate(authored, installed, context, {}).meshes.single { it.id == mouthId }.geometry)
+            val head = ModifierUpstreamCapability("face/fitted", "face/fitted", 1, instance.targets, "head")
+            assertFailsWith<IllegalArgumentException> {
+                MouthFittedV2Algorithm().changes(before, instance, context.withUpstream(listOf(upstream, head))) {}
+            }
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
     }
 
     @Test fun depthTurnMatchesNativeAcrossHeadAndBodyPoses(): Unit = runBlocking<Unit> {

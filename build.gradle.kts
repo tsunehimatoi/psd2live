@@ -70,6 +70,7 @@ dependencies {
 	implementation(project(":algorithms:simulation"))
 	implementation(project(":algorithms:binding"))
 	implementation(project(path = ":algorithms:binding", configuration = "eyeFittedElements"))
+	implementation(project(path = ":algorithms:binding", configuration = "mouthFittedV2Elements"))
 	implementation(platform("io.ktor:ktor-bom:3.5.1"))
 	// Engine ported from Umamo (format, runtime, interop, render, edit); it brings its own libraries.
 	implementation(project(":umamo"))
@@ -236,6 +237,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginHairLegacy")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-hair-legacy")) {
         into("algorithm-plugins/hair-legacy")
+    }
+    dependsOn(":algorithms:binding:pluginMouthFittedV2")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-fitted-v2")) {
+        into("algorithm-plugins/mouth-fitted-v2")
     }
     dependsOn(":algorithms:binding:pluginEyeLidFade")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-lid-fade")) {

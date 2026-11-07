@@ -4,6 +4,7 @@ import io.github.psd2live.algorithms.binding.MouthFittedInputs
 import io.github.psd2live.core.recipe.RecipeSubject
 import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.i18n.tr
+import org.umamo.runtime.model.DeformerId
 import org.umamo.runtime.model.PuppetModel
 
 /** Captures source semantics and provider configuration, never evaluated mouth poses. */
@@ -12,6 +13,17 @@ internal object RigFittedMouthSource {
         context: RigBuilder.RigContext,
         config: PipelineConfig,
         source: PuppetModel,
+        layers: Map<String, ClassifiedLayer>,
+        frames: Map<String, Bounds>,
+        maskSources: List<String>,
+        headProvider: String?,
+    ): MouthFittedInputs = capture(context, config, source.drawables.associate { it.id.raw to it.parentDeformerId?.raw },
+        layers, frames, maskSources, headProvider)
+
+    fun capture(
+        context: RigBuilder.RigContext,
+        config: PipelineConfig,
+        parents: Map<String, String?>,
         layers: Map<String, ClassifiedLayer>,
         frames: Map<String, Bounds>,
         maskSources: List<String>,
@@ -27,12 +39,10 @@ internal object RigFittedMouthSource {
                 config.recipe.value(RigModules.FACE_DEPTH_TURN.id, "depth") / 100f, face.chinY)
         }
         val styled = context.faceTurn(config) != null
-        val byId = source.drawables.associateBy { it.id.raw }
         val captured = layers.mapValues { (id, original) ->
-            val drawable = requireNotNull(byId[id]) { "Missing captured mouth source mesh: $id" }
             val frame = requireNotNull(frames[id]) { "Missing captured mouth parent frame: $id" }
             val layer = context.rigLayer(original)
-            val parent = drawable.parentDeformerId
+            val parent = parents.getValue(id)?.let(::DeformerId)
             val ownTurn = parent?.raw?.startsWith("DeformMouthShape") != true &&
                 !(styled && parent != null && (parent.raw == "DeformFaceContour" || parent in context.underFace))
             MouthFittedInputs.Layer(layer.semantic.tag.name, layer.semantic.role?.name, layer.semantic.side.name,

@@ -234,7 +234,7 @@ tasks.register("pluginBrowFitted") {
              "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
              "algorithms":[{"type":"$id/binding","aliases":["brow/fitted"],"version":1,"contextVersion":2,"name":"Fitted brows","category":"brow",
                "targets":["mesh"],"requires":["rig.scaffold"],"exclusiveFamily":"base:brow",
-               "reads":["*"],"writes":["mesh","parameter","hierarchy"],"composableKinds":["mesh","parameter","hierarchy"],
+               "reads":["*"],"writes":["mesh","parameter","hierarchy","rest_pose"],"composableKinds":["mesh","parameter","hierarchy"],
                "configSchema":{"type":"object"},"defaults":{}}]}
         """.trimIndent())
     }
@@ -269,6 +269,56 @@ val pluginMouthFitted by tasks.registering {
              "algorithms":[{"type":"$id/source","version":1,"contextVersion":2,"name":"Fitted mouth source","category":"mouth",
                "targets":["mesh"],"requires":["rig.scaffold"],"exclusiveFamily":"base:mouth",
                "reads":["*"],"writes":["mesh","parameter","part","hierarchy","textures"],"composableKinds":["mesh","parameter","part","hierarchy"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
+val mouthFittedV2 = sourceSets.create("mouthFittedV2")
+kotlin.target.compilations.named("mouthFittedV2") {
+    associateWith(kotlin.target.compilations.getByName("main"))
+}
+val mouthFittedV2ClassesJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("mouth-fitted-v2")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    from(mouthFittedV2.output)
+}
+val mouthFittedV2Elements = configurations.create("mouthFittedV2Elements") {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+}
+artifacts.add(mouthFittedV2Elements.name, mouthFittedV2ClassesJar)
+
+val mouthFittedV2WorkerJar by tasks.registering(Jar::class) {
+    dependsOn(workerJar)
+    archiveClassifier.set("worker-mouth-fitted-v2")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest { attributes["Main-Class"] = "io.github.psd2live.algorithms.binding.MouthFittedV2Worker" }
+    from(mouthFittedV2.output)
+    from(workerJar.flatMap { it.archiveFile }.map { zipTree(it) }) { exclude("META-INF/MANIFEST.MF") }
+}
+
+tasks.register("pluginMouthFittedV2") {
+    dependsOn(mouthFittedV2WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-fitted-v2")
+    inputs.file(mouthFittedV2WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", project.version.toString())
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthFittedV2WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682f666974746564.v2"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"${project.version}","name":"Fitted mouth v2",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/binding","aliases":["mouth/fitted"],"version":2,"contextVersion":2,"name":"Fitted mouth v2","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold"],"exclusiveFamily":"base:mouth",
+               "reads":["*"],"writes":["mesh","parameter","hierarchy","rest_pose"],"composableKinds":["mesh","parameter","hierarchy"],
                "configSchema":{"type":"object"},"defaults":{}}]}
         """.trimIndent())
     }
