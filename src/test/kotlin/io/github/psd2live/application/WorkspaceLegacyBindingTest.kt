@@ -1027,6 +1027,62 @@ class WorkspaceLegacyBindingTest {
         assertEquals(RigIrCompiler.compile(legacy, tileArt = true), RigIrCompiler.compile(actual, tileArt = true))
     }
 
+    @Test fun mouthCaptureV3ReplaysAfterFittedSourceBindings(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
+        val choices = WorkspaceInitialPreset()
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, legacy) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
+            preferSourceBindings = true)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val locked = stack.instances.single { it.type == "mouth.capture" }
+        assertEquals(1, locked.version)
+        val versions = mapOf("mouth/fitted" to 3, "mouth.outline" to 3, "mouth.vowel" to 4, locked.type to 3)
+        suspend fun replay(captureVersion: Int): RigPreviewModel {
+            val next = stack.copy(instances = stack.instances.map { instance ->
+                val version = if (instance.id == locked.id) captureVersion else versions[instance.type] ?: return@map instance
+                instance.copy(version = version, plugin = assertNotNull(BundledAlgorithmArtifacts.find(instance.type, version)).reference)
+            })
+            return WorkspacePreviewBuilder().build(initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = next.toJson())))
+        }
+        assertFailsWith<IllegalArgumentException> { replay(2) }
+        val actual = replay(3)
+        val evaluation = assertNotNull(actual.modifierEvaluation)
+        val expected = assertNotNull(legacy.modifierEvaluation)
+        stack.instances.forEachIndexed { index, instance ->
+            if (instance.type in versions) assertEquals(expected.outputs[index], evaluation.outputs[index], instance.type)
+        }
+        assertEquals(RigIrCompiler.compile(legacy, tileArt = true), RigIrCompiler.compile(actual, tileArt = true))
+
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 3))
+        val directory = Files.createTempDirectory("mouth-capture-v3-package-")
+        val preferences = Preferences.userRoot().node("mouth-capture-v3-package/${UUID.randomUUID()}")
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            for (name in artifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val installed = store.install(staging.toString())
+            val index = stack.index(locked.id)
+            val instance = evaluation.entries[index].instance.copy(type = installed.manifest.algorithms.single().type)
+            val definition = RigMouthCaptureModifier.fittedDefinition(RigModifierSource.of(actual))
+            val adapter = ModifierPluginCatalog.definitions(store, captured = listOf(definition)).single {
+                it.type == instance.type && it.version == instance.version
+            }
+            val context = assertNotNull(evaluation.readAlgorithms[instance.id]).context
+            assertEquals(3, context.upstream.single { it.type == "mouth/fitted" }.version)
+            assertEquals(expected.outputs[index], (adapter.plugin as ContextualModifierAlgorithmPlugin).evaluate(
+                evaluation.outputs[index - 1], instance, context) {})
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
     @Test fun independentMouthCapturePreservesRecommendedPreset(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
         val builder = WorkspacePreviewBuilder()
