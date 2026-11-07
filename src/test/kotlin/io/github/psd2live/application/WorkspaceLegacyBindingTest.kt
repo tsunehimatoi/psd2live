@@ -1447,6 +1447,134 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun independentBrowLidMatchesLockedVersionAndInstalledWorker(): Unit = runBlocking {
+        for (composed in listOf(false, true)) {
+            val art = document(eyeDetails = true, pairedBrows = true, bilateralEyes = true, bangOverlay = composed)
+            val source = if (!composed) art else {
+                val sourceArt = art.source as WorkspaceSourceArt
+                val white = sourceArt.layers.single { it.id.raw == "white" } as WorkspaceSourceLayer
+                val paired = white.copy(bounds = LayerBounds(18, 20, 28, 8), raster = LayerRaster(28, 8,
+                    ByteArray(28 * 8 * 4) { i -> if ((i / 4) % 28 in 12..15) 0 else 255.toByte() }))
+                art.copy(source = sourceArt.copy(layers = sourceArt.layers.filterNot { it.id.raw == "white-right" }
+                    .map { if (it == white) paired else it }),
+                    layerOverrides = (art.layerOverrides - "white-right") +
+                        ("white" to art.layerOverrides.getValue("white").copy(side = Side.NONE)))
+            }
+            suspend fun setup(): Fixture {
+                val f = Fixture(source)
+                f.install()
+                f.group(listOf("body/legacy", "face/legacy", "eye/fitted", "brow/fitted"))
+                val eyeConfig = buildJsonObject { put("scaffold", "structure"); put("base", "eye") }
+                val browConfig = buildJsonObject { put("scaffold", "structure"); put("base", "brow") }
+                if (composed) f.edit("modifier_add", f.addition("brow.shape", "shape", config = browConfig))
+                if (composed) {
+                    for (type in listOf("eye.smile", "eye.squash", "eye.wide", "eye.lid-fade", "eye.emotion", "eye.aftershock")) {
+                        f.edit("modifier_add", f.addition(type, type, config = eyeConfig))
+                    }
+
+                }
+                return f
+            }
+            val f = setup()
+            val reference = setup()
+            val config = buildJsonObject {
+                put("scaffold", "structure"); put("base", "brow")
+                putJsonObject("dependencies") { put("eye/fitted", "eye") }
+                putJsonObject("values") { put("strength", 145f) }
+            }
+            val input = assertNotNull(f.now.model.rig.modifierOutput)
+            val addition = f.addition("brow.lid-coupling", "coupling", config = config)
+            reference.edit("modifier_add", addition)
+            val original = reference.now.model
+            val old = RigModifierStack.fromJson(reference.now.document.rigEdits.modifierStack!!).instances.last()
+            assertEquals(1, old.version)
+            assertEquals(BuiltinModifierPlugins.reference(old.type, 1), old.plugin)
+            f.edit("modifier_add", JsonObject(addition + ("version" to JsonPrimitive(2))))
+            val actual = f.now.model
+            val expected = assertNotNull(original.rig.modifierOutput)
+            val output = assertNotNull(actual.rig.modifierOutput)
+            if (composed) assertTrue(expected.deformers.size > input.deformers.size, "Paired lids must exercise a coupling carrier")
+            assertEquals(expected.deformers.map { it.id }, output.deformers.map { it.id })
+            for ((before, after) in expected.meshes.zip(output.meshes)) {
+                assertEquals(before.parent, after.parent, before.id)
+                assertEquals(before.offsets?.axes, after.offsets?.axes, before.id)
+                assertEquals(before.geometry, after.geometry, "Rest geometry: ${before.id}, composed=$composed")
+                assertEquals(before.shapes.map { it.parameter }, after.shapes.map { it.parameter }, "Blend shapes: ${before.id}, composed=$composed")
+                assertEquals(before.channels, after.channels, "Channels: ${before.id}, composed=$composed")
+                val cells = before.offsets?.cells.orEmpty().zip(after.offsets?.cells.orEmpty())
+                val mismatch = cells.indexOfFirst { (old, new) -> old != new }
+                assertTrue(mismatch == -1, "Offsets: ${before.id}, composed=$composed, cell=$mismatch")
+                assertTrue(before == after, "Mesh differs: ${before.id}, composed=$composed")
+            }
+            assertTrue(expected == output, "Complete brow and lid IR differs")
+            val pose = mapOf(
+                StandardParameters.ANGLE_X to 19f, StandardParameters.ANGLE_Y to -11f,
+                StandardParameters.EYE_L_OPEN to .84f, StandardParameters.EYE_R_OPEN to .15f,
+                StandardParameters.BROW_L_Y to -.8f, StandardParameters.BROW_R_Y to .6f,
+                ParameterId("ParamBrowLAngle") to -.55f, ParameterId("ParamBrowRAngle") to .4f,
+            )
+            val evaluator = CpuDeformationEvaluator()
+            val before = evaluator.evaluate(original.rig.puppet, pose)
+            val after = evaluator.evaluate(actual.rig.puppet, pose)
+            for ((id, positions) in before.worldPositions) assertContentEquals(positions, after.worldPositions.getValue(id), id.raw)
+            assertEquals(before.opacity, after.opacity)
+
+            if (composed) {
+                val stack = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
+                val instance = stack.instances.last()
+                val artifact = assertNotNull(BundledAlgorithmArtifacts.find("brow.lid-coupling", 2))
+                assertEquals(artifact.reference, instance.plugin)
+                val directory = Files.createTempDirectory("brow-lid-package-")
+                val preferences = Preferences.userRoot().node("brow-lid-package/" + UUID.randomUUID())
+                val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+                try {
+                    val staging = Files.createDirectory(directory.resolve("package"))
+                    Files.write(staging.resolve("plugin.json"), artifact.bytes)
+                    for (name in artifact.manifest.files.keys) {
+                        assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                    }
+                    val upstream = stack.instances.dropLast(1).map {
+                        ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+                    }
+                    val context = RigBrowLidModifier.definition(RigModifierSource.of(actual)).authorContext(instance).withUpstream(upstream)
+                    repeat(2) {
+                        val installed = store.install(staging.toString())
+                        assertEquals(artifact.reference, installed.reference)
+                        assertTrue(output == ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(), input,
+                            instance, {}, store, context = context), "Installed worker differs")
+                        ModifierPluginWorkers.stop(installed.reference)
+                        store.uninstall(installed.reference)
+                    }
+                    val history = f.runtime.history()
+                    val historyStore = WorkspaceStore(directory.resolve("project"))
+                    historyStore.persistHistory(f.now.projectId, history)
+                    val archive = directory.resolve("brow-lid.psd2live")
+                    val repository = ProjectRepository(writeHeadCache = false)
+                    repository.save(ProjectSaveCapture(f.now.projectId, history, JsonObject(emptyMap()), null, historyStore), archive)
+                    repository.open(archive).use { opened ->
+                        val restored = opened.history.head().snapshot
+                        assertEquals(instance, RigModifierStack.fromJson(restored.rigEdits.modifierStack!!).instances.last())
+                        assertTrue(output == WorkspacePreviewBuilder().build(restored).rig.modifierOutput, "Saved coupling differs")
+                    }
+                } finally {
+                    store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+                    preferences.removeNode()
+                    ModifierPluginStore.deleteTree(directory)
+                }
+            }
+            if (composed) {
+                val browConfig = buildJsonObject { put("scaffold", "structure"); put("base", "brow") }
+                for (fixture in listOf(reference, f)) for (type in listOf("brow.blink", "brow.spring")) {
+                    fixture.edit("modifier_add", fixture.addition(type, type, config = browConfig))
+                }
+                assertTrue(reference.now.model.rig.modifierOutput == f.now.model.rig.modifierOutput, "Following brow modules differ")
+            }
+            f.edit("modifier_apply", buildJsonObject { put("id", "coupling") })
+            assertEquals(RigIrCompiler.compile(reference.now.model), RigIrCompiler.compile(f.now.model))
+            assertEquals(RigIrCompiler.compile(reference.now.model), RigIrCompiler.compile(WorkspacePreviewBuilder().build(f.now.document)))
+        }
+    }
+
     @Test fun independentEyeWideMatchesLockedVersionWithPreviousEyeModules(): Unit = runBlocking {
         compareEyeWide("face/legacy", composed = true, worker = true)
     }

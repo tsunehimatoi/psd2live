@@ -420,7 +420,7 @@ object RigBuilder {
 		 * How much of the brows the bangs in front of them hide, 0 … 1: a hidden brow can show little of a mood, so the lids
 		 * coupled to it carry more of it.
 		 */
-		private val browCover: Float by lazy {
+		val browCover: Float by lazy {
 			val brows = analysis.layers.filter { it.semantic.tag == SemanticTag.EYEBROW && it.semantic.role == null && it.opaquePixels > 0 }
 			val bangs = analysis.layers.filter { it.semantic.tag == SemanticTag.FRONT_HAIR && it.opaquePixels > 0 }
 			var seen = 0; var hidden = 0
