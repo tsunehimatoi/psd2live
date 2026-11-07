@@ -34,6 +34,7 @@ internal object BuiltinModifierPlugins {
         RigCheekModifier.definition(source), RigBrowBlinkModifier.definition(source), RigEyeSmileModifier.definition(source),
         RigEyeAftershockModifier.definition(source), RigArmSwingModifier.definition(source),
         RigEyeGazeLidModifier.definition(source), RigEyeEmotionModifier.definition(source), RigEyeHighlightModifier.definition(source),
+        RigGloomModifier.definition(source),
     )
 
     private fun hairChains(source: RigModifierSource?): RigModifierDefinition {

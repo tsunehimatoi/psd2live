@@ -3275,6 +3275,142 @@ class WorkspaceLegacyBindingTest {
         assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
     }
 
+    @Test fun packagedGloomMatchesLegacyWithAnAuthoredHighlightTrack(): Unit = runBlocking {
+        val gloom = ParameterId("ParamGloom")
+        val authored = ParameterId("ParamAuthoredOpacity")
+        suspend fun frame(version: Int): Triple<ColorRgb, Float, io.github.psd2live.format.model.RigIR> {
+            val f = Fixture(document(expressionDetails = true)); f.install()
+            f.group(listOf("face/legacy"))
+            f.edit("modifier_add", f.addition("expression.cheek", "cheek"))
+            val face = mesh(f, "face").id
+            val highlight = mesh(f, "skin-highlight").id
+            f.edit("object_edit_appearance", buildJsonObject {
+                putJsonArray("edits") { addJsonObject {
+                    put("action", "static"); put("kind", "mesh"); put("id", face.raw)
+                    put("multiply_color", JsonArray(listOf(.8f, .9f, .95f).map(::JsonPrimitive)))
+                } }
+            })
+            f.edit("parameter_create", buildJsonObject {
+                put("parameter_id", authored.raw); put("name", "Authored opacity")
+                put("min", 0f); put("max", 1f); put("default", 0f)
+            })
+            f.edit("keyform_apply", buildJsonObject {
+                putJsonArray("changes") {
+                    for ((key, opacity) in listOf(0f to 1f, 1f to .95f)) addJsonObject {
+                        put("op", "set"); put("target", "mesh:${highlight.raw}")
+                        putJsonObject("key") { put(authored.raw, key) }
+                        putJsonObject("channels") { put("opacity", opacity) }
+                    }
+                }
+            })
+            val request = f.addition("expression.gloom", "gloom")
+            f.edit("modifier_add", JsonObject(request + ("version" to JsonPrimitive(version))))
+            val evaluated = CpuDeformationEvaluator().evaluate(f.now.model.rig.puppet, mapOf(gloom to 1f, authored to 1f))
+            return Triple(evaluated.multiplyColor.getValue(face), evaluated.opacity.getValue(highlight),
+                RigIrCompiler.compile(f.now.model))
+        }
+
+        val (legacyColor, legacyOpacity, legacyIr) = frame(1)
+        val (candidateColor, candidateOpacity, candidateIr) = frame(2)
+        assertFaceEquals(legacyIr, candidateIr)
+        assertEquals(legacyColor, candidateColor)
+        assertEquals(.67f, candidateColor.red, .0001f)
+        assertEquals(.1f, legacyOpacity, .0001f)
+        assertEquals(legacyOpacity, candidateOpacity, .0001f)
+    }
+
+    @Test fun packagedGloomReplacesLegacyGloomOnlyOnSelectedMeshes(): Unit = runBlocking {
+        val type = "expression.gloom"
+        val oldReference = requireNotNull(BuiltinModifierPlugins.reference(type, 1))
+        assertEquals("builtin.65787072657373696f6e2e676c6f6f6d.v1", oldReference.id)
+        assertEquals("1.0.0", oldReference.version)
+        assertNull(BundledAlgorithmArtifacts.find(type, 1))
+        val artifact = requireNotNull(BundledAlgorithmArtifacts.find(type, 2))
+        val entrypoint = artifact.manifest.algorithms.single().type
+        val f = Fixture(document(expressionDetails = true)); f.install()
+        f.group(listOf("face/legacy"))
+        f.edit("modifier_add", f.addition("expression.cheek", "cheek"))
+        fun gloomConfig(strength: Float) = buildJsonObject {
+            put("scaffold", "structure")
+            putJsonObject("values") { put("strength", strength) }
+        }
+        val old = f.addition(type, "old-gloom", config = gloomConfig(100f))
+        f.edit("modifier_add", JsonObject(old + ("version" to JsonPrimitive(1))))
+        fun stack() = RigModifierStack.fromJson(requireNotNull(f.now.document.rigEdits.modifierStack))
+        assertEquals(oldReference, stack().instances.last().plugin)
+        val before = RigIrCompiler.compile(f.now.model)
+        val prior = assertNotNull(f.now.model.rig.modifierOutput)
+        val faceId = mesh(f, "face").id.raw
+        val face = listOf(ModifierTarget("mesh", faceId))
+        f.edit("modifier_add", f.addition(entrypoint, "new-gloom", face, gloomConfig(50f)))
+        val installed = stack().instances.last()
+        assertEquals(2, installed.version)
+        assertEquals(artifact.reference, installed.plugin)
+        val directory = Files.createTempDirectory("gloom-package-")
+        val preferences = Preferences.userRoot().node("gloom-package/" + UUID.randomUUID())
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            for (name in artifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val packageRef = store.install(staging.toString())
+            assertEquals(artifact.reference, packageRef.reference)
+            val adapter = ModifierPluginCatalog.definitions(store,
+                captured = listOf(RigGloomModifier.definition(RigModifierSource.of(f.now.model))))
+                .single { it.type == entrypoint && it.version == 2 }
+            val external = installed.copy(type = entrypoint)
+            val worker = adapter.plugin as ContextualModifierAlgorithmPlugin
+            assertEquals(f.now.model.rig.modifierOutput, worker.evaluate(prior, external, adapter.authorContext(external)) {})
+        } finally {
+            ModifierPluginWorkers.stop(artifact.reference)
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+        val after = RigIrCompiler.compile(f.now.model)
+        val beforeFace = before.meshes.single { it.id == faceId }
+        val afterFace = after.meshes.single { it.id == faceId }
+        assertNotEquals(beforeFace.channels, afterFace.channels)
+        assertEquals(before, after.copy(meshes = after.meshes.map { if (it.id == faceId) it.copy(channels = beforeFace.channels) else it }))
+        val pose = mapOf(ParameterId("ParamCheek") to 1f, ParameterId("ParamGloom") to 1f)
+        val frame = CpuDeformationEvaluator().evaluate(f.now.model.rig.puppet, pose)
+        val color = frame.multiplyColor.getValue(DrawableId(faceId))
+        assertEquals(.935f, color.red, .0001f)
+        assertEquals(.875f, color.green, .0001f)
+        assertEquals(.901f, color.blue, .0001f)
+        assertFailsWith<WorkspaceBatchEditException> {
+            f.edit("modifier_add", f.addition(type, "overlapping-gloom", face))
+        }
+        assertEquals(after, RigIrCompiler.compile(f.builder.build(f.now.document)))
+        f.edit("modifier_apply", buildJsonObject { put("id", "old-gloom") })
+        assertEquals(after, RigIrCompiler.compile(f.builder.build(f.now.document)))
+        f.edit("modifier_apply", buildJsonObject { put("id", "new-gloom") })
+        assertEquals(after, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
+    @Test fun packagedGloomRejectsCompletePresetWhenLegacyAddsCarriers(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true)
+        val config = WorkspacePresetBaseline.configure(art.config(), "modern")
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, model) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
+            WorkspaceInitialPreset(clothing = true), preferSourceBindings = true)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val gloom = stack.instances.single { it.type == "expression.gloom" }
+        assertEquals(1, gloom.version)
+        val plugin = assertNotNull(BuiltinModifierPlugins.reference(gloom.type, 2))
+        val independent = stack.copy(instances = stack.instances.map {
+            if (it.id == gloom.id) it.copy(version = 2, plugin = plugin) else it
+        })
+        val updated = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = independent.toJson()))
+        val outputs = assertNotNull(model.modifierEvaluation).outputs
+        val index = stack.index(gloom.id)
+        assertTrue(outputs[index].deformers.size > outputs[index - 1].deformers.size)
+        val failure = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(updated) }
+        assertContains(failure.message.orEmpty(), "use Gloom v1")
+    }
+
     @Test fun skinClippingAndLegacyNeckFollowSurvivePrefixApplication(): Unit = runBlocking {
         skinClippingAndNeckFollowSurvivePrefixApplication(1)
     }
