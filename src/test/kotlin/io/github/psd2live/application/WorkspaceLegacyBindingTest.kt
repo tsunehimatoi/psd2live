@@ -992,21 +992,24 @@ class WorkspaceLegacyBindingTest {
         assertEquals(1, RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.last().version)
     }
 
-    @Test fun independentMouthCaptureReplaysAfterFittedOutlineAndIndependentVowels(): Unit = runBlocking {
+    @Test fun independentMouthCaptureAndJawReplayAfterFittedOutlineAndIndependentVowels(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
         val choices = WorkspaceInitialPreset()
-        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
-            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val baseline = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+        val recipe = baseline.recipe.copy(modules = baseline.recipe.modules +
+            (RigModules.MOUTH_TONGUE.id to ModuleChoice(false)))
+        val config = baseline.copy(recipe = recipe, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
         val (initialized, legacy) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
             preferSourceBindings = true)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
-        val versions = mapOf("mouth.outline" to 3, "mouth.vowel" to 3, "mouth.capture" to 2)
-        val capture = stack.instances.single { it.type == "mouth.capture" }
-        val index = stack.index(capture.id)
-        assertEquals(1, capture.version)
-        assertEquals(listOf("mouth.outline", "mouth.vowel", "mouth.capture"),
-            stack.instances.filter { it.type in versions }.map { it.type })
+        val versions = mapOf("mouth.outline" to 3, "mouth.vowel" to 3, "mouth.capture" to 2, "mouth.jaw" to 2)
+        val evaluatedTypes = setOf("mouth.capture", "mouth.jaw")
+        val stages = stack.instances.withIndex().filter { it.value.type in evaluatedTypes }
+        assertEquals(evaluatedTypes, stages.mapTo(hashSetOf()) { it.value.type })
+        assertTrue(stages.all { it.value.version == 1 })
+        assertTrue(stack.instances.none { it.type == RigModules.MOUTH_TONGUE.id })
+        assertEquals(versions.keys.toList(), stack.instances.filter { it.type in versions }.map { it.type })
         val locked = stack.copy(instances = stack.instances.map { instance ->
             val version = versions[instance.type] ?: return@map instance
             instance.copy(version = version, plugin = assertNotNull(BundledAlgorithmArtifacts.find(instance.type, version)).reference)
@@ -1014,8 +1017,11 @@ class WorkspaceLegacyBindingTest {
         val document = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = locked.toJson()))
         val actual = WorkspacePreviewBuilder().build(document)
         val output = assertNotNull(actual.modifierEvaluation)
-        assertEquals(ModifierStatus.ACTIVE, output.entries[index].status)
-        assertEquals(assertNotNull(legacy.modifierEvaluation).outputs[index], output.outputs[index])
+        val expected = assertNotNull(legacy.modifierEvaluation)
+        for ((index, stage) in stages) {
+            assertEquals(ModifierStatus.ACTIVE, output.entries[index].status)
+            assertEquals(expected.outputs[index], output.outputs[index], stage.type)
+        }
         assertEquals(RigIrCompiler.compile(legacy, tileArt = true), RigIrCompiler.compile(actual, tileArt = true))
     }
 
