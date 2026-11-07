@@ -2282,20 +2282,30 @@ object RigBuilder {
 			}
 		}
 		val stages = stagesOf(meshCache) ?: return build()
-		val eyes = rigLayer.semantic.tag == SemanticTag.EYEWHITE || rigLayer.semantic.tag == SemanticTag.EYELASH ||
-			rigLayer.semantic.tag == SemanticTag.EYE_CLOSE || rigLayer.semantic.tag == SemanticTag.IRIDES || rigLayer.semantic.tag == SemanticTag.EYEBROW ||
-			rigLayer.semantic.tag in io.github.psd2live.core.fit.FittedMouth.TAGS || rigLayer.semantic.tag == SemanticTag.FACE ||
-			rigLayer.semantic.tag == SemanticTag.FACE_DETAIL || rigLayer.semantic.tag == SemanticTag.NOSE
-		val styledTurn = if (styled(rigLayer) && context.faceTurn(config) != null)
-			context.head to context.faceLandmarks(config) else null
+		val tag = rigLayer.semantic.tag
+		val eyeGeometry = tag in eyeMeshTags || tag == SemanticTag.EYEBROW
+		val mouthGeometry = tag in io.github.psd2live.core.fit.FittedMouth.TAGS ||
+			tag == SemanticTag.FACE || tag == SemanticTag.FACE_DETAIL || tag == SemanticTag.NOSE
+		val localEyes = if (eyeGeometry) context.fittedEyes(config)?.let { eyes ->
+			val fits = if (rigLayer.semantic.side == Side.NONE || tag == SemanticTag.EYEBROW)
+				eyes.rigs.entries.map { it.key to it.value.fit } else eyes.rigs[rigLayer.semantic.side]?.fit
+			fits to eyes.options
+		} else null
+		val localBrow = if (tag == SemanticTag.EYEBROW) context.fittedBrows(config)[rigLayer.semantic.side]?.cacheKey else null
+		val localMouth = if (mouthGeometry) context.fittedMouth(config)?.let {
+			listOf(it.rig?.fit, it.rig?.options, it.chin, it.covers(rigLayer), it.layered, it.lipped, rigLayer.source.clipped,
+				it.result.layers.any { layer -> layer.semantic.tag == SemanticTag.MOUTH })
+		} else null
+		val styledMesh = styled(rigLayer)
+		val mountedOnFace = parentId != null && (parentId == faceContourId || parentId in context.underFace)
+		val styledFace = (styledMesh || mountedOnFace) && context.faceTurn(config) != null
+		val styledTurn = if (styledMesh && styledFace) context.head to context.faceLandmarks(config) else null
 		val key = MeshKey(layer.meta(), layer.source.raster.width, layer.source.raster.height,
 			MeshResolution.input(layer.source, config.meshTrace, MeshResolution.unitScale(config, context.analysis.source)).key,
 			rigLayer.bounds, rigLayer.centroidX, rigLayer.centroidY, parentId, parentFrame, headSpace,
-			listOf(if (eyes) listOf(faceSignature(context.faceRig), context.fittedEyes(config)?.let { it.rigs[rigLayer.semantic.side]?.fit to it.options },
-				rigLayer.semantic.role, context.fittedBrows(config)[rigLayer.semantic.side]?.cacheKey,
-				context.fittedMouth(config)?.let { listOf(it.rig?.fit, it.rig?.options, it.chin, it.covers(rigLayer)) }) else null, context.headTurn(config)?.let {
+			listOf(rigLayer.semantic, if (eyeGeometry) faceSignature(context.faceRig) else null, localEyes, localBrow, localMouth, context.headTurn(config)?.let {
 				listOf(faceSignature(context.faceRig), headShell(rigLayer), io.github.psd2live.core.recipe.RigModules.FACE_DEPTH_TURN.let { m ->
-					m.knobs.map { config.recipe.value(m.id, it.id) } }, config.headTurnStrength, styledTurn)
+					m.knobs.map { config.recipe.value(m.id, it.id) } }, config.headTurnStrength, styledFace, styledTurn)
 			}),
 			matchingEyeWhiteBounds(rigLayer, context.eyeWhiteLayers),
 			MeshResolution.unitScale(config, context.analysis.source), meshConfigFor(rigLayer, meshConfig), config.meshOverrides[layer.source.id.raw],
@@ -2303,10 +2313,23 @@ object RigBuilder {
 		return stages.get(RigStageCache.MESH, 1024, key to neutralScaffold, build)
 	}
 
+    private val eyeMeshTags = setOf(SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYE_CLOSE, SemanticTag.IRIDES)
+
     private fun meshConfigFor(layer: ClassifiedLayer, config: PipelineConfig): PipelineConfig {
         // Styled hair and accessories use the captured head landmarks, not the eye, brow or mouth module switches.
         if (styled(layer)) return config.copy(recipe = config.recipe.copy(modules = config.recipe.modules.filterKeys {
             it == "face.depth-turn"
+        }))
+        val tag = layer.semantic.tag
+        val localAreas = when {
+            tag in eyeMeshTags -> setOf("eye")
+            tag == SemanticTag.EYEBROW -> setOf("eye", "brow")
+            tag in io.github.psd2live.core.fit.FittedMouth.TAGS ||
+                tag == SemanticTag.FACE || tag == SemanticTag.FACE_DETAIL || tag == SemanticTag.NOSE -> setOf("mouth")
+            else -> emptySet()
+        }
+        if (localAreas.isNotEmpty()) return config.copy(recipe = config.recipe.copy(modules = config.recipe.modules.filterKeys {
+            it == "face.depth-turn" || it.substringBefore('.') in localAreas
         }))
         // These tags have no eye/brow/mouth-local geometry. Neck shadows can still turn with the
         // head; chest and neck motion remain explicit inputs along with all frames in MeshKey.
