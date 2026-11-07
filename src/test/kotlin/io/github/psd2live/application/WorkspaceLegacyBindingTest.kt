@@ -6170,21 +6170,6 @@ class WorkspaceLegacyBindingTest {
         compareArmSwingV3(document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true))
     }
 
-    @Test fun modernClosedMouthPresetKeepsCompatibleSingleArmBinding(): Unit = runBlocking {
-        val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true,
-            pairedBrows = true, bilateralEyes = true, chestDetail = true, closedMouth = true, ribbonDetails = true)
-        val choices = WorkspaceInitialPreset(clothing = true)
-        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
-            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
-        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, model) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
-        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
-        assertEquals(4, stack.instances.single { it.type == "mouth/fitted" }.version)
-        val arm = stack.instances.single { it.type == "body.arms" }
-        assertEquals(1, arm.version)
-        assertEquals(ModifierStatus.ACTIVE, assertNotNull(model.modifierEvaluation).entries[stack.index(arm.id)].status)
-    }
-
     @Test fun armSwingV4MatchesSingleArmAfterClosedSourceBindings(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true,
             pairedBrows = true, bilateralEyes = true, chestDetail = true, closedMouth = true, ribbonDetails = true)
@@ -6196,15 +6181,13 @@ class WorkspaceLegacyBindingTest {
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val arm = stack.instances.single { it.type == "body.arms" }
         val index = stack.index(arm.id)
-        val baseline = if (arm.version == 1) prepared else {
-            val legacy = arm.copy(version = 1, plugin = assertNotNull(BuiltinModifierPlugins.reference(arm.type, 1)))
-            val prior = stack.copy(instances = stack.instances.map { if (it.id == arm.id) legacy else it })
-            WorkspacePreviewBuilder().build(initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = prior.toJson())))
-        }
+        assertEquals(4, stack.instances.single { it.type == "mouth/fitted" }.version)
+        assertEquals(4, arm.version)
         val artifact = assertNotNull(BundledAlgorithmArtifacts.find(arm.type, 4))
-        val selected = arm.copy(version = 4, plugin = artifact.reference)
-        val upgraded = stack.copy(instances = stack.instances.map { if (it.id == arm.id) selected else it })
-        val document = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = upgraded.toJson()))
+        assertEquals(artifact.reference, arm.plugin)
+        val legacy = arm.copy(version = 1, plugin = assertNotNull(BuiltinModifierPlugins.reference(arm.type, 1)))
+        val prior = stack.copy(instances = stack.instances.map { if (it.id == arm.id) legacy else it })
+        val baseline = WorkspacePreviewBuilder().build(initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = prior.toJson())))
         val expected = assertNotNull(baseline.modifierEvaluation).outputs
         assertNotEquals(expected[index - 1].meshes.single { it.name == "arm" }, expected[index].meshes.single { it.name == "arm" })
         val compiled = RigIrCompiler.compile(baseline, tileArt = true)
@@ -6214,11 +6197,11 @@ class WorkspaceLegacyBindingTest {
             for (stage in index - 1 until stack.instances.size) assertFaceEquals(expected[stage], evaluation.outputs[stage])
             assertFaceEquals(compiled, RigIrCompiler.compile(model, tileArt = true))
         }
-        val actual = WorkspacePreviewBuilder().build(document).also(::verify)
+        val actual = prepared.also(::verify)
         val cache = RigStageCache.enabled
         try {
             RigStageCache.enabled = false
-            verify(PSD2LivePipeline().buildPreview(document.source, document.config()))
+            verify(PSD2LivePipeline().buildPreview(initialized.source, initialized.config()))
         } finally {
             RigStageCache.enabled = cache
         }
@@ -6229,11 +6212,11 @@ class WorkspaceLegacyBindingTest {
             BundledAlgorithmArtifacts.retain(store, listOf(artifact))
             val plugin = store.snapshot().single()
             val evaluation = assertNotNull(actual.modifierEvaluation)
-            val context = assertNotNull(evaluation.readAlgorithms[selected.id]).context
+            val context = assertNotNull(evaluation.readAlgorithms[arm.id]).context
             assertEquals(expected[index - 1].meshes.single { it.name == "arm" }.id, context.values.getValue("singleArm").jsonPrimitive.content)
             val definition = RigArmSwingModifier.singleDefinition(RigModifierSource.of(actual))
             val output = ModifierPluginWorkers.evaluate(plugin, plugin.manifest.algorithms.single(),
-                evaluation.outputs[index - 1], selected, {}, store, context = context, declaredParameters = definition.parameters(selected))
+                evaluation.outputs[index - 1], arm, {}, store, context = context, declaredParameters = definition.parameters(arm))
             assertFaceEquals(expected[index], output)
         } finally {
             ModifierPluginWorkers.stop(artifact.reference)

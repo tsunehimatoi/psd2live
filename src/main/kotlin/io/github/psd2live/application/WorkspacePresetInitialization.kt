@@ -1,6 +1,7 @@
 package io.github.psd2live.application
 
 import io.github.psd2live.algorithms.binding.ArmSwingV3Algorithm
+import io.github.psd2live.algorithms.binding.ArmSwingV4Algorithm
 import io.github.psd2live.algorithms.binding.BrowBlinkV3Algorithm
 import io.github.psd2live.algorithms.binding.BrowFittedV3Binding
 import io.github.psd2live.algorithms.binding.BrowLegacyV2Algorithm
@@ -156,8 +157,9 @@ internal object WorkspacePresetInitialization {
                 val extensions = if (lids.size == plannedLids.size && (!subject.has(SemanticTag.EYEBROW) || brows.isNotEmpty())) {
                     val mouth = if (completeEyePair && (subject.has(SemanticTag.MOUTH) || subject.has(SemanticTag.MOUTH_OPEN)))
                         packages(sourceMouthVersions(model.analysis, config, types)) else emptyMap()
-                    val arms = if (supportsPairedArms(model.analysis)) packages(mapOf(RigModules.BODY_ARMS.id to ArmSwingV3Algorithm.VERSION))
-                        else emptyMap()
+                    val armVersion = sourceArmVersion(model.analysis,
+                        closedMouth = mouth[RigModules.MOUTH_FITTED.id]?.first == MouthFittedV4Algorithm.VERSION)
+                    val arms = armVersion?.let { packages(mapOf(RigModules.BODY_ARMS.id to it)) }.orEmpty()
                     mouth + arms +
                         packages(mapOf(RigModules.EXPRESSION_CHEEK.id to CheekCarrierAlgorithm.VERSION)) +
                         packages(mapOf(RigModules.EXPRESSION_GLOOM.id to GloomCarrierAlgorithm.VERSION))
@@ -304,10 +306,15 @@ internal object WorkspacePresetInitialization {
             config.meshOverrides.isEmpty() && config.parentOverrides.isEmpty() &&
             !config.deferRig && config.rigPendingLayerIds.isEmpty()
 
-    private fun supportsPairedArms(analysis: PipelineAnalysis): Boolean {
+    private fun sourceArmVersion(analysis: PipelineAnalysis, closedMouth: Boolean): Int? {
         val sides = analysis.layers.filter { it.opaquePixels > 0 && it.semantic.tag == SemanticTag.HANDWEAR }
             .map { it.semantic.side }
-        return sides.size == 2 && sides.toSet() == setOf(Side.LEFT, Side.RIGHT)
+        val lateral = setOf(Side.LEFT, Side.RIGHT)
+        return when {
+            sides.size == 2 && sides.toSet() == lateral -> ArmSwingV3Algorithm.VERSION
+            closedMouth && sides.singleOrNull() in lateral -> ArmSwingV4Algorithm.VERSION
+            else -> null
+        }
     }
 
     private fun closedMouthVersions(types: List<String>): Map<String, Int> = mapOf(
