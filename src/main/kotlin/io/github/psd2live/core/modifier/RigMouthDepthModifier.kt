@@ -4,6 +4,7 @@ import io.github.psd2live.algorithms.binding.MouthDepthAlgorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV5Algorithm
+import io.github.psd2live.algorithms.binding.MouthDepthV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthRig.Follow
 import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.RigModules
@@ -47,6 +48,37 @@ internal object RigMouthDepthModifier {
 
     fun closedShellDefinition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthDepthV5Algorithm.VERSION, closedShellAlgorithm)
+
+    fun sharedFrameDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val projected = object : ChangingModifierAlgorithmPlugin by MouthDepthV6Algorithm,
+            ModifierOptionalUpstream, ModifierVersionSelection {
+            override val canonicalOptInType = MouthDepthAlgorithm.TYPE
+            override val optionalUpstream = RigLegacyBindings.specs.filter { !it.expressionToggles && !it.seeThrough }
+                .mapTo(linkedSetOf()) { it.type } - setOf(MouthDepthAlgorithm.TYPE, "mouth/fitted")
+        }
+        return fittedDefinition(source).copy(version = MouthDepthV6Algorithm.VERSION, plugin = projected,
+            changeWrites = MouthDepthV6Algorithm.WRITES,
+            authorContext = { requireNotNull(source).captureSharedFrames(it) })
+    }
+
+    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val scaffold = provider(instance)
+        val prefix = bindingPredecessors(instance, scaffold)
+        require(prefix.any { it.id == instance.config.getValue("base").jsonPrimitive.content &&
+            it.type == "mouth/fitted" && it.version == 6 }) { "Mouth interior depth v6 requires a shared fitted mouth v6" }
+        val providers = setOf("mouth.outline", "mouth.vowel", "mouth.capture", "mouth.jaw", "mouth.cheek-lid") +
+            prefix.filter { it.type == "mouth.tongue" }.map { it.type }
+        require(prefix.none { it.type.startsWith("mouth.") && it.type !in providers }) {
+            "Mouth interior depth v6 requires the shared open-mouth source chain"
+        }
+        val interior = setOf(SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE, SemanticTag.MOUTH_OPEN)
+        return captureBindingTransition(instance, scaffold, prefix, CharacterAnalyzer.MOUTH_TAGS + SemanticTag.FACE + SemanticTag.NOSE,
+            projectedTags = interior, includeMouthShading = true, values = buildJsonObject {
+                putJsonObject("providers") {
+                    providers.forEach { type -> put(type, prefix.single { it.type == type }.id) }
+                }
+            })
+    }
 
     private fun definition(source: RigModifierSource?, version: Int,
                            algorithm: ReadingModifierAlgorithmPlugin): RigModifierDefinition =

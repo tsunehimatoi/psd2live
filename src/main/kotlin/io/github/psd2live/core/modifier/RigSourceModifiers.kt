@@ -253,9 +253,10 @@ internal class RigModifierSource(
                            parameters: Set<ParameterId>, includeFaceLean: Boolean = false,
                            projectedMeshes: Set<String> = layers.keys,
                            chains: List<io.github.psd2live.core.fit.HairChain> = emptyList(),
-                           parameterAliases: Map<ParameterId, ParameterId> = emptyMap()): ModifierAlgorithmResource =
+                           parameterAliases: Map<ParameterId, ParameterId> = emptyMap(),
+                           includeMouthShading: Boolean = false): ModifierAlgorithmResource =
         ModifierAlgorithmResource(io.github.psd2live.format.compile.RigIrBinary.encode(PuppetIr.toIr(
-            RigBuilder.closedMouthShellProjection(context, config, atlas, meshCache, materialBase, layers, parameters, includeFaceLean, chains)
+            RigBuilder.closedMouthShellProjection(context, config, atlas, meshCache, materialBase, layers, parameters, includeFaceLean, chains, includeMouthShading)
                 .let { projection -> if (parameterAliases.isEmpty()) projection else RigIdRemap(parameters = parameterAliases).model(projection) }
                 .let { projection -> projection.copy(drawables = projection.drawables.filter { it.id.raw in projectedMeshes }) })))
     private val staticModels = java.util.IdentityHashMap<PuppetModel, PuppetModel>()

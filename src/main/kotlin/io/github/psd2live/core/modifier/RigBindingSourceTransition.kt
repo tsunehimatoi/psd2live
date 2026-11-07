@@ -14,6 +14,7 @@ internal fun RigModifierSource.captureBindingTransition(
     capturedTags: Set<SemanticTag>,
     projectedTags: Set<SemanticTag> = capturedTags,
     values: JsonObject,
+    includeMouthShading: Boolean = false,
     validateLayers: (Map<String, ClassifiedLayer>) -> Unit = {},
 ): ModifierAlgorithmContext {
     val (beforeConfig, before) = RigFittedMouthModuleSource.context(this, scaffold, preceding, null)
@@ -26,9 +27,9 @@ internal fun RigModifierSource.captureBindingTransition(
     require(projected.isNotEmpty()) { "${instance.type} needs source meshes in its captured frame" }
     val axes = preceding.flatMapTo(HashSet()) { RigLegacyBindings.spec(it.type).parameters }
     return ModifierAlgorithmContext(values, mapOf(
-        "before" to outlineShellSource(before, beforeConfig, beforeLayers, axes, includeFaceLean = true, projectedMeshes = projected),
+        "before" to outlineShellSource(before, beforeConfig, beforeLayers, axes, includeFaceLean = true, projectedMeshes = projected, includeMouthShading = includeMouthShading),
         "after" to outlineShellSource(after, afterConfig, afterLayers, axes + RigLegacyBindings.spec(instance.type).parameters,
-            includeFaceLean = true, projectedMeshes = projected),
+            includeFaceLean = true, projectedMeshes = projected, includeMouthShading = includeMouthShading),
     ))
 }
 
