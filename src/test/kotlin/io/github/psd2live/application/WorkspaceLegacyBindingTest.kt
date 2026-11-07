@@ -1025,6 +1025,141 @@ class WorkspaceLegacyBindingTest {
         assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(f.now.document)))
     }
 
+    @Test fun independentEyeGazeLidPreservesTheRecommendedPreset(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
+        val builder = WorkspacePreviewBuilder()
+        val stack = WorkspaceModifierPlan.initial(builder.build(art), WorkspaceModifierPlan.RECOMMENDED_GROUP)
+        val locked = stack.instances.single { it.type == "eye.gaze-lid" }
+        assertEquals(1, locked.version)
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 2))
+        suspend fun preview(candidate: RigModifierStack) = builder.build(art.copy(
+            rigEdits = art.rigEdits.copy(modifierStack = candidate.toJson()),
+        ))
+        val expected = preview(stack)
+        val current = preview(stack.copy(instances = stack.instances.map {
+            if (it.id == locked.id) it.copy(version = 2, plugin = artifact.reference) else it
+        }))
+        assertEquals(expected.rig.modifierOutput, current.rig.modifierOutput)
+        assertEquals(RigIrCompiler.compile(expected), RigIrCompiler.compile(current))
+    }
+
+    @Test fun independentEyeGazeLidMatchesLockedVersionWithWideLids(): Unit = runBlocking {
+        compareEyeGazeLid("face/legacy", installWorker = true)
+    }
+
+    @Test fun independentEyeGazeLidMatchesLockedVersionWithFittedHead(): Unit = runBlocking {
+        compareEyeGazeLid("face/fitted", installWorker = false)
+    }
+
+    private suspend fun compareEyeGazeLid(head: String, installWorker: Boolean) {
+        val f = Fixture(document(eyeDetails = true, bilateralEyes = true))
+        f.install()
+        f.group(listOf("body/legacy", head, "eye/fitted"))
+        val dependency = buildJsonObject { put("scaffold", "structure"); put("base", "eye") }
+        for (type in listOf("eye.wide", "eye.smile")) {
+            f.edit("modifier_add", f.addition(type, type, config = dependency))
+        }
+        val config = JsonObject(dependency + ("values" to buildJsonObject {
+            put("follow", 138f)
+        }))
+        val addition = f.addition("eye.gaze-lid", "gaze", config = config)
+        val prefix = f.now
+        val previous = assertNotNull(prefix.model.rig.modifierOutput)
+        f.edit("modifier_add", addition)
+        val legacy = f.now.model
+        assertEquals(1, RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.last().version)
+        assertEquals("0ddd69ed8ca39842ce106a3c87866feec27d8704758aadc0a68ba85a5c51417d",
+            RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.last().plugin?.digest)
+        val expected = assertNotNull(legacy.rig.modifierOutput)
+        f.runtime.checkout(f.now.projectId, f.now.state, prefix.historyHead)
+        f.edit("modifier_add", JsonObject(addition + ("version" to JsonPrimitive(2))))
+        val current = f.now.model
+        val actual = assertNotNull(current.rig.modifierOutput)
+        assertEquals(expected.parameters, actual.parameters)
+        assertEquals(expected.parameterTree, actual.parameterTree)
+        assertEquals(expected.parameterLinks, actual.parameterLinks)
+        assertEquals(expected.deformers.map { it.id }, actual.deformers.map { it.id })
+        for ((old, new) in expected.deformers.zip(actual.deformers)) assertEquals(old, new, old.id)
+        for ((old, new) in expected.meshes.zip(actual.meshes)) {
+            assertEquals(old, new, old.id)
+        }
+        assertTrue(expected == actual, "The complete generated IR must match the locked gaze algorithm")
+
+        val evaluator = CpuDeformationEvaluator()
+        val pose = mapOf(StandardParameters.ANGLE_X to 18f, StandardParameters.ANGLE_Y to -12f,
+            StandardParameters.EYE_L_OPEN to 1.5f, StandardParameters.EYE_R_OPEN to 0f,
+            ParameterId("ParamEyeLSmile") to .67f,
+            ParameterId("ParamEyeBallLY") to .67f, ParameterId("ParamEyeBallRX") to 1f,
+            StandardParameters.EYE_BALL_X to .2f)
+        val oldPose = evaluator.evaluate(legacy.rig.puppet, pose)
+        val newPose = evaluator.evaluate(current.rig.puppet, pose)
+        for ((id, positions) in oldPose.worldPositions) assertContentEquals(positions, newPose.worldPositions.getValue(id), id.raw)
+        assertEquals(oldPose.opacity, newPose.opacity)
+        val plainPose = evaluator.evaluate(current.rig.puppet, pose + (ParameterId("ParamEyeBallLY") to 0f))
+        val white = mesh(f, "white").id
+        assertFalse(plainPose.worldPositions.getValue(white).contentEquals(newPose.worldPositions.getValue(white)))
+
+        val stack = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
+        val instance = stack.instances.last()
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find("eye.gaze-lid", 2))
+        assertEquals(artifact.reference, instance.plugin)
+        if (installWorker) {
+            val directory = Files.createTempDirectory("eye-gaze-package-")
+            val preferences = Preferences.userRoot().node("eye-gaze-package/" + UUID.randomUUID())
+            val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+            try {
+                val staging = Files.createDirectory(directory.resolve("package"))
+                Files.write(staging.resolve("plugin.json"), artifact.bytes)
+                for (name in artifact.manifest.files.keys) {
+                    assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                }
+                val providers = stack.instances.dropLast(1).map { provider ->
+                    ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
+                        provider.id, provider.config, provider.outputAliases, provider.plugin)
+                }
+                val definition = RigEyeGazeLidModifier.definition(RigModifierSource.of(current))
+                repeat(2) {
+                    val installed = store.install(staging.toString())
+                    assertEquals(artifact.reference, installed.reference)
+                    val algorithm = installed.manifest.algorithms.single()
+                    val external = instance.copy(type = algorithm.type)
+                    val adapter = ModifierPluginCatalog.definitions(store, captured = listOf(definition)).single {
+                        it.type == external.type && it.version == external.version
+                    }
+                    assertEquals(definition.optionalUpstream, adapter.optionalUpstream)
+                    val workerContext = adapter.authorContext(external).withUpstream(providers.filter {
+                        it.capability in adapter.requires + adapter.optionalUpstream
+                    })
+                    val worker = adapter.plugin as ContextualModifierAlgorithmPlugin
+                    assertEquals(actual, worker.evaluate(previous, external, workerContext) {})
+                    ModifierPluginWorkers.stop(installed.reference)
+                    store.uninstall(installed.reference)
+                }
+
+                val now = f.now
+                val history = f.runtime.history()
+                val historyStore = WorkspaceStore(directory.resolve("project"))
+                historyStore.persistHistory(now.projectId, history)
+                val archive = directory.resolve("eye-gaze.psd2live")
+                val repository = ProjectRepository(writeHeadCache = false)
+                repository.save(ProjectSaveCapture(now.projectId, history, JsonObject(emptyMap()), null, historyStore), archive)
+                repository.open(archive).use { opened ->
+                    val restored = opened.history.head().snapshot
+                    assertEquals(instance, RigModifierStack.fromJson(restored.rigEdits.modifierStack!!).instances.last())
+                    assertEquals(actual, WorkspacePreviewBuilder().build(restored).rig.modifierOutput)
+                }
+            } finally {
+                store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+                preferences.removeNode()
+                ModifierPluginStore.deleteTree(directory)
+            }
+        }
+        val compiled = RigIrCompiler.compile(current)
+        f.edit("modifier_apply", buildJsonObject { put("id", "gaze") })
+        assertEquals(compiled, RigIrCompiler.compile(f.now.model))
+        assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(f.now.document)))
+    }
+
     @Test fun independentEyeAftershockMatchesLockedVersionWithWideLids(): Unit = runBlocking {
         compareEyeAftershock("face/legacy", composed = true)
     }

@@ -34,6 +34,8 @@ Eye smile v2 requires shared scaffold v2 and fitted eyes v2. It adds smile keys 
 
 Blink aftershock v2 adds eyelid rebound and its physics group. It requires a shared v2 scaffold and compatible fitted eyes. Use v1 with preceding lid coupling or if the source eyelid frame or keyforms have already been edited.
 
+Gaze-following lids v2 adds shared and per-eye gaze from the source eyelids. It requires a shared v2 scaffold and compatible fitted eyes. Use v1 with edited or lowered lid geometry or when rebound, brow-lid or cheek-lid coupling already precedes it.
+
 Skirt sway v2 is selectable for topwear or bottomwear attached under the torso. It uses a shared source frame and preserves the existing skirt mesh, physics and simulation bindings in compatible presets.
 
 Arm swing v2 is selectable for the original hanging-arm frames of a shared v2 scaffold, with body and face bindings on that scaffold. Use v1 if an arm has been reparented or its neutral lattice edited.
