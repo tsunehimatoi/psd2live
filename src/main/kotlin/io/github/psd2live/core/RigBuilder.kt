@@ -3703,7 +3703,8 @@ object RigBuilder {
 	/** The additive shapes the rig modules give [layer]'s mesh: the eyes' and brows' ([eyeBlendShapes]) and the mouth's. */
 	private fun moduleBlendShapes(layer: ClassifiedLayer, data: MeshData, frame: Bounds, context: RigContext, config: PipelineConfig, parent: DeformerId?):
 		List<org.umamo.runtime.model.BlendShapeBinding<org.umamo.runtime.model.MeshForm>> =
-		eyeBlendShapes(layer, data, frame, context.fittedEyes(config), context.fittedBrows(config)) + mouthBlendShapes(layer, data, frame, context.fittedMouth(config)) +
+		eyeBlendShapes(layer, data, frame, context.fittedEyes(config), context.fittedBrows(config),
+            sidedCoupling = (config.recipe.modules["brow.lid-coupling"]?.version ?: 1) >= 5) + mouthBlendShapes(layer, data, frame, context.fittedMouth(config)) +
 			(if (context.faceTurn(config) != null && styled(layer)) styleTurnShapes(layer, data.rigPositions, frame, context, config)
 			else headTurnShapes(layer, turnPositions(layer, data.rigPositions, context.fittedMouth(config)), frame, context.headTurn(config).takeUnless { turnsWithMouth(parent) ||
 				parent != null && (parent == faceContourId || parent in context.underFace) && context.faceTurn(config) != null })) +
@@ -3851,9 +3852,12 @@ object RigBuilder {
 
 	/** The additive shapes the eye modules give [layer]'s mesh: the lids' gaze, emotions and aftershock, a highlight's drift. */
 	private fun eyeBlendShapes(layer: ClassifiedLayer, data: MeshData, frame: Bounds, eyes: io.github.psd2live.core.fit.FittedEyes?,
-	                           brows: Map<Side, io.github.psd2live.core.fit.BrowRig> = emptyMap()):
+	                           brows: Map<Side, io.github.psd2live.core.fit.BrowRig>, sidedCoupling: Boolean):
 		List<org.umamo.runtime.model.BlendShapeBinding<org.umamo.runtime.model.MeshForm>> {
 		val tag = layer.semantic.tag
+        // Legacy consumers of an explicit coupling v5 must project the same side coverage.
+        fun options(eyes: io.github.psd2live.core.fit.FittedEyes, side: Side) =
+            if (sidedCoupling && side !in brows && eyes.options.browCoupling) eyes.options.copy(browCoupling = false) else eyes.options
 		if (tag == SemanticTag.EYEBROW && layer.semantic.role == null) {
 			val brow = brows[layer.semantic.side] ?: return emptyList()
 			val left = layer.semantic.side == Side.LEFT
@@ -3866,7 +3870,7 @@ object RigBuilder {
 		if (layer.semantic.side == Side.NONE && eyes != null && (tag == SemanticTag.EYEWHITE || tag == SemanticTag.EYELASH)) {
 			val owner = List(data.rigPositions.size / 2) { i -> eyes.sideAt(layer.source.id.raw, data.rigPositions[i * 2], data.rigPositions[i * 2 + 1]) }
 			return eyes.rigs.flatMap { (side, eye) -> io.github.psd2live.core.fit.EyeModules.lidShapes(
-				io.github.psd2live.core.fit.EyeModules.meshOf(tag.name, layer.semantic.role?.name)!!, side, data.rigPositions, frame, eye, eyes.options, layer.source.id.raw)
+				io.github.psd2live.core.fit.EyeModules.meshOf(tag.name, layer.semantic.role?.name)!!, side, data.rigPositions, frame, eye, options(eyes, side), layer.source.id.raw)
 				.map { shape -> shape.copy(forms = shape.forms.map { form -> form?.let { org.umamo.runtime.model.MeshForm(it.positionDeltas.mapIndexed { i, delta ->
 					if (owner[i / 2] == side) delta else 0f }.toFloatArray()) } }) }
 			}
@@ -3874,11 +3878,11 @@ object RigBuilder {
 		val eye = eyes?.rigs?.get(layer.semantic.side) ?: return emptyList()
 		return when {
 			tag == SemanticTag.EYEWHITE || tag == SemanticTag.EYELASH -> io.github.psd2live.core.fit.EyeModules.lidShapes(
-				io.github.psd2live.core.fit.EyeModules.meshOf(tag.name, layer.semantic.role?.name)!!, layer.semantic.side, data.rigPositions, frame, eye, eyes.options, layer.source.id.raw)
+				io.github.psd2live.core.fit.EyeModules.meshOf(tag.name, layer.semantic.role?.name)!!, layer.semantic.side, data.rigPositions, frame, eye, options(eyes, layer.semantic.side), layer.source.id.raw)
 			tag == SemanticTag.IRIDES && layer.semantic.role == PartRole.HIGHLIGHT ->
 				io.github.psd2live.core.fit.EyeModules.highlightShapes(data.rigPositions, frame, eye.fit.iris ?: layer.bounds, eyes.options)
 			tag == SemanticTag.IRIDES -> io.github.psd2live.core.fit.EyeModules.pupilShapes(layer.semantic.side, data.rigPositions, frame,
-				eye.fit.iris ?: layer.bounds, eyes.options)
+				eye.fit.iris ?: layer.bounds, options(eyes, layer.semantic.side))
 			else -> emptyList()
 		}
 	}

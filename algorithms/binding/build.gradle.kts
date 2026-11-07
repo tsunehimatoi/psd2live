@@ -2026,6 +2026,42 @@ tasks.register("pluginBrowLidV4") {
     }
 }
 
+val browLidV5WorkerJar = registerIsolatedBindingWorker(
+    "browLidV5", "brow-lid-v5", "worker-brow-lid-v5", "io.github.psd2live.algorithms.binding.BrowLidV5Worker",
+)
+
+kotlin.target.compilations.named("browLidV5") {
+    associateWith(kotlin.target.compilations.getByName("eyeWide"))
+}
+browLidV5WorkerJar.configure {
+    from(sourceSets["eyeWide"].output) { include("**/EyeWideInputs*.class") }
+}
+
+tasks.register("pluginBrowLidV5") {
+    dependsOn(browLidV5WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-brow-lid-v5")
+    val packageVersion = project.version.toString()
+    inputs.file(browLidV5WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        browLidV5WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.62726f772e6c69642d636f75706c696e67.v5"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Brow and lid together",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/coupling","aliases":["brow.lid-coupling"],"version":5,"name":"Brow and lid together","category":"brow",
+               "targets":["mesh"],"requires":["rig.scaffold","brow/fitted","eye/fitted"],"contextVersion":2,
+               "reads":["mesh","parameter","canvas","deformer"],"writes":["mesh","deformer"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val eyeGazeLidWorkerJar = registerIsolatedBindingWorker(
     "eyeGazeLid", "eye-gaze-lid", "worker-eye-gaze-lid", "io.github.psd2live.algorithms.binding.EyeGazeLidWorker",
 )

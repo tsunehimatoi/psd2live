@@ -3711,7 +3711,7 @@ class WorkspaceLegacyBindingTest {
         val expected = outputs[index]
         assertTrue(expected.deformers.size > input.deformers.size)
         assertEquals(input.deformers.map { it.id }, expected.deformers.take(input.deformers.size).map { it.id })
-        for (version in 3..4) {
+        for (version in 3..5) {
             val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, version))
             val instance = locked.copy(version = version, plugin = artifact.reference)
             val versions = if (version == 3) emptyMap() else mapOf(
@@ -3749,12 +3749,16 @@ class WorkspaceLegacyBindingTest {
                     assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
                 }
                 val owner = RigModifierSource.of(actual)
-                val definition = if (version == 3) RigBrowLidModifier.fittedDefinition(owner) else RigBrowLidModifier.fittedEyeDefinition(owner)
+                val definition = when (version) {
+                    3 -> RigBrowLidModifier.fittedDefinition(owner)
+                    4 -> RigBrowLidModifier.fittedEyeDefinition(owner)
+                    else -> RigBrowLidModifier.sidedDefinition(owner)
+                }
                 val upstream = independent.instances.take(index).filter { it.type in definition.requires + definition.optionalUpstream }.map {
                     ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
                 }
                 val context = definition.authorContext(instance).withUpstream(upstream)
-                if (version == 4) {
+                if (version >= 4) {
                     assertEquals(5, context.upstream.single { it.type == "eye/fitted" }.version)
                     assertEquals(3, context.upstream.single { it.type == "brow/fitted" }.version)
                     assertEquals(3, context.upstream.single { it.type == "eye.gaze-lid" }.version)
@@ -3768,6 +3772,63 @@ class WorkspaceLegacyBindingTest {
                 preferences.removeNode()
                 ModifierPluginStore.deleteTree(directory)
             }
+        }
+    }
+
+    @Test fun browLidCouplingSkipsTheEyeWithNoBrowAndKeepsItsOrdinaryAxis(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true, bilateralEyes = true)
+        val choices = WorkspaceInitialPreset(clothing = true)
+        val config = WorkspacePresetBaseline.configure(art.config(), "modern")
+            .copy(meshSpacing = 88, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        suspend fun prepare(versions: Map<String, Int>) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
+            choices, preferSourceBindings = true, requestedVersions = versions)
+        assertContains(assertFailsWith<IllegalArgumentException> { prepare(emptyMap()) }.message.orEmpty(),
+            "incompatible parameter ParamBrowRY")
+        val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 3,
+            "eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3)
+        assertContains(assertFailsWith<IllegalArgumentException> { prepare(versions + ("brow.lid-coupling" to 4)) }.message.orEmpty(),
+            "requires ordinary fitted brow axes")
+
+        val (initialized, actual) = prepare(versions + ("brow.lid-coupling" to 5))
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val instance = stack.instances.single { it.type == "brow.lid-coupling" }
+        val index = stack.index(instance.id)
+        val legacyBlink = stack.instances[index + 1]
+        assertEquals("brow.blink", legacyBlink.type, legacyBlink.id)
+        assertEquals(1, legacyBlink.version)
+        val evaluation = assertNotNull(actual.modifierEvaluation)
+        val before = evaluation.outputs[index - 1]
+        val after = evaluation.outputs[index]
+        assertEquals(before.parameters, after.parameters)
+        val rightAxis = after.parameters.single { it.id == "ParamBrowRY" }
+        assertFalse(rightAxis.blend)
+        assertEquals(rightAxis, evaluation.outputs.last().parameters.single { it.id == rightAxis.id })
+        val rightLayers = setOf("iris-right", "white-right", "lash-right", "close-right")
+        val right = actual.rig.ownLayerIdByDrawableId.filterValues { it in rightLayers }.keys
+        assertEquals(rightLayers.size, right.size)
+        assertEquals(before.meshes.filter { it.id in right }, after.meshes.filter { it.id in right })
+        val left = actual.rig.ownLayerIdByDrawableId.entries.single { it.value == "lash" }.key
+        assertNotEquals(before.meshes.single { it.id == left }, after.meshes.single { it.id == left })
+
+        val modernBrows = mapOf("brow.shape" to 3, "brow.blink" to 3, "brow.spring" to 4)
+        val (_, independentBrows) = prepare(versions + modernBrows + ("brow.lid-coupling" to 5))
+        assertFaceEquals(RigIrCompiler.compile(actual), RigIrCompiler.compile(independentBrows))
+
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(instance.type, 5))
+        val directory = Files.createTempDirectory("brow-lid-single-brow-")
+        val preferences = Preferences.userRoot().node("brow-lid-single-brow/" + UUID.randomUUID())
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+            val installed = store.snapshot().single()
+            val context = assertNotNull(evaluation.readAlgorithms[instance.id]).context
+            assertEquals(after, ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(),
+                before, instance, {}, store, context = context))
+        } finally {
+            ModifierPluginWorkers.stop(artifact.reference)
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
         }
     }
 

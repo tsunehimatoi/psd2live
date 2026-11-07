@@ -3,6 +3,7 @@ package io.github.psd2live.core.modifier
 import io.github.psd2live.algorithms.binding.BrowLidAlgorithm
 import io.github.psd2live.algorithms.binding.BrowLidV3Algorithm
 import io.github.psd2live.algorithms.binding.BrowLidV4Algorithm
+import io.github.psd2live.algorithms.binding.BrowLidV5Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.RigTuning
@@ -44,6 +45,18 @@ internal object RigBrowLidModifier {
         version = BrowLidV4Algorithm.VERSION,
         plugin = fittedEyeAlgorithm,
         changeWrites = BrowLidV4Algorithm.WRITES,
+    )
+
+    private val sidedAlgorithm = object : ReadingModifierAlgorithmPlugin by BrowLidV5Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = BrowLidV5Algorithm.optionalUpstream
+        override val canonicalOptInType = BrowLidV5Algorithm.TYPE
+    }
+
+    fun sidedDefinition(source: RigModifierSource?): RigModifierDefinition = definition(source).copy(
+        version = BrowLidV5Algorithm.VERSION,
+        plugin = sidedAlgorithm,
+        changeWrites = BrowLidV5Algorithm.WRITES,
     )
 
     fun definition(source: RigModifierSource?): RigModifierDefinition =
