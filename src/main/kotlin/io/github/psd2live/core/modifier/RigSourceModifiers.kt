@@ -377,11 +377,11 @@ internal class RigModifierSource(
                 return fittedMouthTemplate(instances, scaffold, nativeConfig, kept, byArea.keys)
             }
             var bindingInput: (() -> PuppetModel)? = null
-            val native = generated(bodyStrength, tuning, headStrength,
-                correctedRecipe, outline,
-                scaffold["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
-                scaffold["frontHairSway"]?.jsonPrimitive?.boolean ?: true, scaffold["backHairSway"]?.jsonPrimitive?.boolean ?: true,
-                neutralScaffold = instances.isEmpty(), capture = { bindingInput = it })
+            val native = RigBuildProfile.stage("modifier legacy template: ${instances.lastOrNull()?.type ?: "rig.scaffold"}") {
+                generated(bodyStrength, tuning, headStrength, correctedRecipe, outline, scaffold["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
+                    scaffold["frontHairSway"]?.jsonPrimitive?.boolean ?: true, scaffold["backHairSway"]?.jsonPrimitive?.boolean ?: true,
+                    neutralScaffold = instances.isEmpty(), capture = { bindingInput = it })
+            }
             val chains = native.generatedChains.filter { chain -> instances.any { chain.kind in RigModifierChains.kinds(it.type) } }
                 .map { RigModifierChains.Binding(it) }
             return finishTemplate(native.puppet, chains, kept, byArea.keys, bindingInput)
