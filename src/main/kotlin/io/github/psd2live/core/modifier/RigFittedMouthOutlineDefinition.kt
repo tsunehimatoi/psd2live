@@ -6,6 +6,7 @@ import io.github.psd2live.algorithms.binding.LegacyFaceInputs
 import io.github.psd2live.algorithms.binding.MouthOutlineHair
 import io.github.psd2live.algorithms.binding.MouthOutlineHeadAttachment
 import io.github.psd2live.algorithms.binding.MouthOutlineV3Algorithm
+import io.github.psd2live.algorithms.binding.MouthOutlineV5Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
 import io.github.psd2live.algorithms.binding.ScaffoldFramesContext
 import io.github.psd2live.algorithms.binding.ScaffoldMesh
@@ -38,7 +39,16 @@ internal object RigFittedMouthOutlineDefinition {
         authorContext = { requireNotNull(source).capture(it) },
     )
 
-    private fun RigModifierSource.capture(instance: RigModifierInstance): ModifierAlgorithmContext {
+    fun closedDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val closed = object : ReadingModifierAlgorithmPlugin by MouthOutlineV5Algorithm(), ModifierVersionSelection, ModifierOptionalUpstream {
+            override val canonicalOptInType = TYPE
+            override val optionalUpstream = plugin.optionalUpstream
+        }
+        return definition(source).copy(version = MouthOutlineV5Algorithm.VERSION, plugin = closed,
+            authorContext = { requireNotNull(source).capture(it, closedDrawing = true) })
+    }
+
+    private fun RigModifierSource.capture(instance: RigModifierInstance, closedDrawing: Boolean = false): ModifierAlgorithmContext {
         val scaffold = provider(instance)
         require(scaffold.version == 2) { "Fitted mouth outline requires a shared v2 scaffold" }
         val prefix = activeBefore(instance).filter { entry ->
@@ -49,6 +59,7 @@ internal object RigFittedMouthOutlineDefinition {
         val mouth = requireNotNull(prefix.singleOrNull { it.type == "mouth/fitted" && instance.targets.all(it.targets::contains) }) {
             "Fitted mouth outline requires one fitted mouth on the same scaffold"
         }
+        require(!closedDrawing || mouth.version == 4) { "Closed-drawing outline requires fitted mouth v4" }
         val head = prefix.lastOrNull { it.type == "face/fitted" || it.type == "face.depth-turn" }
         val body = prefix.singleOrNull { it.type == "body/legacy" }
         val (previous, before) = RigFittedMouthModuleSource.context(this, scaffold, prefix, null)
@@ -75,7 +86,8 @@ internal object RigFittedMouthOutlineDefinition {
         val outline = RigMouthOutlineSource.capture(analysis, desired, owners, headInput, meshCache)
         val selected = outline.targets.keys
         val components = owners.keys.filterTo(linkedSetOf()) { id ->
-            previousByLayer.getValue(owners.getValue(id).layer).semantic.tag in CharacterAnalyzer.MOUTH_COMPONENT_TAGS
+            val tag = previousByLayer.getValue(owners.getValue(id).layer).semantic.tag
+            tag in CharacterAnalyzer.MOUTH_COMPONENT_TAGS || closedDrawing && tag == SemanticTag.MOUTH_CLOSE
         }
         val stationary = owners.keys.filterTo(linkedSetOf()) { id ->
             val owner = owners.getValue(id)

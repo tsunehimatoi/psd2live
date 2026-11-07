@@ -1796,7 +1796,7 @@ class WorkspaceLegacyBindingTest {
         assertEquals(RigIrCompiler.compile(expected), RigIrCompiler.compile(current))
     }
 
-    @Test fun fittedMouthWithSeparateClosedDrawingMatchesLockedVersionAndWorker(): Unit = runBlocking {
+    @Test fun fittedMouthAndOutlineWithSeparateClosedDrawingMatchLockedVersionsAndWorkers(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true, closedMouth = true)
         val choices = WorkspaceInitialPreset()
         val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
@@ -1831,6 +1831,28 @@ class WorkspaceLegacyBindingTest {
         val compiled = RigIrCompiler.compile(baseline, tileArt = true)
         assertEquals(compiled, RigIrCompiler.compile(actual, tileArt = true))
         assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(document), tileArt = true))
+        val outlineIndex = candidate.instances.indexOfFirst { it.type == "mouth.outline" }
+        val outlineArtifact = assertNotNull(BundledAlgorithmArtifacts.find("mouth.outline", 5))
+        val fittedOutline = candidate.copy(instances = candidate.instances.mapIndexed { i, entry ->
+            if (i == outlineIndex) entry.copy(version = 5, plugin = outlineArtifact.reference) else entry
+        })
+        val outlinedDocument = document.copy(rigEdits = document.rigEdits.copy(modifierStack = fittedOutline.toJson()))
+        val outlined = WorkspacePreviewBuilder().build(outlinedDocument)
+        val outlineEvaluation = assertNotNull(outlined.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, outlineEvaluation.entries[outlineIndex].status)
+        val beforeOutline = reference[outlineIndex - 1]
+        val afterOutline = reference[outlineIndex]
+        val closedBefore = beforeOutline.meshes.single { it.name == "mouth-closed" }
+        val closedAfter = afterOutline.meshes.single { it.name == "mouth-closed" }
+        assertNotEquals(closedBefore.geometry, closedAfter.geometry)
+        assertNotEquals(closedBefore.offsets, closedAfter.offsets)
+        assertEquals(closedBefore.channels, closedAfter.channels)
+        assertEquals(beforeOutline.meshes.size + 2, afterOutline.meshes.size)
+        for (stage in outlineIndex until stack.instances.size) {
+            assertTrue(reference[stage] == outlineEvaluation.outputs[stage], stack.instances[stage].type)
+        }
+        assertEquals(compiled, RigIrCompiler.compile(outlined, tileArt = true))
+        assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(outlinedDocument), tileArt = true))
         val instance = candidate.instances[index]
         val definition = RigFittedMouthDefinition.closedDefinition(RigModifierSource.of(actual))
         val context = definition.authorContext(instance).withUpstream(candidate.instances.take(index).map {
@@ -1848,6 +1870,18 @@ class WorkspaceLegacyBindingTest {
             val installed = store.install(staging.toString())
             assertEquals(after, ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(), before,
                 instance, {}, store, context = context, declaredParameters = definition.parameters(instance)))
+            val outlineInstance = fittedOutline.instances[outlineIndex]
+            val outlineStaging = Files.createDirectory(directory.resolve("outline-package"))
+            Files.write(outlineStaging.resolve("plugin.json"), outlineArtifact.bytes)
+            for (name in outlineArtifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(outlineArtifact.resource + name)).use { Files.copy(it, outlineStaging.resolve(name)) }
+            }
+            val outlineWorker = store.install(outlineStaging.toString())
+            assertEquals(outlineArtifact.reference, outlineWorker.reference)
+            val outlineContext = assertNotNull(outlineEvaluation.readAlgorithms[outlineInstance.id]).context
+            assertEquals(afterOutline, ModifierPluginWorkers.evaluate(outlineWorker, outlineWorker.manifest.algorithms.single(),
+                beforeOutline, outlineInstance, {}, store, context = outlineContext,
+                resolveRasters = { rig, rasters, checkpoint -> RigModifierRasterAssets.attach(rig, rasters, outlined.config, checkpoint) }))
         } finally {
             store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
             preferences.removeNode()

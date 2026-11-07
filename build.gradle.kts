@@ -188,6 +188,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "mouthOutlineV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthOutlineV4Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthOutlineV3Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "mouthOutlineV5Elements"))
 	testImplementation(kotlin("test"))
 }
 
@@ -337,6 +338,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginMouthOutlineV3")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-outline-v3")) {
         into("algorithm-plugins/mouth-outline-v3")
+    }
+    dependsOn(":algorithms:binding:pluginMouthOutlineV5")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-outline-v5")) {
+        into("algorithm-plugins/mouth-outline-v5")
     }
     dependsOn(":algorithms:binding:pluginMouthOutlineV2")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-outline-v2")) {
