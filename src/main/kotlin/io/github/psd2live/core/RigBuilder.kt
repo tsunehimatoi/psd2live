@@ -2,6 +2,7 @@ package io.github.psd2live.core
 
 import io.github.psd2live.algorithms.binding.BodyStance
 import io.github.psd2live.algorithms.binding.EyeFittedInputs
+import io.github.psd2live.algorithms.binding.EyeSmileInputs
 import io.github.psd2live.algorithms.binding.EyeWideInputs
 import io.github.psd2live.core.modifier.ModifierSourceBounds
 import io.github.psd2live.core.modifier.RigSourceCapture
@@ -1202,6 +1203,45 @@ object RigBuilder {
             source, ScaffoldMeshContext.capture(topology.values.toList()).resources.getValue("source_meshes"))
     }
 
+
+    /** Eye smile reads only the art, original target topology and its source coordinate frame. */
+    internal fun eyeSmileSourceInputs(
+        analysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig, cache: PreviewMeshCache,
+        targetLayers: Map<String, String>, parameterNames: Map<String, String>, parentId: (String, String) -> String,
+    ): io.github.psd2live.core.modifier.ModifierAlgorithmContext {
+        val context = rigContext(analysis, config, cache, neutralScaffold = true)
+        val artwork = context.analysis.layers.filter { it.semantic.tag in eyeMeshTags && it.opaquePixels > 0 }
+        val byLayer = artwork.associateBy { it.source.id.raw }
+        val firstWhite = artwork.firstOrNull { it.semantic.tag == SemanticTag.EYEWHITE }
+        val space = firstWhite?.let { context.headSpaceFor(it, config) }
+        val alignment = space?.let {
+            val radians = it.angleDegrees * kotlin.math.PI.toFloat() / 180f
+            EyeFittedInputs.Alignment(it.pivotX, it.pivotY, kotlin.math.cos(radians), kotlin.math.sin(radians))
+        }
+        val moves = mapOf(Side.LEFT to "eye.L", Side.RIGHT to "eye.R").mapKeys { it.key.name }.mapValues { (_, feature) ->
+            context.rigMoves(config, feature) { x, y -> space?.toAligned(x, y) ?: (x to y) }
+        }
+        val topology = LinkedHashMap<String, ScaffoldMeshContext.Material>()
+        val targets = targetLayers.mapNotNull { (id, layerId) ->
+            val layer = byLayer[layerId]?.takeIf { it.semantic.tag != SemanticTag.IRIDES } ?: return@mapNotNull null
+            val placement = requireNotNull(atlas.placementByLayerId[layerId]) { "Missing fitted lid atlas placement: $layerId" }
+            val (parent, frame) = context.parentAndFrame(layer, config)
+            topology.getOrPut(layerId) {
+                val mesh = buildGridMesh(layer, frame, context.headSpaceFor(layer, config), config, cache,
+                    MeshResolution.unitScale(config, context.analysis.source))
+                val raw = ScaffoldMesh.RawMesh(mesh.rigPositions, LayerTexture.packed(layer, placement, atlas).bind(mesh.mesh.uvs), mesh.mesh.indices)
+                ScaffoldMeshContext.Material(layerId, layerId, raw, ScaffoldMesh.Geometry.Zero)
+            }
+            id to EyeSmileInputs.Target(layerId, parent?.raw?.let { parentId(id, it) },
+                io.github.psd2live.core.modifier.ModifierSourceBounds(frame.left, frame.top, frame.right, frame.bottom))
+        }.toMap()
+        val source = io.github.psd2live.core.modifier.RigSourceCapture.capture(artwork, targets.mapValues { it.value.layer })
+        val stamps = artwork.filter { it.semantic.tag == SemanticTag.EYELASH }
+            .associate { it.source.id.raw to io.github.psd2live.core.fit.EyeArtworkFitting.stamp(it) }
+        return EyeSmileInputs(context.faceRig.centerX, alignment, stamps, moves, config.recipe.eyeParts, targets,
+            parameterNames, tr("model.group.eyes")).encode(
+            source, ScaffoldMeshContext.capture(topology.values.toList()).resources.getValue("source_meshes"))
+    }
 
     /** Captures the fitted crease, source iris topology and its neutral frame without binding motion. */
     internal fun eyeSquashSourceInputs(

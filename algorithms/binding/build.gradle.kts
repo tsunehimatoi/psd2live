@@ -1095,3 +1095,32 @@ tasks.register("pluginEyeWide") {
         """.trimIndent())
     }
 }
+
+val eyeSmileWorkerJar = registerIsolatedBindingWorker(
+    "eyeSmile", "eye-smile", "worker-eye-smile", "io.github.psd2live.algorithms.binding.EyeSmileWorker",
+)
+
+tasks.register("pluginEyeSmile") {
+    dependsOn(eyeSmileWorkerJar)
+    val output = layout.buildDirectory.dir("plugin-eye-smile")
+    val packageVersion = project.version.toString()
+    inputs.file(eyeSmileWorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        eyeSmileWorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6579652e736d696c65.v2"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Eye smile",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/smile","aliases":["eye.smile"],"version":2,"name":"Eye smile","category":"eye",
+               "targets":["mesh"],"requires":["rig.scaffold","eye/fitted"],"contextVersion":2,
+               "reads":["mesh","parameter","hierarchy","canvas"],"writes":["mesh","parameter","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}

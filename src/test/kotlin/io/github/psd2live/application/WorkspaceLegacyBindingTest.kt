@@ -4,6 +4,7 @@ import io.github.psd2live.algorithms.binding.BrowLegacyV2Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV2Algorithm
 import io.github.psd2live.algorithms.binding.FittedFaceV2Algorithm
 import io.github.psd2live.algorithms.binding.DepthTurnV2Algorithm
+import io.github.psd2live.algorithms.binding.EyeSmileAlgorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV2Algorithm
 import io.github.psd2live.algorithms.binding.LegacyFaceV2Algorithm
 import io.github.psd2live.core.*
@@ -776,6 +777,157 @@ class WorkspaceLegacyBindingTest {
         assertEquals(expected, RigIrCompiler.compile(f.now.model))
         assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
     }
+    @Test fun independentEyeSmileMatchesLockedVersionWithWideLids(): Unit = runBlocking {
+        compareEyeSmile("face/legacy", composed = true)
+    }
+
+    @Test fun independentEyeSmileMatchesLockedVersionWithFittedHead(): Unit = runBlocking {
+        compareEyeSmile("face/fitted")
+    }
+
+    private suspend fun compareEyeSmile(head: String, composed: Boolean = false) {
+        val f = Fixture(document(eyeDetails = true, bilateralEyes = true))
+        f.install()
+        f.group(listOf("body/legacy", head, "eye/fitted"))
+        val dependency = buildJsonObject { put("scaffold", "structure"); put("base", "eye") }
+        if (composed) for (type in listOf("eye.wide", "eye.squash", "eye.lid-fade")) {
+            f.edit("modifier_add", f.addition(type, type, config = dependency))
+        }
+        val config = JsonObject(dependency + ("values" to buildJsonObject {
+            put("arch", 138f); put("push", 71f)
+        }))
+        val addition = f.addition("eye.smile", "smile", config = config)
+        val prefix = f.now
+        val previous = assertNotNull(prefix.model.rig.modifierOutput)
+        f.edit("modifier_add", addition)
+        val legacy = f.now.model
+        assertEquals(1, RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.last().version)
+        val expected = assertNotNull(legacy.rig.modifierOutput)
+        f.runtime.checkout(f.now.projectId, f.now.state, prefix.historyHead)
+        f.edit("modifier_add", JsonObject(addition + ("version" to JsonPrimitive(2))))
+        val current = f.now.model
+        val actual = assertNotNull(current.rig.modifierOutput)
+        assertEquals(expected.parameters, actual.parameters)
+        assertEquals(expected.parameterTree, actual.parameterTree)
+        for ((old, new) in expected.meshes.zip(actual.meshes)) {
+            assertEquals(old, new, old.id)
+        }
+        assertTrue(expected == actual, "The complete generated IR must match the locked smile algorithm")
+
+        val evaluator = CpuDeformationEvaluator()
+        val pose = mapOf(StandardParameters.ANGLE_X to 18f, StandardParameters.ANGLE_Y to -12f,
+            StandardParameters.EYE_L_OPEN to .36f, StandardParameters.EYE_R_OPEN to 0f,
+            ParameterId("ParamEyeLSmile") to .67f, ParameterId("ParamEyeRSmile") to 1f)
+        val oldPose = evaluator.evaluate(legacy.rig.puppet, pose)
+        val newPose = evaluator.evaluate(current.rig.puppet, pose)
+        for ((id, positions) in oldPose.worldPositions) assertContentEquals(positions, newPose.worldPositions.getValue(id), id.raw)
+        assertEquals(oldPose.opacity, newPose.opacity)
+        val plainPose = evaluator.evaluate(current.rig.puppet, pose + (ParameterId("ParamEyeLSmile") to 0f))
+        val white = mesh(f, "white").id
+        assertFalse(plainPose.worldPositions.getValue(white).contentEquals(newPose.worldPositions.getValue(white)))
+
+        val stack = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
+        val instance = stack.instances.last()
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find("eye.smile", 2))
+        assertEquals(artifact.reference, instance.plugin)
+        if (composed) {
+            val directory = Files.createTempDirectory("eye-smile-package-")
+            val preferences = Preferences.userRoot().node("eye-smile-package/" + UUID.randomUUID())
+            val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+            try {
+                val staging = Files.createDirectory(directory.resolve("package"))
+                Files.write(staging.resolve("plugin.json"), artifact.bytes)
+                for (name in artifact.manifest.files.keys) {
+                    assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                }
+                val providers = stack.instances.dropLast(1).map { provider ->
+                    ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
+                        provider.id, provider.config, provider.outputAliases, provider.plugin)
+                }
+                val definition = RigEyeSmileModifier.definition(RigModifierSource.of(current))
+                val context = definition.authorContext(instance).withUpstream(providers)
+                val geometry = assertNotNull(previous.meshes.single { it.id == white.raw }.geometry)
+                val edited = previous.copy(meshes = previous.meshes.map {
+                    if (it.id != white.raw) it else it.copy(geometry = geometry.copy(uvs = Floats.wrap(geometry.uvs.toArray().also { uv ->
+                        uv[0] += .01f
+                    })))
+                })
+                val topologyFailure = assertFailsWith<IllegalArgumentException> {
+                    EyeSmileAlgorithm().changes(edited, instance, context) {}
+                }
+                assertContains(topologyFailure.message.orEmpty(), "requires the captured lid topology")
+                val reparented = previous.copy(meshes = previous.meshes.map {
+                    if (it.id != white.raw) it else it.copy(parent = null)
+                })
+                val carrierFailure = assertFailsWith<IllegalArgumentException> {
+                    EyeSmileAlgorithm().changes(reparented, instance, context) {}
+                }
+                assertContains(carrierFailure.message.orEmpty(), "cannot migrate a fitted lid carrier")
+
+                repeat(2) {
+                    val installed = store.install(staging.toString())
+                    assertEquals(artifact.reference, installed.reference)
+                    val algorithm = installed.manifest.algorithms.single()
+                    val external = instance.copy(type = algorithm.type)
+                    val adapter = ModifierPluginCatalog.definitions(store, captured = listOf(definition)).single {
+                        it.type == external.type && it.version == external.version
+                    }
+                    assertEquals(definition.optionalUpstream, adapter.optionalUpstream)
+                    val workerContext = adapter.authorContext(external).withUpstream(providers.filter {
+                        it.capability in adapter.requires + adapter.optionalUpstream
+                    })
+                    val worker = adapter.plugin as ContextualModifierAlgorithmPlugin
+                    assertEquals(actual, worker.evaluate(previous, external, workerContext) {})
+                    val coupled = providers.first { it.capability == "eye.wide" }.copy(
+                        capability = "eye.gaze-lid", type = "eye.gaze-lid", instanceId = "gaze",
+                    )
+                    val conflict = assertFailsWith<IllegalStateException> {
+                        worker.evaluate(previous, external, workerContext.withUpstream(workerContext.upstream + coupled)) {}
+                    }
+                    assertContains(conflict.message.orEmpty(), "cannot lower preceding coupled lid or brow bindings")
+                    ModifierPluginWorkers.stop(installed.reference)
+                    store.uninstall(installed.reference)
+                }
+
+                val now = f.now
+                val history = f.runtime.history()
+                val historyStore = WorkspaceStore(directory.resolve("project"))
+                historyStore.persistHistory(now.projectId, history)
+                val archive = directory.resolve("eye-smile.psd2live")
+                val repository = ProjectRepository(writeHeadCache = false)
+                repository.save(ProjectSaveCapture(now.projectId, history, JsonObject(emptyMap()), null, historyStore), archive)
+                repository.open(archive).use { opened ->
+                    val restored = opened.history.head().snapshot
+                    assertEquals(instance, RigModifierStack.fromJson(restored.rigEdits.modifierStack!!).instances.last())
+                    assertEquals(actual, WorkspacePreviewBuilder().build(restored).rig.modifierOutput)
+                }
+            } finally {
+                store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+                preferences.removeNode()
+                ModifierPluginStore.deleteTree(directory)
+            }
+        }
+        val compiled = RigIrCompiler.compile(current)
+        f.edit("modifier_apply", buildJsonObject { put("id", "smile") })
+        assertEquals(compiled, RigIrCompiler.compile(f.now.model))
+        assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(f.now.document)))
+    }
+
+    @Test fun independentEyeSmileRejectsEarlierCoupledLidsAtomically(): Unit = runBlocking {
+        val f = Fixture(document(eyeDetails = true))
+        f.install()
+        f.group(listOf("face/legacy", "eye/fitted"))
+        val config = buildJsonObject { put("scaffold", "structure"); put("base", "eye") }
+        f.edit("modifier_add", f.addition("eye.gaze-lid", "gaze", config = config))
+        val before = f.now
+        val addition = f.addition("eye.smile", "smile", config = config)
+        val failure = assertFailsWith<WorkspaceBatchEditException> {
+            f.edit("modifier_add", JsonObject(addition + ("version" to JsonPrimitive(2))))
+        }
+        assertContains(failure.message.orEmpty(), "cannot lower preceding coupled lid or brow bindings")
+        assertEquals(before, f.now)
+    }
+
     @Test fun dependentEyeModulesPauseWithoutTheirChosenBaseAndSurvivePrefixApplication(): Unit = runBlocking<Unit> {
         val f = Fixture(document()); f.install()
         f.group(listOf("body/legacy", "face/legacy", "eye/fitted", "mouth/fitted", "hair/legacy"))
