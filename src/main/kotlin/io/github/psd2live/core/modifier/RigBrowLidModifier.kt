@@ -5,7 +5,9 @@ import io.github.psd2live.algorithms.binding.BrowLidV3Algorithm
 import io.github.psd2live.algorithms.binding.BrowLidV4Algorithm
 import io.github.psd2live.algorithms.binding.BrowLidV5Algorithm
 import io.github.psd2live.algorithms.binding.BrowLidV6Algorithm
+import io.github.psd2live.algorithms.binding.BrowLidV7Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
+import io.github.psd2live.core.ClassifiedLayer
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.RigTuning
 import io.github.psd2live.core.SemanticTag
@@ -77,6 +79,53 @@ internal object RigBrowLidModifier {
         version = BrowLidV6Algorithm.VERSION, plugin = fallbackAlgorithm, changeWrites = BrowLidV6Algorithm.WRITES,
         authorContext = { requireNotNull(source).captureFallback(it) },
     )
+
+    fun sharedFrameDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val implementation = object : ChangingModifierAlgorithmPlugin by BrowLidV7Algorithm, ModifierOptionalUpstream, ModifierVersionSelection {
+            override val optionalUpstream = RigLegacyBindings.specs.filter { !it.expressionToggles && !it.seeThrough }
+                .mapTo(linkedSetOf()) { it.type } - setOf(BrowLidV7Algorithm.TYPE, "brow/fitted", "eye/fitted")
+            override val canonicalOptInType = BrowLidV7Algorithm.TYPE
+        }
+        return definition(source).copy(version = BrowLidV7Algorithm.VERSION, plugin = implementation,
+            changeWrites = BrowLidV7Algorithm.WRITES, authorContext = { requireNotNull(source).captureSharedFrame(it) })
+    }
+
+    private fun RigModifierSource.captureSharedFrame(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val scaffold = provider(instance)
+        val prior = activeBefore(instance).filter { entry ->
+            entry.config["scaffold"] == JsonPrimitive(scaffold.id) && entry.targets.any(instance.targets::contains) &&
+                RigLegacyBindings.find(entry.type)?.let { !it.expressionToggles && !it.seeThrough } == true
+        }
+        require(scaffold.version == 2 && prior.all { it.targets.containsAll(instance.targets) }) {
+            "Brow and lid v7 requires a shared fitted source"
+        }
+        val face = prior.single { it.type == "face/fitted" && it.version == 3 }
+        val shape = prior.single { it.type == "brow.shape" && it.version in setOf(1, 5) }
+        require(prior.none { it.type in setOf(BrowLidV7Algorithm.TYPE, "mouth.cheek-lid", "face.depth-turn") })
+        val (old, before) = RigFittedMouthModuleSource.context(this, scaffold, prior, null)
+        val (next, after) = RigFittedMouthModuleSource.context(this, scaffold, prior + instance, null)
+        val tags = setOf(SemanticTag.IRIDES, SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYE_CLOSE)
+        fun sources(context: RigBuilder.RigContext): Map<String, ClassifiedLayer> {
+            val layers = context.analysis.layers.associateBy { it.source.id.raw }
+            return instance.targets.mapNotNull { target ->
+                val layer = layers[layersByMesh[target.id]] ?: return@mapNotNull null
+                (target.id to layer).takeIf { layer.source.id.raw in atlas.placementByLayerId &&
+                    (layer.semantic.tag in tags || layer.semantic.tag == SemanticTag.EYEBROW) }
+            }.toMap()
+        }
+        val oldLayers = sources(before)
+        val nextLayers = sources(after)
+        require(oldLayers.keys == nextLayers.keys)
+        val scope = oldLayers.filterValues { it.semantic.tag in tags }.keys
+        val axes = prior.flatMapTo(hashSetOf()) { RigLegacyBindings.spec(it.type).parameters }
+        return ModifierAlgorithmContext(buildJsonObject {
+            put("face", face.id)
+            put("shape", shape.id)
+        }, mapOf(
+            "before" to outlineShellSource(before, old, oldLayers, axes, includeFaceLean = true, projectedMeshes = scope),
+            "after" to outlineShellSource(after, next, nextLayers, axes, includeFaceLean = true, projectedMeshes = scope),
+        ))
+    }
 
     private fun RigModifierSource.captureFallback(instance: RigModifierInstance): ModifierAlgorithmContext {
         val context = capture(instance)
