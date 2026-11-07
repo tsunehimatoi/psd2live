@@ -28,7 +28,7 @@ class CliNoDeformersTool {
         val profiling = RigBuildProfile.recording
         RigBuildProfile.recording = true
         val candidate = try {
-            pipeline.run(sample.path, destination.resolve("source"), config)
+            pipeline.run(baseline.analysis.source, sample.path.fileName.toString(), destination.resolve("source"), config)
         } finally {
             RigBuildProfile.recording = profiling
         }

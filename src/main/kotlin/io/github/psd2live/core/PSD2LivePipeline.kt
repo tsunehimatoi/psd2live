@@ -692,13 +692,7 @@ class PSD2LivePipeline {
 		progress: ProgressListener = ProgressListener { _, _ -> },
 	): PipelineResult {
 		progress.update(tr("progress.readPsd"), 0.04)
-		val source = readPsd(psd)
-        val model = when {
-            config.meshOnly && standaloneSource(config) -> buildRawMeshExport(source, config, building(progress))
-            !config.generateDeformers && standaloneSource(config) -> buildRawWithoutDeformers(source, config, building(progress))
-            else -> buildPreview(source, config, building(progress))
-        }
-		return export(model, psd.fileName.toString(), outputDirectory, progress)
+		return exportSource(readPsd(psd), psd.fileName.toString(), outputDirectory, config, progress)
 	}
 
 	/** Export the current authoritative source, including Agent-created layers, without rereading the PSD. */
@@ -710,7 +704,18 @@ class PSD2LivePipeline {
 		progress: ProgressListener = ProgressListener { _, _ -> },
 	): PipelineResult {
 		progress.update(tr("progress.readPsd"), 0.04)
-		return export(buildPreview(source, config, building(progress)), sourceName, outputDirectory, progress)
+		return exportSource(source, sourceName, outputDirectory, config, progress)
+	}
+
+	private fun exportSource(source: SourceArt, name: String, directory: Path, config: PipelineConfig,
+	                         progress: ProgressListener): PipelineResult {
+		val buildProgress = building(progress)
+		val model = when {
+			config.meshOnly && standaloneSource(config) -> buildRawMeshExport(source, config, buildProgress)
+			!config.generateDeformers && standaloneSource(config) -> buildRawWithoutDeformers(source, config, buildProgress)
+			else -> buildPreview(source, config, buildProgress)
+		}
+		return export(model, name, directory, progress)
 	}
 
 	/** The build's own progress, in the part of an export before the model is written. */
