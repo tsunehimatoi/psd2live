@@ -1,5 +1,6 @@
 package io.github.psd2live.core.modifier
 
+import io.github.psd2live.algorithms.binding.CheekCarrierAlgorithm
 import io.github.psd2live.algorithms.binding.CheekV2Algorithm
 import io.github.psd2live.algorithms.binding.CheekSource
 import io.github.psd2live.algorithms.binding.CheekSource.LayerKind
@@ -29,9 +30,19 @@ internal object RigCheekModifier {
             authorContext = { requireNotNull(source).capture(it) },
         )
 
+    fun carrierDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val carrier = object : ReadingModifierAlgorithmPlugin by CheekCarrierAlgorithm(), ModifierVersionSelection, ModifierOptionalUpstream {
+            override val canonicalOptInType = CheekCarrierAlgorithm.TYPE
+            override val optionalUpstream = RigLegacyBindings.specs.mapTo(linkedSetOf()) { it.type } -
+                setOf(CheekCarrierAlgorithm.TYPE, "expression.gloom", "expression.toggles")
+        }
+        return definition(source).copy(version = CheekCarrierAlgorithm.VERSION, plugin = carrier,
+            changeWrites = CheekCarrierAlgorithm.WRITES, authorContext = { requireNotNull(source).capture(it, carriers = true) })
+    }
+
     private fun RigModifierSource.applicable() = RigModules.EXPRESSION_CHEEK.applies(RecipeSubject.of(analysis))
 
-    private fun RigModifierSource.capture(instance: RigModifierInstance): ModifierAlgorithmContext {
+    private fun RigModifierSource.capture(instance: RigModifierInstance, carriers: Boolean = false): ModifierAlgorithmContext {
         val scaffold = provider(instance)
         require(scaffold.version == 2) { "Cheek v2 requires a shared v2 scaffold" }
         require(instance.outputAliases.keys.none { it.startsWith("parameter-folder:") }) {
@@ -58,6 +69,14 @@ internal object RigCheekModifier {
             }
             target.id to CheekSource.Layer(kind)
         }
-        return CheekSource(applicable(), tr("model.parameter.cheek"), tr("model.group.face"), targets).context()
+        val context = CheekSource(applicable(), tr("model.parameter.cheek"), tr("model.group.face"), targets).context()
+        if (!carriers) return context
+        val skin = instance.targets.filter { targets.getValue(it.id).kind in setOf(LayerKind.FACE, LayerKind.NOSE, LayerKind.BLUSH) }
+        val scaffoldMeshes = skin.associate { target ->
+            target.id to scaffoldFor(scaffold, target) {
+                if (Thread.currentThread().isInterrupted) throw java.util.concurrent.CancellationException()
+            }.drawables.single { it.id.raw == target.id }
+        }
+        return captureSkinLowering(skin, scaffold, preceding, scaffoldMeshes, context, includeBlush = true)
     }
 }

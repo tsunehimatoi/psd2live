@@ -78,7 +78,7 @@ class WorkspaceLegacyBindingTest {
     /** Small public procedural art with distinct eye, brow, mouth, hair and torso inputs. */
     private fun document(eyeDetails: Boolean = false, mouthDetails: Boolean = false, expressionDetails: Boolean = false, skinDetails: Boolean = false, outfitDetails: Boolean = false, sideLock: Boolean = false, bangOverlay: Boolean = false,
                          chestDetail: Boolean = false, pairedArms: Boolean = false, thinMouth: Boolean = false, pairedBrows: Boolean = false, bilateralEyes: Boolean = false,
-                         closedMouth: Boolean = false, ribbonDetails: Boolean = false, creatureDetails: Boolean = false): WorkspaceDocument {
+                         closedMouth: Boolean = false, ribbonDetails: Boolean = false, creatureDetails: Boolean = false, denseBlush: Boolean = false): WorkspaceDocument {
         data class Shape(val id: String, val tag: SemanticTag, val side: Side, val x: Int, val y: Int, val w: Int, val h: Int, val role: PartRole? = null)
         val shapes = listOf(
             Shape("iris", SemanticTag.IRIDES, Side.LEFT, 37, 19, 5, 10),
@@ -111,7 +111,8 @@ class WorkspaceLegacyBindingTest {
             Shape("tongue", SemanticTag.TONGUE, Side.NONE, 29, 38, 6, 3),
             Shape("nose", SemanticTag.NOSE, Side.NONE, 29, 28, 5, 3),
         ) else emptyList()) + (if (expressionDetails) listOf(
-            Shape("blush", SemanticTag.FACE_DETAIL, Side.LEFT, 18, 31, 8, 3, PartRole.BLUSH),
+            if (denseBlush) Shape("blush", SemanticTag.FACE_DETAIL, Side.LEFT, 12, 10, 48, 40, PartRole.BLUSH)
+            else Shape("blush", SemanticTag.FACE_DETAIL, Side.LEFT, 18, 31, 8, 3, PartRole.BLUSH),
             Shape("skin-highlight", SemanticTag.FACE_DETAIL, Side.NONE, 24, 11, 7, 2, PartRole.HIGHLIGHT),
             Shape("ear", SemanticTag.EARS, Side.LEFT, 9, 21, 6, 13),
         ) else emptyList())
@@ -1811,6 +1812,107 @@ class WorkspaceLegacyBindingTest {
         assertEquals(prefix.document, f.now.document)
         f.edit("modifier_add", add)
         assertEquals(1, RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.last().version)
+    }
+
+    @Test fun independentCheekReplaysDenseBlushHeadCarrier(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, pairedBrows = true, bilateralEyes = true, bangOverlay = true, denseBlush = true)
+        val choices = WorkspaceInitialPreset()
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern")).copy(
+            atlasSize = 2048, meshMaxEdgeDistance = 12f, meshInteriorDensity = 12f, rigEdits = art.rigEdits)
+        val scaled = io.github.psd2live.tools.upscaled(art.source, 14)
+        fun dotArt(original: LayerRaster): LayerRaster {
+            val pitch = 52
+            val rgba = ByteArray(original.width * original.height * 4)
+            for (y in 0 until original.height) for (x in 0 until original.width) {
+                val dx = x % pitch - pitch / 2
+                val dy = y % pitch - pitch / 2
+                if (dx * dx + dy * dy > 36) continue
+                val i = (y * original.width + x) * 4
+                rgba[i] = 240.toByte()
+                rgba[i + 1] = 140.toByte()
+                rgba[i + 2] = 140.toByte()
+                rgba[i + 3] = 180.toByte()
+            }
+            return LayerRaster(original.width, original.height, rgba)
+        }
+        val stippled = object : SourceArt by scaled {
+            override val layers = scaled.layers.map { layer ->
+                if (layer.name != "blush") layer else object : SourceLayer by layer {
+                    override val raster = dotArt(layer.raster)
+                }
+            }
+        }
+        val source = art.copy(source = stippled, settings = WorkspaceSettingsCodec.encode(config))
+        val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        assertEquals(3, stack.instances.single { it.type == "face/fitted" }.version)
+        assertEquals(5, stack.instances.single { it.type == "eye/fitted" }.version)
+        val locked = stack.instances.single { it.type == "expression.cheek" }
+        assertEquals(1, locked.version)
+        val index = stack.index(locked.id)
+        val evaluation = assertNotNull(baseline.modifierEvaluation)
+        val prior = evaluation.outputs[index - 1]
+        val legacy = evaluation.outputs[index]
+        val before = prior.meshes.single { it.name == "blush" }
+        val after = legacy.meshes.single { it.id == before.id }
+        assertNotEquals(before.parent, after.parent)
+        val carrier = assertNotNull(legacy.deformers.singleOrNull { it.id == after.parent })
+        assertEquals(before.parent, carrier.parent)
+        assertTrue(prior.deformers.none { it.id == carrier.id })
+        assertTrue(after.channels.getValue(Channel.MULTIPLY_COLOR).axes.any { it.parameter == "ParamCheek" })
+
+        val v2 = locked.copy(version = 2)
+        val v2Context = RigCheekModifier.definition(RigModifierSource.of(baseline)).authorContext(v2)
+        val rejected = assertFailsWith<IllegalArgumentException> {
+            io.github.psd2live.algorithms.binding.CheekV2Algorithm().changes(prior, v2, v2Context) {}
+        }
+        assertTrue(rejected.message.orEmpty().contains(before.id), rejected.message)
+
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 3))
+        val instance = locked.copy(version = 3, plugin = artifact.reference)
+        val gloom = stack.instances.single { it.type == "expression.gloom" }
+        val gloomPackage = assertNotNull(BundledAlgorithmArtifacts.find(gloom.type, 3))
+        val upgraded = stack.copy(instances = stack.instances.map {
+            when (it.id) {
+                locked.id -> instance
+                gloom.id -> gloom.copy(version = 3, plugin = gloomPackage.reference)
+                else -> it
+            }
+        })
+        val updated = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = upgraded.toJson()))
+        val current = WorkspacePreviewBuilder().build(updated)
+        val actual = assertNotNull(current.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, actual.entries[index].status)
+        for (stage in index until stack.instances.size) {
+            assertTrue(evaluation.outputs[stage] == actual.outputs[stage], "Stage differs: ${stack.instances[stage].type}")
+        }
+        val compiled = RigIrCompiler.compile(baseline, tileArt = true)
+        assertTrue(compiled == RigIrCompiler.compile(current, tileArt = true), "Full IR differs")
+        val warmCache = RigStageCache.enabled
+        RigStageCache.enabled = false
+        try {
+            val replay = WorkspacePreviewBuilder().build(updated)
+            assertTrue(compiled == RigIrCompiler.compile(replay, tileArt = true), "Cold replay differs")
+        } finally {
+            RigStageCache.enabled = warmCache
+        }
+        val directory = Files.createTempDirectory("cheek-carrier-package-")
+        val preferences = Preferences.userRoot().node("cheek-carrier-package/" + UUID.randomUUID())
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+            val installed = store.snapshot().single { it.reference == artifact.reference }
+            val context = assertNotNull(actual.readAlgorithms[instance.id]).context
+            assertTrue(context.upstream.any { it.type == "face/fitted" && it.version == 3 })
+            assertTrue(context.upstream.any { it.type == "eye/fitted" && it.version == 5 })
+            val declared = RigCheekModifier.carrierDefinition(RigModifierSource.of(current)).parameters(instance)
+            assertTrue(legacy == ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(), prior,
+                instance, {}, store, context = context, declaredParameters = declared), "Installed JVM output differs")
+        } finally {
+            ModifierPluginWorkers.stop(artifact.reference)
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
     }
 
     @Test fun independentCheekPreservesRecommendedPreset(): Unit = runBlocking {

@@ -3,16 +3,6 @@ package io.github.psd2live.core.modifier
 import io.github.psd2live.algorithms.binding.EyeHighlightAlgorithm
 import io.github.psd2live.algorithms.binding.GloomBindingAlgorithm
 import io.github.psd2live.algorithms.binding.GloomCarrierAlgorithm
-import io.github.psd2live.algorithms.binding.ScaffoldBinding
-import io.github.psd2live.core.RigBuilder
-import io.github.psd2live.format.compile.RigIrBinary
-import io.github.psd2live.format.model.Canvas
-import io.github.psd2live.format.model.RigIR
-import io.github.psd2live.i18n.tr
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonObject
-import org.umamo.runtime.model.Drawable
 import io.github.psd2live.core.PartRole
 import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.RigTuning
@@ -92,44 +82,7 @@ internal object RigGloomModifier {
             }
         val base = ModifierAlgorithmContext(JsonObject(context.values +
             ("eye_highlights" to JsonArray(eyeHighlights.map(::JsonPrimitive)))), context.resources)
-        return if (captureCarriers) skinContext(instance, scaffold, previous, scaffoldMeshes, base) else base
+        return if (captureCarriers) captureSkinLowering(instance.targets, scaffold, previous, scaffoldMeshes, base) else base
     }
 
-    private fun RigModifierSource.skinContext(instance: RigModifierInstance, scaffold: RigModifierInstance,
-                                              previous: List<RigModifierInstance>, scaffoldMeshes: Map<String, Drawable>,
-                                              base: ModifierAlgorithmContext): ModifierAlgorithmContext {
-        require(scaffold.version == 2) { "Gloom v3 requires a shared scaffold" }
-        val sourceLayers = analysis.layers.associateBy { it.source.id.raw }
-        val contexts = HashMap<List<RigModifierInstance>, Pair<io.github.psd2live.core.PipelineConfig, RigBuilder.RigContext>>()
-        val source = ArrayList<io.github.psd2live.format.model.Mesh>()
-        val measurements = buildJsonObject {
-            for (target in instance.targets) {
-                val layer = sourceLayers.getValue(layersByMesh.getValue(target.id))
-                if (layer.semantic.tag !in setOf(SemanticTag.FACE, SemanticTag.NOSE)) continue
-                val preceding = previous.filter {
-                    target in it.targets && RigLegacyBindings.find(it.type)?.let { spec -> !spec.expressionToggles && !spec.seeThrough } == true
-                }
-                require(preceding.none { it.type == GloomBindingAlgorithm.TYPE }) { "Gloom v3 needs an unshaded skin binding" }
-                val (native, rig) = contexts.getOrPut(preceding) {
-                    RigFittedMouthModuleSource.context(this@skinContext, scaffold, preceding, null)
-                }
-                val alignedLayer = rig.analysis.layers.single { it.source.id == layer.source.id }
-                val skin = RigBuilder.skinLoweringSource(alignedLayer, rig, native, atlas, meshCache, scaffoldMeshes.getValue(target.id))
-                val parent = requireNotNull(skin.parentDeformerId) { "Gloom v3 requires a bound skin parent" }
-                source += PuppetIr.meshToIr(skin)
-                putJsonObject(target.id) {
-                    put("providers", JsonArray(preceding.map { JsonPrimitive(it.id) }))
-                    put("parents", JsonArray((listOf(scaffold) + preceding).map {
-                        JsonPrimitive(ScaffoldBinding.deformerId(it, target.id, parent.raw, shared = true))
-                    }.distinct()))
-                }
-            }
-        }
-        return ModifierAlgorithmContext(JsonObject(base.values + mapOf(
-            "skin" to measurements,
-            "turn_name" to JsonPrimitive(tr("model.deformer.meshTurn", "{meshName}")),
-            "shape_name" to JsonPrimitive(tr("model.deformer.meshShape", "{meshName}")),
-        )), base.resources + ("skin_forms" to ModifierAlgorithmResource(RigIrBinary.encode(
-            RigIR(Canvas(1f, 1f), emptyList(), meshes = source)))))
-    }
 }

@@ -2706,6 +2706,36 @@ tasks.register("pluginCheekV2") {
     }
 }
 
+val cheekV3WorkerJar = registerIsolatedBindingWorker(
+    "cheekV3", "cheek-v3", "worker-cheek-v3", "io.github.psd2live.algorithms.binding.CheekV3Worker",
+)
+
+tasks.register("pluginCheekV3") {
+    dependsOn(cheekV3WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-cheek-v3")
+    val packageVersion = project.version.toString()
+    inputs.file(cheekV3WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        cheekV3WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.65787072657373696f6e2e636865656b.v3"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Cheek",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/color","aliases":["expression.cheek"],"version":3,"name":"Cheek","category":"expression",
+               "targets":["mesh"],"requires":["rig.scaffold"],"contextVersion":2,
+               "reads":["canvas","mesh","parameter","deformer","hierarchy"],"writes":["mesh","parameter","deformer","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "parameters":[{"id":"ParamCheek","name":"Cheek","min":0,"max":1,"default":0}],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val gloomV2WorkerJar = registerIsolatedBindingWorker(
     "gloomV2", "gloom-v2", "worker-gloom-v2", "io.github.psd2live.algorithms.binding.GloomWorker",
 )
