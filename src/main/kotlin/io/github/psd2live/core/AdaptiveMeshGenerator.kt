@@ -189,15 +189,8 @@ internal object AdaptiveMeshGenerator {
 		wrapRadius: Double = 0.0,
 	): Result? {
 		val threshold = alphaThreshold.coerceIn(1, 255)
-		val hardened = AlphaEdgePreprocessor.process(width, height, rgba, threshold)
-		val geometryRgba = hardened?.rgba ?: ByteArray(rgba.size)
-		// Smoothing must neither bridge a transparent gap nor erase a bright one-pixel stroke
-		// beside a much thicker island. Texture alpha itself remains untouched.
-		for (pixel in 0 until width * height) {
-			val offset = pixel * 4 + 3
-			val sourceAlpha = rgba[offset].toInt() and 0xff
-			if (sourceAlpha < threshold) geometryRgba[offset] = 0
-			else if (sourceAlpha >= (hardened?.hardThreshold ?: threshold)) geometryRgba[offset] = -1
+		val geometryRgba = RigBuildProfile.stage("mesh: alpha mask") {
+			AlphaEdgePreprocessor.geometryMask(width, height, rgba, threshold)
 		}
 		// Wrapping only adds to the traced mask, so whatever the source paints stays inside the mesh.
 		if (wrapRadius > 0.0) MeshWrap.close(width, height, geometryRgba, wrapRadius)
