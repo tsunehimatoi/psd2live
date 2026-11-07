@@ -4537,9 +4537,9 @@ class WorkspaceLegacyBindingTest {
         val spring = stack.instances.single { it.type == "brow.spring" }
         assertEquals(1, spring.version)
         val versions = mapOf("eye/fitted" to 5, "eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3,
-            "eye.emotion" to 3, "eye.aftershock" to 3, "brow/fitted" to 3, "brow.lid-coupling" to 4, "brow.blink" to 3, "brow.spring" to 4)
+            "eye.emotion" to 3, "eye.aftershock" to 3, "brow/fitted" to 3, "brow.shape" to 3, "brow.lid-coupling" to 4, "brow.blink" to 3, "brow.spring" to 4)
         val index = stack.index(spring.id)
-        assertTrue(listOf("brow/fitted", "eye/fitted", "brow.lid-coupling", "brow.blink").all { type -> stack.instances.take(index).any { it.type == type } })
+        assertTrue(listOf("brow/fitted", "eye/fitted", "brow.shape", "brow.lid-coupling", "brow.blink").all { type -> stack.instances.take(index).any { it.type == type } })
         suspend fun preview(candidate: RigModifierStack) = builder.build(initialized.copy(
             rigEdits = initialized.rigEdits.copy(modifierStack = candidate.toJson()),
         ))
@@ -4574,6 +4574,7 @@ class WorkspaceLegacyBindingTest {
             assertTrue(providers.any { it.type == "eye/fitted" && it.version == 5 })
             assertTrue(providers.any { it.type == "brow/fitted" && it.version == 3 })
             assertTrue(providers.any { it.type == "brow.blink" && it.version == 3 })
+            assertTrue(providers.any { it.type == "brow.shape" && it.version == 3 })
             val installed = store.install(staging.toString())
             assertEquals(artifact.reference, installed.reference)
             val worker = ModifierPluginCatalog.definitions(store, captured = listOf(definition))

@@ -29,8 +29,8 @@ class BrowSpringV4Algorithm : ReadingModifierAlgorithmPlugin {
                 it.targets.containsAll(source.targets.filterValues { it.eye != null }.keys.map { ModifierTarget("mesh", it) })
         }) { "Brow spring v4 requires its captured fitted eyes" }
         val shape = source.shapeProvider?.let { provider ->
-            requireNotNull((input.providers(SHAPE) + input.providers(SHAPE_ENTRYPOINT)).singleOrNull {
-                it.instanceId == provider && it.version in 1..2 && it.config["scaffold"] == scaffold &&
+            requireNotNull(shapeCapabilities.flatMap(input::providers).singleOrNull {
+                it.instanceId == provider && it.version in 1..3 && it.config["scaffold"] == scaffold &&
                     it.config["base"] == JsonPrimitive(base) && it.targets.containsAll(instance.targets)
             }) { "Brow spring v4 requires its captured brow shape" }
         }
@@ -177,7 +177,9 @@ class BrowSpringV4Algorithm : ReadingModifierAlgorithmPlugin {
         const val SHAPE = "brow.shape"
         const val SHAPE_ENTRYPOINT = "builtin.62726f772e7368617065.v2/shape"
         private const val BLINK = "brow.blink"
-        val optionalUpstream = setOf("eye/fitted", "eye/legacy", "eye.wide", "eye.smile", BLINK, SHAPE, SHAPE_ENTRYPOINT)
+        const val SHAPE_V3_ENTRYPOINT = "builtin.62726f772e7368617065.v3/shape"
+        private val shapeCapabilities = setOf(SHAPE, SHAPE_ENTRYPOINT, SHAPE_V3_ENTRYPOINT)
+        val optionalUpstream = setOf("eye/fitted", "eye/legacy", "eye.wide", "eye.smile", BLINK) + shapeCapabilities
         val writes = setOf("mesh", "parameter", "hierarchy", "physics")
 
         private fun suffix(side: Side) = if (side == Side.LEFT) "L" else "R"

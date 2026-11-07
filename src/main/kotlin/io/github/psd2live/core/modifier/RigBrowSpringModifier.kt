@@ -82,10 +82,12 @@ internal object RigBrowSpringModifier {
         val name = "Brow spring v${instance.version}"
         val scaffold = provider(instance)
         require(scaffold.version == 2) { "$name requires a shared v2 scaffold" }
+        val shapeEntrypoints = if (modern) setOf(BrowSpringAlgorithm.SHAPE_ENTRYPOINT, BrowSpringV4Algorithm.SHAPE_V3_ENTRYPOINT)
+            else setOf(BrowSpringAlgorithm.SHAPE_ENTRYPOINT)
         val preceding = activeBefore(instance).filter {
             it.config["scaffold"] == JsonPrimitive(scaffold.id) && it.targets.any(instance.targets::contains)
         }.map { item ->
-            if (item.type == BrowSpringAlgorithm.SHAPE_ENTRYPOINT) item.copy(type = BrowSpringAlgorithm.SHAPE) else item
+            if (item.type in shapeEntrypoints) item.copy(type = BrowSpringAlgorithm.SHAPE) else item
         }
         val baseId = instance.config.getValue("base").jsonPrimitive.content
         require(preceding.any { it.id == baseId && it.type == "brow/fitted" && it.version in (1..if (modern) 3 else 2) }) {
@@ -112,7 +114,8 @@ internal object RigBrowSpringModifier {
             else -> 2..2
         }
         require(eye == null || eye.version in eyeVersions) { "$name requires compatible fitted eyes" }
-        require(shape == null || shape.version in 1..2) { "$name requires a compatible brow shape" }
+        val shapeVersions = if (modern) 1..3 else 1..2
+        require(shape == null || shape.version in shapeVersions) { "$name requires a compatible brow shape" }
         val corrections = WorkspaceSettingsCodec.decodeRecipe(scaffold.config["corrections"])
         val byArea = state.values.filter { RigLegacyBindings.spec(it.type).isBase }.associateBy { RigLegacyBindings.spec(it.type).area }
         val bases = RigModules.areas.associate { area ->
