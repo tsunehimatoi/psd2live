@@ -51,8 +51,8 @@ internal interface ModifierVersionSelection {
 
 internal class RigModifierRegistry(definitions: List<RigModifierDefinition>) {
     private val entries = definitions.associateBy { Triple(it.type, it.version, it.pluginReference) }
-    private val defaults = definitions.filterNot { it.explicitVersion }.groupBy { it.type }
-        .mapValues { (_, candidates) -> candidates.maxBy { it.version } }
+    private val defaults by lazy { definitions.filterNot { it.explicitVersion }.groupBy { it.type }
+        .mapValues { (_, candidates) -> candidates.maxBy { it.version } } }
 
     init {
         require(entries.size == definitions.size) { "Duplicate modifier algorithm version" }
@@ -142,7 +142,8 @@ internal class RigModifierEvaluator(
                  cache: RigModifierEvaluationCache? = null, context: Any = Unit,
                  checkpoint: () -> Unit = {}): RigModifierResult {
         val pluginRevision = ModifierPluginStore.shared.revision.value
-        validateOrder(stack)
+        val definitions = resolveDefinitions(stack)
+        validateOrder(stack, definitions)
         var current = authored
         val available = stack.appliedCapabilities.toMutableList()
         val entries = ArrayList<ModifierEvaluation>()
@@ -165,7 +166,8 @@ internal class RigModifierEvaluator(
         var unavailableUpstream: String? = null
         for ((index, instance) in stack.instances.withIndex()) {
             checkpoint()
-            if (!ModifierPluginCatalog.available(instance)) {
+            val definition = definitions[index]
+            if (definition == null) {
                 entries += ModifierEvaluation(instance, if (instance.enabled) ModifierStatus.MISSING_PLUGIN else ModifierStatus.DISABLED)
                 if (instance.enabled) unavailableUpstream = instance.id
                 outputs += current
@@ -177,7 +179,6 @@ internal class RigModifierEvaluator(
                 outputs += current
                 continue
             }
-            val definition = registry.definition(instance)
             if (index < reuse) {
                 io.github.psd2live.core.RigBuildProfile.count("modifier cache hits")
                 val entry = saved!!.entries[index]
@@ -323,14 +324,25 @@ internal class RigModifierEvaluator(
     }
 
     /** A dependency supplied only below its consumer is an invalid order, never an invitation to sort silently. */
-    fun validateOrder(stack: RigModifierStack) {
-        stack.instances.forEachIndexed { index, instance ->
-            if (!ModifierPluginCatalog.available(instance)) return@forEachIndexed
-            val definition = registry.definition(instance)
-            if (!instance.enabled) return@forEachIndexed
+    fun validateOrder(stack: RigModifierStack) = validateOrder(stack, resolveDefinitions(stack))
+
+    private fun resolveDefinitions(stack: RigModifierStack) = stack.instances.map { instance ->
+        if (ModifierPluginCatalog.available(instance)) registry.definition(instance) else null
+    }
+
+    private fun validateOrder(stack: RigModifierStack, definitions: List<RigModifierDefinition?>) {
+        val instances = stack.instances
+        val motionOutputs = HashMap<Int, Set<String>>()
+        for ((index, instance) in instances.withIndex()) {
+            val definition = definitions[index] ?: continue
+            if (!instance.enabled) continue
             val motionInputs = definition.motionInputs(instance)
-            for (later in stack.instances.drop(index + 1).filter { it.enabled && ModifierPluginCatalog.available(it) }) {
-                val conflicts = motionInputs.intersect(registry.definition(later).motionOutputs(later))
+            if (motionInputs.isNotEmpty()) for (laterIndex in index + 1..instances.lastIndex) {
+                val producer = definitions[laterIndex] ?: continue
+                val later = instances[laterIndex]
+                if (!later.enabled) continue
+                val outputs = motionOutputs.getOrPut(laterIndex) { producer.motionOutputs(later) }
+                val conflicts = motionInputs.intersect(outputs)
                 require(conflicts.isEmpty()) { "${instance.id} must follow ${later.id} for motions ${conflicts.joinToString()}" }
             }
             for ((parameter, provider) in instance.parameterProviders) {
