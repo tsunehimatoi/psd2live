@@ -163,6 +163,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "browBlinkElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browBlinkV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browBlinkV4Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "neckV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLidElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLidV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLidV4Elements"))
@@ -369,6 +370,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginHairChains")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-hair-chains")) {
         into("algorithm-plugins/hair-chains")
+    }
+    dependsOn(":algorithms:binding:pluginFaceNeckV3")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-face-neck-v3")) {
+        into("algorithm-plugins/face-neck-v3")
     }
     dependsOn(":algorithms:binding:pluginFaceNeck")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-face-neck")) {

@@ -6251,6 +6251,11 @@ class WorkspaceLegacyBindingTest {
         skinClippingAndNeckFollowSurvivePrefixApplication(2)
     }
 
+    @Test fun skinClippingAndFoldedNeckFollowSurvivePrefixApplication(): Unit = runBlocking {
+        val artifact = requireNotNull(BundledAlgorithmArtifacts.find("face.neck", 3))
+        skinClippingAndNeckFollowSurvivePrefixApplication(3, artifact.manifest.algorithms.single().type)
+    }
+
     @Test fun skinClippingAndPackagedNeckFollowSurvivePrefixApplication(): Unit = runBlocking {
         val artifact = requireNotNull(BundledAlgorithmArtifacts.find("face.neck", 2))
         skinClippingAndNeckFollowSurvivePrefixApplication(2, artifact.manifest.algorithms.single().type)

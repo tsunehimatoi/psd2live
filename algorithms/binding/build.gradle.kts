@@ -1196,6 +1196,34 @@ tasks.register("pluginBrowBlinkV4") {
     }
 }
 
+val neckV3WorkerJar = registerIsolatedBindingWorker(
+    "neckV3", "face-neck-v3", "worker-face-neck-v3", "io.github.psd2live.algorithms.binding.NeckV3Worker",
+)
+tasks.register("pluginFaceNeckV3") {
+    dependsOn(neckV3WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-face-neck-v3")
+    val packageVersion = project.version.toString()
+    inputs.file(neckV3WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        neckV3WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.666163652e6e65636b.v3"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Neck tilt",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/tilt","aliases":["face.neck"],"version":3,"name":"Neck tilt","category":"face",
+               "targets":["mesh"],"requires":["rig.scaffold","face/legacy"],"contextVersion":2,
+               "reads":["mesh","deformer","part","parameter","canvas","textures","authoring"],"writes":["mesh","relations"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val bodyLegacyV2WorkerJar = registerIsolatedBindingWorker(
     "bodyLegacyV2", "body-legacy-v2", "worker-body-legacy-v2", "io.github.psd2live.algorithms.binding.LegacyBodyV2Worker",
 )
