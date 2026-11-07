@@ -6185,6 +6185,68 @@ class WorkspaceLegacyBindingTest {
         assertEquals(ModifierStatus.ACTIVE, assertNotNull(model.modifierEvaluation).entries[stack.index(arm.id)].status)
     }
 
+    @Test fun armSwingV4MatchesSingleArmAfterClosedSourceBindings(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true,
+            pairedBrows = true, bilateralEyes = true, chestDetail = true, closedMouth = true, ribbonDetails = true)
+        val choices = WorkspaceInitialPreset(clothing = true)
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, prepared) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val arm = stack.instances.single { it.type == "body.arms" }
+        val index = stack.index(arm.id)
+        val baseline = if (arm.version == 1) prepared else {
+            val legacy = arm.copy(version = 1, plugin = assertNotNull(BuiltinModifierPlugins.reference(arm.type, 1)))
+            val prior = stack.copy(instances = stack.instances.map { if (it.id == arm.id) legacy else it })
+            WorkspacePreviewBuilder().build(initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = prior.toJson())))
+        }
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(arm.type, 4))
+        val selected = arm.copy(version = 4, plugin = artifact.reference)
+        val upgraded = stack.copy(instances = stack.instances.map { if (it.id == arm.id) selected else it })
+        val document = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = upgraded.toJson()))
+        val expected = assertNotNull(baseline.modifierEvaluation).outputs
+        assertNotEquals(expected[index - 1].meshes.single { it.name == "arm" }, expected[index].meshes.single { it.name == "arm" })
+        val compiled = RigIrCompiler.compile(baseline, tileArt = true)
+        fun verify(model: RigPreviewModel) {
+            val evaluation = assertNotNull(model.modifierEvaluation)
+            assertEquals(ModifierStatus.ACTIVE, evaluation.entries[index].status)
+            for (stage in index - 1 until stack.instances.size) assertFaceEquals(expected[stage], evaluation.outputs[stage])
+            assertFaceEquals(compiled, RigIrCompiler.compile(model, tileArt = true))
+        }
+        val actual = WorkspacePreviewBuilder().build(document).also(::verify)
+        val cache = RigStageCache.enabled
+        try {
+            RigStageCache.enabled = false
+            verify(PSD2LivePipeline().buildPreview(document.source, document.config()))
+        } finally {
+            RigStageCache.enabled = cache
+        }
+        val directory = Files.createTempDirectory("single-arm-source")
+        val preferences = Preferences.userRoot().node("single-arm-source/" + UUID.randomUUID())
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+            val plugin = store.snapshot().single()
+            val evaluation = assertNotNull(actual.modifierEvaluation)
+            val context = assertNotNull(evaluation.readAlgorithms[selected.id]).context
+            assertEquals(expected[index - 1].meshes.single { it.name == "arm" }.id, context.values.getValue("singleArm").jsonPrimitive.content)
+            val definition = RigArmSwingModifier.singleDefinition(RigModifierSource.of(actual))
+            val output = ModifierPluginWorkers.evaluate(plugin, plugin.manifest.algorithms.single(),
+                evaluation.outputs[index - 1], selected, {}, store, context = context, declaredParameters = definition.parameters(selected))
+            assertFaceEquals(expected[index], output)
+        } finally {
+            ModifierPluginWorkers.stop(artifact.reference)
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
+    @Test fun armSwingV4PreservesPairedArms(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true,
+            pairedArms = true, chestDetail = true)
+        compareArmSwingV3(art, useDefault = true, selectedVersion = 4)
+    }
     @Test fun armSwingV3MatchesPairedArmsAfterIndependentMouthBindings(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true,
             pairedArms = true, chestDetail = true)
@@ -6198,7 +6260,7 @@ class WorkspaceLegacyBindingTest {
     }
 
     private suspend fun compareArmSwingV3(art: WorkspaceDocument, mouthVersions: Map<String, Int> = emptyMap(),
-                                         useDefault: Boolean = false) {
+                                         useDefault: Boolean = false, selectedVersion: Int = 3) {
         val choices = WorkspaceInitialPreset(clothing = true)
         val preset = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
         val recipe = if (mouthVersions.isEmpty()) preset.recipe else preset.recipe.copy(
@@ -6212,8 +6274,8 @@ class WorkspaceLegacyBindingTest {
         val index = stack.index(arms.id)
         assertEquals(if (useDefault) 3 else 1, arms.version)
         assertEquals(mouthVersions.keys, stack.instances.take(index).map { it.type }.filter { it in mouthVersions }.toSet())
-        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(arms.type, 3))
-        val selected = arms.copy(version = 3, plugin = artifact.reference)
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(arms.type, selectedVersion))
+        val selected = arms.copy(version = selectedVersion, plugin = artifact.reference)
         val legacy = arms.copy(version = 1, plugin = assertNotNull(BuiltinModifierPlugins.reference(arms.type, 1)))
         val prior = stack.copy(instances = stack.instances.map {
             if (it.id == arms.id) legacy else mouthVersions[it.type]?.let { version ->
@@ -6251,7 +6313,9 @@ class WorkspaceLegacyBindingTest {
             BundledAlgorithmArtifacts.retain(store, listOf(artifact))
             val installed = store.snapshot().single()
             assertEquals(artifact.reference, installed.reference)
-            val definition = RigArmSwingModifier.definition(RigModifierSource.of(actual), modern = true)
+            val owner = RigModifierSource.of(actual)
+            val definition = if (selectedVersion == 4) RigArmSwingModifier.singleDefinition(owner)
+            else RigArmSwingModifier.definition(owner, modern = true)
             val context = assertNotNull(evaluated.readAlgorithms[selected.id]).context
             val output = ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(),
                 evaluated.outputs[index - 1], selected, {}, store, context = context,

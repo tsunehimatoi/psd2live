@@ -1920,6 +1920,40 @@ tasks.register("pluginArmSwingV3") {
     }
 }
 
+val armSwingV4WorkerJar = registerIsolatedBindingWorker(
+    "armSwingV4", "body-arms-v4", "worker-body-arms-v4", "io.github.psd2live.algorithms.binding.ArmSwingV4Worker",
+)
+
+kotlin.target.compilations.named("armSwingV4") {
+    associateWith(kotlin.target.compilations.getByName("armSwingV3"))
+}
+armSwingV4WorkerJar.configure {
+    from(sourceSets["armSwing"].output)
+    from(sourceSets["armSwingV3"].output)
+}
+tasks.register("pluginArmSwingV4") {
+    dependsOn(armSwingV4WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-arm-swing-v4")
+    inputs.file(armSwingV4WorkerJar.flatMap { it.archiveFile })
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        armSwingV4WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.626f64792e61726d73.v4"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"1.0.0","name":"Arm swing",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/swing","aliases":["body.arms"],"version":4,"name":"Arm swing","category":"body",
+               "targets":["mesh"],"requires":["rig.scaffold","body/legacy","face/legacy"],"contextVersion":2,
+               "reads":["canvas","mesh","deformer","parameter","hierarchy","physics","textures","authoring"],"writes":["mesh","deformer","parameter","hierarchy","physics"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter","physics"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val browLidWorkerJar = registerIsolatedBindingWorker(
     "browLid", "brow-lid", "worker-brow-lid", "io.github.psd2live.algorithms.binding.BrowLidWorker",
 )

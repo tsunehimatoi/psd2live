@@ -2,7 +2,9 @@ package io.github.psd2live.core.modifier
 
 import io.github.psd2live.algorithms.binding.ArmSwingAlgorithm
 import io.github.psd2live.algorithms.binding.ArmSwingV3Algorithm
+import io.github.psd2live.algorithms.binding.ArmSwingV4Algorithm
 import io.github.psd2live.core.RigBuilder
+import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.recipe.BaseChoice
 import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.core.recipe.RigRecipe
@@ -35,6 +37,42 @@ internal object RigArmSwingModifier {
         )
     }
 
+    fun singleDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val implementation = object : ReadingModifierAlgorithmPlugin by ArmSwingV4Algorithm(), ModifierVersionSelection {
+            override val canonicalOptInType = ArmSwingAlgorithm.TYPE
+        }
+        val contexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
+        fun captured(instance: RigModifierInstance) = contexts.getOrPut(instance) {
+            requireNotNull(source).captureSingle(instance)
+        }
+        return definition(source, modern = true).copy(version = ArmSwingV4Algorithm.VERSION,
+            parameters = { ArmSwingAlgorithm.parameters(captured(it)) }, plugin = implementation, authorContext = ::captured)
+    }
+
+    private fun RigModifierSource.captureSingle(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val ordinary = capture(instance, modern = true)
+        val arms = analysis.layers.filter { it.semantic.tag == SemanticTag.HANDWEAR && it.opaquePixels > 0 }
+        val source = arms.singleOrNull() ?: return ordinary
+        val targets = instance.targets.filter { layersByMesh[it.id] == source.source.id.raw }
+        val target = targets.singleOrNull() ?: return ordinary
+        val scaffold = provider(instance)
+        val prior = activeBefore(instance).filter {
+            it.config["scaffold"] == JsonPrimitive(scaffold.id) && target in it.targets &&
+                RigLegacyBindings.find(it.type)?.let { spec -> !spec.expressionToggles && !spec.seeThrough } == true
+        }
+        val (previous, before) = RigFittedMouthModuleSource.context(this, scaffold, prior, null)
+        val (desired, after) = RigFittedMouthModuleSource.context(this, scaffold, prior + instance, null)
+        val oldLayer = before.analysis.layers.single { it.source.id == source.source.id }
+        val newLayer = after.analysis.layers.single { it.source.id == source.source.id }
+        val parent = before.parentAndFrame(oldLayer, previous).first
+        if (parent?.raw?.startsWith("DeformArmHang_") != true) return ordinary
+        require(after.parentAndFrame(newLayer, desired).first == parent) { "Arm swing requires the same source arm carrier" }
+        val axes = prior.flatMapTo(hashSetOf()) { RigLegacyBindings.spec(it.type).parameters }
+        return ModifierAlgorithmContext(JsonObject(ordinary.values + ("singleArm" to JsonPrimitive(target.id))), mapOf(
+            "armBefore" to outlineShellSource(before, previous, mapOf(target.id to oldLayer), axes),
+            "armAfter" to outlineShellSource(after, desired, mapOf(target.id to newLayer), axes + RigLegacyBindings.spec(instance.type).parameters),
+        ))
+    }
     private fun RigModifierSource.capture(instance: RigModifierInstance, modern: Boolean): ModifierAlgorithmContext {
         val scaffold = provider(instance)
         val packageVersion = scaffold.plugin?.let { ModifierPluginVersion.parse(it.version, legacy = true) }
