@@ -5,6 +5,7 @@ import io.github.psd2live.algorithms.binding.BrowSpringInputs
 import io.github.psd2live.algorithms.binding.BrowSpringV3Algorithm
 import io.github.psd2live.algorithms.binding.BrowSpringV4Algorithm
 import io.github.psd2live.algorithms.binding.BrowSpringV5Algorithm
+import io.github.psd2live.algorithms.binding.BrowSpringV6Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
 import io.github.psd2live.core.PipelineConfig
 import io.github.psd2live.core.RigBuilder
@@ -44,13 +45,19 @@ internal object RigBrowSpringModifier {
     fun fittedDefinition(source: RigModifierSource?): RigModifierDefinition =
         composedDefinition(source, BrowSpringV4Algorithm.VERSION, fitted)
 
-    fun fallbackDefinition(source: RigModifierSource?): RigModifierDefinition {
-        val implementation = object : ReadingModifierAlgorithmPlugin by BrowSpringV5Algorithm(), ModifierVersionSelection, ModifierOptionalUpstream {
+    fun fallbackDefinition(source: RigModifierSource?): RigModifierDefinition =
+        localDefinition(source, BrowSpringV5Algorithm.VERSION, BrowSpringV5Algorithm())
+
+    fun sharedFrameDefinition(source: RigModifierSource?): RigModifierDefinition =
+        localDefinition(source, BrowSpringV6Algorithm.VERSION, BrowSpringV6Algorithm())
+
+    private fun localDefinition(source: RigModifierSource?, version: Int, algorithm: ReadingModifierAlgorithmPlugin): RigModifierDefinition {
+        val implementation = object : ReadingModifierAlgorithmPlugin by algorithm, ModifierVersionSelection, ModifierOptionalUpstream {
             override val canonicalOptInType = BrowSpringAlgorithm.TYPE
             override val optionalUpstream = RigLegacyBindings.specs.filter { !it.expressionToggles && !it.seeThrough }
                 .mapTo(linkedSetOf()) { it.type } - setOf(BrowSpringAlgorithm.TYPE, "brow/fitted")
         }
-        return composedDefinition(source, BrowSpringV5Algorithm.VERSION, implementation).copy(
+        return composedDefinition(source, version, implementation).copy(
             changeWrites = BrowSpringV4Algorithm.writes + "deformer")
     }
     private fun composedDefinition(source: RigModifierSource?, version: Int,
@@ -64,8 +71,8 @@ internal object RigBrowSpringModifier {
             authorContext = { instance ->
                 val inputs = capture(instance)
                 val context = inputs.encode()
-                if (version == BrowSpringV5Algorithm.VERSION) {
-                    requireNotNull(source).captureFallback(instance, inputs, context)
+                if (version >= BrowSpringV5Algorithm.VERSION) {
+                    requireNotNull(source).captureLocal(instance, inputs, context)
                 } else {
                     val layers = requireNotNull(source).analysis.layers.associateBy { it.source.id.raw }
                     val names = JsonObject(inputs.targets.keys.associateWith { mesh ->
@@ -106,11 +113,16 @@ internal object RigBrowSpringModifier {
             if (item.type in shapeEntrypoints) item.copy(type = BrowSpringAlgorithm.SHAPE) else item
         }
         val baseId = instance.config.getValue("base").jsonPrimitive.content
-        require(preceding.any { it.id == baseId && it.type == "brow/fitted" && it.version in (1..if (modern) 3 else 2) }) {
+        val browVersions = when {
+            version == BrowSpringV6Algorithm.VERSION -> 4..4
+            modern -> 1..3
+            else -> 1..2
+        }
+        require(preceding.any { it.id == baseId && it.type == "brow/fitted" && it.version in browVersions }) {
             "$name requires a compatible fitted brow provider"
         }
         require(preceding.none {
-            it.type in setOf(BrowSpringAlgorithm.TYPE, BrowSpringAlgorithm.ENTRYPOINT, BrowSpringV3Algorithm.ENTRYPOINT, BrowSpringV4Algorithm.ENTRYPOINT, BrowSpringV5Algorithm.ENTRYPOINT) ||
+            it.type in setOf(BrowSpringAlgorithm.TYPE, BrowSpringAlgorithm.ENTRYPOINT, BrowSpringV3Algorithm.ENTRYPOINT, BrowSpringV4Algorithm.ENTRYPOINT, BrowSpringV5Algorithm.ENTRYPOINT, BrowSpringV6Algorithm.ENTRYPOINT) ||
                 !composed && it.type in setOf("brow.blink", "brow.lid-coupling")
         }) {
             if (composed) "$name requires a brow without a preceding spring binding"
@@ -131,6 +143,7 @@ internal object RigBrowSpringModifier {
         }
         require(eye == null || eye.version in eyeVersions) { "$name requires compatible fitted eyes" }
         val shapeVersions = when (version) {
+            BrowSpringV6Algorithm.VERSION -> 5..5
             BrowSpringV5Algorithm.VERSION -> 4..4
             BrowSpringV4Algorithm.VERSION -> 1..3
             else -> 1..2
@@ -166,7 +179,7 @@ internal object RigBrowSpringModifier {
         }
     }
 
-    private fun RigModifierSource.captureFallback(instance: RigModifierInstance, inputs: BrowSpringInputs,
+    private fun RigModifierSource.captureLocal(instance: RigModifierInstance, inputs: BrowSpringInputs,
                                                    context: ModifierAlgorithmContext): ModifierAlgorithmContext {
         if (inputs.targets.isEmpty()) return context
         val scaffold = provider(instance)
@@ -175,11 +188,12 @@ internal object RigBrowSpringModifier {
             it.config["scaffold"] == JsonPrimitive(scaffold.id) && it.targets.any(targets::contains) &&
                 RigLegacyBindings.find(it.type)?.let { spec -> !spec.expressionToggles && !spec.seeThrough } == true
         }
-        require(prior.all { it.targets.containsAll(targets) }) { "Brow spring v5 requires shared fitted source frames" }
+        require(prior.all { it.targets.containsAll(targets) }) { "Brow spring v${instance.version} requires shared fitted source frames" }
         val (previous, before) = RigFittedMouthModuleSource.context(this, scaffold, prior, null)
         val (desired, after) = RigFittedMouthModuleSource.context(this, scaffold, prior + instance, null)
-        require(before.faceTurn(previous) == null && after.faceTurn(desired) == null) {
-            "Brow spring v5 requires a fallback head turn"
+        val fallback = instance.version == BrowSpringV5Algorithm.VERSION
+        require((before.faceTurn(previous) == null) == fallback && (after.faceTurn(desired) == null) == fallback) {
+            if (fallback) "Brow spring v5 requires a fallback head turn" else "Brow spring v6 requires a fitted head turn"
         }
         val axes = prior.flatMapTo(hashSetOf()) { RigLegacyBindings.spec(it.type).parameters }
         val browIds = targets.mapTo(hashSetOf()) { it.id }

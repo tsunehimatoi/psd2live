@@ -2073,6 +2073,42 @@ tasks.register("pluginBrowSpringV5") {
     }
 }
 
+val browSpringV6WorkerJar = registerIsolatedBindingWorker(
+    "browSpringV6", "brow-spring-v6", "worker-brow-spring-v6", "io.github.psd2live.algorithms.binding.BrowSpringV6Worker",
+)
+
+kotlin.target.compilations.named("browSpringV6") {
+    associateWith(kotlin.target.compilations.getByName("browSpring"))
+}
+browSpringV6WorkerJar.configure {
+    from(sourceSets["browSpring"].output) { exclude("**/BrowSpringWorker*.class") }
+}
+
+tasks.register("pluginBrowSpringV6") {
+    dependsOn(browSpringV6WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-brow-spring-v6")
+    val packageVersion = project.version.toString()
+    inputs.file(browSpringV6WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        browSpringV6WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.62726f772e737072696e67.v6"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Brow spring",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/spring","aliases":["brow.spring"],"version":6,"name":"Brow spring","category":"brow",
+               "targets":["mesh"],"requires":["rig.scaffold","brow/fitted"],"contextVersion":2,
+               "reads":["canvas","mesh","deformer","parameter","hierarchy","physics","textures","authoring"],"writes":["mesh","deformer","parameter","hierarchy","physics"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val eyeAftershockWorkerJar = registerIsolatedBindingWorker(
     "eyeAftershock", "eye-aftershock", "worker-eye-aftershock", "io.github.psd2live.algorithms.binding.EyeAftershockWorker",
 )

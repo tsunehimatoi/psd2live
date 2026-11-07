@@ -108,6 +108,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "browSpringV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browSpringV4Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browSpringV5Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "browSpringV6Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthSpringElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthSpringV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthSpringV4Elements"))
@@ -752,6 +753,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginBrowSpringV5")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-spring-v5")) {
         into("algorithm-plugins/brow-spring-v5")
+    }
+    dependsOn(":algorithms:binding:pluginBrowSpringV6")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-spring-v6")) {
+        into("algorithm-plugins/brow-spring-v6")
     }
     dependsOn(":algorithms:binding:pluginMouthSpring")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-spring")) {
