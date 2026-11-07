@@ -209,12 +209,18 @@ class ModifierPluginTest {
 
     @Test fun corruptedInstallationDoesNotPreventOpeningAndCanBeReinstalled() = fixture { root, store, preferences ->
         val source = packageAt(root.resolve("package"))
+        val manifestPath = source.resolve("plugin.json")
+        val original = Files.readString(manifestPath)
         val installed = store.install(source.toString())
+        val manifest = Json.decodeFromString(ModifierPluginManifest.serializer(), original)
+        Files.writeString(manifestPath, Json.encodeToString(ModifierPluginManifest.serializer(), manifest.copy(version = "2")))
+        val otherVersion = store.install(source.toString())
+        Files.writeString(manifestPath, original)
         Files.write(installed.directory.resolve("example.jar"), byteArrayOf(1))
         assertFailsWith<IllegalArgumentException> { store.verify(installed.reference) }
         val reopened = ModifierPluginStore(store.root, preferences)
-        assertTrue(reopened.snapshot().isEmpty())
-        assertTrue(reopened.problems().isNotEmpty())
+        assertEquals(listOf(otherVersion.reference), reopened.snapshot().map { it.reference })
+        assertTrue(reopened.problems().single().startsWith(installed.reference.digest))
         val restored = reopened.install(source.toString())
         assertEquals(installed.reference, restored.reference)
         reopened.verify(restored.reference)

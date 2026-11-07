@@ -1,5 +1,6 @@
 package io.github.psd2live.core.modifier
 
+import io.github.psd2live.core.RigBuildProfile
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.Json
@@ -8,6 +9,10 @@ import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption.ATOMIC_MOVE
 import java.security.MessageDigest
+import java.util.concurrent.Callable
+import java.util.concurrent.CancellationException
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.prefs.Preferences
 import java.util.zip.ZipInputStream
@@ -256,23 +261,44 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
         dependencies.keys.forEach(::visit)
     }
 
-    private fun load(): List<InstalledModifierPlugin> {
+    private fun load(): List<InstalledModifierPlugin> = RigBuildProfile.stage("plugin load: installed catalog") {
         if (!Files.isDirectory(root)) return emptyList()
-        return Files.list(root).use { paths -> paths.filter { digest.matches(it.fileName.toString()) }.toList().mapNotNull { path ->
+        val paths = Files.list(root).use { paths -> paths.filter { digest.matches(it.fileName.toString()) }.toList() }
+        val threads = minOf(paths.size, Runtime.getRuntime().availableProcessors(), 4)
+        val results = if (threads < 2) paths.map(::readInstalled) else {
+            val pool = Executors.newFixedThreadPool(threads) { task -> Thread(task, "psd2live-plugin-load").apply { isDaemon = true } }
             try {
-                inspectDirectory(path, path.resolve(".origin").takeIf(Files::exists)?.let(Files::readString)).copy(
-                    dependencyLock = path.resolve(".dependencies").takeIf(Files::exists)?.let {
-                        require(Files.size(it) <= 1024 * 1024) { "Dependency lock is too large" }
-                        codec.decodeFromString(kotlinx.serialization.builtins.ListSerializer(ModifierPluginReference.serializer()), Files.readString(it))
-                    }).let { entry -> entry.copy(reference = entry.reference.copy(dependencyDigests = entry.dependencyLock.orEmpty().associate { "${it.id}@${it.version}" to it.digest })) }.also {
-                    require(it.reference.digest == path.fileName.toString()) { "Installed plugin contents changed: ${it.reference.id}" }
+                pool.invokeAll(paths.map { path -> Callable { readInstalled(path) } }).map { future ->
+                    try { future.get() } catch (failure: ExecutionException) { throw failure.cause ?: failure }
                 }
-            } catch (failure: Exception) {
-                if (failure is java.util.concurrent.CancellationException) throw failure
+            } catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw CancellationException("Plugin catalog loading cancelled").apply { initCause(interrupted) }
+            } finally {
+                pool.shutdownNow()
+            }
+        }
+        paths.zip(results).mapNotNull { (path, result) ->
+            result.getOrElse { failure ->
                 loadProblems += "${path.fileName}: ${failure.message}"
                 null
             }
-        } }
+        }
+    }
+
+    private fun readInstalled(path: Path): Result<InstalledModifierPlugin> = try {
+        val entry = inspectDirectory(path, path.resolve(".origin").takeIf(Files::exists)?.let(Files::readString))
+        val dependencies = path.resolve(".dependencies").takeIf(Files::exists)?.let {
+            require(Files.size(it) <= 1024 * 1024) { "Dependency lock is too large" }
+            codec.decodeFromString(kotlinx.serialization.builtins.ListSerializer(ModifierPluginReference.serializer()), Files.readString(it))
+        }
+        val reference = entry.reference.copy(dependencyDigests = dependencies.orEmpty().associate { "${it.id}@${it.version}" to it.digest })
+        require(reference.digest == path.fileName.toString()) { "Installed plugin contents changed: ${reference.id}" }
+        Result.success(entry.copy(reference = reference, dependencyLock = dependencies))
+    } catch (failure: Exception) {
+        if (failure is CancellationException) throw failure
+        checkCancelled()
+        Result.failure(failure)
     }
 
     private fun inspectDirectory(directory: Path, commit: String?): InstalledModifierPlugin {
