@@ -4447,3 +4447,33 @@ tasks.register("pluginEyeAftershockV4") {
         """.trimIndent())
     }
 }
+
+
+val eyeAftershockV5WorkerJar = registerIsolatedBindingWorker(
+    "eyeAftershockV5", "eye-aftershock-v5", "worker-eye-aftershock-v5", "io.github.psd2live.algorithms.binding.EyeAftershockV5Worker",
+)
+
+tasks.register("pluginEyeAftershockV5") {
+    dependsOn(eyeAftershockV5WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-eye-aftershock-v5")
+    val packageVersion = project.version.toString()
+    inputs.file(eyeAftershockV5WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        eyeAftershockV5WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6579652e616674657273686f636b.v5"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Blink aftershock",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/aftershock","aliases":["eye.aftershock"],"version":5,"name":"Blink aftershock","category":"eye",
+               "targets":["mesh"],"requires":["rig.scaffold","eye/fitted"],"contextVersion":2,
+               "reads":["*"],"writes":["mesh","deformer","part","parameter","hierarchy","physics"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter","physics"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}

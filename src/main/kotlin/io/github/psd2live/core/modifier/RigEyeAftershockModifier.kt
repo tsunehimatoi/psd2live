@@ -3,7 +3,10 @@ package io.github.psd2live.core.modifier
 import io.github.psd2live.algorithms.binding.EyeAftershockAlgorithm
 import io.github.psd2live.algorithms.binding.EyeAftershockV3Algorithm
 import io.github.psd2live.algorithms.binding.EyeAftershockV4Algorithm
+import io.github.psd2live.algorithms.binding.EyeAftershockV5Algorithm
+import io.github.psd2live.core.PhysicsGenerator
 import io.github.psd2live.core.recipe.RigModules
+import io.github.psd2live.format.compile.RigIrBinary
 import io.github.psd2live.i18n.tr
 import kotlinx.serialization.json.*
 
@@ -36,6 +39,38 @@ internal object RigEyeAftershockModifier {
 
     fun fittedHeadDefinition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, EyeAftershockV4Algorithm.VERSION, fittedHeadAlgorithm)
+
+    fun sharedFrameDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val projected = object : ChangingModifierAlgorithmPlugin by EyeAftershockV5Algorithm(),
+            ModifierOptionalUpstream, ModifierVersionSelection {
+            override val optionalUpstream = RigLegacyBindings.specs.filter { !it.expressionToggles && !it.seeThrough }
+                .mapTo(linkedSetOf()) { it.type } - EyeAftershockAlgorithm.TYPE
+            override val canonicalOptInType = EyeAftershockAlgorithm.TYPE
+        }
+        val contexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
+        fun capture(instance: RigModifierInstance) = contexts.getOrPut(instance) { requireNotNull(source).captureSharedFrames(instance) }
+        val parameterIds = RigModules.EYE_AFTERSHOCK.defines.mapTo(hashSetOf()) { it.id }
+        return fittedHeadDefinition(source).copy(version = EyeAftershockV5Algorithm.VERSION, plugin = projected,
+            parameters = { instance -> RigIrBinary.decode(capture(instance).resources.getValue("after").read())
+                .parameters.filter { it.id in parameterIds } },
+            changeWrites = setOf("mesh", "deformer", "part", "parameter", "hierarchy", "physics"),
+            authorContext = ::capture)
+    }
+
+    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val scaffold = provider(instance)
+        val prefix = bindingPredecessors(instance, scaffold)
+        val face = prefix.single { it.type == "face/fitted" && it.version == 3 }
+        val brow = prefix.single { it.type == "brow/fitted" && it.version == 4 }
+        require(prefix.any { it.id == instance.config.getValue("base").jsonPrimitive.content && it.type == "eye/fitted" && it.version == 5 })
+        return captureBindingTransition(instance, scaffold, prefix, eyeBindingTags, values = buildJsonObject {
+            put("face", face.id)
+            put("brow", brow.id)
+            put("group", tr("model.group.physics"))
+            val controls = setOf("ParamEyeLOpen", "ParamEyeROpen", "ParamEyeLBounce", "ParamEyeRBounce")
+            put("physics", JsonArray(PhysicsGenerator.moduleRules(controls).map { it.toJson() }))
+        })
+    }
 
     private fun definition(source: RigModifierSource?, version: Int, algorithm: ReadingModifierAlgorithmPlugin): RigModifierDefinition {
         val legacy = RigLegacyBindings.definition(RigLegacyBindings.spec(EyeAftershockAlgorithm.TYPE), source)

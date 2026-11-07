@@ -87,6 +87,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "eyeAftershockElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "eyeAftershockV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "eyeAftershockV4Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "eyeAftershockV5Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "eyeGazeLidElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "eyeGazeLidV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "eyeGazeLidV4Elements"))
@@ -660,6 +661,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginEyeAftershockV3")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-aftershock-v3")) {
         into("algorithm-plugins/eye-aftershock-v3")
+    }
+    dependsOn(":algorithms:binding:pluginEyeAftershockV5")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-aftershock-v5")) {
+        into("algorithm-plugins/eye-aftershock-v5")
     }
     dependsOn(":algorithms:binding:pluginEyeAftershockV4")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-aftershock-v4")) {
