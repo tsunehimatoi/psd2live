@@ -17,6 +17,7 @@ import io.github.psd2live.algorithms.binding.EyeSmileV3Algorithm
 import io.github.psd2live.algorithms.binding.EyeSquashV4Algorithm
 import io.github.psd2live.algorithms.binding.EyeWideV3Algorithm
 import io.github.psd2live.algorithms.binding.FittedFaceV3Algorithm
+import io.github.psd2live.algorithms.binding.GloomCarrierAlgorithm
 import io.github.psd2live.algorithms.binding.LegacyBodyV2Algorithm
 import io.github.psd2live.algorithms.binding.LegacyFaceV2Algorithm
 import io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm
@@ -128,10 +129,11 @@ internal object WorkspacePresetInitialization {
                         RigModules.BROW_SPRING.id to BrowSpringV4Algorithm.VERSION)
                     packages(browVersions.filterKeys { type -> stack.instances.any { it.type == type } })
                 } else emptyMap()
-                val arms = if (lids.size == plannedLids.size && (!subject.has(SemanticTag.EYEBROW) || brows.isNotEmpty())) {
-                    packages(mapOf(RigModules.BODY_ARMS.id to ArmSwingV3Algorithm.VERSION))
+                val extensions = if (lids.size == plannedLids.size && (!subject.has(SemanticTag.EYEBROW) || brows.isNotEmpty())) {
+                    packages(mapOf(RigModules.BODY_ARMS.id to ArmSwingV3Algorithm.VERSION)) +
+                        packages(mapOf(RigModules.EXPRESSION_GLOOM.id to GloomCarrierAlgorithm.VERSION))
                 } else emptyMap()
-                headAndEye + lids + brows + arms
+                headAndEye + lids + brows + extensions
             }
         } else emptyMap()
         val sourceVersions = if (scaffold != null) buildMap {
