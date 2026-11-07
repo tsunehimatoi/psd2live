@@ -17,7 +17,9 @@ import io.github.psd2live.project.WorkspaceDocument
 import io.github.psd2live.project.WorkspaceSettingsCodec
 import kotlinx.coroutines.runBlocking
 import org.umamo.runtime.model.DrawableId
+import org.umamo.runtime.model.OrgChild
 import org.umamo.runtime.model.ParameterId
+import org.umamo.runtime.model.withDerivedRenderRoot
 import kotlin.test.Test
 
 /** Compare a raw PSD export with a stack that uses names derived from the same source. */
@@ -38,7 +40,8 @@ class CliPresetMigrationTool {
             WorkspaceInitialPreset(clothing = false))
         val stack = RigModifierStack.fromJson(requireNotNull(initialized.rigEdits.modifierStack))
         val evaluated = requireNotNull(independent.rig.modifierOutput)
-        val measured = RigGenerationSource.prepare(RigGenerationSource.analyze(source, config), config).geometry
+        val sourceAnalyses = RigGenerationSource.prepare(RigGenerationSource.analyze(source, config), config)
+        val measured = sourceAnalyses.geometry
         val context = RigBuilder.rigContext(measured, config.copy(generateDeformers = false))
         val chains = RigBuilder.hairChains(context.analysis, context.faceRig, config).map(RigModifierChains::Binding)
         val chainWarps = chains.associate { it.warp.raw to it.native.warpId }
@@ -74,9 +77,13 @@ class CliPresetMigrationTool {
         val before = RigIrCompiler.compile(independent, tileArt = true)
         val after = RigIrCompiler.compile(candidate, tileArt = true)
         // Keep the evaluated geometry and generated pixels, then try the raw export's shared atlas layout.
-        val repackedAtlas = AtlasLayout.pack(candidate.analysis.layers, config)
+        val sourceOrder = sourceAnalyses.textures.layers.mapIndexed { index, layer -> layer.source.id.raw to index }.toMap()
+        val exportArt = candidate.analysis.copy(layers = candidate.analysis.layers.sortedBy {
+            sourceOrder[it.source.id.raw] ?: Int.MAX_VALUE
+        })
+        val repackedAtlas = AtlasLayout.pack(exportArt.layers, config)
         val repacked = RigLayerDeletion.rebind(candidate.rig, candidate.analysis, candidate.atlas,
-            candidate.analysis, repackedAtlas)
+            exportArt, repackedAtlas)
         output("cli-preset-migration").resolve("report.txt").writeText(buildString {
             appendLine("Names follow the source measurement. The native build is used only as the comparison baseline.")
             compare("instance IDs", expected, before)
@@ -84,12 +91,13 @@ class CliPresetMigrationTool {
             if (repacked != null) {
                 appendLine("  shared atlas placement differences = " +
                     repackedAtlas.placementByLayerId.keys.filter { repackedAtlas.placementByLayerId[it] != native.atlas.placementByLayerId[it] })
-                val packed = candidate.copy(rig = repacked, atlas = repackedAtlas)
+                val packed = candidate.copy(analysis = exportArt, rig = repacked, atlas = repackedAtlas)
                 compare("shared atlas", expected, RigIrCompiler.compile(packed, tileArt = true))
                 val moduleIds = RigModules.parameters(config, RecipeSubject.of(measured)).map { ParameterId(it.id) } +
                     chains.flatMap { it.native.parameters }
-                val ordered = orderExportMetadata(packed, moduleIds, config)
-                compare("shared export layout", expected, RigIrCompiler.compile(ordered, tileArt = true))
+                val ordered = orderExportMetadata(orderLipMeshes(packed, measured), moduleIds, config)
+                val presented = CliMouthOutlinePresentation.apply(ordered, config)
+                compare("shared export layout", expected, RigIrCompiler.compile(presented, tileArt = true))
             } else appendLine("Shared atlas comparison unavailable: a mesh has no matching source tile.")
         })
     }
@@ -103,6 +111,36 @@ class CliPresetMigrationTool {
         return stack.copy(instances = stack.instances.filterNot { it in postponed }.toMutableList().apply {
             addAll(indexOf(outline) + 1, postponed)
         })
+    }
+
+    private fun orderLipMeshes(preview: RigPreviewModel, measured: PipelineAnalysis): RigPreviewModel {
+        val rig = preview.rig
+        val meshByLayer = rig.ownLayerIdByDrawableId.entries.groupBy({ it.value }, { DrawableId(it.key) })
+        val lips = measured.layers.mapNotNull { it.source as? MouthLipLayer }.sortedBy { it.side }
+        val pairs = lips.mapNotNull { lip ->
+            val owner = meshByLayer[lip.ownerId]?.singleOrNull() ?: return@mapNotNull null
+            val mesh = meshByLayer[lip.id.raw]?.singleOrNull() ?: return@mapNotNull null
+            owner to mesh
+        }
+        if (pairs.isEmpty()) return preview
+        val lipByOwner = pairs.groupBy({ it.first }, { it.second })
+        val ownerByLip = pairs.associate { (owner, lip) -> lip to owner }
+        fun <T> order(items: List<T>, id: (T) -> DrawableId?): List<T> {
+            val byId = items.mapNotNull { item -> id(item)?.let { it to item } }.toMap()
+            return buildList {
+                for (item in items) {
+                    val mesh = id(item)
+                    if (ownerByLip[mesh] in byId) continue
+                    add(item)
+                    lipByOwner[mesh].orEmpty().mapNotNullTo(this, byId::get)
+                }
+            }
+        }
+        fun children(items: List<OrgChild>) = order(items) { (it as? OrgChild.Drawable)?.id }
+        val puppet = rig.puppet
+        return preview.copy(rig = rig.copy(puppet = puppet.copy(drawables = order(puppet.drawables) { it.id },
+            parts = puppet.parts.map { it.copy(children = children(it.children)) },
+            rootChildren = children(puppet.rootChildren)).withDerivedRenderRoot()))
     }
 
     private fun orderExportMetadata(preview: RigPreviewModel, moduleIds: List<ParameterId>, config: PipelineConfig): RigPreviewModel {
