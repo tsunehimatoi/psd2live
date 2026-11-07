@@ -93,8 +93,10 @@ internal object WorkspacePresetInitialization {
             version to reference
         }
         val scaffold = stack.instances.singleOrNull { it.type == RigSourceModifiers.SCAFFOLD && it.version == 2 }
+        val completeEyePair = subject.sides(SemanticTag.EYEWHITE).size == 2 && subject.sides(SemanticTag.EYELASH).size == 2
         val fittedSources = if (preferSourceBindings && scaffold != null && config.recipe == RigRecipe.Modern && fittedFace &&
-            !config.featureDisplacementEnabled && config.rigTuning == RigTuning() && requestedVersions.isEmpty() && freshSource(config)) {
+            !config.featureDisplacementEnabled && config.rigTuning == RigTuning() && requestedVersions.isEmpty() && freshSource(config) &&
+            (!subject.has(SemanticTag.EYEBROW) || completeEyePair)) {
             fun packages(versions: Map<String, Int>): Map<String, Pair<Int, ModifierPluginReference>> {
                 val selected = versions.mapNotNull { (type, version) ->
                     val entry = stack.instances.singleOrNull { it.type == type } ?: return@mapNotNull null
