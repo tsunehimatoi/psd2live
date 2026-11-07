@@ -1115,6 +1115,27 @@ object RigBuilder {
         return ScaffoldMeshContext.capture(materials)
     }
 
+    /** Capture the source eye fit and the opacity beneath the generated fade. */
+    internal fun lidFadeSourceInputs(analysis: PipelineAnalysis, config: PipelineConfig, cache: PreviewMeshCache,
+                                     targetLayers: Map<String, String>): io.github.psd2live.core.modifier.ModifierAlgorithmContext {
+        val context = rigContext(analysis, config, cache)
+        val eyes = context.fittedEyes(config)?.rigs.orEmpty()
+        val layers = context.analysis.layers.associateBy { it.source.id.raw }
+        val targets = targetLayers.mapNotNull { (id, layerId) ->
+            val layer = layers[layerId] ?: return@mapNotNull null
+            val semantic = layer.semantic
+            if (semantic.tag != SemanticTag.EYELASH || (semantic.role != PartRole.LID && semantic.role != PartRole.SHADOW))
+                return@mapNotNull null
+            val override = config.layerOverrides[layerId]
+            if ((override?.type ?: semantic.type) != LayerType.PRESET &&
+                (override?.parameter ?: semantic.parameter).isNotBlank()) return@mapNotNull null
+            val eye = eyes[semantic.side] ?: return@mapNotNull null
+            val parameter = io.github.psd2live.core.fit.EyeModules.open(semantic.side).raw
+            id to io.github.psd2live.algorithms.binding.LidFadeInputs(parameter, eye.crease, layer.source.opacity.coerceIn(0f, 1f))
+        }.toMap()
+        return io.github.psd2live.algorithms.binding.LidFadeInputs.encode(targets)
+    }
+
     /** Captures the neck's source topology and neutral frames without evaluating any binding stage. */
     internal fun neckSourceInputs(
         analysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig, cache: PreviewMeshCache,

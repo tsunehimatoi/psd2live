@@ -23,6 +23,8 @@ val bustWorkerClasses = listOf("**/BustBindingAlgorithm*.class", "**/BustBinding
 
 val hairLegacyWorkerClasses = listOf("**/HairLegacy*.class")
 
+val lidFadeWorkerClasses = listOf("**/LidFadeAlgorithm*.class", "**/LidFadeInputs*.class", "**/LidFadeWorker*.class")
+
 val workerJar by tasks.registering(Jar::class) {
     dependsOn(configurations.runtimeClasspath)
     archiveClassifier.set("worker")
@@ -33,7 +35,7 @@ val workerJar by tasks.registering(Jar::class) {
     from(sourceSets.main.get().output)
     from(configurations.runtimeClasspath.map { files -> files.map { if (it.isDirectory) it else zipTree(it) } })
     exclude("META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA")
-    exclude(neckWorkerClasses + bustWorkerClasses + hairLegacyWorkerClasses)
+    exclude(neckWorkerClasses + bustWorkerClasses + hairLegacyWorkerClasses + lidFadeWorkerClasses)
 }
 
 tasks.register("pluginPackage") {
@@ -294,7 +296,7 @@ val hairChainsWorkerJar by tasks.registering(Jar::class) {
     from(sourceSets.main.get().output)
     from(configurations.runtimeClasspath.map { files -> files.map { if (it.isDirectory) it else zipTree(it) } })
     exclude("META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA")
-    exclude(neckWorkerClasses + bustWorkerClasses + hairLegacyWorkerClasses)
+    exclude(neckWorkerClasses + bustWorkerClasses + hairLegacyWorkerClasses + lidFadeWorkerClasses)
 }
 
 tasks.register("pluginHairChains") {
@@ -422,6 +424,42 @@ tasks.register("pluginHairLegacy") {
                "version":2,"name":"Legacy hair","category":"hair","contextVersion":1,"targets":["mesh"],
                "requires":["rig.scaffold"],"exclusiveFamily":"base:hair",
                "reads":["*"],"writes":["mesh","deformer","hierarchy","parameter"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
+val lidFadeWorkerJar by tasks.registering(Jar::class) {
+    dependsOn(workerJar)
+    archiveClassifier.set("worker-eye-lid-fade")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest { attributes["Main-Class"] = "io.github.psd2live.algorithms.binding.LidFadeWorker" }
+    from(sourceSets.main.get().output) { include(lidFadeWorkerClasses) }
+    from(workerJar.flatMap { it.archiveFile }.map { zipTree(it) }) { exclude("META-INF/MANIFEST.MF") }
+}
+
+tasks.register("pluginEyeLidFade") {
+    dependsOn(lidFadeWorkerJar)
+    val output = layout.buildDirectory.dir("plugin-eye-lid-fade")
+    val packageVersion = project.version.toString()
+    inputs.file(lidFadeWorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        lidFadeWorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6579652e6c69642d66616465.v2"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Lid lines fade early",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/fade","aliases":["eye.lid-fade"],"version":2,"name":"Lid lines fade early","category":"eye",
+               "targets":["mesh"],"requires":["rig.scaffold","eye/fitted"],"contextVersion":2,
+               "reads":["mesh","parameter"],"writes":["mesh"],
                "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
                "configSchema":{"type":"object"},"defaults":{}}]}
         """.trimIndent())

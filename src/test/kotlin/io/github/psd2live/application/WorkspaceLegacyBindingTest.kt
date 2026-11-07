@@ -501,7 +501,20 @@ class WorkspaceLegacyBindingTest {
         assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
     }
 
-    @Test fun widenedLidsFadingLinesAndHighlightsComposeWithHeadTurnsAndApplyAsOrdinaryContent(): Unit = runBlocking<Unit> {
+    @Test fun widenedLidsFadingLinesAndHighlightsComposeWithHeadTurnsAndApplyAsOrdinaryContent(): Unit = runBlocking {
+        widenedLidsFadingLinesAndHighlightsCompose("eye.lid-fade", 2)
+    }
+
+    @Test fun packagedLidFadeMatchesTheNativeRecipeAndSurvivesApplyingItsPrefix(): Unit = runBlocking {
+        val artifact = requireNotNull(BundledAlgorithmArtifacts.find("eye.lid-fade", 2))
+        widenedLidsFadingLinesAndHighlightsCompose(artifact.manifest.algorithms.single().type, 2)
+    }
+
+    @Test fun historicalLidFadeMatchesTheNativeRecipeAndSurvivesApplyingItsPrefix(): Unit = runBlocking {
+        widenedLidsFadingLinesAndHighlightsCompose("eye.lid-fade", 1)
+    }
+
+    private suspend fun widenedLidsFadingLinesAndHighlightsCompose(fadeType: String, fadeVersion: Int) {
         val f = Fixture(document(eyeDetails = true)); f.install()
         f.group(listOf("body/legacy", "face/legacy", "eye/fitted", "brow/fitted", "mouth/fitted", "hair/legacy"))
         val modules = listOf("eye.wide", "eye.lid-fade", "eye.highlight")
@@ -513,10 +526,12 @@ class WorkspaceLegacyBindingTest {
             mapOf(StandardParameters.EYE_L_OPEN to 2f, StandardParameters.ANGLE_X to -25f, StandardParameters.ANGLE_Y to 18f))
         fun recipe(active: List<String>) = base.copy(modules = base.modules + active.associateWith { ModuleChoice(true) })
         for ((index, type) in modules.withIndex()) {
-            f.edit("modifier_add", f.addition(type, type, config = buildJsonObject {
+            val addition = f.addition(if (type == "eye.lid-fade") fadeType else type, type, config = buildJsonObject {
                 put("scaffold", "structure"); put("base", "eye")
                 if (type == "eye.highlight") putJsonObject("dependencies") { put("face/legacy", "face") }
-            }))
+            })
+            f.edit("modifier_add", if (type == "eye.lid-fade")
+                JsonObject(addition + ("version" to JsonPrimitive(fadeVersion))) else addition)
             try { compare(native(f.document, recipe(modules.take(index + 1))), f.now.model, poses) }
             catch (error: Throwable) { throw AssertionError("Stage $type: ${error.message}", error) }
         }
