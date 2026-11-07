@@ -78,7 +78,8 @@ internal object WorkspacePresetInitialization {
 
     fun prepare(document: WorkspaceDocument, work: WorkspaceRasterWork,
                 choices: WorkspaceInitialPreset = WorkspaceInitialPreset(),
-                requestedVersions: Map<String, Int> = emptyMap()): Pair<WorkspaceDocument, RigPreviewModel> {
+                requestedVersions: Map<String, Int> = emptyMap(),
+                cliBindings: CliPresetBindings? = null): Pair<WorkspaceDocument, RigPreviewModel> {
         val config = document.config()
         var stack = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack))
         require(stack.instances.isEmpty()) { "Initialize presets only into an empty stack" }
@@ -296,6 +297,7 @@ internal object WorkspacePresetInitialization {
                 if (ModifierPluginCatalog.available(entry.type, version, plugin)) entry.copy(version = version, plugin = plugin) else entry
             })
         }
+        if (cliBindings != null) stack = cliBindings.bindings(model, stack)
         model = build("binding preview")
         val parameters = model.rig.puppet.parameters.associateBy { it.id.raw }
         val available = parameters.keys
@@ -303,7 +305,8 @@ internal object WorkspacePresetInitialization {
         if (config.generatePhysics) for (rule in PhysicsGenerator.presetRules(
             PhysicsGenerator.Presets(config.physicsFrontHair, config.physicsBackHair, config.physicsEyeJelly), available)) {
             if (PhysicsCatalog.issueOf(rule, available) != null || rule.outputs.any { it.parameter in claimed }) continue
-            stack = stack.add("physics", 1, targets, rule.toJson(), group)
+            stack = stack.add("physics", 1, targets, rule.toJson(), group,
+                outputAliases = if (cliBindings == null) emptyMap() else mapOf("physics" to rule.id))
             claimed += rule.outputs.map { it.parameter }
         }
         if (config.exportMotions) for (name in MotionClips.BUILTIN_NAMES) {
@@ -329,8 +332,10 @@ internal object WorkspacePresetInitialization {
             val clip = MotionClip("template", name, loop = MotionPresets.loops(name),
                 duration = MotionPresets.duration(name, tracks, settings).takeIf { it > 0f } ?: 2f,
                 curves = curves, capturedRanges = ranges)
-            stack = stack.add("motion", 1, targets, MotionClips.toJson(clip.copy(parameterRoles =
-                if (name == "Blink") mapOf("EyeBlink" to listOf("ParamEyeLOpen", "ParamEyeROpen").filter { it in available }) else emptyMap())), group)
+            val named = cliBindings?.motion(clip) ?: clip
+            val roles = if (name == "Blink") mapOf("EyeBlink" to listOf("ParamEyeLOpen", "ParamEyeROpen").filter { it in available }) else emptyMap()
+            stack = stack.add("motion", 1, targets, MotionClips.toJson(named.copy(parameterRoles = roles)), group,
+                outputAliases = if (cliBindings == null) emptyMap() else mapOf("motion" to name))
         }
         // Physics and clips reference the binding parameters without changing the rest geometry.
         // All simulation presets can therefore plan against the same evaluated binding.
