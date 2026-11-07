@@ -8,11 +8,6 @@ import io.github.psd2live.algorithms.binding.MouthJawV6Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldMesh
 import io.github.psd2live.algorithms.binding.ScaffoldMeshContext
 import io.github.psd2live.core.*
-import io.github.psd2live.core.recipe.BaseChoice
-import io.github.psd2live.core.recipe.ModuleChoice
-import io.github.psd2live.core.recipe.RigModules
-import io.github.psd2live.core.recipe.RigRecipe
-import io.github.psd2live.project.WorkspaceSettingsCodec
 import kotlinx.serialization.json.*
 
 internal object RigMouthJawModifier {
@@ -98,33 +93,8 @@ internal object RigMouthJawModifier {
         require(!allowTongue || preceding.filter { it.type == "mouth.tongue" }.all { it.version == 3 }) {
             "Mouth jaw v4 requires a compatible tongue provider"
         }
-        val state = preceding.associateBy { it.type }
-        val bases = preceding.filter { RigLegacyBindings.spec(it.type).isBase }.associateBy { RigLegacyBindings.spec(it.type).area }
-        val corrections = WorkspaceSettingsCodec.decodeRecipe(scaffold.config["corrections"])
-        val recipe = RigRecipe(true, bases = RigModules.areas.associate { area ->
-            val chosen = bases[area.id]?.takeUnless { it.type == RigLegacyBindings.FITTED_FACE }
-            area.id to if (chosen == null) BaseChoice(area.legacy.id, area.legacy.version)
-            else BaseChoice(chosen.type, chosen.version, RigLegacyBindings.values(chosen))
-        }, modules = RigModules.modules.associate { module ->
-            val chosen = state[module.id] ?: state[RigLegacyBindings.FITTED_FACE]?.takeIf { module == RigModules.FACE_DEPTH_TURN }
-            module.id to when {
-                chosen != null -> ModuleChoice(true, chosen.version, RigLegacyBindings.values(chosen))
-                else -> ModuleChoice(false)
-            }
-        }, moves = corrections.moves, eyeParts = corrections.eyeParts)
-        val tuning = RigLegacyBindings.specs.fold(RigTuning()) { current, spec ->
-            state[spec.type]?.let { RigLegacyBindings.tuning(it, current) } ?: current
-        }
-        val head = state[RigLegacyBindings.FITTED_FACE] ?: state["face/legacy"]
-        val outline = state["mouth.outline"]
-        val native = sourceConfig().copy(recipe = recipe, rigTuning = tuning,
-            mouthOutlineEnabled = outline != null,
-            headTurnStrength = head?.let(RigLegacyBindings::strength) ?: 1f,
-            bodyStrength = state["body/legacy"]?.let(RigLegacyBindings::strength) ?: 1f,
-            featureDisplacementEnabled = scaffold.config["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
-            hairSimulationFront = !(scaffold.config["frontHairSway"]?.jsonPrimitive?.boolean ?: true),
-            hairSimulationBack = !(scaffold.config["backHairSway"]?.jsonPrimitive?.boolean ?: true))
-        val context = RigBuilder.rigContext(analysis, native, meshCache, neutralScaffold = closedDrawing)
+        val (native, context) = RigFittedMouthModuleSource.context(this, scaffold, preceding, null,
+            neutralScaffold = closedDrawing)
         val fitted = requireNotNull(context.fittedMouth(native))
         val measured = requireNotNull(fitted.source) { "Mouth jaw v$version requires readable fitted mouth artwork" }
         require(!fitted.layered) { "Use mouth jaw v1 for artwork with separate lip or line layers" }
