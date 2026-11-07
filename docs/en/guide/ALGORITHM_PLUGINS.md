@@ -28,7 +28,7 @@ Brow spring v2 adds rebound shapes and physics. It requires shared scaffold v2, 
 
 Brow blink v2 links brow motion to blinking, widening and smiling. It requires a shared v2 scaffold and compatible fitted brows with their original height and angle grids. Use v1 if the brow topology or those keyforms have been edited.
 
-Brow-lid coupling v2 requires a shared v2 scaffold, fitted eyes v2 and compatible fitted brows. Use v1 with fitted head turn, preceding gaze or cheek-lid coupling, or edited eye topology or parent frames.
+Brow-lid coupling v2 and v3 are selectable by version. Both require a shared v2 scaffold, fitted eyes v2 and compatible fitted brows. v3 supports fitted head turn and preceding gaze coupling while preserving existing deformer IDs. Use v1 for edited eye topology or parent frames, earlier cheek-lid or brow-lid coupling, or a separate depth-turn modifier.
 
 Eye smile v2 requires shared scaffold v2 and fitted eyes v2. It adds smile keys to the source eyelids. Use v1 when the eyelid geometry has been edited or when a coupled lid or brow modifier already precedes it.
 
