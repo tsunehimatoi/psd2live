@@ -743,6 +743,32 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun modernPresetUsesIndependentOpenMouthBindings(): Unit = runBlocking {
+        val art = document(eyeDetails = true, pairedBrows = true, bilateralEyes = true)
+        val choices = WorkspaceInitialPreset(clothing = false)
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, actual) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val versions = mapOf("mouth/fitted" to 3, "mouth.outline" to 7, "mouth.vowel" to 6, "mouth.capture" to 5,
+            "mouth.jaw" to 3, "mouth.cheek-lid" to 5, "mouth.spring" to 4)
+        assertEquals(versions, stack.instances.filter { it.type == "mouth/fitted" || it.type.startsWith("mouth.") }
+            .associate { it.type to it.version })
+        val locked = stack.copy(instances = stack.instances.map { instance ->
+            if (instance.type in versions) instance.copy(version = 1,
+                plugin = assertNotNull(BuiltinModifierPlugins.reference(instance.type, 1))) else instance
+        })
+        val reference = WorkspacePreviewBuilder().build(initialized.copy(
+            rigEdits = initialized.rigEdits.copy(modifierStack = locked.toJson())))
+        val expected = assertNotNull(reference.modifierEvaluation).outputs
+        val result = assertNotNull(actual.modifierEvaluation).outputs
+        for ((index, entry) in stack.instances.withIndex()) {
+            assertTrue(expected[index] == result[index], "Default mouth binding differs at ${entry.type}")
+        }
+        assertFaceEquals(RigIrCompiler.compile(reference, tileArt = true), RigIrCompiler.compile(actual, tileArt = true))
+    }
+
     @Test fun modernPresetUsesIndependentClosedMouthBindings(): Unit = runBlocking {
         val choices = WorkspaceInitialPreset(clothing = false)
         for (interior in listOf(false, true)) {

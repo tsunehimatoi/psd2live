@@ -21,18 +21,25 @@ import io.github.psd2live.algorithms.binding.GloomCarrierAlgorithm
 import io.github.psd2live.algorithms.binding.LegacyBodyV2Algorithm
 import io.github.psd2live.algorithms.binding.LegacyFaceV2Algorithm
 import io.github.psd2live.algorithms.binding.MouthCaptureV4Algorithm
+import io.github.psd2live.algorithms.binding.MouthCaptureV5Algorithm
+import io.github.psd2live.algorithms.binding.MouthCheekLidV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV4Algorithm
+import io.github.psd2live.algorithms.binding.MouthFittedV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV4Algorithm
+import io.github.psd2live.algorithms.binding.MouthJawV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV5Algorithm
+import io.github.psd2live.algorithms.binding.MouthOutlineV7Algorithm
+import io.github.psd2live.algorithms.binding.MouthSpringV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV5Algorithm
+import io.github.psd2live.algorithms.binding.MouthVowelV6Algorithm
 import io.github.psd2live.algorithms.binding.SkirtAlgorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
@@ -141,8 +148,8 @@ internal object WorkspacePresetInitialization {
                     packages(browVersions.filterKeys { type -> stack.instances.any { it.type == type } })
                 } else emptyMap()
                 val extensions = if (lids.size == plannedLids.size && (!subject.has(SemanticTag.EYEBROW) || brows.isNotEmpty())) {
-                    val mouth = if (completeEyePair && subject.has(SemanticTag.MOUTH_CLOSE) &&
-                        supportsClosedMouth(model.analysis, config)) packages(closedMouthVersions(types)) else emptyMap()
+                    val mouth = if (completeEyePair && (subject.has(SemanticTag.MOUTH) || subject.has(SemanticTag.MOUTH_OPEN)))
+                        packages(sourceMouthVersions(model.analysis, config, types)) else emptyMap()
                     mouth + packages(mapOf(RigModules.BODY_ARMS.id to ArmSwingV3Algorithm.VERSION)) +
                         packages(mapOf(RigModules.EXPRESSION_GLOOM.id to GloomCarrierAlgorithm.VERSION))
                 } else emptyMap()
@@ -279,13 +286,25 @@ internal object WorkspacePresetInitialization {
         RigModules.MOUTH_SPRING.id to if (RigModules.MOUTH_DEPTH.id in types) MouthSpringV7Algorithm.VERSION else MouthSpringV6Algorithm.VERSION,
     ).filterKeys { it in types }
 
-    private fun supportsClosedMouth(analysis: PipelineAnalysis, config: PipelineConfig): Boolean {
-        if (config.mouthOutlineEnabled && !supportsClassicOutline(analysis, config)) return false
+    private fun sourceMouthVersions(analysis: PipelineAnalysis, config: PipelineConfig, types: List<String>): Map<String, Int> {
+        if (config.mouthOutlineEnabled && !supportsClassicOutline(analysis, config)) return emptyMap()
         val measurement = config.copy(generateDeformers = false)
         val context = RigBuilder.rigContext(analysis, measurement)
-        val mouth = context.fittedMouth(measurement) ?: return false
-        return mouth.source != null && mouth.closedLine && !mouth.layered && mouth.rig?.fit?.layered == null &&
-            context.faceTurn(measurement) != null
+        val mouth = context.fittedMouth(measurement) ?: return emptyMap()
+        if (mouth.source == null || mouth.layered || mouth.rig?.fit?.layered != null || context.faceTurn(measurement) == null)
+            return emptyMap()
+        if (mouth.closedLine) return closedMouthVersions(types)
+        if (RigModules.MOUTH_TONGUE.id in types || RigModules.MOUTH_DEPTH.id in types ||
+            analysis.layers.any { it.semantic.tag == SemanticTag.MOUTH_CLOSE }) return emptyMap()
+        return mapOf(
+            RigModules.MOUTH_FITTED.id to MouthFittedV3Algorithm.VERSION,
+            RigModules.MOUTH_OUTLINE.id to MouthOutlineV7Algorithm.VERSION,
+            RigModules.MOUTH_VOWEL.id to MouthVowelV6Algorithm.VERSION,
+            RigModules.MOUTH_CAPTURE.id to MouthCaptureV5Algorithm.VERSION,
+            RigModules.MOUTH_JAW.id to MouthJawV3Algorithm.VERSION,
+            RigModules.MOUTH_CHEEK_LID.id to MouthCheekLidV5Algorithm.VERSION,
+            RigModules.MOUTH_SPRING.id to MouthSpringV4Algorithm.VERSION,
+        ).filterKeys { it in types }
     }
 
     private fun supportsClassicOutline(analysis: PipelineAnalysis, config: PipelineConfig): Boolean {
