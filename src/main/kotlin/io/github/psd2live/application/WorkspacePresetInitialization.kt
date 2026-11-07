@@ -151,7 +151,9 @@ internal object WorkspacePresetInitialization {
                 val extensions = if (lids.size == plannedLids.size && (!subject.has(SemanticTag.EYEBROW) || brows.isNotEmpty())) {
                     val mouth = if (completeEyePair && (subject.has(SemanticTag.MOUTH) || subject.has(SemanticTag.MOUTH_OPEN)))
                         packages(sourceMouthVersions(model.analysis, config, types)) else emptyMap()
-                    mouth + packages(mapOf(RigModules.BODY_ARMS.id to ArmSwingV3Algorithm.VERSION)) +
+                    val arms = if (supportsPairedArms(model.analysis)) packages(mapOf(RigModules.BODY_ARMS.id to ArmSwingV3Algorithm.VERSION))
+                        else emptyMap()
+                    mouth + arms +
                         packages(mapOf(RigModules.EXPRESSION_CHEEK.id to CheekCarrierAlgorithm.VERSION)) +
                         packages(mapOf(RigModules.EXPRESSION_GLOOM.id to GloomCarrierAlgorithm.VERSION))
                 } else emptyMap()
@@ -275,6 +277,12 @@ internal object WorkspacePresetInitialization {
         config.rigEdits.copy(modifierStack = null) == RigEditOverlay.Empty &&
             config.meshOverrides.isEmpty() && config.parentOverrides.isEmpty() &&
             !config.deferRig && config.rigPendingLayerIds.isEmpty()
+
+    private fun supportsPairedArms(analysis: PipelineAnalysis): Boolean {
+        val sides = analysis.layers.filter { it.opaquePixels > 0 && it.semantic.tag == SemanticTag.HANDWEAR }
+            .map { it.semantic.side }
+        return sides.size == 2 && sides.toSet() == setOf(Side.LEFT, Side.RIGHT)
+    }
 
     private fun closedMouthVersions(types: List<String>): Map<String, Int> = mapOf(
         RigModules.MOUTH_FITTED.id to MouthFittedV4Algorithm.VERSION,

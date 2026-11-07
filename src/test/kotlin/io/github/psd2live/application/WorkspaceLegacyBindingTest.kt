@@ -5938,6 +5938,21 @@ class WorkspaceLegacyBindingTest {
         compareArmSwingV3(document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true))
     }
 
+    @Test fun modernClosedMouthPresetKeepsCompatibleSingleArmBinding(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true,
+            pairedBrows = true, bilateralEyes = true, chestDetail = true, closedMouth = true, ribbonDetails = true)
+        val choices = WorkspaceInitialPreset(clothing = true)
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, model) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        assertEquals(4, stack.instances.single { it.type == "mouth/fitted" }.version)
+        val arm = stack.instances.single { it.type == "body.arms" }
+        assertEquals(1, arm.version)
+        assertEquals(ModifierStatus.ACTIVE, assertNotNull(model.modifierEvaluation).entries[stack.index(arm.id)].status)
+    }
+
     @Test fun armSwingV3MatchesPairedArmsAfterIndependentMouthBindings(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true,
             pairedArms = true, chestDetail = true)
