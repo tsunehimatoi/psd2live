@@ -1791,7 +1791,7 @@ class WorkspaceLegacyBindingTest {
         assertEquals(RigIrCompiler.compile(expected), RigIrCompiler.compile(current))
     }
 
-    @Test fun fittedMouthOutlineAndVowelsWithSeparateClosedDrawingMatchLockedVersionsAndWorkers(): Unit = runBlocking {
+    @Test fun closedMouthSourceChainMatchesLockedVersionsAndInstalledWorkers(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true, closedMouth = true)
         val choices = WorkspaceInitialPreset()
         val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
@@ -1874,6 +1874,39 @@ class WorkspaceLegacyBindingTest {
         }
         assertEquals(compiled, RigIrCompiler.compile(vowelPreview, tileArt = true))
         assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(vowelDocument), tileArt = true))
+        val captureIndex = vowelStack.instances.indexOfFirst { it.type == "mouth.capture" }
+        val captureBefore = vowelEvaluation.outputs[captureIndex - 1]
+        val captureAfter = vowelEvaluation.outputs[captureIndex]
+        val captureArtifact = assertNotNull(BundledAlgorithmArtifacts.find("mouth.capture", 4))
+        val captureStack = vowelStack.copy(instances = vowelStack.instances.mapIndexed { i, entry ->
+            if (i == captureIndex) entry.copy(version = 4, plugin = captureArtifact.reference) else entry
+        })
+        val captureDocument = document.copy(rigEdits = document.rigEdits.copy(modifierStack = captureStack.toJson()))
+        val capturePreview = WorkspacePreviewBuilder().build(captureDocument)
+        val captureEvaluation = assertNotNull(capturePreview.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, captureEvaluation.entries[captureIndex].status)
+        val captureClosed = captureEvaluation.outputs[captureIndex].meshes.single { it.name == "mouth-closed" }
+        val captureClosedBefore = captureBefore.meshes.single { it.id == captureClosed.id }
+        val press = "ParamMouthPressLipOpen"
+        assertEquals(captureClosedBefore.geometry, captureClosed.geometry)
+        assertEquals(listOf("ParamMouthForm", press), assertNotNull(captureClosed.offsets).axes.map { it.parameter })
+        val opacity = captureClosed.channels.getValue(io.github.psd2live.format.model.Channel.OPACITY)
+        assertEquals(listOf("ParamMouthOpenY", press), opacity.axes.map { it.parameter })
+        assertEquals(listOf(2f, 1f, 1f, 2f, 1f, 1f, 1f, 0f, 0f), opacity.cells.map {
+            (it.form as io.github.psd2live.format.model.ChannelValue.Scalar).value
+        })
+        assertEquals(captureClosedBefore.shapes, captureClosed.shapes.take(captureClosedBefore.shapes.size))
+        assertTrue(captureClosed.shapes.any { it.parameter == "ParamMouthFunnel" && it.shapes.filterNotNull().single().opacity == 0f })
+        for (stage in captureIndex until stack.instances.size) {
+            val expected = reference[stage]
+            val output = captureEvaluation.outputs[stage]
+            val changed = expected.meshes.zip(output.meshes).filter { (a, b) -> a != b }.joinToString { (a, b) ->
+                "${a.name} geometry=${a.geometry != b.geometry} grid=${a.offsets != b.offsets} shapes=${a.shapes != b.shapes} channels=${a.channels != b.channels}"
+            }
+            assertTrue(expected == output, "${stack.instances[stage].type}: $changed")
+        }
+        assertEquals(compiled, RigIrCompiler.compile(capturePreview, tileArt = true))
+        assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(captureDocument), tileArt = true))
         val instance = candidate.instances[index]
         val definition = RigFittedMouthDefinition.closedDefinition(RigModifierSource.of(actual))
         val context = definition.authorContext(instance).withUpstream(candidate.instances.take(index).map {
@@ -1915,6 +1948,18 @@ class WorkspaceLegacyBindingTest {
             val vowelDefinition = RigMouthVowelModifier.closedDefinition(RigModifierSource.of(vowelPreview))
             assertEquals(afterVowels, ModifierPluginWorkers.evaluate(vowelWorker, vowelWorker.manifest.algorithms.single(),
                 beforeVowels, vowelInstance, {}, store, context = vowelContext, declaredParameters = vowelDefinition.parameters(vowelInstance)))
+            val captureInstance = captureStack.instances[captureIndex]
+            val captureStaging = Files.createDirectory(directory.resolve("capture-package"))
+            Files.write(captureStaging.resolve("plugin.json"), captureArtifact.bytes)
+            for (name in captureArtifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(captureArtifact.resource + name)).use { Files.copy(it, captureStaging.resolve(name)) }
+            }
+            val captureWorker = store.install(captureStaging.toString())
+            assertEquals(captureArtifact.reference, captureWorker.reference)
+            val captureContext = assertNotNull(captureEvaluation.readAlgorithms[captureInstance.id]).context
+            val captureDefinition = RigMouthCaptureModifier.closedDefinition(RigModifierSource.of(capturePreview))
+            assertEquals(captureAfter, ModifierPluginWorkers.evaluate(captureWorker, captureWorker.manifest.algorithms.single(),
+                captureBefore, captureInstance, {}, store, context = captureContext, declaredParameters = captureDefinition.parameters(captureInstance)))
         } finally {
             store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
             preferences.removeNode()
