@@ -4,6 +4,8 @@ import io.github.psd2live.algorithms.binding.MouthCaptureAlgorithm
 import io.github.psd2live.algorithms.binding.MouthCaptureV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthCaptureV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthCaptureV5Algorithm
+import io.github.psd2live.algorithms.binding.MouthCaptureV6Algorithm
+import io.github.psd2live.format.compile.RigIrBinary
 import io.github.psd2live.algorithms.binding.MouthRig
 import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.RigModules
@@ -46,6 +48,52 @@ internal object RigMouthCaptureModifier {
 
     fun modernDefinition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthCaptureV5Algorithm.VERSION, modernAlgorithm)
+
+    fun sharedFrameDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val algorithm = object : ChangingModifierAlgorithmPlugin by MouthCaptureV6Algorithm(),
+            ModifierOptionalUpstream, ModifierVersionSelection {
+            override val optionalUpstream = RigLegacyBindings.specs.filter { !it.expressionToggles && !it.seeThrough }
+                .mapTo(linkedSetOf()) { it.type } - MouthCaptureAlgorithm.TYPE
+            override val canonicalOptInType = MouthCaptureAlgorithm.TYPE
+        }
+        val contexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
+        fun capture(instance: RigModifierInstance) = contexts.getOrPut(instance) { requireNotNull(source).captureSharedFrames(instance) }
+        val controls = RigModules.MOUTH_CAPTURE.defines.mapTo(hashSetOf()) { it.id }
+        return RigLegacyBindings.definition(RigLegacyBindings.spec(MouthCaptureAlgorithm.TYPE), source).copy(
+            version = MouthCaptureV6Algorithm.VERSION, plugin = algorithm, upstreamInputs = true,
+            parameters = { instance ->
+                RigIrBinary.decode(capture(instance).resources.getValue("after").read()).parameters.filter { it.id in controls }
+            },
+            resolveParameter = { _, _, _ -> null }, changeWrites = MouthCaptureAlgorithm.WRITES,
+            authorContext = ::capture,
+        )
+    }
+
+    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val scaffold = provider(instance)
+        val prefix = bindingPredecessors(instance, scaffold)
+        val base = instance.config.getValue("base").jsonPrimitive.content
+        require(scaffold.version == 2 && prefix.all { it.targets.containsAll(instance.targets) }) {
+            "Mouth capture v6 requires a shared source stack"
+        }
+        require(prefix.any { it.id == base && it.type == "mouth/fitted" && it.version == 6 }) {
+            "Mouth capture v6 requires its fitted mouth v6"
+        }
+        val outline = prefix.single { it.type == "mouth.outline" && it.version in setOf(1, 8) }
+        val vowel = prefix.single { it.type == "mouth.vowel" && it.version in setOf(1, 7) }
+        require(prefix.none { it.type.startsWith("mouth.") && it != outline && it != vowel })
+        val tags = CharacterAnalyzer.MOUTH_COMPONENT_TAGS + setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN,
+            SemanticTag.MOUTH_CLOSE, SemanticTag.FACE, SemanticTag.FACE_DETAIL, SemanticTag.NOSE)
+        return captureBindingTransition(instance, scaffold, prefix, tags, values = buildJsonObject {
+            put("outline", outline.id)
+            put("vowel", vowel.id)
+            put("group", tr("model.group.mouth"))
+        }, validateLayers = { layers ->
+            require(layers.values.none { it.semantic.tag == SemanticTag.MOUTH_CLOSE }) {
+                "Mouth capture v6 requires an open drawing"
+            }
+        })
+    }
 
     private fun definition(source: RigModifierSource?, version: Int, algorithm: ReadingModifierAlgorithmPlugin): RigModifierDefinition {
         val legacy = RigLegacyBindings.definition(RigLegacyBindings.spec(MouthCaptureAlgorithm.TYPE), source)

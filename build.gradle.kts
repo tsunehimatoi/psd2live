@@ -144,6 +144,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "mouthCaptureV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthCaptureV4Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthCaptureV5Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "mouthCaptureV6Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthJawElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthJawV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthJawV4Elements"))
@@ -465,6 +466,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginMouthCaptureV5")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-capture-v5")) {
         into("algorithm-plugins/mouth-capture-v5")
+    }
+    dependsOn(":algorithms:binding:pluginMouthCaptureV6")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-capture-v6")) {
+        into("algorithm-plugins/mouth-capture-v6")
     }
     dependsOn(":algorithms:binding:pluginMouthJawV3")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-jaw-v3")) {
