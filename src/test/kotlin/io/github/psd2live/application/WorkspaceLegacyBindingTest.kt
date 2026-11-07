@@ -629,6 +629,100 @@ class WorkspaceLegacyBindingTest {
         assertEquals(RigIrCompiler.compile(expected), RigIrCompiler.compile(current))
     }
 
+    @Test fun independentMouthJawMatchLockedVersionWithHeadTurnAndInstalledWorker(): Unit = runBlocking {
+        for (head in listOf("face/legacy", "face/fitted")) {
+            val f = Fixture(document(mouthDetails = true))
+            f.install()
+            f.group(listOf("body/legacy", head, "mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture"))
+            val prefix = f.now
+            val previous = assertNotNull(prefix.model.rig.modifierOutput)
+            val targets = RigModifierStack.fromJson(prefix.document.rigEdits.modifierStack!!).instances.first().targets
+            val add = f.addition("mouth.jaw", "jaw", targets, config = buildJsonObject { put("scaffold", "structure"); put("base", "mouth"); putJsonObject("values") { put("share", 22f) } })
+            f.edit("modifier_add", add)
+            val legacy = f.now.model
+            val expected = assertNotNull(legacy.rig.modifierOutput)
+            f.runtime.checkout(f.now.projectId, f.now.state, prefix.historyHead)
+            f.edit("modifier_add", JsonObject(add + ("version" to JsonPrimitive(2))))
+            val current = f.now.model
+            val actual = assertNotNull(current.rig.modifierOutput)
+            val report = assertNotNull(current.rig.modifierReport).getValue("entries").jsonArray.last().jsonObject
+            assertEquals("active", report.getValue("status").jsonPrimitive.content, report.toString())
+            assertEquals(expected.parameters, actual.parameters)
+            assertEquals(expected.parameterTree, actual.parameterTree)
+            for ((before, after) in expected.meshes.zip(actual.meshes)) {
+                assertEquals(before.shapes, after.shapes, before.id)
+                assertEquals(before, after, before.id)
+            }
+            assertEquals(expected, actual)
+            val compiled = RigIrCompiler.compile(current)
+            assertEquals(RigIrCompiler.compile(legacy), compiled)
+            val pose = mapOf(StandardParameters.ANGLE_X to 18f, StandardParameters.ANGLE_Y to -12f,
+                StandardParameters.MOUTH_OPEN to .25f, StandardParameters.MOUTH_FORM to .44f,
+                ParameterId("ParamA") to .7f, ParameterId("ParamU") to .4f)
+            val evaluator = CpuDeformationEvaluator()
+            val mouth = mesh(f, "face").id
+            val changed = evaluator.evaluate(current.rig.puppet, pose).worldPositions.getValue(mouth)
+            assertContentEquals(evaluator.evaluate(legacy.rig.puppet, pose).worldPositions.getValue(mouth), changed)
+            assertFalse(evaluator.evaluate(prefix.model.rig.puppet, pose).worldPositions.getValue(mouth).contentEquals(changed))
+
+            val stack = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
+            val instance = stack.instances.last()
+            val artifact = assertNotNull(BundledAlgorithmArtifacts.find(instance.type, 2))
+            assertEquals(artifact.reference, instance.plugin)
+            if (head == "face/fitted") {
+                val directory = Files.createTempDirectory("mouth-jaw-package-")
+                val preferences = Preferences.userRoot().node("mouth-jaw-package/" + UUID.randomUUID())
+                val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+                try {
+                    val staging = Files.createDirectory(directory.resolve("package"))
+                    Files.write(staging.resolve("plugin.json"), artifact.bytes)
+                    for (name in artifact.manifest.files.keys) {
+                        assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                    }
+                    val providers = stack.instances.dropLast(1).map { provider ->
+                        ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
+                            provider.id, provider.config, provider.outputAliases, provider.plugin)
+                    }
+                    val definition = RigMouthJawModifier.definition(RigModifierSource.of(current))
+                    repeat(2) {
+                        val installed = store.install(staging.toString())
+                        assertEquals(artifact.reference, installed.reference)
+                        val external = instance.copy(type = installed.manifest.algorithms.single().type)
+                        val adapter = ModifierPluginCatalog.definitions(store, captured = listOf(definition)).single {
+                            it.type == external.type && it.version == external.version
+                        }
+                        val context = adapter.authorContext(external).withUpstream(providers.filter {
+                            it.capability in adapter.requires + adapter.optionalUpstream
+                        })
+                        assertEquals(actual, (adapter.plugin as ContextualModifierAlgorithmPlugin).evaluate(previous, external, context) {})
+                        ModifierPluginWorkers.stop(installed.reference)
+                        store.uninstall(installed.reference)
+                    }
+                } finally {
+                    store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+                    preferences.removeNode()
+                    ModifierPluginStore.deleteTree(directory)
+                }
+            }
+            f.edit("modifier_apply", buildJsonObject { put("id", "jaw") })
+            assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(f.now.document)))
+        }
+    }
+
+    @Test fun independentMouthJawRejectsEarlierTongueModuleAtomically(): Unit = runBlocking {
+        val f = Fixture(document(mouthDetails = true))
+        f.install()
+        f.group(listOf("face/legacy", "mouth/fitted", "mouth.capture", "mouth.tongue"))
+        val prefix = f.now
+        val targets = RigModifierStack.fromJson(prefix.document.rigEdits.modifierStack!!).instances.first().targets
+        val add = f.addition("mouth.jaw", "jaw", targets, config = buildJsonObject {
+            put("scaffold", "structure"); put("base", "mouth")
+        })
+        assertFails { f.edit("modifier_add", JsonObject(add + ("version" to JsonPrimitive(2)))) }
+        assertEquals(prefix.historyHead, f.now.historyHead)
+        assertEquals(prefix.document, f.now.document)
+    }
+
     @Test fun independentMouthVowelsMatchLockedVersionWithHeadTurnAndInstalledWorker(): Unit = runBlocking {
         for (head in listOf("face/legacy", "face/fitted")) {
             val f = Fixture(document(mouthDetails = true))
@@ -717,6 +811,30 @@ class WorkspaceLegacyBindingTest {
         assertEquals(prefix.document, f.now.document)
         f.edit("modifier_add", add)
         assertEquals(1, RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.last().version)
+    }
+
+    @Test fun independentMouthJawPreservesRecommendedPreset(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
+        val builder = WorkspacePreviewBuilder()
+        val stack = WorkspaceModifierPlan.initial(builder.build(art), WorkspaceModifierPlan.RECOMMENDED_GROUP)
+        val locked = stack.instances.single { it.type == "mouth.jaw" }
+        assertEquals(1, locked.version)
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 2))
+        fun withStack(candidate: RigModifierStack) = art.copy(rigEdits = art.rigEdits.copy(modifierStack = candidate.toJson()))
+        val expected = builder.build(withStack(stack))
+        val upgraded = stack.copy(instances = stack.instances.map {
+            if (it.id == locked.id) it.copy(version = 2, plugin = artifact.reference) else it
+        })
+        val current = builder.build(withStack(upgraded))
+        val before = assertNotNull(expected.rig.modifierOutput)
+        val after = assertNotNull(current.rig.modifierOutput)
+        for ((original, upgradedMesh) in before.meshes.zip(after.meshes)) {
+            assertEquals(original.offsets?.axes, upgradedMesh.offsets?.axes, original.id)
+            assertEquals(original.shapes.map { it.parameter }, upgradedMesh.shapes.map { it.parameter }, original.id)
+            assertEquals(original, upgradedMesh, original.id)
+        }
+        assertEquals(before, after)
+        assertEquals(RigIrCompiler.compile(expected), RigIrCompiler.compile(current))
     }
 
     @Test fun independentMouthVowelsPreserveRecommendedPresetAndNaturalTalk(): Unit = runBlocking {
