@@ -48,12 +48,13 @@ class CliPresetMigrationTool {
             WorkspaceSettingsCodec.encode(config.copy(rigEdits = overlay)))
         val sourceAnalyses = RigGenerationSource.prepare(RigGenerationSource.analyze(source, config), config)
         val bindings = CliPresetBindings(sourceAnalyses, config)
-        val candidate = if (config.meshOnly) pipeline.buildPreview(source, config.copy(rigEdits = overlay)) else
+        val candidate = if (config.meshOnly) pipeline.buildRawMeshExport(source, config) else
             WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
                 WorkspaceInitialPreset(clothing = false), cliBindings = bindings).second
         val expected = RigIrCompiler.compile(native, tileArt = true)
         val after = RigIrCompiler.compile(candidate, tileArt = true)
-        val presented = CliPresetPresentation.apply(candidate, sourceAnalyses, bindings.moduleParameters, config)
+        val presented = if (config.meshOnly) candidate else
+            CliPresetPresentation.apply(candidate, sourceAnalyses, bindings.moduleParameters, config)
         val result = RigIrCompiler.compile(presented, tileArt = true)
         val directory = output("cli-preset-migration")
         val name = when {
@@ -69,7 +70,14 @@ class CliPresetMigrationTool {
         })
         if (setting("PSD2LIVE_CLI_VERIFY", "0") == "1") {
             assertEquals(expected, result, "See the field comparison in $comparison")
-            val exported = pipeline.export(presented, sample.path.fileName.toString(), directory.resolve("readback").toPath())
+            val readback = directory.resolve(if (config.meshOnly) "mesh-only-readback" else "readback").toPath()
+            val exported = if (config.meshOnly) {
+                pipeline.run(sample.path, readback, config).also { output ->
+                    val stack = RigModifierStack.fromJson(assertNotNull(output.previewModel.config.rigEdits.modifierStack))
+                    assertTrue(stack.instances.isEmpty())
+                    assertEquals(expected, RigIrCompiler.compile(output.previewModel, tileArt = true))
+                }
+            } else pipeline.export(presented, sample.path.fileName.toString(), readback)
             val report = exported.exportedFiles.single { it.path.fileName.toString().endsWith(".psd2live.json") }
             val physics = Json.parseToJsonElement(report.path.readText()).jsonObject.getValue("physics").jsonObject
             assertEquals(result.physics.groups.map { it.id }, physics.getValue("groups").jsonArray.map { it.jsonPrimitive.content })

@@ -94,6 +94,18 @@ class PSD2LivePipeline {
         return buildPreviewInputs(analysis, config, progress, previousAtlas, ordinaryMaterials = true)
     }
 
+    /** The standalone mesh export has historical static metadata and an empty modifier stack. */
+    internal fun buildRawMeshExport(source: SourceArt, config: PipelineConfig,
+                                    progress: ProgressListener = ProgressListener { _, _ -> }): RigPreviewModel {
+        require(config.meshOnly && config.rigEdits == RigEditOverlay.Empty)
+        val material = buildOrdinaryPreview(source, config.copy(generateDeformers = false), progress, previousAtlas = null)
+        val rig = RigBuilder.meshExportLayout(material.rig, material.analysis, config, meshCache)
+        val overlay = config.rigEdits.copy(modifierStack = io.github.psd2live.core.modifier.RigModifierStack().toJson())
+        val explicit = config.copy(rigEdits = overlay)
+        val built = rig.copy(modifierOutput = RigIrCompiler.compileAuthored(material.analysis, material.atlas, rig, explicit))
+        return material.copy(rig = built, config = explicit, runtimeBundle = previewBundle(material.analysis, material.atlas, built, explicit))
+    }
+
     private fun buildPreviewInputs(analysis: PipelineAnalysis, config: PipelineConfig, progress: ProgressListener,
                                    previousAtlas: PackedAtlas?, ordinaryMaterials: Boolean): RigPreviewModel {
         if (config.rigEdits.modifierStack != null) {
@@ -656,7 +668,11 @@ class PSD2LivePipeline {
 		progress: ProgressListener = ProgressListener { _, _ -> },
 	): PipelineResult {
 		progress.update(tr("progress.readPsd"), 0.04)
-		val model = buildPreview(psd, config, building(progress))
+		val source = readPsd(psd)
+		val standaloneMesh = config.meshOnly && config.rigEdits == RigEditOverlay.Empty &&
+			config.generationSource == null && config.meshSource == null && !config.deferRig && config.rigPendingLayerIds.isEmpty()
+		val model = if (standaloneMesh) buildRawMeshExport(source, config, building(progress))
+			else buildPreview(source, config, building(progress))
 		return export(model, psd.fileName.toString(), outputDirectory, progress)
 	}
 

@@ -4,6 +4,7 @@ import io.github.psd2live.algorithms.binding.BodyStance
 import io.github.psd2live.algorithms.binding.BindingProjection
 import io.github.psd2live.algorithms.binding.BrowSpringInputs
 import io.github.psd2live.algorithms.binding.EyeFittedInputs
+import io.github.psd2live.algorithms.binding.ExpressionChannels
 import io.github.psd2live.algorithms.binding.EyeSmileInputs
 import io.github.psd2live.algorithms.binding.EyeWideInputs
 import io.github.psd2live.core.modifier.ModifierSourceBounds
@@ -1114,6 +1115,176 @@ object RigBuilder {
 		buildWithContext(input, atlas, config, meshCache, context, ids, materialsOnly = true)
 	}
 
+    /** Preserve the standalone CLI mesh layout from the traced source materials. */
+    internal fun meshExportLayout(base: BuiltRig, input: PipelineAnalysis, config: PipelineConfig, cache: PreviewMeshCache): BuiltRig {
+        require(config.meshOnly && config.rigEdits == RigEditOverlay.Empty)
+        val context = rigContext(input, config, cache)
+        val layers = context.analysis.layers.associateBy { it.source.id.raw }
+        val classified = base.puppet.drawables.associateTo(HashMap()) { mesh ->
+            mesh.id to layers.getValue(base.layerIdByDrawableId.getValue(mesh.id.raw))
+        }
+        val expressions = sourceExpressions(context.analysis, config)
+        val material = base.puppet.drawables.map { drawable ->
+            val layer = classified.getValue(drawable.id)
+            drawable.copy(maskedBy = emptyList(), geometryGrid = zeroMeshGrid(requireNotNull(drawable.mesh).positions.size),
+                channelGrids = sourceChannels(layer, context, config, expressions.switchKeys, stagesOf(cache)))
+        }
+        val fittedMouth = context.fittedMouth(config)
+        val masked = sourceMasks(material, material, classified, context, config, fittedMouth, emptySet())
+        val tongues = protrudingTongues(masked, classified, context, config, fittedMouth)
+        for ((owner, copy) in tongues) classified[copy.id] = classified.getValue(owner)
+        val drawables = placeTongues(masked, tongues.map { it.second }, classified, context, config)
+        val organization = ScaffoldParts.build(drawables.map { drawable ->
+            val layer = classified.getValue(drawable.id)
+            ScaffoldParts.Material(drawable.id, scaffoldSlot(layer, context.analysis.anchors), layer.source.order)
+        }) { tr(it) }
+        val modules = moduleParameters(context, config, emptyList())
+        val standard = standardParameters(context, config)
+        val standardIds = (standard + modules).mapTo(HashSet()) { it.id }
+        val custom = expressions.parameters.filter { it.id !in standardIds }
+        val puppet = base.puppet.copy(drawables = drawables, parts = organization.parts, rootChildren = organization.rootChildren,
+            parameters = standard + modules + custom, parameterLinks = StandardParameters.links(standardIds),
+            parameterTree = StandardParameters.tree(custom.map { it.id }, modules.map { it.id })).withDerivedRenderRoot()
+        fun <T> withTongues(values: Map<String, T>) = values + tongues.associate { (owner, copy) -> copy.id.raw to values.getValue(owner.raw) }
+        return base.copy(puppet = CubismBlendShapes.lawful(withoutLegacyHairSway(puppet, config)),
+            layerIdByDrawableId = withTongues(base.layerIdByDrawableId), pageByDrawableId = withTongues(base.pageByDrawableId),
+            sourceBoundsByDrawableId = withTongues(base.sourceBoundsByDrawableId), copiedDrawableIds = tongues.mapTo(HashSet()) { it.second.id.raw })
+    }
+
+    private fun sourceExpressions(analysis: PipelineAnalysis, config: PipelineConfig): ExpressionChannels.Catalog {
+        val layers = analysis.layers.mapNotNull { layer ->
+            val override = config.layerOverrides[layer.source.id.raw]
+            val type = override?.type ?: layer.semantic.type
+            val parameter = (override?.parameter ?: layer.semantic.parameter).trim()
+            if (type == LayerType.PRESET || parameter.isBlank()) null else
+                ExpressionChannels.Layer(parameter, if (type == LayerType.SWITCH) override?.switchId ?: layer.semantic.switchId else null)
+        }
+        val modules = io.github.psd2live.core.recipe.RigModules
+        return ExpressionChannels.catalog(layers, modules.builds(modules.EXPRESSION_TOGGLES, config,
+            io.github.psd2live.core.recipe.RecipeSubject.of(analysis)))
+    }
+
+    private fun sourceChannels(layer: ClassifiedLayer, context: RigContext, config: PipelineConfig,
+                               switchKeys: Map<String, FloatArray>, stages: RigStageCache?): ChannelGrids {
+        val override = config.layerOverrides[layer.source.id.raw]
+        if (config.meshOnly && (override?.type ?: layer.semantic.type) == LayerType.PRESET) return ChannelGrids.Empty
+        val layeredMouth = context.fittedMouth(config)?.let { it.rig?.fit?.layered != null && it.covers(layer) } == true
+        val channels = channelStage(layer, override, switchKeys, config.rigTuning, context.hasClosedMouth, stages,
+            eyeSwap(context, config, layer), mouthSwap(context, config, layer), eyeOpenMax(context, config), layeredMouth)
+        return withEyeOpacity(channels, context, config, layer)
+            .let { withMoodChannels(it, context, config, layer) }.let { withMouthShading(it, context, config, layer) }
+    }
+
+    private fun sourceMasks(maskSources: List<Drawable>, maskTargets: List<Drawable>,
+                            classifiedByDrawable: Map<DrawableId, ClassifiedLayer>, context: RigContext, config: PipelineConfig,
+                            fittedMouth: io.github.psd2live.core.fit.FittedMouth?, ribbons: Set<DrawableId>): List<Drawable> {
+        // The mouth's inside clips what is in the mouth; a layered mouth's lips and lines lie over it and clip nothing.
+        val mouthMasks = maskSources.filter { drawable ->
+            drawable.id !in ribbons &&
+            classifiedByDrawable.getValue(drawable.id).let { layer -> layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) &&
+                layer.semantic.role == null && !layer.source.clipped }
+        }
+        // A highlight or shadow lying inside the opening is in the mouth too, and so is what is clipped onto it: the inside's base.
+        fun inMouth(layer: ClassifiedLayer) = layer.semantic.tag in CharacterAnalyzer.MOUTH_COMPONENT_TAGS ||
+            fittedMouth != null && layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && (layer.semantic.role != null || layer.source.clipped) && fittedMouth.covers(layer) &&
+            fittedMouth.follow(layer).let { it == io.github.psd2live.algorithms.binding.MouthRig.Follow.DEEP || it == io.github.psd2live.algorithms.binding.MouthRig.Follow.INSIDE ||
+                it == io.github.psd2live.algorithms.binding.MouthRig.Follow.OPENING }
+        val skinClip = io.github.psd2live.core.recipe.RigModules.let { it.builds(it.FACE_SKIN_CLIP, config, io.github.psd2live.core.recipe.RecipeSubject.of(context.analysis)) }
+        val faceMasks = if (!skinClip) emptyList() else maskSources.filter { classifiedByDrawable.getValue(it.id).semantic.tag == SemanticTag.FACE }
+        val neckClip = io.github.psd2live.core.recipe.RigModules.let { it.builds(it.FACE_NECK, config, io.github.psd2live.core.recipe.RecipeSubject.of(context.analysis)) }
+        val neckMasks = if (!neckClip) emptyList() else maskSources.filter { classifiedByDrawable.getValue(it.id).semantic.let { s -> s.tag == SemanticTag.NECK && s.role == null } }
+        val faceBounds = faceMasks.map { classifiedByDrawable.getValue(it.id).bounds }.reduceOrNull(Bounds::union)
+        // A skin overlay mostly on the face: blush, shading, the bangs' shadow. One reaching well past it is something else.
+        fun onSkin(layer: ClassifiedLayer): Boolean {
+            val face = faceBounds ?: return false
+            val b = layer.bounds
+            val w = (minOf(b.right, face.right) - maxOf(b.left, face.left)).coerceAtLeast(0f)
+            val h = (minOf(b.bottom, face.bottom) - maxOf(b.top, face.top)).coerceAtLeast(0f)
+            return w * h >= 0.85f * b.width * b.height
+        }
+        return maskTargets.map { drawable ->
+            val semantic = classifiedByDrawable.getValue(drawable.id).semantic
+            when {
+                neckMasks.isNotEmpty() && drawable.maskedBy.isEmpty() && semantic.tag == SemanticTag.NECK && semantic.role == PartRole.SHADOW ->
+                    drawable.copy(maskedBy = neckMasks.map { it.id })
+                faceMasks.isNotEmpty() && drawable.maskedBy.isEmpty() && drawable.id !in ribbons &&
+                    (semantic.tag == SemanticTag.FACE_DETAIL || semantic.tag == SemanticTag.FRONT_HAIR && semantic.role == PartRole.SHADOW) &&
+                    onSkin(classifiedByDrawable.getValue(drawable.id)) -> drawable.copy(maskedBy = faceMasks.map { it.id })
+                semantic.tag == SemanticTag.IRIDES && drawable.maskedBy.isEmpty() -> {
+                    val whites = maskSources.filter { classifiedByDrawable.getValue(it.id).semantic.tag == SemanticTag.EYEWHITE }
+                    val selected = io.github.psd2live.core.fit.EyeOpeningAssociation.select(classifiedByDrawable.getValue(drawable.id),
+                        whites.map { classifiedByDrawable.getValue(it.id) }).mapTo(HashSet()) { it.source.id }
+                    drawable.copy(maskedBy = whites.filter { classifiedByDrawable.getValue(it.id).source.id in selected }.map { it.id })
+                }
+                inMouth(classifiedByDrawable.getValue(drawable.id)) -> {
+                    val layer = classifiedByDrawable.getValue(drawable.id)
+                    val exact = mouthMasks.filter { mask ->
+                        val maskSemantic = classifiedByDrawable.getValue(mask.id).semantic
+                        maskSemantic.side == semantic.side && maskSemantic.variant == semantic.variant
+                    }
+                    val sameSide = mouthMasks.filter { classifiedByDrawable.getValue(it.id).semantic.side == semantic.side }
+                    val fallback = mouthMasks.filter { classifiedByDrawable.getValue(it.id).semantic.side == Side.NONE }
+                    val masks = exact.ifEmpty { sameSide.ifEmpty { fallback.ifEmpty { mouthMasks } } }
+                    val nearest = masks.minByOrNull { mask ->
+                        val bounds = classifiedByDrawable.getValue(mask.id).bounds
+                        val dx = bounds.centerX - layer.bounds.centerX
+                        val dy = bounds.centerY - layer.bounds.centerY
+                        dx * dx + dy * dy
+                    }
+                    drawable.copy(maskedBy = listOfNotNull(nearest?.id))
+                }
+                else -> drawable
+            }
+        }
+    }
+
+    private fun protrudingTongues(drawables: List<Drawable>, classified: Map<DrawableId, ClassifiedLayer>,
+                                  context: RigContext, config: PipelineConfig, fittedMouth: io.github.psd2live.core.fit.FittedMouth?)
+        : List<Pair<DrawableId, Drawable>> {
+        val rig = fittedMouth?.rig ?: return emptyList()
+        if (rig.fit.layered == null || !rig.options.capture || !rig.options.tongue) return emptyList()
+        val lowerOrder = drawables.filter { classified[it.id]?.semantic?.role in setOf(PartRole.LOWER_LIP, PartRole.LOWER_LINE) }
+            .maxOfOrNull { it.drawOrder } ?: return emptyList()
+        return drawables.mapNotNull { tongue ->
+            val layer = classified.getValue(tongue.id)
+            if (layer.semantic.tag != SemanticTag.TONGUE || !fittedMouth.covers(layer)) return@mapNotNull null
+            val id = DrawableId("${tongue.id.raw}_Out")
+            require(drawables.none { it.id == id }) { "Generated tongue ID already exists: ${id.raw}" }
+            val frame = tongue.parentDeformerId?.let { requireNotNull(context.resolveFrame(it, config)) } ?: Bounds(0f, 0f, 1f, 1f)
+            val positions = requireNotNull(tongue.mesh).positions
+            val rigPositions = FloatArray(positions.size) { i ->
+                if (i % 2 == 0) frame.left + positions[i] * frame.width else frame.top + positions[i] * frame.height
+            }
+            val copy = tongue.copy(id = id, maskedBy = emptyList(), channelGrids = ChannelGrids.Empty, opacity = 0f,
+                drawOrder = lowerOrder + 1f, geometryGrid = rig.grid(rigPositions, frame, StandardParameters.MOUTH_FORM,
+                    StandardParameters.MOUTH_OPEN, io.github.psd2live.algorithms.binding.MouthRig.Follow.PROTRUDING_TONGUE, fittedMouth.chin))
+            val shapes = rig.protrudingTongueShapes(rigPositions, frame, layer.source.opacity, chin = fittedMouth.chin)
+            // Tongue-out reveals a transparent copy. Preserve the authored opacity on that binding.
+            val normalized = neutralized(shapes, copy).map { binding ->
+                if (binding.parameterId != io.github.psd2live.algorithms.binding.MouthRig.TONGUE_OUT) binding else {
+                    val source = shapes.first { it.parameterId == binding.parameterId }
+                    binding.copy(forms = binding.forms.mapIndexed { index, form -> form?.let {
+                        MeshForm(it.positionDeltas, it.drawOrder, source.forms[index]!!.opacity, it.multiplyColor, it.screenColor)
+                    } })
+                }
+            }
+            tongue.id to copy.copy(blendShapes = normalized)
+        }
+    }
+
+    private fun placeTongues(drawables: List<Drawable>, tongues: List<Drawable>, classified: Map<DrawableId, ClassifiedLayer>,
+                             context: RigContext, config: PipelineConfig): List<Drawable> {
+        val threshold = tongues.minOfOrNull { it.drawOrder }?.minus(1f)
+        val needsGap = threshold != null && drawables.any { it.drawOrder > threshold && it.drawOrder < threshold + 2f }
+        val ordered = if (!needsGap) drawables else drawables.map { drawable ->
+            val layer = classified.getValue(drawable.id)
+            if (drawable.drawOrder > requireNotNull(threshold) &&
+                config.drawOrderOverrides[layer.source.id.raw] == null && config.drawOrderOverrides[drawable.id.raw] == null)
+                drawable.copy(drawOrder = drawable.drawOrder + 1f) else drawable
+        }
+        return sideLocksBehind(ordered + tongues, classified, context, config)
+    }
+
     internal data class ScaffoldSourceInputs(val frames: kotlinx.serialization.json.JsonObject,
                                               val branches: kotlinx.serialization.json.JsonObject,
                                               val torso: TorsoFrame,
@@ -1657,19 +1828,7 @@ object RigBuilder {
 		fun seeThrough(puppet: PuppetModel) = SeeThroughLayers.candidates(puppet, config.alphaThreshold) { id ->
 			classifiedByDrawable[id]?.takeIf { inferredGroup(it, analysis.anchors) == LayerGroup.HEAD }
 		}
-        val expressions by lazy(LazyThreadSafetyMode.NONE) {
-            val layers = analysis.layers.mapNotNull { layer ->
-                val override = config.layerOverrides[layer.source.id.raw]
-                val type = override?.type ?: layer.semantic.type
-                val parameter = (override?.parameter ?: layer.semantic.parameter).trim()
-                if (type == LayerType.PRESET || parameter.isBlank()) null else
-                    io.github.psd2live.algorithms.binding.ExpressionChannels.Layer(parameter,
-                        if (type == LayerType.SWITCH) override?.switchId ?: layer.semantic.switchId else null)
-            }
-            io.github.psd2live.algorithms.binding.ExpressionChannels.catalog(layers,
-                io.github.psd2live.core.recipe.RigModules.builds(io.github.psd2live.core.recipe.RigModules.EXPRESSION_TOGGLES,
-                    config, io.github.psd2live.core.recipe.RecipeSubject.of(analysis)))
-        }
+        val expressions by lazy(LazyThreadSafetyMode.NONE) { sourceExpressions(analysis, config) }
 
 		val builtDeformPaths = mutableListOf<DeformPath>()
 		// Expressions change channels during assembly, not mesh geometry or lip ribbons.
@@ -1728,15 +1887,12 @@ object RigBuilder {
 				meshCache = meshCache,
 			)
 			builtDeformPaths.addAll(parts.mouthPaths.filter { it.drawableId == id })
-			val override = config.layerOverrides[layer.source.id.raw]
-			val classification = override?.type ?: layer.semantic.type
-			val channelGrids = if (materialsOnly || config.meshOnly && classification == LayerType.PRESET) ChannelGrids.Empty
-				else withEyeOpacity(channelStage(layer, override, expressions.switchKeys, config.rigTuning, context.hasClosedMouth, stages, eyeSwap(context, config, layer), mouthSwap(context, config, layer), eyeOpenMax(context, config), context.fittedMouth(config)?.let { it.rig?.fit?.layered != null && it.covers(layer) } == true),
-				context, config, layer)
-					.let { withMoodChannels(it, context, config, layer) }.let { withMouthShading(it, context, config, layer) }.let { grids ->
-					if (v2 && resolution.isStubLayer(layer.source.id.raw) &&
-						grids.gridsByChannel.values.any { grid -> grid.axes.any { it.parameterId !in knownParameters } }) ChannelGrids.Empty else grids
-				}
+            val channelGrids = if (materialsOnly) ChannelGrids.Empty else
+                sourceChannels(layer, context, config, expressions.switchKeys, stages).let { grids ->
+                    if (v2 && resolution.isStubLayer(layer.source.id.raw) &&
+                        grids.gridsByChannel.values.any { grid -> grid.axes.any { it.parameterId !in knownParameters } }) ChannelGrids.Empty
+                    else grids
+                }
 			if (v2 && resolution.isStubLayer(layer.source.id.raw)) ghostIds += id
 			val drawable = Drawable(
 				id = id,
@@ -1830,65 +1986,9 @@ object RigBuilder {
 		// Masks are generated among the resolved drawables: a passenger never masks, a part does.
 		val maskSources = if (!v2) drawables else drawables.filterNot { it.id in ghostIds } + partDrawables
 		val maskTargets = if (!v2) drawables else drawables + partDrawables
-		// The mouth's inside clips what is in the mouth; a layered mouth's lips and lines lie over it and clip nothing.
-		val mouthMasks = maskSources.filter { drawable ->
-            drawable.id !in lipOwnerById &&
-			classifiedByDrawable.getValue(drawable.id).let { layer -> layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) &&
-				layer.semantic.role == null && !layer.source.clipped }
-		}
-		val fittedMouth = context.fittedMouth(config)
-		// A highlight or shadow lying inside the opening is in the mouth too, and so is what is clipped onto it: the inside's base.
-		fun inMouth(layer: ClassifiedLayer) = layer.semantic.tag in CharacterAnalyzer.MOUTH_COMPONENT_TAGS ||
-			fittedMouth != null && layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && (layer.semantic.role != null || layer.source.clipped) && fittedMouth.covers(layer) &&
-			fittedMouth.follow(layer).let { it == io.github.psd2live.algorithms.binding.MouthRig.Follow.DEEP || it == io.github.psd2live.algorithms.binding.MouthRig.Follow.INSIDE ||
-				it == io.github.psd2live.algorithms.binding.MouthRig.Follow.OPENING }
-		val skinClip = io.github.psd2live.core.recipe.RigModules.let { it.builds(it.FACE_SKIN_CLIP, config, io.github.psd2live.core.recipe.RecipeSubject.of(context.analysis)) }
-		val faceMasks = if (!skinClip) emptyList() else maskSources.filter { classifiedByDrawable.getValue(it.id).semantic.tag == SemanticTag.FACE }
-		val neckClip = io.github.psd2live.core.recipe.RigModules.let { it.builds(it.FACE_NECK, config, io.github.psd2live.core.recipe.RecipeSubject.of(context.analysis)) }
-		val neckMasks = if (!neckClip) emptyList() else maskSources.filter { classifiedByDrawable.getValue(it.id).semantic.let { s -> s.tag == SemanticTag.NECK && s.role == null } }
-		val faceBounds = faceMasks.map { classifiedByDrawable.getValue(it.id).bounds }.reduceOrNull(Bounds::union)
-		// A skin overlay mostly on the face: blush, shading, the bangs' shadow. One reaching well past it is something else.
-		fun onSkin(layer: ClassifiedLayer): Boolean {
-			val face = faceBounds ?: return false
-			val b = layer.bounds
-			val w = (minOf(b.right, face.right) - maxOf(b.left, face.left)).coerceAtLeast(0f)
-			val h = (minOf(b.bottom, face.bottom) - maxOf(b.top, face.top)).coerceAtLeast(0f)
-			return w * h >= 0.85f * b.width * b.height
-		}
-		val maskedAllUnswapped = maskTargets.map { drawable ->
-			val semantic = classifiedByDrawable.getValue(drawable.id).semantic
-			when {
-				neckMasks.isNotEmpty() && drawable.maskedBy.isEmpty() && semantic.tag == SemanticTag.NECK && semantic.role == PartRole.SHADOW ->
-					drawable.copy(maskedBy = neckMasks.map { it.id })
-				faceMasks.isNotEmpty() && drawable.maskedBy.isEmpty() && drawable.id !in lipOwnerById &&
-					(semantic.tag == SemanticTag.FACE_DETAIL || semantic.tag == SemanticTag.FRONT_HAIR && semantic.role == PartRole.SHADOW) &&
-					onSkin(classifiedByDrawable.getValue(drawable.id)) -> drawable.copy(maskedBy = faceMasks.map { it.id })
-				semantic.tag == SemanticTag.IRIDES && drawable.maskedBy.isEmpty() -> {
-					val whites = maskSources.filter { classifiedByDrawable.getValue(it.id).semantic.tag == SemanticTag.EYEWHITE }
-					val selected = io.github.psd2live.core.fit.EyeOpeningAssociation.select(classifiedByDrawable.getValue(drawable.id),
-						whites.map { classifiedByDrawable.getValue(it.id) }).mapTo(HashSet()) { it.source.id }
-					drawable.copy(maskedBy = whites.filter { classifiedByDrawable.getValue(it.id).source.id in selected }.map { it.id })
-				}
-				inMouth(classifiedByDrawable.getValue(drawable.id)) -> {
-					val layer = classifiedByDrawable.getValue(drawable.id)
-					val exact = mouthMasks.filter { mask ->
-						val maskSemantic = classifiedByDrawable.getValue(mask.id).semantic
-						maskSemantic.side == semantic.side && maskSemantic.variant == semantic.variant
-					}
-					val sameSide = mouthMasks.filter { classifiedByDrawable.getValue(it.id).semantic.side == semantic.side }
-					val fallback = mouthMasks.filter { classifiedByDrawable.getValue(it.id).semantic.side == Side.NONE }
-					val masks = exact.ifEmpty { sameSide.ifEmpty { fallback.ifEmpty { mouthMasks } } }
-					val nearest = masks.minByOrNull { mask ->
-						val bounds = classifiedByDrawable.getValue(mask.id).bounds
-						val dx = bounds.centerX - layer.bounds.centerX
-						val dy = bounds.centerY - layer.bounds.centerY
-						dx * dx + dy * dy
-					}
-					drawable.copy(maskedBy = listOfNotNull(nearest?.id))
-				}
-				else -> drawable
-			}
-        }.let { masked ->
+        val fittedMouth = context.fittedMouth(config)
+        val maskedAllUnswapped = sourceMasks(maskSources, maskTargets, classifiedByDrawable, context, config,
+            fittedMouth, lipOwnerById.keys).let { masked ->
             masked.map { drawable ->
                 val owner = lipOwnerById[drawable.id]
                 if (owner == null) drawable else {
@@ -1905,45 +2005,16 @@ object RigBuilder {
 		// the generated list goes to the side channel for the record to restore.
 		val generatedMasks = LinkedHashMap<DrawableId, List<DrawableId>>()
 		val baseDrawableIds = if (!v2) emptySet() else drawables.mapTo(HashSet()) { it.id }
-		val tongueCopies = mutableListOf<Drawable>()
-		val mouthRig = fittedMouth?.rig
-		if (mouthRig?.fit?.layered != null && mouthRig.options.capture && mouthRig.options.tongue) {
-			val lowerOrder = maskedAllUnswapped.filter { classifiedByDrawable[it.id]?.semantic?.role in setOf(PartRole.LOWER_LIP, PartRole.LOWER_LINE) }
-				.maxOfOrNull { it.drawOrder }
-			if (lowerOrder != null) for (tongue in maskedAllUnswapped.filter { classifiedByDrawable[it.id]?.semantic?.tag == SemanticTag.TONGUE && fittedMouth.covers(classifiedByDrawable.getValue(it.id)) }) {
-				val layer = classifiedByDrawable.getValue(tongue.id)
-				val copyId = DrawableId("${tongue.id.raw}_Out")
-				require(maskedAllUnswapped.none { it.id == copyId }) { "Generated tongue ID already exists: ${copyId.raw}" }
-				val frame = if (tongue.parentDeformerId == null) Bounds(0f, 0f, 1f, 1f) else requireNotNull(context.resolveFrame(requireNotNull(tongue.parentDeformerId), config))
-				val raw = sourceBoundsByDrawable.getValue(tongue.id.raw)
-				val positions = requireNotNull(tongue.mesh).positions
-				val rigPositions = FloatArray(positions.size) { i -> if (i % 2 == 0) frame.left + positions[i] * frame.width else frame.top + positions[i] * frame.height }
-				val base = tongue.copy(id = copyId, maskedBy = emptyList(), channelGrids = ChannelGrids.Empty, opacity = 0f, drawOrder = lowerOrder + 1f,
-					geometryGrid = mouthRig.grid(rigPositions, frame, StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN, io.github.psd2live.algorithms.binding.MouthRig.Follow.PROTRUDING_TONGUE, fittedMouth.chin))
-				val shapes = mouthRig.protrudingTongueShapes(rigPositions, frame, layer.source.opacity, chin = fittedMouth.chin)
-				// Tongue-out reveals a statically transparent copy; preserve its authored opacity instead of multiplying by zero.
-				val normalized = neutralized(shapes, base).map { binding ->
-					if (binding.parameterId != io.github.psd2live.algorithms.binding.MouthRig.TONGUE_OUT) binding else
-						binding.copy(forms = binding.forms.mapIndexed { i, form -> form?.let { f ->
-							org.umamo.runtime.model.MeshForm(f.positionDeltas, f.drawOrder, shapes.first { it.parameterId == binding.parameterId }.forms[i]!!.opacity, f.multiplyColor, f.screenColor)
-						} })
-				}
-				tongueCopies += base.copy(blendShapes = normalized)
-				generatedCopies += copyId.raw; classifiedByDrawable[copyId] = layer
-				layerIdByDrawable[copyId.raw] = layer.source.id.raw
-				pageByDrawable[copyId.raw] = pageByDrawable.getValue(tongue.id.raw)
-				sourceBoundsByDrawable[copyId.raw] = raw
-			}
-		}
-		val tongueOrderThreshold = tongueCopies.minOfOrNull { it.drawOrder }?.minus(1f)
-		val needsTongueOrderGap = tongueOrderThreshold != null && maskedAllUnswapped.any { it.drawOrder > tongueOrderThreshold && it.drawOrder < tongueOrderThreshold + 2f }
-		val orderedMouth = if (!needsTongueOrderGap) maskedAllUnswapped else maskedAllUnswapped.map { drawable ->
-			val layer = classifiedByDrawable.getValue(drawable.id)
-			if (drawable.drawOrder > requireNotNull(tongueOrderThreshold) &&
-				config.drawOrderOverrides[layer.source.id.raw] == null && config.drawOrderOverrides[drawable.id.raw] == null)
-				drawable.copy(drawOrder = drawable.drawOrder + 1f) else drawable
-		}
-		val maskedAll = sideLocksBehind(orderedMouth + tongueCopies, classifiedByDrawable, context, config)
+        val tongues = protrudingTongues(maskedAllUnswapped, classifiedByDrawable, context, config, fittedMouth)
+        for ((owner, copy) in tongues) {
+            val layer = classifiedByDrawable.getValue(owner)
+            generatedCopies += copy.id.raw
+            classifiedByDrawable[copy.id] = layer
+            layerIdByDrawable[copy.id.raw] = layer.source.id.raw
+            pageByDrawable[copy.id.raw] = pageByDrawable.getValue(owner.raw)
+            sourceBoundsByDrawable[copy.id.raw] = sourceBoundsByDrawable.getValue(owner.raw)
+        }
+        val maskedAll = placeTongues(maskedAllUnswapped, tongues.map { it.second }, classifiedByDrawable, context, config)
 		val maskedDrawables = if (!v2) maskedAll else maskedAll.filter { it.id in baseDrawableIds || it.id.raw in generatedCopies }.map { drawable ->
 			val rewritten = drawable.maskedBy.map { resolution.baseStandIn(it, baseDrawableIds) }.distinct()
 			if (rewritten == drawable.maskedBy) drawable else {
