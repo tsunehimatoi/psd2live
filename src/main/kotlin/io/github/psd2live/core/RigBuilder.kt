@@ -2286,6 +2286,8 @@ object RigBuilder {
 			rigLayer.semantic.tag == SemanticTag.EYE_CLOSE || rigLayer.semantic.tag == SemanticTag.IRIDES || rigLayer.semantic.tag == SemanticTag.EYEBROW ||
 			rigLayer.semantic.tag in io.github.psd2live.core.fit.FittedMouth.TAGS || rigLayer.semantic.tag == SemanticTag.FACE ||
 			rigLayer.semantic.tag == SemanticTag.FACE_DETAIL || rigLayer.semantic.tag == SemanticTag.NOSE
+		val styledTurn = if (styled(rigLayer) && context.faceTurn(config) != null)
+			context.head to context.faceLandmarks(config) else null
 		val key = MeshKey(layer.meta(), layer.source.raster.width, layer.source.raster.height,
 			MeshResolution.input(layer.source, config.meshTrace, MeshResolution.unitScale(config, context.analysis.source)).key,
 			rigLayer.bounds, rigLayer.centroidX, rigLayer.centroidY, parentId, parentFrame, headSpace,
@@ -2293,7 +2295,7 @@ object RigBuilder {
 				rigLayer.semantic.role, context.fittedBrows(config)[rigLayer.semantic.side]?.cacheKey,
 				context.fittedMouth(config)?.let { listOf(it.rig?.fit, it.rig?.options, it.chin, it.covers(rigLayer)) }) else null, context.headTurn(config)?.let {
 				listOf(faceSignature(context.faceRig), headShell(rigLayer), io.github.psd2live.core.recipe.RigModules.FACE_DEPTH_TURN.let { m ->
-					m.knobs.map { config.recipe.value(m.id, it.id) } }, config.headTurnStrength, context.faceTurn(config) != null && styled(rigLayer))
+					m.knobs.map { config.recipe.value(m.id, it.id) } }, config.headTurnStrength, styledTurn)
 			}),
 			matchingEyeWhiteBounds(rigLayer, context.eyeWhiteLayers),
 			MeshResolution.unitScale(config, context.analysis.source), meshConfigFor(rigLayer, meshConfig), config.meshOverrides[layer.source.id.raw],
@@ -2302,6 +2304,10 @@ object RigBuilder {
 	}
 
     private fun meshConfigFor(layer: ClassifiedLayer, config: PipelineConfig): PipelineConfig {
+        // Styled hair and accessories use the captured head landmarks, not the eye, brow or mouth module switches.
+        if (styled(layer)) return config.copy(recipe = config.recipe.copy(modules = config.recipe.modules.filterKeys {
+            it == "face.depth-turn"
+        }))
         // These tags have no eye/brow/mouth-local geometry. Neck shadows can still turn with the
         // head; chest and neck motion remain explicit inputs along with all frames in MeshKey.
         if (layer.semantic.tag !in setOf(SemanticTag.TOPWEAR, SemanticTag.BOTTOMWEAR, SemanticTag.HANDWEAR,
