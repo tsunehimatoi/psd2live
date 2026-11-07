@@ -155,6 +155,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "mouthJawV6Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthJawV7Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthJawV8Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "mouthJawV9Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "cheekElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "cheekV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "gloomV2Elements"))
@@ -499,6 +500,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginMouthJawV8")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-jaw-v8")) {
         into("algorithm-plugins/mouth-jaw-v8")
+    }
+    dependsOn(":algorithms:binding:pluginMouthJawV9")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-jaw-v9")) {
+        into("algorithm-plugins/mouth-jaw-v9")
     }
     dependsOn(":algorithms:binding:pluginMouthJawV7")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-jaw-v7")) {
