@@ -809,7 +809,7 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
-    @Test fun singleEyeOpenMouthFittingMatchesHistoricSource(): Unit = runBlocking {
+    @Test fun singleEyeOpenMouthFittingAndOutlineMatchHistoricSource(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, closedMouth = false)
         val choices = WorkspaceInitialPreset(clothing = false)
         val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
@@ -818,11 +818,13 @@ class WorkspaceLegacyBindingTest {
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 3, "brow.shape" to 4,
             "brow.lid-coupling" to 6, "brow.blink" to 4, "brow.spring" to 5, "eye.smile" to 3, "eye.wide" to 3,
             "eye.gaze-lid" to 3, "eye.emotion" to 3, "eye.lid-fade" to 3, "eye.highlight" to 3,
-            "eye.aftershock" to 4, "eye.squash" to 4, "mouth/fitted" to 1)
+            "eye.aftershock" to 4, "eye.squash" to 4, "mouth/fitted" to 1, "mouth.outline" to 1)
         val (initialized, locked) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
             requestedVersions = versions)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val mouth = stack.instances.single { it.type == "mouth/fitted" }
+        val outline = stack.instances.single { it.type == "mouth.outline" }
+        val outlineArtifact = assertNotNull(BundledAlgorithmArtifacts.find(outline.type, 7))
         val index = stack.index(mouth.id)
         assertEquals(1, mouth.version)
         assertEquals(versions, stack.instances.filter { it.type in versions }.associate { it.type to it.version })
@@ -832,7 +834,11 @@ class WorkspaceLegacyBindingTest {
         fun candidate(version: Int): WorkspaceDocument {
             val artifact = assertNotNull(BundledAlgorithmArtifacts.find(mouth.type, version))
             val replacement = stack.copy(instances = stack.instances.map {
-                if (it.id == mouth.id) it.copy(version = version, plugin = artifact.reference) else it
+                when (it.id) {
+                    mouth.id -> it.copy(version = version, plugin = artifact.reference)
+                    outline.id -> if (version == 3) it.copy(version = 7, plugin = outlineArtifact.reference) else it
+                    else -> it
+                }
             })
             return initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = replacement.toJson()))
         }
@@ -852,14 +858,15 @@ class WorkspaceLegacyBindingTest {
             assertTrue(reference[stage] == actual.outputs[stage], "Single-eye open fitting differs at ${stack.instances[stage].type}")
         }
         assertFaceEquals(RigIrCompiler.compile(locked, tileArt = true), RigIrCompiler.compile(model, tileArt = true))
+        assertEquals(locked.rig.modifierRasterAssets, model.rig.modifierRasterAssets)
 
         val artifact = assertNotNull(BundledAlgorithmArtifacts.find(mouth.type, 3))
         val root = Files.createTempDirectory("single-eye-open-mouth-package-")
         val preferences = Preferences.userRoot().node("single-eye-open-mouth/" + UUID.randomUUID())
         val store = ModifierPluginStore(root.resolve("installed"), preferences)
         try {
-            BundledAlgorithmArtifacts.retain(store, listOf(artifact))
-            val worker = store.snapshot().single()
+            BundledAlgorithmArtifacts.retain(store, listOf(artifact, outlineArtifact))
+            val worker = store.snapshot().single { it.reference == artifact.reference }
             val instance = actual.entries[index].instance
             val definition = RigFittedMouthDefinition.modernDefinition(RigModifierSource.of(model))
             val context = definition.authorContext(instance).withUpstream(actual.entries.take(index)
@@ -874,6 +881,15 @@ class WorkspaceLegacyBindingTest {
             }
             assertFaceEquals(reference[index], ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(),
                 actual.outputs[index - 1], instance, {}, store, context = context, declaredParameters = definition.parameters(instance)))
+            val outlineIndex = stack.index(outline.id)
+            val selected = actual.entries[outlineIndex].instance
+            val captured = assertNotNull(actual.readAlgorithms[selected.id]).context
+            assertTrue(captured.upstream.any { it.type == mouth.type && it.version == 3 })
+            val outlineWorker = store.snapshot().single { it.reference == outlineArtifact.reference }
+            assertFaceEquals(reference[outlineIndex], ModifierPluginWorkers.evaluate(outlineWorker, outlineWorker.manifest.algorithms.single(),
+                actual.outputs[outlineIndex - 1], selected, {}, store, context = captured, resolveRasters = { rig, rasters, checkpoint ->
+                    RigModifierRasterAssets.attach(rig, rasters, model.config, checkpoint)
+                }))
         } finally {
             store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
             preferences.removeNode()
