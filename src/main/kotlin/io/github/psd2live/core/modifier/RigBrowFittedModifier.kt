@@ -65,15 +65,8 @@ internal object RigBrowFittedModifier {
         val eye = prior.single { it.type == "eye/fitted" && it.version == 5 }
         val (old, before) = RigFittedMouthModuleSource.context(this, scaffold, prior, null)
         val (next, after) = RigFittedMouthModuleSource.context(this, scaffold, prior + instance, null)
-        fun sourceLayers(context: RigBuilder.RigContext): Map<String, ClassifiedLayer> {
-            val available = context.analysis.layers.associateBy { it.source.id.raw }
-            return instance.targets.mapNotNull { target ->
-                val layer = available[layersByMesh[target.id]] ?: return@mapNotNull null
-                (target.id to layer).takeIf { layer.source.id.raw in atlas.placementByLayerId }
-            }.toMap()
-        }
-        val priorLayers = sourceLayers(before)
-        val nextLayers = sourceLayers(after)
+        val priorLayers = bindingSourceLayers(instance, before)
+        val nextLayers = bindingSourceLayers(instance, after)
         require(priorLayers.keys == nextLayers.keys)
         val oldFrames = priorLayers.mapValues { (_, layer) -> before.parentAndFrame(layer, old) }
         val newFrames = nextLayers.mapValues { (_, layer) -> after.parentAndFrame(layer, next) }

@@ -6,7 +6,6 @@ import io.github.psd2live.algorithms.binding.BrowShapeV4Algorithm
 import io.github.psd2live.algorithms.binding.BrowShapeV5Algorithm
 import io.github.psd2live.algorithms.binding.BrowShapeInputs
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
-import io.github.psd2live.core.ClassifiedLayer
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.RigTuning
 import io.github.psd2live.core.SemanticTag
@@ -67,38 +66,16 @@ internal object RigBrowShapeModifier {
 
     private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance): ModifierAlgorithmContext {
         val scaffold = provider(instance)
-        val prefix = activeBefore(instance).filter {
-            it.config["scaffold"] == JsonPrimitive(scaffold.id) && it.targets.any(instance.targets::contains) &&
-                RigLegacyBindings.find(it.type)?.let { spec -> !spec.expressionToggles && !spec.seeThrough } == true
-        }
+        val prefix = bindingPredecessors(instance, scaffold)
         val face = prefix.single { it.type == "face/fitted" && it.version == 3 }
         val eye = prefix.single { it.type == "eye/fitted" && it.version == 5 }
         require(prefix.any { it.id == instance.config.getValue("base").jsonPrimitive.content && it.type == "brow/fitted" && it.version == 4 })
-        val (before, old) = RigFittedMouthModuleSource.context(this, scaffold, prefix, null)
-        val (after, next) = RigFittedMouthModuleSource.context(this, scaffold, prefix + instance, null)
-        val witnessTags = setOf(SemanticTag.EYEBROW, SemanticTag.IRIDES, SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYE_CLOSE)
-        fun candidates(context: RigBuilder.RigContext): Map<String, ClassifiedLayer> {
-            val layers = context.analysis.layers.associateBy { it.source.id.raw }
-            return instance.targets.mapNotNull { target ->
-                val layer = layers[layersByMesh[target.id]] ?: return@mapNotNull null
-                (target.id to layer).takeIf { layer.semantic.tag in witnessTags && layer.source.id.raw in atlas.placementByLayerId }
-            }.toMap()
-        }
-        val prior = candidates(old)
-        val desired = candidates(next)
-        require(prior.keys == desired.keys)
-        val brows = prior.filterValues { it.semantic.tag == SemanticTag.EYEBROW }.keys
-        require(brows.isNotEmpty())
-        val axes = prefix.flatMapTo(hashSetOf()) { RigLegacyBindings.spec(it.type).parameters }
-        return ModifierAlgorithmContext(buildJsonObject {
-            put("face", face.id)
-            put("eye", eye.id)
-            put("group", tr("model.group.brows"))
-        }, mapOf(
-            "before" to outlineShellSource(old, before, prior, axes, includeFaceLean = true, projectedMeshes = brows),
-            "after" to outlineShellSource(next, after, desired, axes + RigLegacyBindings.spec(instance.type).parameters,
-                includeFaceLean = true, projectedMeshes = brows),
-        ))
+        return captureBindingTransition(instance, scaffold, prefix, eyeBindingTags + SemanticTag.EYEBROW,
+            projectedTags = setOf(SemanticTag.EYEBROW), values = buildJsonObject {
+                put("face", face.id)
+                put("eye", eye.id)
+                put("group", tr("model.group.brows"))
+            })
     }
 
     private val fallbackAlgorithm = object : ReadingModifierAlgorithmPlugin by BrowShapeV4Algorithm(),

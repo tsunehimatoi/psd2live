@@ -4,11 +4,9 @@ import io.github.psd2live.algorithms.binding.EyeWideAlgorithm
 import io.github.psd2live.algorithms.binding.EyeWideV3Algorithm
 import io.github.psd2live.algorithms.binding.EyeWideV4Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
-import io.github.psd2live.core.ClassifiedLayer
 import io.github.psd2live.core.PipelineConfig
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.RigTuning
-import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.StandardParameters
 import io.github.psd2live.core.recipe.BaseChoice
 import io.github.psd2live.core.recipe.ModuleChoice
@@ -51,10 +49,7 @@ internal object RigEyeWideModifier {
 
     private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance): ModifierAlgorithmContext {
         val scaffold = provider(instance)
-        val prefix = activeBefore(instance).filter {
-            it.config["scaffold"] == JsonPrimitive(scaffold.id) && it.targets.any(instance.targets::contains) &&
-                RigLegacyBindings.find(it.type)?.let { spec -> !spec.expressionToggles && !spec.seeThrough } == true
-        }
+        val prefix = bindingPredecessors(instance, scaffold)
         require(scaffold.version == 2 && prefix.all { it.targets.containsAll(instance.targets) }) {
             "Eye widening v4 requires a shared fitted source"
         }
@@ -63,29 +58,11 @@ internal object RigEyeWideModifier {
         require(prefix.any { it.id == instance.config.getValue("base").jsonPrimitive.content && it.type == "eye/fitted" && it.version == 5 })
         val smile = prefix.single { it.type == "eye.smile" && it.version in setOf(1, 4) }
         require(prefix.none { it.type == EyeWideAlgorithm.TYPE })
-        val (before, old) = RigFittedMouthModuleSource.context(this, scaffold, prefix, null)
-        val (after, next) = RigFittedMouthModuleSource.context(this, scaffold, prefix + instance, null)
-        val eyeTags = setOf(SemanticTag.IRIDES, SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYE_CLOSE)
-        fun eyes(context: RigBuilder.RigContext): Map<String, ClassifiedLayer> {
-            val layers = context.analysis.layers.associateBy { it.source.id.raw }
-            return instance.targets.mapNotNull { target ->
-                val layer = layers[layersByMesh[target.id]] ?: return@mapNotNull null
-                (target.id to layer).takeIf { layer.semantic.tag in eyeTags && layer.source.id.raw in atlas.placementByLayerId }
-            }.toMap()
-        }
-        val prior = eyes(old)
-        val desired = eyes(next)
-        require(prior.isNotEmpty() && prior.keys == desired.keys)
-        val axes = prefix.flatMapTo(hashSetOf()) { RigLegacyBindings.spec(it.type).parameters }
-        return ModifierAlgorithmContext(buildJsonObject {
+        return captureBindingTransition(instance, scaffold, prefix, eyeBindingTags, values = buildJsonObject {
             put("face", face.id)
             put("brow", brow.id)
             put("smile", smile.id)
-        }, mapOf(
-            "before" to outlineShellSource(old, before, prior, axes, includeFaceLean = true),
-            "after" to outlineShellSource(next, after, desired, axes + RigLegacyBindings.spec(instance.type).parameters,
-                includeFaceLean = true),
-        ))
+        })
     }
 
     fun definition(source: RigModifierSource?): RigModifierDefinition =
