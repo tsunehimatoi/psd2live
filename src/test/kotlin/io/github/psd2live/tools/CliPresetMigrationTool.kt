@@ -2,6 +2,8 @@ package io.github.psd2live.tools
 
 import io.github.psd2live.application.CliPresetBindings
 import io.github.psd2live.application.WorkspaceInitialPreset
+import io.github.psd2live.application.WorkspaceModifierConversion
+import io.github.psd2live.application.WorkspaceModifierConversionMismatch
 import io.github.psd2live.application.WorkspacePreviewBuilder
 import io.github.psd2live.application.WorkspacePresetInitialization
 import io.github.psd2live.application.WorkspaceRasterWork
@@ -32,6 +34,43 @@ class CliPresetMigrationTool {
     @Test fun compareMeshOnly() = compareRawPreset(meshOnly = true, generateDeformers = true)
 
     @Test fun compareWithoutDeformers() = compareRawPreset(meshOnly = false, generateDeformers = false)
+
+    @Test fun compareProjectConversion() = runBlocking {
+        requireTools()
+        val sample = Sample.fromEnvironment()
+        val source = PSD2LivePipeline().readPsd(sample.path)
+        val config = PipelineConfig()
+        val document = WorkspaceDocument(source, emptyMap(), emptySet(), emptyMap(), emptyMap(), config.rigEdits,
+            WorkspaceSettingsCodec.encode(config))
+        val builder = WorkspacePreviewBuilder()
+        val before = builder.build(document)
+        val report = output("cli-preset-migration").resolve("project-conversion-${sample.name}.txt")
+        RigBuildProfile.reset()
+        RigBuildProfile.recording = true
+        try {
+            val converted = WorkspaceModifierConversion.convert(document, before, WorkspaceRasterWork.Direct)
+            val after = builder.build(converted)
+            val oldIr = RigIrCompiler.compile(before, tileArt = true, simulations = true)
+            val newIr = RigIrCompiler.compile(after, tileArt = true, simulations = true)
+            report.writeText(buildString { compare("project conversion", oldIr, newIr) })
+            assertEquals(oldIr.copy(parameters = oldIr.parameters.sortedBy { it.id }),
+                newIr.copy(parameters = newIr.parameters.sortedBy { it.id }))
+        } catch (failure: WorkspaceModifierConversionMismatch) {
+            report.writeText(failure.message.orEmpty() + "\n" + failure.objects + "\n")
+            runCatching {
+                val candidate = builder.build(WorkspaceModifierConversion.capture(document, before))
+                val original = RigIrCompiler.compile(before, tileArt = true, simulations = true)
+                val observed = RigIrCompiler.compile(candidate, tileArt = true, simulations = true)
+                report.appendText(buildString { compare("rejected conversion candidate", original, observed) })
+            }.exceptionOrNull()?.let(failure::addSuppressed)
+            throw failure
+        } finally {
+            RigBuildProfile.recording = false
+            val templates = RigBuildProfile.snapshot().filterKeys { it.startsWith("modifier legacy") || it.startsWith("modifier template consumer") }
+            report.appendText(templates.entries.joinToString("\n", prefix = "\n") { (stage, value) -> "$stage ${value.second}" })
+            RigBuildProfile.reset()
+        }
+    }
 
     private fun compareRawPreset(meshOnly: Boolean, generateDeformers: Boolean) {
         requireTools()
@@ -192,7 +231,7 @@ class CliPresetMigrationTool {
         meshDifferences("keyforms") { it.offsets }
         meshDifferences("channels") { it.channels }
         meshDifferences("blend shapes") { it.shapes }
-        if (label == "shared export layout") {
+        if (label == "shared export layout" || label == "rejected conversion candidate") {
             for ((before, after) in expected.parameterTree.zip(actual.parameterTree)) {
                 if (before != after) appendLine("  parameter folder: expected=$before actual=$after")
             }

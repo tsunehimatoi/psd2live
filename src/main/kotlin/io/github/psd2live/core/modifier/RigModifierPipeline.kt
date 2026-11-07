@@ -60,11 +60,20 @@ internal object RigModifierPipeline {
                 progress.update("Evaluating modifier stack", .85)
             }
         }
-        val rig = base.rig.withModifierMeshes(PuppetIr.toPuppet(result.rig), result.rig.textures.tileArt)
+        val evaluated = base.rig.withModifierMeshes(PuppetIr.toPuppet(result.rig), result.rig.textures.tileArt)
             .copy(modifierOutput = result.rig, modifierReport = result.report())
-        val extra = RigModifierRasterAssets.layers(rig, config).filterNot { it.source.id.raw in base.atlas.placementByLayerId }
-        val atlas = RigModifierRasterAssets.append(base.atlas, extra, config)
-        val composed = if (extra.isEmpty()) base.analysis else base.analysis.copy(layers = base.analysis.layers + extra)
+        val extra = RigModifierRasterAssets.layers(evaluated, config).filterNot { it.source.id.raw in base.atlas.placementByLayerId }
+        val appended = RigModifierRasterAssets.append(base.atlas, extra, config)
+        val arranged = RigModifierRasterAssets.arranged(extra, config)
+        val composed = when {
+            extra.isEmpty() -> base.analysis
+            arranged -> base.analysis.copy(layers = RigModifierRasterAssets.sourceOrder(base.analysis.layers, extra))
+            else -> base.analysis.copy(layers = base.analysis.layers + extra)
+        }
+        val atlas = if (arranged) AtlasLayout.pack(composed.layers, config, previous = previousAtlas) else appended
+        val rig = if (arranged) requireNotNull(RigLayerDeletion.rebind(evaluated, composed, appended, composed, atlas)) {
+            "The arranged atlas cannot bind every generated mesh"
+        } else evaluated
         progress.update("Compiling modifier result", .95)
         val bundle = pipeline.previewBundle(composed, atlas, rig, config)
         return base.copy(analysis = composed, atlas = atlas, rig = rig, config = config, runtimeBundle = bundle,

@@ -20,6 +20,19 @@ internal object RigModifierRasterAssets {
     fun resolve(input: RigIR, outputs: List<ModifierRasterOutput>, checkpoint: () -> Unit): RigIR =
         attach(input, outputs, PipelineConfig(), checkpoint)
 
+    fun arranged(assets: List<ClassifiedLayer>, config: PipelineConfig): Boolean {
+        val tiles = config.atlasArrangement?.tiles ?: return false
+        return assets.any { it.source.id.raw in tiles }
+    }
+
+    fun sourceOrder(base: List<ClassifiedLayer>, assets: List<ClassifiedLayer>): List<ClassifiedLayer> {
+        val ids = base.mapTo(HashSet()) { it.source.id.raw }
+        val ribbons = assets.filter { MouthLipLayer.isLipId(it.source.id.raw) && it.source.id.raw.substringBeforeLast("::mouth-lip-") in ids }
+        val byOwner = ribbons.groupBy { it.source.id.raw.substringBeforeLast("::mouth-lip-") }
+        return base.flatMap { byOwner[it.source.id.raw].orEmpty().sortedBy { lip -> lip.source.id.raw } + it } +
+            (assets - ribbons.toSet())
+    }
+
     fun restored(config: PipelineConfig): List<ClassifiedLayer> {
         val overlay = config.rigEdits
         if (overlay.checkpointIndex < 0) return emptyList()
