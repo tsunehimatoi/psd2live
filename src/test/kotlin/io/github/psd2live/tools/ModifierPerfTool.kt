@@ -19,6 +19,14 @@ class ModifierPerfTool {
         val report = StringBuilder()
         val baseline = setting("PSD2LIVE_BASELINE_MODIFIER", "")
         val importVersions = versionSelection(setting("PSD2LIVE_IMPORT_MODIFIER_VERSIONS", ""))
+        val verifyIndependent = setting("PSD2LIVE_VERIFY_INDEPENDENT", "0") == "1"
+        fun checkIndependent(label: String, stages: Map<String, Pair<Double, Long>>) {
+            if (!verifyIndependent) return
+            val templates = stages["modifier legacy template requests"]?.second ?: 0
+            val builds = stages["modifier legacy rig builds"]?.second ?: 0
+            check(templates == 0L && builds == 0L) { "$label used $templates legacy template requests and $builds legacy rig builds" }
+            report.appendLine("$label: no legacy template requests or rig builds")
+        }
         if (importVersions.isNotEmpty()) report.appendLine("import locked versions: " +
             importVersions.entries.joinToString(",") { (type, version) -> "$type@$version" })
         val recording = if (setting("PSD2LIVE_JFR", "0") == "1")
@@ -54,6 +62,7 @@ class ModifierPerfTool {
                     report.appendLine("%-65s %9.1f ms x%d".format(name, value.first, value.second))
                 }
                 output("modifier-perf").resolve("report.txt").writeText(report.toString())
+                checkIndependent("import $round", stages)
                 println("import $round: $elapsed ms")
                 if (round == 1) {
                     val before = runtime.capture()
@@ -75,12 +84,14 @@ class ModifierPerfTool {
                             report.appendLine("adjustment %-54s %9.1f ms x%d".format(name, value.first, value.second))
                         }
                         output("modifier-perf").resolve("report.txt").writeText(report.toString())
+                        checkIndependent("modifier adjustment", RigBuildProfile.snapshot())
                     }
                 }
                 if (round == 1 && setting("PSD2LIVE_VERIFY", "0") == "1") {
                     val capture = runtime.capture()
                     val enabled = RigStageCache.enabled
                     try {
+                        RigBuildProfile.reset()
                         RigStageCache.enabled = false
                         val cold = PSD2LivePipeline().buildPreview(capture.document.source, capture.document.config())
                         val expected = RigIrCompiler.compile(capture.model, tileArt = true)
@@ -93,6 +104,7 @@ class ModifierPerfTool {
                             fail(detail)
                         }
                         report.appendLine("uncached replay: identical complete IR")
+                        checkIndependent("uncached replay", RigBuildProfile.snapshot())
                         output("modifier-perf").resolve("report.txt").writeText(report.toString())
                     } finally { RigStageCache.enabled = enabled }
                 }

@@ -31,6 +31,7 @@ internal class RigModifierSource(
     private fun generated(strength: Float = 1f, tuning: RigTuning = RigTuning(), headStrength: Float = 1f,
                           recipe: RigRecipe = RigRecipe.Legacy, outline: RigModifierInstance? = null,
                           featureDisplacement: Boolean = false, frontHairSway: Boolean = true, backHairSway: Boolean = true, neutralScaffold: Boolean = false, capture: ((() -> PuppetModel) -> Unit)? = null): BuiltRig {
+        RigBuildProfile.count("modifier legacy rig builds")
         val native = generationConfig(strength, tuning, headStrength, recipe, outline,
             featureDisplacement, frontHairSway, backHairSway)
         if (outline == null) return if (neutralScaffold) RigBuilder.buildNeutralScaffold(analysis, atlas, native, meshCache, capture)
@@ -324,6 +325,7 @@ internal class RigModifierSource(
     }
 
     private fun template(instances: List<RigModifierInstance>, scaffold: JsonObject): Template {
+        RigBuildProfile.count("modifier legacy template requests")
         val state = instances.associateBy { it.type }
         val key = templateKey(instances, scaffold)
         return templates.getOrPut(key) {
