@@ -113,9 +113,12 @@ class ModifierPerfTool {
                         val stages = RigBuildProfile.snapshot()
                         report.appendLine("$label legacy templates: " +
                             stages.filterKeys { it.startsWith("modifier legacy template:") }.values.sumOf { it.second })
-                        val selectedEvaluations = versions.keys.mapTo(HashSet()) { "modifier evaluate: $it" }
+                        val selectedStages = versions.keys.flatMapTo(HashSet()) {
+                            listOf("modifier parameters: $it", "modifier input: $it", "modifier evaluate: $it")
+                        }
                         for ((stage, result) in stages) {
-                            if (stage in selectedEvaluations || stage.startsWith("modifier legacy template:") ||
+                            if (stage in selectedStages || stage.startsWith("source fitting: mouth") ||
+                                stage.startsWith("modifier legacy template:") ||
                                 stage.startsWith("modifier template consumer:")) {
                                 report.appendLine("$label $stage: %.1f ms x%d".format(result.first, result.second))
                             }

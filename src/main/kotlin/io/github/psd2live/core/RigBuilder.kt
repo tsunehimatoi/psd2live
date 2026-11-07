@@ -527,15 +527,19 @@ object RigBuilder {
 				?: return 0.6f
 			val space = headSpaceFor(face, config)
 			val raster = face.source.raster; val bounds = face.source.bounds
-			var deepest = 0f
-			for (y in 0 until raster.height step 2) for (x in 0 until raster.width step 2) {
-				if ((raster.rgba[(y * raster.width + x) * 4 + 3].toInt() and 0xff) < 128) continue
-				val canvasX = bounds.left + x * bounds.width / raster.width.toFloat(); val canvasY = bounds.top + y * bounds.height / raster.height.toFloat()
-				val (rx, ry) = space?.toAligned(canvasX, canvasY) ?: (canvasX to canvasY)
-				val (u, v) = rig.fit.toMouth(rx, ry)
-				if (u in 0f..1f && v > deepest) deepest = v
+			RigBuildProfile.count("source fitting: mouth chin requests")
+			return sourceFit("mouth chin", listOf(raster, bounds, space, rig.fit)) {
+				var deepest = 0f
+				for (y in 0 until raster.height step 2) for (x in 0 until raster.width step 2) {
+					if ((raster.rgba[(y * raster.width + x) * 4 + 3].toInt() and 0xff) < 128) continue
+					val canvasX = bounds.left + x * bounds.width / raster.width.toFloat()
+					val canvasY = bounds.top + y * bounds.height / raster.height.toFloat()
+					val (rx, ry) = space?.toAligned(canvasX, canvasY) ?: (canvasX to canvasY)
+					val (u, v) = rig.fit.toMouth(rx, ry)
+					if (u in 0f..1f && v > deepest) deepest = v
+				}
+				deepest.coerceIn(0.2f, 3f)
 			}
-			return deepest.coerceIn(0.2f, 3f)
 		}
 
 		private val fittedBrows = java.util.concurrent.ConcurrentHashMap<Identity, Map<Side, io.github.psd2live.core.fit.BrowRig>>()
@@ -3471,15 +3475,27 @@ object RigBuilder {
 	                                  atlas: PackedAtlas, cache: PreviewMeshCache): MeshData {
 		val (parent, frame) = context.parentAndFrame(layer, config)
 		val space = context.headSpaceFor(layer, config)
-		val raw = buildGridMesh(layer, frame, space, config, cache,
-			MeshResolution.unitScale(config, context.analysis.source))
+		val unitScale = MeshResolution.unitScale(config, context.analysis.source)
 		val contour = config.mouthOutlineEnabled && layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) &&
 			context.fittedMouth(config)?.layered != true
-		val data = if (contour) mouthContourMesh(raw, layer, frame, space) else raw
 		val placement = atlas.placementByLayerId.getValue(layer.source.id.raw)
-		val positions = if (parent == null) data.rigPositions else data.mesh.positions
-		val uvs = LayerTexture.packed(layer, placement, atlas).bind(data.mesh.uvs)
-		return MeshData(DrawableMesh(positions, uvs, data.mesh.indices), data.rigPositions)
+		val page = atlas.pages[placement.page].image
+		RigBuildProfile.count("source fitting: mouth mesh requests")
+		val build = {
+			RigBuildProfile.stage("source fitting: mouth mesh") {
+				val raw = buildGridMesh(layer, frame, space, config, cache, unitScale)
+				val data = if (contour) mouthContourMesh(raw, layer, frame, space) else raw
+				val positions = if (parent == null) data.rigPositions else data.mesh.positions
+				val uvs = LayerTexture.packed(layer, placement, page.width, page.height).bind(data.mesh.uvs)
+				MeshData(DrawableMesh(positions, uvs, data.mesh.indices), data.rigPositions)
+			}
+		}
+		val stages = stagesOf(cache) ?: return build()
+		// All consumers read these arrays as captured source geometry. Motion settings only affect the frame
+		// and whether the contour replaces the source boundary.
+		val key = listOf(layer, parent == null, frame, space, unitScale, meshSettings(layer, config), config.meshTrace,
+			config.alphaThreshold, contour, placement, page.width, page.height)
+		return stages.get("fitted mouth source mesh", 128, key, build)
 	}
 
 	/**
