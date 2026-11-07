@@ -26,11 +26,28 @@ internal object RigSourceBinding {
         val current = BindingMerge.apply(PuppetIr.toPuppet(rig), instance, inputs, checkpoint)
         val chains = if (RigModifierChains.kinds(instance.type).isEmpty()) emptyList() else source.chains(instance, checkpoint)
         val spec = RigLegacyBindings.spec(instance.type)
-        val bound = rig.withPuppet(current)
+        val bound = rig.withPuppet(orderNativeChainParameters(current, instance, chains))
         val posed = if (spec.isBase && spec.area == "mouth" && bound.parameters.any { it.id == StandardParameters.MOUTH_OPEN.raw })
             bound.copy(restPose = bound.restPose + (StandardParameters.MOUTH_OPEN.raw to 1f)) else bound
         val output = RigModifierPhysics.add(posed, instance, chains)
         return if (chains.isEmpty()) output else source.addUpstreamExpressionInputs(output, instance)
+    }
+
+    private fun orderNativeChainParameters(model: PuppetModel, instance: RigModifierInstance,
+                                           chains: List<RigModifierChains.Owned>): PuppetModel {
+        if (chains.size < 2 || instance.outputAliases.keys.none { it.startsWith("chain-parameter:") }) return model
+        // A legacy recipe orders chain axes by source ordinal. Target traversal visits them in mesh order.
+        val rank = chains.sortedBy { it.binding.native.index }.flatMap { it.aliases.values }
+            .mapIndexed { index, parameter -> ParameterId(parameter) to index }.toMap()
+        fun ordered(nodes: List<ParameterNode>): List<ParameterNode> {
+            val owned = nodes.filterIsInstance<ParameterNode.Param>().filter { it.id in rank }
+                .sortedBy { rank.getValue(it.id) }.iterator()
+            return nodes.map { node -> when (node) {
+                is ParameterNode.Param -> if (node.id in rank) owned.next() else node
+                is ParameterNode.Group -> node.copy(children = ordered(node.children))
+            } }
+        }
+        return model.copy(parameterTree = ordered(model.parameterTree))
     }
 
     private fun canvasMesh(model: PuppetModel, drawable: Drawable): DrawableMesh {

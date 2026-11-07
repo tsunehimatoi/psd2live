@@ -166,6 +166,7 @@ internal object WorkspaceModifierConversion {
         fun capture(spec: RigLegacyBindings.Spec, version: Int, values: Map<String, Float>) {
             val missing = spec.requires - providers.keys
             require(missing.isEmpty()) { "Conversion cannot resolve ${spec.type} prerequisites: $missing" }
+            val copies = if (spec.seeThrough) seeThroughAliases(model, spec.module == RigModules.EYE_SEE_THROUGH) else emptyMap()
             add(spec.type, version, buildJsonObject {
                 put("scaffold", providers.getValue(RigSourceModifiers.SCAFFOLD))
                 spec.module?.base?.let { put("base", providers.getValue(it)) }
@@ -181,7 +182,7 @@ internal object WorkspaceModifierConversion {
                 if (values.isNotEmpty()) putJsonObject("values") { values.forEach { (key, value) -> put(key, value) } }
             }, hierarchyAliases + buildMap {
                 if (spec.mouthOutline) putAll(mouthOutlineAliases(model))
-                if (spec.seeThrough) putAll(seeThroughAliases(model, spec.module == RigModules.EYE_SEE_THROUGH))
+                putAll(copies)
                 nativePhysics.filter { it.id in spec.module?.physicsGroups.orEmpty() }.forEach { put("physics:${it.id}", it.id) }
                 for (chain in chains.filter { it.native.kind in RigModifierChains.kinds(spec.type) }) {
                     chain.parameters.forEach { (native, normalized) -> put("chain-parameter:${normalized.raw.removePrefix("SourceChain:")}", native) }
@@ -190,6 +191,19 @@ internal object WorkspaceModifierConversion {
                     }
                 }
             })
+            // Legacy finished copies carried this editor state. Keep it with their modifier.
+            if (copies.isNotEmpty()) {
+                val owner = stack.instances.last().id
+                val drawables = model.rig.puppet.drawables.associateBy { it.id.raw }
+                val overrides = copies.values.distinct().sorted().map { id -> buildJsonObject {
+                    put("op", "structure"); put("generator", "modifier:$owner")
+                    putJsonArray("edits") { add(buildJsonObject {
+                        put("action", "static"); put("kind", "mesh"); put("id", id)
+                        put("selectable", drawables.getValue(id).isSelectable)
+                    }) }
+                } }
+                stack = stack.withOverrides(owner, overrides)
+            }
         }
         if (config.generateDeformers) for (area in listOf("body", "face", "eye", "brow", "mouth", "hair")) {
             val base = config.recipe.base(area)
@@ -202,8 +216,15 @@ internal object WorkspaceModifierConversion {
             } else capture(RigLegacyBindings.spec(base.id), version, base.knobs.associate { it.id to config.recipe.baseValue(area, it.id) })
         }
         val subject = RecipeSubject.of(model.analysis)
+        // Legacy lip ribbons used the final mouth poses and see-through copies used the final bind.
         val modules = RigModules.modules.filter { RigModules.builds(it, config, subject) && !(fittedFace && it == RigModules.FACE_DEPTH_TURN) }
-            .mapNotNull { RigLegacyBindings.find(it.id) }.sortedBy { it.seeThrough }.toMutableList()
+            .mapNotNull { RigLegacyBindings.find(it.id) }.sortedBy {
+                when {
+                    it.seeThrough -> 2
+                    it.mouthOutline -> 1
+                    else -> 0
+                }
+            }.toMutableList()
         while (modules.isNotEmpty()) {
             val spec = requireNotNull(modules.firstOrNull { providers.keys.containsAll(it.requires) }) {
                 "Conversion cannot resolve legacy module prerequisites: ${modules.map { it.type }}"

@@ -121,9 +121,17 @@ internal object RigModifierRasterAssets {
                 geometry = geometry.copy(uvs = uvs))
         }
         val byOwner = outputs.groupBy { it.owner.id }
+        val savedTiles = config.atlasArrangement?.tiles.orEmpty()
+        val nativeLipIds = outputs.filter { output ->
+            val key = output.layer.key
+            key in savedTiles && MouthLipLayer.isLipId(key) &&
+                output.mesh.id == "${output.owner.id}_lip_${key.substringAfterLast('-')}"
+        }.mapTo(HashSet()) { it.mesh.id }
         fun children(input: List<io.github.psd2live.format.model.ChildRef>) = input.flatMap { child ->
             val added = if (child is io.github.psd2live.format.model.ChildRef.MeshRef) byOwner[child.id].orEmpty() else emptyList()
-            added.map { io.github.psd2live.format.model.ChildRef.MeshRef(it.mesh.id) } + child
+            val (native, ordinary) = added.partition { it.mesh.id in nativeLipIds }
+            ordinary.map { io.github.psd2live.format.model.ChildRef.MeshRef(it.mesh.id) } + child +
+                native.map { io.github.psd2live.format.model.ChildRef.MeshRef(it.mesh.id) }
         }
         val source = existing?.copy(layers = existing.layers + outputs.map { it.layer }) ?: io.github.psd2live.format.model.SourceFile(
             sourceId, "artwork.psd", null, "psd", outputs.map { it.layer })
@@ -157,7 +165,14 @@ internal object RigModifierRasterAssets {
             authoring = ModifierFieldChange(rig.authoring, rig.authoring.copy(sources = sources, paths = rig.authoring.paths + outputs.flatMap { it.paths })),
             textures = ModifierFieldChange(rig.textures, textures))
         val candidate = changes.apply(rig, checkpoint)
-        return candidate.withPuppet(PuppetIr.toPuppet(candidate).withDerivedRenderRoot()).copy(textures = textures).also { checkpoint() }
+        val ordered = if (nativeLipIds.isEmpty()) candidate else {
+            val byId = meshes.associateBy { it.id }
+            val sourceOrder = rig.meshes.flatMap { mesh ->
+                listOf(mesh) + byOwner[mesh.id].orEmpty().filter { it.mesh.id in nativeLipIds }.map { byId.getValue(it.mesh.id) }
+            }
+            candidate.copy(meshes = sourceOrder + meshes.filterNot { it.id in nativeLipIds })
+        }
+        return ordered.withPuppet(PuppetIr.toPuppet(ordered).withDerivedRenderRoot()).copy(textures = textures).also { checkpoint() }
     }
 
     /** Appending dedicated pages keeps upstream UVs and page bindings unchanged. */

@@ -218,9 +218,12 @@ internal class RigModifierSource(
                 val asset = source.copy(source = object : org.umamo.format.art.SourceLayer by source.source {
                     override val id = org.umamo.format.art.LayerId(assetId)
                 })
+                val arranged = id == lip.id && assetId == source.source.id.raw && config.atlasArrangement?.tiles?.containsKey(assetId) == true
                 val drawable = lip.copy(id = id, parentDeformerId = owner.parent?.let(::DeformerId), maskedBy = owner.maskedBy.map(::DrawableId),
                     invertMask = owner.invertMask, isVisible = owner.visible, textureSourceId = null,
-                    drawOrder = (owner.drawOrder + 1f).coerceAtMost(1000f), atlasTileId = PuppetSourceAtlas.tileIdFor(assetId))
+                    drawOrder = if (arranged) lip.drawOrder
+                        else (owner.drawOrder + 1f).coerceAtMost(1000f),
+                    atlasTileId = PuppetSourceAtlas.tileIdFor(assetId))
                 val paths = native.deformPaths.filter { it.drawableId == lip.id }.map { path ->
                     path.copy(id = instance.outputId("mouth-path:${target.id}:$side:${path.id}"), drawableId = id)
                 }
