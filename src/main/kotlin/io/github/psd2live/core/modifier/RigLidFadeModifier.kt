@@ -1,6 +1,7 @@
 package io.github.psd2live.core.modifier
 
 import io.github.psd2live.algorithms.binding.LidFadeAlgorithm
+import io.github.psd2live.algorithms.binding.LidFadeV3Algorithm
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.RigTuning
 import io.github.psd2live.core.recipe.BaseChoice
@@ -13,11 +14,15 @@ internal object RigLidFadeModifier {
         override val optionalUpstream = setOf("eye.wide", LidFadeAlgorithm.TYPE, LidFadeAlgorithm.ENTRYPOINT)
     }
 
-    fun definition(source: RigModifierSource?): RigModifierDefinition =
+    private val modernAlgorithm = object : ReadingModifierAlgorithmPlugin by LidFadeV3Algorithm(), ModifierOptionalUpstream {
+        override val optionalUpstream = algorithm.optionalUpstream + LidFadeV3Algorithm.ENTRYPOINT
+    }
+
+    fun definition(source: RigModifierSource?, modern: Boolean = false): RigModifierDefinition =
         RigLegacyBindings.definition(RigLegacyBindings.spec(LidFadeAlgorithm.TYPE), source).copy(
-            version = LidFadeAlgorithm.VERSION,
+            version = if (modern) LidFadeV3Algorithm.VERSION else LidFadeAlgorithm.VERSION,
             parameters = { emptyList() },
-            plugin = algorithm,
+            plugin = if (modern) modernAlgorithm else algorithm,
             changeWrites = setOf("mesh"),
             upstreamInputs = true,
             authorContext = { requireNotNull(source).capture(it) },

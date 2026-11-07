@@ -21,7 +21,7 @@ internal object BuiltinModifierPlugins {
         PhysicsAlgorithmPlugin.definition, MotionAlgorithmPlugin.definition,
     ) + RigSourceModifiers.definitions(source) + listOf(
         hairChains(source), RigSkirtModifier.definition(source), RigRibbonsModifier.definition(source), RigCreatureModifier.definition(source), RigNeckModifier.definition(source), RigBustModifier.definition(source),
-        RigHairLegacySource.definition(source), RigLidFadeModifier.definition(source), RigFittedEyeDefinition.definition(source), RigFittedEyeDefinition.mixedDefinition(source),
+        RigHairLegacySource.definition(source), RigLidFadeModifier.definition(source), RigLidFadeModifier.definition(source, modern = true), RigFittedEyeDefinition.definition(source), RigFittedEyeDefinition.mixedDefinition(source),
         RigFittedEyeDefinition.modernDefinition(source),
         RigFittedMouthDefinition.definition(source), RigFittedMouthDefinition.modernDefinition(source), RigMouthVowelModifier.definition(source), RigMouthVowelModifier.outlineDefinition(source), RigMouthVowelModifier.fittedDefinition(source), RigMouthCaptureModifier.definition(source), RigMouthCaptureModifier.fittedDefinition(source), RigMouthJawModifier.definition(source), RigMouthJawModifier.fittedDefinition(source), RigMouthJawModifier.tongueDefinition(source), RigMouthTongueModifier.definition(source), RigMouthTongueModifier.fittedDefinition(source), RigFittedFaceDefinition.definition(source),
         RigLegacyFaceDefinition.definition(source),

@@ -724,6 +724,36 @@ tasks.register("pluginEyeLidFade") {
     }
 }
 
+val lidFadeV3WorkerJar = registerIsolatedBindingWorker(
+    "lidFadeV3", "eye-lid-fade-v3", "worker-eye-lid-fade-v3", "io.github.psd2live.algorithms.binding.LidFadeV3Worker",
+)
+lidFadeV3WorkerJar.configure { from(sourceSets.main.get().output) { include(lidFadeWorkerClasses) } }
+
+tasks.register("pluginEyeLidFadeV3") {
+    dependsOn(lidFadeV3WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-eye-lid-fade-v3")
+    val packageVersion = project.version.toString()
+    inputs.file(lidFadeV3WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        lidFadeV3WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6579652e6c69642d66616465.v3"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Lid lines fade early",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/fade","aliases":["eye.lid-fade"],"version":3,"name":"Lid lines fade early","category":"eye",
+               "targets":["mesh"],"requires":["rig.scaffold","eye/fitted"],"contextVersion":2,
+               "reads":["mesh","parameter"],"writes":["mesh"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val eyeFitted = sourceSets.create("eyeFitted")
 kotlin.target.compilations.named("eyeFitted") {
     associateWith(kotlin.target.compilations.getByName("main"))
