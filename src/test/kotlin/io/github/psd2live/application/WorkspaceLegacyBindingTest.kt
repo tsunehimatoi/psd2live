@@ -1585,6 +1585,7 @@ class WorkspaceLegacyBindingTest {
         f.install()
         f.group(listOf("body/legacy", "face/legacy", "eye/fitted", "brow/fitted", "mouth/fitted", "hair/legacy"))
         val targets = f.now.model.rig.puppet.drawables.map { ModifierTarget("mesh", it.id.raw) }
+        val original = mesh(f, "mouth")
         val withoutOutline = RigIrCompiler.compile(f.now.model, tileArt = true)
         f.edit("modifier_add", f.addition("mouth.outline", "outline", targets))
         val model = f.now.model
@@ -1594,6 +1595,11 @@ class WorkspaceLegacyBindingTest {
         val recipe = fittedRecipe(mapOf("eye" to BaseChoice("eye/fitted", 2), "brow" to BaseChoice("brow/fitted"), "mouth" to BaseChoice("mouth/fitted")))
         val legacy = PSD2LivePipeline().buildPreview(f.document.source, RigModifierPipeline.ordinaryConfig(f.document.config()).copy(
             meshOnly = false, generateDeformers = true, recipe = recipe, mouthOutlineEnabled = true))
+        val owner = mesh(f, "mouth")
+        val nativeOwner = legacy.rig.puppet.drawables.single { legacy.rig.layerIdByDrawableId[it.id.raw] == "mouth" }
+        assertNotEquals(requireNotNull(original.mesh).indices.toList(), requireNotNull(owner.mesh).indices.toList())
+        assertContentEquals(requireNotNull(nativeOwner.mesh).indices, requireNotNull(owner.mesh).indices)
+        assertTrue(model.rig.puppet.deformPaths.none { it.drawableId == owner.id })
         val legacyRibbons = legacy.rig.puppet.drawables.filter { "_lip_" in it.id.raw }
         assertEquals(legacyRibbons.size, ribbons.size)
         val evaluator = CpuDeformationEvaluator()
