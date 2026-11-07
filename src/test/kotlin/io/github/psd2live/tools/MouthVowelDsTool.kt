@@ -12,7 +12,11 @@ import java.util.prefs.Preferences
 import kotlin.test.*
 
 class MouthVowelDsTool {
-    @Test fun compareSharedFrameVowel() = runBlocking {
+    @Test fun compareSharedFrameVowel(): Unit = verify(1)
+
+    @Test fun compareSharedFrameVowelAfterSourceOutline(): Unit = verify(8)
+
+    private fun verify(outlineVersion: Int): Unit = runBlocking {
         requireTools()
         val config = PipelineConfig(meshSpacing = 64)
         val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
@@ -22,13 +26,21 @@ class MouthVowelDsTool {
         val analysis = RigGenerationSource.prepare(RigGenerationSource.analyze(source, config), config)
         val bindings = CliPresetBindings(analysis, config)
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4,
-            "mouth/fitted" to 6, "mouth.outline" to 1, "mouth.vowel" to 1)
+            "mouth/fitted" to 6, "mouth.outline" to outlineVersion, "mouth.vowel" to 1)
         val (planned, historical) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
             WorkspaceInitialPreset(clothing = false), requestedVersions = versions, cliBindings = bindings)
         val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
         val entry = stack.instances.single { it.type == "mouth.vowel" }
         val index = stack.index(entry.id)
-        val expected = assertNotNull(historical.modifierEvaluation).outputs
+        val evaluation = assertNotNull(historical.modifierEvaluation)
+        val expected = evaluation.outputs
+        val outline = stack.instances.single { it.type == "mouth.outline" }
+        val outlineIndex = stack.index(outline.id)
+        assertEquals(outlineVersion, outline.version)
+        assertTrue(outlineIndex in 1 until index)
+        assertEquals(ModifierStatus.ACTIVE, evaluation.entries[outlineIndex].status)
+        val beforeOutline = expected[outlineIndex - 1].meshes.mapTo(hashSetOf()) { it.id }
+        assertTrue(expected[outlineIndex].meshes.any { it.id !in beforeOutline }, "The fitted outline must generate source ribbons")
         fun diff(before: RigIR, after: RigIR): String {
             val fields = RigIR::class.java.declaredFields.filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
                 .filter { it.isAccessible = true; it.get(before) != it.get(after) }.map { it.name }
