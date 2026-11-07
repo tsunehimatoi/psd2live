@@ -8,6 +8,7 @@ import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.RigModifierChains
 import io.github.psd2live.core.modifier.RigModifierInstance
 import io.github.psd2live.core.modifier.RigModifierStack
+import io.github.psd2live.format.model.Mesh as RigIRMesh
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.project.WorkspaceDocument
 import io.github.psd2live.project.WorkspaceSettingsCodec
@@ -110,9 +111,17 @@ class CliPresetMigrationTool {
         ids("physics", expected.physics.groups.map { it.id }, actual.physics.groups.map { it.id })
         ids("motions", expected.clips.map { it.id }, actual.clips.map { it.id })
         val meshes = expected.meshes.associateBy { it.id }
-        appendLine("  topology/UV differences = ${actual.meshes.mapNotNull { mesh ->
-            val previous = meshes[mesh.id] ?: return@mapNotNull null
-            mesh.id.takeIf { previous.geometry?.indices != mesh.geometry?.indices || previous.geometry?.uvs != mesh.geometry?.uvs }
-        }}")
+        fun <T> meshDifferences(kind: String, value: (RigIRMesh) -> T) {
+            val changed = actual.meshes.mapNotNull { mesh ->
+                val previous = meshes[mesh.id] ?: return@mapNotNull null
+                mesh.id.takeIf { value(previous) != value(mesh) }
+            }
+            appendLine("  mesh $kind differences = $changed")
+        }
+        meshDifferences("indices") { it.geometry?.indices }
+        meshDifferences("UVs") { it.geometry?.uvs }
+        meshDifferences("positions") { it.geometry?.positions }
+        meshDifferences("deformer assignment") { it.parent }
+        meshDifferences("texture assignment") { Triple(it.textureSource, it.page, it.tile) }
     }
 }
