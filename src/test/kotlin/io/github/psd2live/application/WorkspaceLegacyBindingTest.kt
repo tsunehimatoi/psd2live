@@ -2953,6 +2953,91 @@ class WorkspaceLegacyBindingTest {
         compareEyeWide("face/fitted")
     }
 
+    @Test fun eyeWideV3MatchesRecommendedFittedHeadAndItsInstalledWorker(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true)
+        val config = WorkspacePresetBaseline.configure(art.config(), "modern")
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
+            WorkspaceInitialPreset(clothing = true), preferSourceBindings = true)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val wide = stack.instances.single { it.type == "eye.wide" }
+        val index = stack.index(wide.id)
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(wide.type, 3))
+        val independent = wide.copy(version = 3, plugin = artifact.reference)
+        val expected = assertNotNull(baseline.modifierEvaluation).outputs
+        assertEquals(1, wide.version)
+        assertEquals(1, stack.instances.single { it.type == "eye.smile" }.version)
+        val candidate = stack.copy(instances = stack.instances.map {
+            when (it.type) {
+                "eye.wide" -> independent
+                "eye/fitted" -> it.copy(version = 5, plugin = assertNotNull(BuiltinModifierPlugins.reference(it.type, 5)))
+                else -> it
+            }
+        })
+        val candidateDocument = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = candidate.toJson()))
+        val stages = RigStageCache.enabled
+        RigStageCache.enabled = false
+        RigBuildProfile.reset()
+        RigBuildProfile.recording = true
+        val actual = try {
+            WorkspacePreviewBuilder().build(candidateDocument)
+        } finally {
+            RigBuildProfile.recording = false
+            RigStageCache.enabled = stages
+        }
+        val profile = RigBuildProfile.snapshot()
+        RigBuildProfile.reset()
+        assertTrue("modifier evaluate: eye.wide" in profile)
+        assertTrue(profile.keys.none {
+            it.startsWith("modifier template consumer: ") && it.contains(": eye.wide ->")
+        })
+        val outputs = assertNotNull(actual.modifierEvaluation).outputs
+        assertFaceEquals(expected[index - 1], outputs[index - 1])
+        assertFaceEquals(expected[index], outputs[index])
+        val compiled = RigIrCompiler.compile(actual, tileArt = true)
+        assertFaceEquals(RigIrCompiler.compile(baseline, tileArt = true), compiled)
+
+        val closedLid = outputs[index].meshes.single { it.id == "ArtMeshEyeCloseL" }
+        val carrier = outputs[index].deformers.single { it.id == closedLid.parent }
+        assertTrue(outputs[index - 1].deformers.none { it.id == carrier.id })
+        val formerParent = outputs[index - 1].meshes.single { it.id == closedLid.id }.parent
+        assertEquals(formerParent, carrier.parent)
+        assertEquals(outputs[index - 1].deformers.single { it.id == formerParent }.part, carrier.part)
+        val exported = mutableMapOf<String, ByteArray>()
+        io.github.psd2live.format.compile.Compiler.export(io.github.psd2live.targets.cubism.Cmo3Target(), compiled,
+            io.github.psd2live.format.compile.ExportOptions("widening")) { path, bytes -> exported[path] = bytes }
+        val imported = Cmo3ModelImport.read(exported.getValue("widening.cmo3")).puppet
+        val importedLid = imported.drawables.single { it.id.raw == closedLid.id }
+        val importedCarrier = imported.deformers.single { it.id == importedLid.parentDeformerId }
+        assertEquals(carrier.id, importedCarrier.id.raw)
+        assertEquals(carrier.parent, importedCarrier.parent?.raw)
+        assertEquals(carrier.part, importedCarrier.partId?.raw)
+
+        val directory = Files.createTempDirectory("eye-wide-recommended-")
+        val preferences = Preferences.userRoot().node("eye-wide-recommended/" + UUID.randomUUID())
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+            val installed = store.snapshot().single()
+            assertEquals(artifact.reference, installed.reference)
+            val definition = RigEyeWideModifier.modernDefinition(RigModifierSource.of(actual))
+            val upstream = candidate.instances.take(index).filter {
+                it.type in definition.requires + definition.optionalUpstream
+            }.map {
+                ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+            }
+            val context = definition.authorContext(independent).withUpstream(upstream)
+            assertFaceEquals(expected[index], ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(),
+                outputs[index - 1], independent, {}, store, context = context,
+                declaredParameters = definition.parameters(independent)))
+        } finally {
+            ModifierPluginWorkers.stop(artifact.reference)
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
     private suspend fun compareEyeWide(head: String, composed: Boolean = false, worker: Boolean = false) {
         val f = Fixture(document(eyeDetails = true, bilateralEyes = true)); f.install()
         f.group(listOf("body/legacy", head, "eye/fitted"))
