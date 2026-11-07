@@ -647,3 +647,19 @@ tasks.register("pluginEyeFitted") {
         """.trimIndent())
     }
 }
+
+val mouthOutline = sourceSets.create("mouthOutline")
+kotlin.target.compilations.named("mouthOutline") {
+    associateWith(kotlin.target.compilations.getByName("main"))
+}
+val mouthOutlineClassesJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("mouth-outline")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    from(mouthOutline.output)
+}
+val mouthOutlineElements = configurations.create("mouthOutlineElements") {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+}
+artifacts.add(mouthOutlineElements.name, mouthOutlineClassesJar)

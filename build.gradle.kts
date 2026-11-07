@@ -114,6 +114,7 @@ dependencies {
 	implementation("org.jetbrains.compose.foundation:foundation:1.11.1")
 	implementation("org.jetbrains.compose.ui:ui:1.11.1")
 	implementation("org.jetbrains.compose.material:material:1.11.1")
+	testImplementation(project(path = ":algorithms:binding", configuration = "mouthOutlineElements"))
 	testImplementation(kotlin("test"))
 }
 

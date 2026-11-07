@@ -1,6 +1,7 @@
 package io.github.psd2live.core
 
 import io.github.psd2live.algorithms.binding.MouthOutlineAlgorithm
+import io.github.psd2live.algorithms.binding.MouthOutlineLegacyCandidate
 import io.github.psd2live.algorithms.binding.MouthOutlineInputs
 import io.github.psd2live.algorithms.binding.MouthOutlineOwner
 import io.github.psd2live.algorithms.binding.MouthContour
@@ -98,6 +99,42 @@ class MouthOutlinePluginParityTest {
         assertEquals(2, paths.size)
         assertEquals(paths, native.deformPaths.filter { it.drawableId == sourceId })
         val expected = PuppetIr.toIr(native)
+        if (!fitted) {
+            val neutralContext = RigBuilder.rigContext(analysis, config, cache)
+            val framed = neutralContext.analysis.layers.single { it.source.id.raw == layerId }
+            val neutral = RigBuilder.fittedMouthSourceMesh(framed, neutralContext, config, atlas, cache)
+            val texture = LayerTexture.packed(layer, atlas.placementByLayerId.getValue(layerId), atlas)
+            fun Bounds.observation() = ModifierSourceBounds(left, top, right, bottom)
+            val (parent, frame) = neutralContext.parentAndFrame(framed, config)
+            val candidateOwners = mapOf(id to MouthOutlineLegacyCandidate.NeutralOwner(
+                parent, neutral.mesh, neutral.rigPositions, frame.observation(), neutralContext.rigLayer(framed).bounds.observation(),
+                MouthOutlineLegacyCandidate.TextureFrame(texture.placement, texture.pageWidth, texture.pageHeight,
+                    texture.offsetOriginX, texture.offsetOriginY, texture.space.scaleX, texture.space.scaleY)))
+            val ownerCandidate = MouthOutlineLegacyCandidate()
+            fun applyOwner(base: io.github.psd2live.format.model.RigIR): io.github.psd2live.format.model.RigIR =
+                ownerCandidate.changes(ModifierEvaluationInput(base, captured), instance, candidateOwners)
+                    .applyWithResources(base, {}, { rig, outputs, checkpoint ->
+                        RigModifierRasterAssets.attach(rig, outputs, legacyConfig, checkpoint)
+                    })
+            val complete = applyOwner(input)
+            val oldOwner = expected.meshes.single { it.id == id }
+            val newOwner = complete.meshes.single { it.id == id }
+            assertEquals(oldOwner.geometry, newOwner.geometry)
+            assertEquals(oldOwner.offsets, newOwner.offsets)
+            val nativePaths = expected.authoring.paths.filter { it.mesh == layerId }.map { it.copy(mesh = id) }
+            assertEquals(nativePaths, complete.authoring.paths.filter { it.mesh == id })
+
+            val before = input.meshes.single { it.id == id }
+            val geometry = requireNotNull(before.geometry)
+            val positions = geometry.positions.toArray()
+            positions[0] += .02f
+            val edited = before.copy(geometry = geometry.copy(positions = io.github.psd2live.format.model.Floats.wrap(positions)))
+            val result = applyOwner(input.copy(meshes = input.meshes.map { if (it.id == id) edited else it }))
+            val kept = result.meshes.single { it.id == id }
+            assertEquals(edited.geometry, kept.geometry)
+            assertNotEquals(edited.offsets, kept.offsets)
+            assertEquals(2, result.authoring.paths.count { it.mesh == id })
+        }
         val attached = changes.applyWithResources(input, {}, { rig, outputs, checkpoint ->
             RigModifierRasterAssets.attach(rig, outputs, legacyConfig, checkpoint)
         })
