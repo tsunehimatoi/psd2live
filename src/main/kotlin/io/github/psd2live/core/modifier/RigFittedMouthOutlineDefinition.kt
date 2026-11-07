@@ -7,6 +7,7 @@ import io.github.psd2live.algorithms.binding.MouthOutlineHair
 import io.github.psd2live.algorithms.binding.MouthOutlineHeadAttachment
 import io.github.psd2live.algorithms.binding.MouthOutlineV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV5Algorithm
+import io.github.psd2live.algorithms.binding.MouthOutlineV6Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
 import io.github.psd2live.algorithms.binding.ScaffoldFramesContext
 import io.github.psd2live.algorithms.binding.ScaffoldMesh
@@ -45,10 +46,20 @@ internal object RigFittedMouthOutlineDefinition {
             override val optionalUpstream = plugin.optionalUpstream
         }
         return definition(source).copy(version = MouthOutlineV5Algorithm.VERSION, plugin = closed,
-            authorContext = { requireNotNull(source).capture(it, closedDrawing = true) })
+            authorContext = { requireNotNull(source).capture(it, closedMouthVersion = 4) })
     }
 
-    private fun RigModifierSource.capture(instance: RigModifierInstance, closedDrawing: Boolean = false): ModifierAlgorithmContext {
+    fun closedShellDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val closed = object : ReadingModifierAlgorithmPlugin by MouthOutlineV6Algorithm(), ModifierVersionSelection, ModifierOptionalUpstream {
+            override val canonicalOptInType = TYPE
+            override val optionalUpstream = RigLegacyBindings.specs.filter { !it.expressionToggles && !it.seeThrough }
+                .mapTo(linkedSetOf()) { it.type } - setOf(TYPE, "mouth/fitted")
+        }
+        return definition(source).copy(version = MouthOutlineV6Algorithm.VERSION, plugin = closed,
+            authorContext = { requireNotNull(source).capture(it, closedMouthVersion = 5) })
+    }
+
+    private fun RigModifierSource.capture(instance: RigModifierInstance, closedMouthVersion: Int? = null): ModifierAlgorithmContext {
         val scaffold = provider(instance)
         require(scaffold.version == 2) { "Fitted mouth outline requires a shared v2 scaffold" }
         val prefix = activeBefore(instance).filter { entry ->
@@ -59,7 +70,8 @@ internal object RigFittedMouthOutlineDefinition {
         val mouth = requireNotNull(prefix.singleOrNull { it.type == "mouth/fitted" && instance.targets.all(it.targets::contains) }) {
             "Fitted mouth outline requires one fitted mouth on the same scaffold"
         }
-        require(!closedDrawing || mouth.version == 4) { "Closed-drawing outline requires fitted mouth v4" }
+        val closedDrawing = closedMouthVersion != null
+        require(!closedDrawing || mouth.version == closedMouthVersion) { "Closed-drawing outline requires fitted mouth v$closedMouthVersion" }
         val head = prefix.lastOrNull { it.type == "face/fitted" || it.type == "face.depth-turn" }
         val body = prefix.singleOrNull { it.type == "body/legacy" }
         val (previous, before) = RigFittedMouthModuleSource.context(this, scaffold, prefix, null)
@@ -209,7 +221,16 @@ internal object RigFittedMouthOutlineDefinition {
                 }
             }
         }
-        return MouthOutlineV3Algorithm.capture(outline.encode(), oldInputs, newInputs, neutral, textures, headFrames,
+        val captured = MouthOutlineV3Algorithm.capture(outline.encode(), oldInputs, newInputs, neutral, textures, headFrames,
             componentSources, componentMeshes, stationarySources, hairSources, attachments)
+        if (closedMouthVersion != 5 || before.faceTurn(previous) != null || after.faceTurn(desired) != null) return captured
+        val shell = owners.filterKeys { it !in fitted && it !in hairSources }.mapValues { (_, owner) ->
+            desiredByLayer.getValue(owner.layer)
+        }
+        val parameters = prefix.flatMapTo(hashSetOf()) { RigLegacyBindings.spec(it.type).parameters }
+        return ModifierAlgorithmContext(captured.values, captured.resources + mapOf(
+            "outlineShellBefore" to outlineShellSource(before, previous, shell, parameters),
+            "outlineShellAfter" to outlineShellSource(after, desired, shell, parameters),
+        ))
     }
 }
