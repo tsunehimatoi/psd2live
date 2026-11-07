@@ -1,9 +1,20 @@
 package example
 
+import io.github.psd2live.algorithm.worker.AlgorithmChanges
+import io.github.psd2live.algorithm.worker.AlgorithmContexts
+import io.github.psd2live.algorithm.worker.AlgorithmObjects
+import io.github.psd2live.core.modifier.ModifierAlgorithmContext
+import io.github.psd2live.core.modifier.ModifierModelChanges
+import io.github.psd2live.core.modifier.ModifierPluginManifest
+import kotlinx.serialization.json.*
+import java.nio.file.Files
+import java.nio.file.Path
+import java.util.concurrent.TimeUnit
 import io.github.psd2live.algorithms.binding.Bounds
 import io.github.psd2live.algorithms.binding.MouthCurve
 import io.github.psd2live.algorithms.binding.MouthFit
 import io.github.psd2live.algorithms.binding.MouthFittedAlgorithm
+import io.github.psd2live.algorithms.binding.MouthFittedCandidateAlgorithm
 import io.github.psd2live.algorithms.binding.MouthFittedInputs
 import io.github.psd2live.algorithms.binding.MouthFittedSourceAlgorithm
 import io.github.psd2live.algorithms.binding.MouthOptions
@@ -12,11 +23,13 @@ import io.github.psd2live.algorithms.binding.MouthSourceContext
 import io.github.psd2live.algorithms.binding.ScaffoldMesh
 import io.github.psd2live.algorithms.binding.ScaffoldMeshContext
 import io.github.psd2live.core.modifier.ModifierTarget
+import io.github.psd2live.core.modifier.ModifierUpstreamCapability
 import io.github.psd2live.core.modifier.RigModifierInstance
 import io.github.psd2live.format.model.*
 import io.github.psd2live.targets.cubism.PuppetIr
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
@@ -90,8 +103,15 @@ class MouthFittedAlgorithmTest {
         var bindingInput = emptyList<Mesh>()
         algorithm.project(PuppetIr.toPuppet(input), targets.mapTo(linkedSetOf()) { it.id }, context,
             onBindingInput = { model -> bindingInput = model.drawables.map(PuppetIr::meshToIr) })
-        val changes = MouthFittedSourceAlgorithm().changes(input, instance, context.encode()) {}
+        val sourceAlgorithm = MouthFittedSourceAlgorithm()
+        assertFailsWith<IllegalArgumentException> { MouthFittedCandidateAlgorithm().changes(input, instance, context.encode()) {} }
+        val provider = ModifierUpstreamCapability("face.depth-turn", "face.depth-turn", 1, targets, "head")
+        val captured = context.encode().withUpstream(listOf(provider))
+        val changes = sourceAlgorithm.changes(input, instance, captured) {}
         assertEquals(setOf("parameter", "mesh"), changes.writeKinds())
+        System.getProperty("psd2live.mouthFittedPackage")?.let {
+            assertEquals(changes.apply(input), packagedChanges(Path.of(it), input, instance, captured).apply(input))
+        }
         val candidate = changes.apply(input)
         assertEquals(bindingInput.filter { it.id != "untouched" }, candidate.meshes.filter { it.id != "untouched" })
         assertTrue(candidate.meshes.single { it.id == "open" }.shapes.any { it.parameter == "ParamAngleX" })
@@ -108,5 +128,48 @@ class MouthFittedAlgorithmTest {
             result.deformers.isNotEmpty() || open.offsets!!.axes.any { it.parameter == "ParamAngleX" })
         assertEquals(listOf(0f, MouthRig.SWAP, 1f), closed.channels.getValue(Channel.OPACITY).axes.single().keys.toArray().toList())
         assertEquals(meshes.last(), result.meshes.single { it.id == "untouched" })
+    }
+
+    private fun packagedChanges(packageDirectory: Path, input: RigIR, instance: RigModifierInstance,
+                                context: ModifierAlgorithmContext): ModifierModelChanges {
+        val manifest = Json.decodeFromString<ModifierPluginManifest>(Files.readString(packageDirectory.resolve("plugin.json")))
+        val algorithm = manifest.algorithms.single()
+        val jar = packageDirectory.resolve("algorithm.jar")
+        assertEquals(manifest.files.getValue("algorithm.jar"), AlgorithmObjects.hash(Files.readAllBytes(jar)))
+        val resources = Files.createTempDirectory("mouth-fitted-worker")
+        try {
+            val write = { bytes: ByteArray -> AlgorithmObjects.write(resources, bytes) }
+            val request = buildJsonObject {
+                put("protocol", 1)
+                put("id", "candidate")
+                put("method", "evaluate")
+                put("reset", true)
+                put("capabilities", JsonArray(listOf(JsonPrimitive("rig_objects"), JsonPrimitive(AlgorithmChanges.CAPABILITY))))
+                put("invocation", Json.encodeToJsonElement(instance.copy(type = algorithm.type)))
+                put("changed", JsonObject(AlgorithmObjects.encode(input, write)))
+                put("removed", JsonArray(emptyList()))
+                put("mesh_order", JsonArray(input.meshes.map { JsonPrimitive(it.id) }))
+                put("deformer_order", JsonArray(input.deformers.map { JsonPrimitive(it.id) }))
+                put("context", AlgorithmContexts.encode(context, write))
+            }
+            val java = Path.of(System.getProperty("java.home"), "bin", if (System.getProperty("os.name").startsWith("Windows")) "java.exe" else "java")
+            val responseFile = resources.resolve("response")
+            val process = ProcessBuilder(java.toString(), "-jar", jar.toString()).redirectOutput(responseFile.toFile())
+                .redirectError(ProcessBuilder.Redirect.INHERIT)
+                .apply { environment()["PSD2LIVE_PLUGIN_RESOURCES"] = resources.toString() }.start()
+            try {
+                process.outputStream.bufferedWriter(Charsets.UTF_8).use { it.appendLine(request.toString()) }
+                assertTrue(process.waitFor(20, TimeUnit.SECONDS), "Fitted mouth worker timed out")
+                assertEquals(0, process.exitValue())
+                val response = Json.parseToJsonElement(Files.readString(responseFile)).jsonObject
+                assertEquals(JsonPrimitive("candidate"), response["id"])
+                val encoded = assertNotNull(response["changes"], response["error"]?.toString()).jsonObject
+                return AlgorithmChanges.decode(encoded, resources).also { it.requireWrites(algorithm.writes) }
+            } finally {
+                if (process.isAlive) process.destroyForcibly().waitFor(5, TimeUnit.SECONDS)
+            }
+        } finally {
+            resources.toFile().deleteRecursively()
+        }
     }
 }

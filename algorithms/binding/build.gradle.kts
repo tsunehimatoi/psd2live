@@ -25,6 +25,8 @@ val hairLegacyWorkerClasses = listOf("**/HairLegacy*.class")
 
 val lidFadeWorkerClasses = listOf("**/LidFadeAlgorithm*.class", "**/LidFadeInputs*.class", "**/LidFadeWorker*.class")
 
+val mouthFittedCandidateClasses = listOf("**/MouthFittedCandidateWorker*.class", "**/MouthFittedCandidateAlgorithm*.class")
+
 val workerJar by tasks.registering(Jar::class) {
     dependsOn(configurations.runtimeClasspath)
     archiveClassifier.set("worker")
@@ -35,7 +37,7 @@ val workerJar by tasks.registering(Jar::class) {
     from(sourceSets.main.get().output)
     from(configurations.runtimeClasspath.map { files -> files.map { if (it.isDirectory) it else zipTree(it) } })
     exclude("META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA")
-    exclude(neckWorkerClasses + bustWorkerClasses + hairLegacyWorkerClasses + lidFadeWorkerClasses)
+    exclude(neckWorkerClasses + bustWorkerClasses + hairLegacyWorkerClasses + lidFadeWorkerClasses + mouthFittedCandidateClasses)
 }
 
 tasks.register("pluginPackage") {
@@ -238,6 +240,49 @@ tasks.register("pluginBrowFitted") {
     }
 }
 
+val mouthFittedCandidateWorkerJar by tasks.registering(Jar::class) {
+    dependsOn(workerJar)
+    archiveClassifier.set("mouth-fitted-candidate-worker")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest { attributes["Main-Class"] = "io.github.psd2live.algorithms.binding.MouthFittedCandidateWorker" }
+    from(sourceSets.main.get().output) { include(mouthFittedCandidateClasses) }
+    from(workerJar.flatMap { it.archiveFile }.map { zipTree(it) }) { exclude("META-INF/MANIFEST.MF") }
+}
+
+val pluginMouthFitted by tasks.registering {
+    dependsOn(mouthFittedCandidateWorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-fitted")
+    inputs.file(mouthFittedCandidateWorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", project.version.toString())
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthFittedCandidateWorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "psd2live.mouth-fitted-source"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"${project.version}","name":"Fitted mouth source",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/source","version":1,"contextVersion":2,"name":"Fitted mouth source","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold"],"exclusiveFamily":"base:mouth",
+               "reads":["*"],"writes":["mesh","parameter","part","hierarchy","textures"],"composableKinds":["mesh","parameter","part","hierarchy"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
+tasks.register<Test>("testMouthFittedPackage") {
+    dependsOn(pluginMouthFitted)
+    inputs.files(pluginMouthFitted.map { it.outputs.files })
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    filter.includeTestsMatching("example.MouthFittedAlgorithmTest")
+    systemProperty("psd2live.mouthFittedPackage", layout.buildDirectory.dir("plugin-mouth-fitted").get().asFile.absolutePath)
+}
+
 tasks.register("pluginCheek") {
     dependsOn(workerJar)
     val output = layout.buildDirectory.dir("plugin-cheek")
@@ -296,7 +341,7 @@ val hairChainsWorkerJar by tasks.registering(Jar::class) {
     from(sourceSets.main.get().output)
     from(configurations.runtimeClasspath.map { files -> files.map { if (it.isDirectory) it else zipTree(it) } })
     exclude("META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA")
-    exclude(neckWorkerClasses + bustWorkerClasses + hairLegacyWorkerClasses + lidFadeWorkerClasses)
+    exclude(neckWorkerClasses + bustWorkerClasses + hairLegacyWorkerClasses + lidFadeWorkerClasses + mouthFittedCandidateClasses)
 }
 
 tasks.register("pluginHairChains") {
