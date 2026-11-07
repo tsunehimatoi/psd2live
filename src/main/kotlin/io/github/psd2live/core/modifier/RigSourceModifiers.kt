@@ -28,10 +28,10 @@ internal class RigModifierSource(
     private val parameterDefinitions = java.util.IdentityHashMap<PuppetModel, List<io.github.psd2live.format.model.Parameter>>()
     internal val primaryByLayer = layersByMesh.entries.sortedBy { it.key in copiedMeshes }.groupBy { it.value }.mapValues { it.value.first().key }
     private val projections = java.util.IdentityHashMap<PuppetModel, MutableMap<String, PuppetModel>>()
-    private fun generated(strength: Float = 1f, tuning: RigTuning = RigTuning(), headStrength: Float = 1f,
-                          recipe: RigRecipe = RigRecipe.Legacy, outline: RigModifierInstance? = null,
-                          featureDisplacement: Boolean = false, frontHairSway: Boolean = true, backHairSway: Boolean = true,
-                          neutralScaffold: Boolean = false): BuiltRig {
+    private fun generated(strength: Float, tuning: RigTuning, headStrength: Float,
+                          recipe: RigRecipe, outline: RigModifierInstance?,
+                          featureDisplacement: Boolean, frontHairSway: Boolean, backHairSway: Boolean,
+                          neutralScaffold: Boolean): BuiltRig {
         RigBuildProfile.count("modifier legacy rig builds")
         val native = generationConfig(strength, tuning, headStrength, recipe, outline,
             featureDisplacement, frontHairSway, backHairSway)
@@ -128,15 +128,22 @@ internal class RigModifierSource(
     private val expressionCatalog by lazy {
         io.github.psd2live.algorithms.binding.ExpressionChannels.catalog(expressionLayers.values.toList(), staggered = true)
     }
-    private val expressionRecipe by lazy {
-        RigRecipe(true, modules = RigModules.modules.associate { it.id to ModuleChoice(it == RigModules.EXPRESSION_TOGGLES) })
+    private val standardExpressionParameters by lazy {
+        // The v1 source recipe used default bases with no widening or extra mouth reach.
+        // Hair chains replaced a legacy sway axis only when that side had source artwork.
+        val layout = analysis.calibration ?: analysis
+        val hair = layout.layers.filter { it.opaquePixels > 0 }.mapTo(hashSetOf()) { it.semantic.tag }
+        StandardParameters.all.filterNot {
+            (it.id == StandardParameters.HAIR_FRONT && SemanticTag.FRONT_HAIR in hair) ||
+                (it.id == StandardParameters.HAIR_BACK && SemanticTag.BACK_HAIR in hair)
+        }
     }
-    private val fittedExpressionParameters by lazy {
-        val native = generationConfig(1f, RigTuning(), 1f, expressionRecipe, null,
+    private val expressionHairParameters by lazy {
+        val recipe = RigRecipe(true, modules = RigModules.modules.associate { it.id to ModuleChoice(it == RigModules.EXPRESSION_TOGGLES) })
+        val native = generationConfig(1f, RigTuning(), 1f, recipe, null,
             featureDisplacement = false, frontHairSway = true, backHairSway = true)
-        RigBuilder.sourceStandardParameters(analysis, native, meshCache)
+        RigBuilder.expressionHairParameters(analysis, native, meshCache)
     }
-    private val loweredExpressionParameters by lazy { generated(recipe = expressionRecipe).puppet.parameters }
 
     internal fun expressionIds(instance: RigModifierInstance) = instance.targets.mapNotNullTo(linkedSetOf()) {
         expressionLayers[layersByMesh[it.id]]?.let { layer -> ParameterId(layer.parameter) }
@@ -147,15 +154,13 @@ internal class RigModifierSource(
         if (ids.isEmpty()) return emptyList()
         val standardIds = StandardParameters.all.mapTo(HashSet()) { it.id }
         val collisions = ids.intersect(standardIds)
-        // These three axes retain their fitted keyform definitions through Cubism lowering.
-        // Only a requested collision on another standard axis needs the lowered model.
+        val standard = if (collisions.isEmpty()) emptyList() else standardExpressionParameters.filter { it.id in collisions }
         val fittedAxes = setOf(StandardParameters.EYE_L_OPEN, StandardParameters.EYE_R_OPEN, StandardParameters.MOUTH_OPEN)
-        val parameters = if (collisions.any { it !in fittedAxes }) {
-            loweredExpressionParameters.filter { it.id in ids }
-        } else {
-            val fitted = if (collisions.isEmpty()) emptyList() else fittedExpressionParameters.filter { it.id in collisions }
-            fitted + expressionCatalog.parameters.filter { it.id in ids && it.id !in standardIds }
-        }
+        // The previous generator-backed path preferred an existing chain declaration to a same-name expression.
+        val hair = if (collisions.any { it !in fittedAxes } && ids.any { it !in standardIds && it.raw.startsWith("ParamHair") })
+            expressionHairParameters.filter { it.id in ids } else emptyList()
+        val reserved = standardIds + hair.map { it.id }
+        val parameters = standard + hair + expressionCatalog.parameters.filter { it.id in ids && it.id !in reserved }
         return PuppetIr.parametersToIr(materialBase.copy(parameters = parameters))
     }
 

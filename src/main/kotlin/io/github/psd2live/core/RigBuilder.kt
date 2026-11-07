@@ -2195,6 +2195,13 @@ object RigBuilder {
 		}, config.recipe.baseValue("hair", "swing") / 100f, config.recipe.baseValue("hair", "softness") / 100f)
 	}
 
+	/** Resolve a source expression that names an existing hair-chain axis without building the chain warps. */
+	internal fun expressionHairParameters(analysis: PipelineAnalysis, config: PipelineConfig, cache: PreviewMeshCache): List<Parameter> {
+		val measured = meshFramedAnalysis(analysis.copy(layers = analysis.layers.filter { it.source !is MouthLipLayer }), config, cache)
+		val face = NinePoseFaceRig.from(measured.calibration ?: measured, config.rigTuning)
+		return chainParameters(measured, hairOnlyChains(measured, face, config))
+	}
+
 	private fun withoutLegacyHairSway(puppet: PuppetModel, config: PipelineConfig): PuppetModel {
 		var model = puppet
 		val chains = config.recipe.base("hair") === io.github.psd2live.core.recipe.RigModules.HAIR_CHAINS && !config.meshOnly
@@ -4353,10 +4360,6 @@ object RigBuilder {
 	private fun eyeOpenMax(context: RigContext, config: PipelineConfig): Float =
 		if (context.fittedEyes(config)?.let { it.options.wide && it.rigs.isNotEmpty() } == true) 2f else 1f
 
-	/** Fitted standard ranges without generating drawable geometry or atlas output; before parameter-kind lowering. */
-	internal fun sourceStandardParameters(analysis: PipelineAnalysis, config: PipelineConfig, cache: PreviewMeshCache? = null): List<Parameter> =
-		standardParameters(rigContext(analysis, config, cache), config)
-
 	/** A widening fitted eye opens up to 2; other projects retain the standard ranges. */
 	private fun standardParameters(context: RigContext, config: PipelineConfig): List<Parameter> {
 		val wide = eyeOpenMax(context, config) > 1f
@@ -4377,11 +4380,14 @@ object RigBuilder {
 		return io.github.psd2live.core.recipe.RigModules.parameters(config, io.github.psd2live.core.recipe.RecipeSubject.of(context.analysis))
 			.filter { eyesFitted || !it.id.startsWith("ParamEye") }
 			.map { Parameter(ParameterId(it.id), tr(it.nameKey), it.min, it.max, it.default) } +
-			chains.flatMap { chain ->
-				val name = context.analysis.layers.firstOrNull { it.source.id.raw == chain.layerId }?.source?.name ?: chain.layerId
-				chain.parameters.map { p -> Parameter(p, tr("model.parameter.hairChain", name, p.raw.removePrefix(chain.kind.prefix)), -1f, 1f, 0f) }
-			}
+			chainParameters(context.analysis, chains)
 	}
+
+	private fun chainParameters(analysis: PipelineAnalysis, chains: List<io.github.psd2live.core.fit.HairChain>): List<Parameter> =
+		chains.flatMap { chain ->
+			val name = analysis.layers.firstOrNull { it.source.id.raw == chain.layerId }?.source?.name ?: chain.layerId
+			chain.parameters.map { p -> Parameter(p, tr("model.parameter.hairChain", name, p.raw.removePrefix(chain.kind.prefix)), -1f, 1f, 0f) }
+		}
 
 	private fun parameterTree(customParameters: List<Parameter> = emptyList(), moduleParameters: List<Parameter> = emptyList()): List<ParameterNode> {
 		val moduleGroups = io.github.psd2live.core.recipe.RigModules.modules.flatMap { it.defines }.associate { ParameterId(it.id) to it.group }

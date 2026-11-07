@@ -54,21 +54,6 @@ class ExpressionGeometryCacheTest {
             PuppetIr.toIr(RigBuilder.build(analysis, atlas, moved, cache).puppet))
     }
 
-    @Test fun sourceParameterDeclarationsDoNotBuildMeshes() {
-        val document = Characters.head(physics = false)
-        val recipe = RigRecipe(true, modules = RigModules.modules.associate { it.id to ModuleChoice(it == RigModules.EXPRESSION_TOGGLES) })
-        val config = document.rawConfig().copy(recipe = recipe)
-        val analysis = CharacterAnalyzer.analyze(document.source, config)
-        val cache = PreviewMeshCache()
-        val declared = RigBuilder.sourceStandardParameters(analysis, config, cache)
-        assertEquals(0L, cache.stages.misses(RigStageCache.MESH))
-        val atlas = AtlasLayout.pack(analysis.layers, config)
-        val reference = RigBuilder.build(analysis, atlas, config, cache).puppet.parameters
-        val fittedAxes = setOf(StandardParameters.EYE_L_OPEN, StandardParameters.EYE_R_OPEN, StandardParameters.MOUTH_OPEN)
-        assertEquals(reference.filter { it.id in fittedAxes }, declared.filter { it.id in fittedAxes })
-        assertTrue(cache.stages.misses(RigStageCache.MESH) > 0)
-    }
-
     @Test fun mixedExpressionTargetsResolveWithoutGeneratingUnrelatedStandardAxes() {
         val document = Characters.figure()
         val (eye, variant, unrelated) = document.layerOverrides.keys.take(3)

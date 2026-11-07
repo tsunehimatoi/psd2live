@@ -7556,12 +7556,50 @@ class WorkspaceLegacyBindingTest {
         assertTrue(ribbons.all { ribbon -> imported.drawables.any { it.id == ribbon.id && it.mesh != null } })
     }
 
+    @Test fun expressionStandardAxisDeclarationsMatchNativeWithAndWithoutHair(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, closedMouth = true)
+        val original = art.source as WorkspaceSourceArt
+        val chainAxes = listOf("ParamHairFront1Y", "ParamHairBack1Y", "ParamHairBack2Y")
+        val names = StandardParameters.all.map { it.id.raw } + chainAxes + "Accessory"
+        val stamp = original.layers.first() as WorkspaceSourceLayer
+        val added = names.mapIndexed { index, name ->
+            stamp.copy(id = LayerId("axis-$name"), name = "axis-$name", order = 50 + index)
+        }
+        val recipe = RigRecipe(true, modules = RigModules.modules.associate { it.id to ModuleChoice(it == RigModules.EXPRESSION_TOGGLES) })
+        for (omit in listOf(emptySet(), setOf("front"), setOf("back"), setOf("front", "back"), original.layers.mapTo(HashSet()) { it.id.raw })) {
+            val f = Fixture(art.copy(source = original.copy(layers = original.layers.filterNot { it.id.raw in omit } + added),
+                layerOverrides = art.layerOverrides + names.associate { "axis-$it" to LayerClassificationOverride(LayerType.TOGGLE, parameter = it) }))
+            f.install()
+            f.group(emptyList())
+            val source = RigModifierSource.of(f.now.model)
+            val targets = source.layersByMesh.filterValues { it.startsWith("axis-") }.keys.map { ModifierTarget("mesh", it) }
+            val instance = RigModifierInstance("expressions", "expression.toggles", 1, targets,
+                config = buildJsonObject { put("scaffold", "structure") })
+            val expected = PuppetIr.parametersToIr(native(f.document, recipe).rig.puppet).filter { it.id in names }
+            assertEquals("front" in omit, expected.any { it.id == StandardParameters.HAIR_FRONT.raw })
+            assertEquals("back" in omit, expected.any { it.id == StandardParameters.HAIR_BACK.raw })
+            assertTrue(expected.any { it.id == "Accessory" })
+            assertEquals("front" !in omit, expected.any { it.id == "ParamHairFront1Y" && it.min == -1f })
+            RigBuildProfile.reset()
+            RigBuildProfile.recording = true
+            try {
+                assertEquals(expected, source.expressionParameters(instance), "omitted layers: $omit")
+                assertFalse("modifier legacy rig builds" in RigBuildProfile.snapshot())
+                assertFalse(RigBuildProfile.snapshot().keys.any { it.startsWith("scaffold: deformers (built)") })
+            } finally {
+                RigBuildProfile.recording = false
+                RigBuildProfile.reset()
+            }
+        }
+    }
+
     @Test fun expressionStandardNamesResolveWithoutBuildingGeometry(): Unit = runBlocking<Unit> {
         val art = document(mouthDetails = true)
         val f = Fixture(art.copy(layerOverrides = art.layerOverrides + mapOf(
             "iris" to LayerClassificationOverride(LayerType.TOGGLE, parameter = StandardParameters.EYE_L_OPEN.raw),
             "lash" to LayerClassificationOverride(LayerType.SWITCH, parameter = StandardParameters.EYE_L_OPEN.raw, switchId = 1),
             "close" to LayerClassificationOverride(LayerType.TOGGLE, parameter = StandardParameters.MOUTH_OPEN.raw),
+            "brow" to LayerClassificationOverride(LayerType.TOGGLE, parameter = StandardParameters.ANGLE_X.raw),
         )))
         f.install()
         val recipe = RigRecipe(true, modules = RigModules.modules.associate { it.id to ModuleChoice(it == RigModules.EXPRESSION_TOGGLES) })
@@ -7569,7 +7607,7 @@ class WorkspaceLegacyBindingTest {
         f.group(emptyList())
         f.edit("modifier_add", f.addition("expression.toggles", "expressions"))
         val actual = f.now.model.rig.puppet.parameters
-        for (id in listOf(StandardParameters.EYE_L_OPEN, StandardParameters.MOUTH_OPEN)) {
+        for (id in listOf(StandardParameters.EYE_L_OPEN, StandardParameters.MOUTH_OPEN, StandardParameters.ANGLE_X)) {
             assertEquals(reference.single { it.id == id }, actual.single { it.id == id })
         }
         val before = RigIrCompiler.compile(f.now.model)
