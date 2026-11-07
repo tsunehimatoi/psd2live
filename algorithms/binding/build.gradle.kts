@@ -3163,6 +3163,40 @@ tasks.register("pluginMouthCaptureV4") {
     }
 }
 
+val mouthCaptureV5WorkerJar = registerIsolatedBindingWorker(
+    "mouthCaptureV5", "mouth-capture-v5", "worker-mouth-capture-v5", "io.github.psd2live.algorithms.binding.MouthCaptureV5Worker",
+)
+kotlin.target.compilations.named("mouthCaptureV5") {
+    associateWith(kotlin.target.compilations.getByName("mouthCapture"))
+}
+mouthCaptureV5WorkerJar.configure {
+    from(sourceSets["mouthCapture"].output)
+}
+
+tasks.register("pluginMouthCaptureV5") {
+    dependsOn(mouthCaptureV5WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-capture-v5")
+    inputs.file(mouthCaptureV5WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", project.version.toString())
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthCaptureV5WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682e63617074757265.v5"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"${project.version}","name":"Mouth capture",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/capture","aliases":["mouth.capture"],"version":5,"name":"Mouth capture","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","mouth/fitted"],"contextVersion":2,
+               "reads":["canvas","mesh","parameter","hierarchy"],"writes":["mesh","parameter","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val mouthCheekLidV4WorkerJar = registerIsolatedBindingWorker(
     "mouthCheekLidV4", "mouth-cheek-lid-v4", "worker-mouth-cheek-lid-v4", "io.github.psd2live.algorithms.binding.MouthCheekLidV4Worker",
 )

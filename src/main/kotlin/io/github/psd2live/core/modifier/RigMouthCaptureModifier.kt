@@ -3,6 +3,7 @@ package io.github.psd2live.core.modifier
 import io.github.psd2live.algorithms.binding.MouthCaptureAlgorithm
 import io.github.psd2live.algorithms.binding.MouthCaptureV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthCaptureV4Algorithm
+import io.github.psd2live.algorithms.binding.MouthCaptureV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthRig
 import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.RigModules
@@ -37,6 +38,15 @@ internal object RigMouthCaptureModifier {
     fun closedDefinition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthCaptureV4Algorithm.VERSION, closedAlgorithm)
 
+    private val modernAlgorithm = object : ReadingModifierAlgorithmPlugin by MouthCaptureV5Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = MouthCaptureAlgorithm.optionalUpstream
+        override val canonicalOptInType = MouthCaptureAlgorithm.TYPE
+    }
+
+    fun modernDefinition(source: RigModifierSource?): RigModifierDefinition =
+        definition(source, MouthCaptureV5Algorithm.VERSION, modernAlgorithm)
+
     private fun definition(source: RigModifierSource?, version: Int, algorithm: ReadingModifierAlgorithmPlugin): RigModifierDefinition {
         val legacy = RigLegacyBindings.definition(RigLegacyBindings.spec(MouthCaptureAlgorithm.TYPE), source)
         val contexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
@@ -48,7 +58,7 @@ internal object RigMouthCaptureModifier {
     }
 
     private fun RigModifierSource.capture(instance: RigModifierInstance, version: Int): ModifierAlgorithmContext {
-        val closedDrawing = version == MouthCaptureV4Algorithm.VERSION
+        val modern = version == MouthCaptureV5Algorithm.VERSION
         val scaffold = provider(instance)
         require(scaffold.version == 2) { "Mouth capture v$version requires a shared v2 scaffold" }
         val preceding = activeBefore(instance).filter { item ->
@@ -58,7 +68,12 @@ internal object RigMouthCaptureModifier {
         val baseId = instance.config.getValue("base").jsonPrimitive.content
         val base = requireNotNull(preceding.singleOrNull {
             it.id == baseId && it.type == "mouth/fitted" &&
-                (if (closedDrawing) it.version == 4 else it.version in 1..2 || version == MouthCaptureV3Algorithm.VERSION && it.version == 3)
+                when (version) {
+                    MouthCaptureV5Algorithm.VERSION -> it.version in setOf(3, 5)
+                    MouthCaptureV4Algorithm.VERSION -> it.version == 4
+                    MouthCaptureV3Algorithm.VERSION -> it.version in 1..3
+                    else -> it.version in 1..2
+                }
         }) { "Mouth capture v$version requires a compatible fitted mouth on the same scaffold" }
         require(preceding.none { it.type.startsWith("mouth.") && it.type !in setOf("mouth.outline", "mouth.vowel") }) {
             "Mouth capture v$version supports preceding outlines and vowels. Use v1 for other preceding mouth modules."
@@ -69,6 +84,7 @@ internal object RigMouthCaptureModifier {
         val fitted = requireNotNull(context.fittedMouth(native)?.takeIf { it.source != null }) {
             "Mouth capture v$version requires readable fitted mouth source artwork"
         }
+        val closedDrawing = version == MouthCaptureV4Algorithm.VERSION || modern && base.version == 5
         require(fitted.closedLine == closedDrawing) {
             if (closedDrawing) "Mouth capture v$version requires a separate closed drawing."
             else "Mouth capture v$version requires a mouth without a separate closed drawing. Use v1 for closed-drawing swaps."
