@@ -34,7 +34,14 @@ internal data class RigModifierDefinition(
     val changeWrites: Set<String>? = null,
     val upstreamInputs: Boolean = false,
     val authorContext: (RigModifierInstance) -> ModifierAlgorithmContext = { ModifierAlgorithmContext.Empty },
-)
+) {
+    val optionalUpstream: Set<String> get() = (plugin as? ModifierOptionalUpstream)?.optionalUpstream.orEmpty()
+}
+
+/** Optional capabilities are passed to a contextual plugin when active, without blocking evaluation. */
+internal interface ModifierOptionalUpstream {
+    val optionalUpstream: Set<String>
+}
 
 internal class RigModifierRegistry(definitions: List<RigModifierDefinition>) {
     private val entries = definitions.associateBy { Triple(it.type, it.version, it.pluginReference) }
@@ -210,7 +217,7 @@ internal class RigModifierEvaluator(
             val capturedContext = capture(instance)
             val authorContext = if (definition.upstreamInputs || definition.plugin is ReadingModifierAlgorithmPlugin) {
                 val providers = definition.providers(instance)
-                val capabilities = definition.requires.sorted().flatMap { required ->
+                val capabilities = (definition.requires + definition.optionalUpstream).sorted().flatMap { required ->
                     available.filter { registry.provides(it.type, required) &&
                         it.targets.any { target -> target in instance.targets } &&
                         (providers[required] == null || it.id == providers[required]) }.map {

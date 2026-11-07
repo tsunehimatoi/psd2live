@@ -19,7 +19,9 @@ internal object ModifierPluginCatalog {
                     }
                     return instance.copy(type = adapter.type)
                 }
-                val worker = object : ContextualModifierAlgorithmPlugin {
+                val worker = object : ContextualModifierAlgorithmPlugin, ModifierOptionalUpstream {
+                    override val optionalUpstream = adapter.optionalUpstream
+
                     override fun evaluate(input: io.github.psd2live.format.model.RigIR, instance: RigModifierInstance,
                                           context: ModifierAlgorithmContext, checkpoint: () -> Unit): io.github.psd2live.format.model.RigIR =
                         ModifierPluginWorkers.evaluate(entry, algorithm, input, instance, checkpoint, store,
