@@ -5,6 +5,7 @@ import io.github.psd2live.algorithms.binding.RibbonsAlgorithm
 import io.github.psd2live.algorithms.binding.RibbonsInputs
 import io.github.psd2live.algorithms.binding.RibbonsResidualAlgorithm
 import io.github.psd2live.algorithms.binding.RibbonsV4Algorithm
+import io.github.psd2live.algorithms.binding.RibbonsV5Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldPairs
 import io.github.psd2live.algorithms.binding.ScaffoldParts
 import io.github.psd2live.core.*
@@ -46,6 +47,16 @@ internal object RigRibbonsModifier {
             override val canonicalOptInType = RibbonsAlgorithm.TYPE
         }
         return definition(source).copy(version = RibbonsV4Algorithm.VERSION, plugin = worker,
+            authorContext = { captureResidual(requireNotNull(source), it) })
+    }
+
+    fun sharedFrameDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val worker = object : ReadingModifierAlgorithmPlugin by RibbonsV5Algorithm(),
+            ModifierVersionSelection, ModifierOptionalUpstream {
+            override val optionalUpstream = RibbonsV5Algorithm.UPSTREAM
+            override val canonicalOptInType = RibbonsAlgorithm.TYPE
+        }
+        return definition(source).copy(version = RibbonsV5Algorithm.VERSION, plugin = worker,
             authorContext = { captureResidual(requireNotNull(source), it) })
     }
 

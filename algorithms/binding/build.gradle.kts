@@ -2863,6 +2863,39 @@ tasks.register("pluginRibbonsV4") {
     }
 }
 
+val ribbonsV5WorkerJar = registerIsolatedBindingWorker(
+    "ribbonsV5", "outfit-ribbons-v5", "worker-outfit-ribbons-v5", "io.github.psd2live.algorithms.binding.RibbonsV5Worker",
+)
+
+kotlin.target.compilations.named("ribbonsV5") {
+    associateWith(kotlin.target.compilations.getByName("ribbons"))
+}
+ribbonsV5WorkerJar.configure { from(sourceSets["ribbons"].output) }
+
+tasks.register("pluginRibbonsV5") {
+    dependsOn(ribbonsV5WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-outfit-ribbons-v5")
+    inputs.file(ribbonsV5WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", project.version.toString())
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        ribbonsV5WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"builtin.6f75746669742e726962626f6e73.v5","version":"${project.version}","name":"Ribbon and pendant sway",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"builtin.6f75746669742e726962626f6e73.v5/ribbons","aliases":["outfit.ribbons"],
+               "version":5,"name":"Ribbon and pendant sway","category":"outfit","contextVersion":2,"targets":["mesh"],
+               "requires":["rig.scaffold","body/legacy","face/legacy"],"exclusiveFamily":"chain:outfit.ribbons",
+               "reads":["*"],"writes":["mesh","part","deformer","hierarchy","parameter","physics"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter","physics"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val eyeEmotionWorkerJar = registerIsolatedBindingWorker(
     "eyeEmotion", "eye-emotion", "worker-eye-emotion", "io.github.psd2live.algorithms.binding.EyeEmotionWorker",
 )
