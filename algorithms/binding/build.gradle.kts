@@ -2583,6 +2583,41 @@ tasks.register("pluginEyeGazeLidV3") {
     }
 }
 
+
+val eyeGazeLidV4WorkerJar = registerIsolatedBindingWorker(
+    "eyeGazeLidV4", "eye-gaze-lid-v4", "worker-eye-gaze-lid-v4", "io.github.psd2live.algorithms.binding.EyeGazeLidV4Worker",
+)
+
+tasks.register("pluginEyeGazeLidV4") {
+    dependsOn(eyeGazeLidV4WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-eye-gaze-lid-v4")
+    val packageVersion = project.version.toString()
+    inputs.file(eyeGazeLidV4WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        eyeGazeLidV4WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6579652e67617a652d6c6964.v4"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Lids follow gaze",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/gaze","aliases":["eye.gaze-lid"],"version":4,"name":"Lids follow gaze","category":"eye",
+               "targets":["mesh"],"requires":["rig.scaffold","eye/fitted"],"contextVersion":2,
+               "reads":["*"],"writes":["mesh","deformer","part","parameter","hierarchy","relations"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "parameters":[
+                 {"id":"ParamEyeBallLX","name":"Left gaze X","min":-1,"max":1,"default":0},
+                 {"id":"ParamEyeBallLY","name":"Left gaze Y","min":-1,"max":1,"default":0},
+                 {"id":"ParamEyeBallRX","name":"Right gaze X","min":-1,"max":1,"default":0},
+                 {"id":"ParamEyeBallRY","name":"Right gaze Y","min":-1,"max":1,"default":0}],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val mouthVowelWorkerJar = registerIsolatedBindingWorker(
     "mouthVowel", "mouth-vowel", "worker-mouth-vowel", "io.github.psd2live.algorithms.binding.MouthVowelWorker",
 )
