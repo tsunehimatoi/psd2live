@@ -340,7 +340,8 @@ object RigBuilder {
 		/** A closed mouth draws the mouth at rest, so an open mouth beside it fades out there; see [buildChannels]. */
 		val hasClosedMouth: Boolean = analysis.layers.any { it.semantic.tag == SemanticTag.MOUTH && it.opaquePixels > 0 }
 
-		private val fittedEyes = java.util.concurrent.ConcurrentHashMap<List<Any?>, io.github.psd2live.core.fit.FittedEyes>()
+		private val recipeSubject by lazy { io.github.psd2live.core.recipe.RecipeSubject.of(analysis) }
+		private val fittedEyes = java.util.concurrent.ConcurrentHashMap<Identity, io.github.psd2live.core.fit.FittedEyes>()
 
         private class SourceFitValue<T>(val value: T)
 
@@ -361,10 +362,9 @@ object RigBuilder {
 		 */
 		fun fittedEyes(config: PipelineConfig): io.github.psd2live.core.fit.FittedEyes? {
 			if (config.recipe.base("eye") !== io.github.psd2live.core.recipe.RigModules.EYE_FITTED) return null
-			val values = io.github.psd2live.core.recipe.RigModules.EYE_FITTED.knobs.map { config.recipe.baseValue("eye", it.id) }
-			val options = eyeOptions(config)
-			val moved = listOf(config.recipe.moves("eye.L"), config.recipe.moves("eye.R"))
-			return fittedEyes.getOrPut(listOf(values, options, config.parentOverrides, deformersEnabled, moved, config.recipe.eyeParts)) {
+			return fittedEyes.getOrPut(Identity(config)) {
+				val values = io.github.psd2live.core.recipe.RigModules.EYE_FITTED.knobs.map { config.recipe.baseValue("eye", it.id) }
+				val options = eyeOptions(config)
 				val space = analysis.layers.firstOrNull { it.semantic.tag == SemanticTag.EYEWHITE && it.opaquePixels > 0 }?.let { headSpaceFor(it, config) }
 				val toRig = { x: Float, y: Float -> space?.toAligned(x, y) ?: (x to y) }
 				val result = sourceEyes(space)
@@ -390,9 +390,8 @@ object RigBuilder {
 
 		/** Which eye modules [config] builds on this art, with their values. */
 		fun eyeOptions(config: PipelineConfig): io.github.psd2live.core.fit.EyeOptions {
-			val subject = io.github.psd2live.core.recipe.RecipeSubject.of(analysis)
 			val recipe = config.recipe
-			fun on(module: io.github.psd2live.core.recipe.RigModule) = io.github.psd2live.core.recipe.RigModules.builds(module, config, subject)
+			fun on(module: io.github.psd2live.core.recipe.RigModule) = io.github.psd2live.core.recipe.RigModules.builds(module, config, recipeSubject)
 			fun value(module: io.github.psd2live.core.recipe.RigModule, knob: String) = recipe.value(module.id, knob) / 100f
 			val m = io.github.psd2live.core.recipe.RigModules
 			return io.github.psd2live.core.fit.EyeOptions(
@@ -435,10 +434,14 @@ object RigBuilder {
 			if (seen == 0) 0f else hidden.toFloat() / seen
 		}
 
-		/** The head turning in depth under [config] (`face.depth-turn`), or null when the recipe leaves it out. */
-		fun headTurn(config: PipelineConfig): io.github.psd2live.core.fit.HeadTurn? = headTurnOf(analysis, faceRig, config)
+		private val headTurns = java.util.concurrent.ConcurrentHashMap<Identity, java.util.Optional<io.github.psd2live.core.fit.HeadTurn>>()
 
-		private val faceTurns = java.util.concurrent.ConcurrentHashMap<List<Any?>, java.util.Optional<io.github.psd2live.core.fit.FaceTurn>>()
+		/** The head turning in depth under [config] (`face.depth-turn`), or null when the recipe leaves it out. */
+		fun headTurn(config: PipelineConfig): io.github.psd2live.core.fit.HeadTurn? = headTurns.getOrPut(Identity(config)) {
+			java.util.Optional.ofNullable(headTurnOf(analysis, faceRig, config))
+		}.orElse(null)
+
+		private val faceTurns = java.util.concurrent.ConcurrentHashMap<Identity, java.util.Optional<io.github.psd2live.core.fit.FaceTurn>>()
 
 		/** The deformers under the face's warp: what the face's turn ([faceTurn]) carries, and nothing else turns. */
 		val underFace: Set<DeformerId> by lazy {
@@ -453,18 +456,15 @@ object RigBuilder {
 		 * The face's turn drawn by the turn's style ([io.github.psd2live.core.fit.FaceTurn]) when the depth turn is built and
 		 * the face has what the style needs; null otherwise, and the face then turns as it did.
 		 */
-		fun faceTurn(config: PipelineConfig): io.github.psd2live.core.fit.FaceTurn? {
+		fun faceTurn(config: PipelineConfig): io.github.psd2live.core.fit.FaceTurn? = faceTurns.getOrPut(Identity(config)) {
 			val m = io.github.psd2live.core.recipe.RigModules
-			if (!m.builds(m.FACE_DEPTH_TURN, config, io.github.psd2live.core.recipe.RecipeSubject.of(analysis))) return null
-			val setting = m.turnStyle(config)
-			return faceTurns.getOrPut(listOf(setting, config.recipe, config.parentOverrides)) {
-				java.util.Optional.ofNullable(io.github.psd2live.core.fit.FaceTurn(faceLandmarks(config), setting).takeIf { it.usable })
-			}.orElse(null)
-		}
+			if (!m.builds(m.FACE_DEPTH_TURN, config, recipeSubject)) java.util.Optional.empty()
+			else java.util.Optional.ofNullable(io.github.psd2live.core.fit.FaceTurn(faceLandmarks(config), m.turnStyle(config)).takeIf { it.usable })
+		}.orElse(null)
 
 		/** The head's feature points read off the art ([io.github.psd2live.core.fit.FaceLandmarking]), in the rig's space. */
-		private val landmarks = java.util.concurrent.ConcurrentHashMap<PipelineConfig, io.github.psd2live.core.fit.FaceLandmarks>()
-        fun faceLandmarks(config: PipelineConfig): io.github.psd2live.core.fit.FaceLandmarks = landmarks.getOrPut(config) {
+		private val landmarks = java.util.concurrent.ConcurrentHashMap<Identity, io.github.psd2live.core.fit.FaceLandmarks>()
+        fun faceLandmarks(config: PipelineConfig): io.github.psd2live.core.fit.FaceLandmarks = landmarks.getOrPut(Identity(config)) {
             val eyes = fittedEyes(config)?.fitting
             val brows = fittedBrows(config).mapValues { it.value.fit }
             val mouth = fittedMouth(config)?.rig?.fit
@@ -475,26 +475,25 @@ object RigBuilder {
             if (RigStageCache.enabled && sharedStages != null) sharedStages.get("face landmarks", 32, key, build) else build()
         }
 
-		private val fittedMouths = java.util.concurrent.ConcurrentHashMap<List<Any?>, io.github.psd2live.core.fit.FittedMouth>()
+		private val fittedMouths = java.util.concurrent.ConcurrentHashMap<Identity, io.github.psd2live.core.fit.FittedMouth>()
 
 		/** The mouth of the `mouth/fitted` base under [config]; null when the recipe builds the mouth another way. */
 		fun fittedMouth(config: PipelineConfig): io.github.psd2live.core.fit.FittedMouth? {
 			if (config.recipe.base("mouth") !== io.github.psd2live.core.recipe.RigModules.MOUTH_FITTED) return null
-			val subject = io.github.psd2live.core.recipe.RecipeSubject.of(analysis)
-			val m = io.github.psd2live.core.recipe.RigModules
-			fun on(module: io.github.psd2live.core.recipe.RigModule) = m.builds(module, config, subject)
-			fun value(module: io.github.psd2live.core.recipe.RigModule, knob: String) = config.recipe.value(module.id, knob) / 100f
-			val options = io.github.psd2live.core.fit.MouthOptions(
-				early = config.recipe.baseValue("mouth", "early") / 100f, formStrength = config.recipe.baseValue("mouth", "form") / 100f,
-				curve = if (config.mouthShape == "custom") config.mouthCurve else MouthCurve.preset(config.mouthShape),
-				exactClose = config.mouthOutlineEnabled,
-				vowels = on(m.MOUTH_VOWEL), capture = on(m.MOUTH_CAPTURE),
-				jaw = on(m.MOUTH_JAW), jawShare = value(m.MOUTH_JAW, "share"),
-				depth = on(m.MOUTH_DEPTH), depthAmount = value(m.MOUTH_DEPTH, "depth"),
-				spring = on(m.MOUTH_SPRING), tongue = on(m.MOUTH_TONGUE), inside = config.recipe.baseValue("mouth", "inside") / 100f,
-				reach = config.recipe.baseValue("mouth", "reach") / 100f, teethWiden = config.recipe.baseValue("mouth", "teeth") / 100f,
-				narrow = config.recipe.baseValue("mouth", "narrow") / 100f)
-			return fittedMouths.getOrPut(listOf(options, config.parentOverrides, deformersEnabled, config.recipe.base("eye"), config.recipe.moves("mouth"))) {
+			return fittedMouths.getOrPut(Identity(config)) {
+				val m = io.github.psd2live.core.recipe.RigModules
+				fun on(module: io.github.psd2live.core.recipe.RigModule) = m.builds(module, config, recipeSubject)
+				fun value(module: io.github.psd2live.core.recipe.RigModule, knob: String) = config.recipe.value(module.id, knob) / 100f
+				val options = io.github.psd2live.core.fit.MouthOptions(
+					early = config.recipe.baseValue("mouth", "early") / 100f, formStrength = config.recipe.baseValue("mouth", "form") / 100f,
+					curve = if (config.mouthShape == "custom") config.mouthCurve else MouthCurve.preset(config.mouthShape),
+					exactClose = config.mouthOutlineEnabled,
+					vowels = on(m.MOUTH_VOWEL), capture = on(m.MOUTH_CAPTURE),
+					jaw = on(m.MOUTH_JAW), jawShare = value(m.MOUTH_JAW, "share"),
+					depth = on(m.MOUTH_DEPTH), depthAmount = value(m.MOUTH_DEPTH, "depth"),
+					spring = on(m.MOUTH_SPRING), tongue = on(m.MOUTH_TONGUE), inside = config.recipe.baseValue("mouth", "inside") / 100f,
+					reach = config.recipe.baseValue("mouth", "reach") / 100f, teethWiden = config.recipe.baseValue("mouth", "teeth") / 100f,
+					narrow = config.recipe.baseValue("mouth", "narrow") / 100f)
 				val mouth = analysis.layers.firstOrNull { it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && it.semantic.role == null && it.opaquePixels > 0 }
 				val space = mouth?.let { headSpaceFor(it, config) }
 				val toRig = { x: Float, y: Float -> space?.toAligned(x, y) ?: (x to y) }
@@ -531,20 +530,18 @@ object RigBuilder {
 			return deepest.coerceIn(0.2f, 3f)
 		}
 
-		private val fittedBrows = java.util.concurrent.ConcurrentHashMap<List<Any?>, Map<Side, io.github.psd2live.core.fit.BrowRig>>()
+		private val fittedBrows = java.util.concurrent.ConcurrentHashMap<Identity, Map<Side, io.github.psd2live.core.fit.BrowRig>>()
 
 		/** The brows of the `brow/fitted` base under [config], by side; empty when the recipe builds the brows another way. */
 		fun fittedBrows(config: PipelineConfig): Map<Side, io.github.psd2live.core.fit.BrowRig> {
 			if (config.recipe.base("brow") !== io.github.psd2live.core.recipe.RigModules.BROW_FITTED) return emptyMap()
-			val subject = io.github.psd2live.core.recipe.RecipeSubject.of(analysis)
-			val m = io.github.psd2live.core.recipe.RigModules
-			val options = io.github.psd2live.core.fit.BrowOptions(
-				shape = m.builds(m.BROW_SHAPE, config, subject), shapeStrength = config.recipe.value(m.BROW_SHAPE.id, "strength") / 100f,
-				blink = m.builds(m.BROW_BLINK, config, subject), blinkDip = config.recipe.value(m.BROW_BLINK.id, "dip") / 100f,
-				spring = m.builds(m.BROW_SPRING, config, subject))
-			val lift = config.recipe.baseValue("brow", "lift") / 100f
-			return fittedBrows.getOrPut(listOf(options, lift, config.parentOverrides, deformersEnabled, config.recipe.base("eye"),
-				config.recipe.moves("brow.L"), config.recipe.moves("brow.R"), config.recipe.moves("eye.L"), config.recipe.moves("eye.R"))) {
+			return fittedBrows.getOrPut(Identity(config)) {
+				val m = io.github.psd2live.core.recipe.RigModules
+				val options = io.github.psd2live.core.fit.BrowOptions(
+					shape = m.builds(m.BROW_SHAPE, config, recipeSubject), shapeStrength = config.recipe.value(m.BROW_SHAPE.id, "strength") / 100f,
+					blink = m.builds(m.BROW_BLINK, config, recipeSubject), blinkDip = config.recipe.value(m.BROW_BLINK.id, "dip") / 100f,
+					spring = m.builds(m.BROW_SPRING, config, recipeSubject))
+				val lift = config.recipe.baseValue("brow", "lift") / 100f
 				val (fits, eyes) = fittedBrowMeasurements(config)
 				fits.mapValues { (side, fit) ->
 					// The brow travels about half the height of the eye below it; without a fitted eye, a quarter of its length.
