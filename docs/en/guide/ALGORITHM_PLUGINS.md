@@ -48,6 +48,8 @@ Mouth jaw v2 is opt-in. It uses a shared v2 source scaffold and a compatible fit
 
 Mouth tongue v2 adds tongue-out forms to a fitted mouth with a tongue layer and a preceding capture modifier. It supports a single mouth drawing on the original source mesh. Use v1 for layered lips or a separate closed-mouth drawing.
 
+Mouth interior depth v2 adds parallax to teeth and other interior layers and shades the tongue and inner mouth as it opens. It uses the original source frame and adds a head-turn deformer when the mesh keyform grid exceeds its budget. Use v1 for reparented or recolored targets.
+
 Mouth spring v2 adds lower-face settling after the mouth opens. It uses the fitted mouth and jaw on a shared source scaffold and honors the physics toggle. Use v1 for separate closed-mouth drawings, edited target geometry or combinations with a preceding tongue modifier.
 
 Cheek-lid coupling v2 is selectable by version. It requires a shared v2 scaffold, fitted eyes v2, and a fitted mouth with a live mouth form grid. Use v1 with edited lid meshes or parent frames, fitted head turn, or preceding gaze or brow-lid coupling.

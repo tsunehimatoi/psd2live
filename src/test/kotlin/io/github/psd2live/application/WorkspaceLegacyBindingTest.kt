@@ -494,6 +494,89 @@ class WorkspaceLegacyBindingTest {
         assertEquals(RigIrCompiler.compile(expected), RigIrCompiler.compile(current))
     }
 
+    @Test fun independentMouthDepthMatchesLockedVersionWithHeadTurn(): Unit = runBlocking {
+        for (head in listOf("face/fitted", "face/legacy")) {
+            val f = Fixture(document(mouthDetails = true))
+            f.install()
+            f.group(listOf("body/legacy", head, "mouth/fitted"))
+            if (head == "face/fitted") {
+                f.edit("modifier_add", f.addition("mouth.capture", "capture", config = buildJsonObject {
+                    put("scaffold", "structure"); put("base", "mouth")
+                }))
+                f.edit("modifier_add", f.addition("mouth.tongue", "tongue", config = buildJsonObject {
+                    put("scaffold", "structure"); put("base", "mouth")
+                    putJsonObject("dependencies") { put("mouth.capture", "capture") }
+                }))
+            }
+            val prefix = f.now
+            val addition = f.addition("mouth.interior-depth", "mouth-depth", config = buildJsonObject {
+                put("scaffold", "structure"); put("base", "mouth")
+                val provider = RigModifierStack.fromJson(prefix.document.rigEdits.modifierStack!!).instances.single { it.type == head }
+                putJsonObject("dependencies") { put("face/legacy", provider.id) }
+                putJsonObject("values") { put("depth", 143f) }
+            })
+            f.edit("modifier_add", addition)
+            val expected = assertNotNull(f.now.model.rig.modifierOutput)
+            val compiled = RigIrCompiler.compile(f.now.model)
+            f.runtime.checkout(f.now.projectId, f.now.state, prefix.historyHead)
+            f.edit("modifier_add", JsonObject(addition + ("version" to JsonPrimitive(2))))
+            val actual = assertNotNull(f.now.model.rig.modifierOutput)
+            val tongue = mesh(f, "tongue").id.raw
+            assertTrue(Channel.MULTIPLY_COLOR in actual.meshes.single { it.id == tongue }.channels)
+            assertTrue(assertNotNull(prefix.model.rig.modifierOutput).meshes.single { it.id == tongue } != actual.meshes.single { it.id == tongue })
+            for ((before, after) in expected.meshes.zip(actual.meshes)) {
+                assertEquals(before.parent, after.parent, "$head parent for ${before.id}")
+                assertEquals(before.channels, after.channels, "$head channels for ${before.id}")
+                assertEquals(before.offsets?.axes, after.offsets?.axes, "$head axes for ${before.id}")
+                assertEquals(before.offsets, after.offsets, "$head offsets for ${before.id}")
+                assertEquals(before, after, "$head mesh ${before.id}")
+            }
+            assertEquals(expected, actual)
+            assertEquals(compiled, RigIrCompiler.compile(f.now.model))
+            assertTrue(actual.deformers.any { it.id.startsWith("modifier:mouth-depth:") })
+            if (head == "face/fitted") {
+                val stack = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
+                val instance = stack.instances.last()
+                val artifact = assertNotNull(BundledAlgorithmArtifacts.find(instance.type, 2))
+                assertEquals(artifact.reference, instance.plugin)
+                val directory = Files.createTempDirectory("mouth-depth-package-")
+                val preferences = Preferences.userRoot().node("mouth-depth-package/" + UUID.randomUUID())
+                val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+                try {
+                    val staging = Files.createDirectory(directory.resolve("package"))
+                    Files.write(staging.resolve("plugin.json"), artifact.bytes)
+                    for (name in artifact.manifest.files.keys) {
+                        assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                    }
+                    val providers = stack.instances.dropLast(1).flatMap { provider ->
+                        val capabilities = if (provider.type == "face/fitted") listOf(provider.type, "face/legacy") else listOf(provider.type)
+                        capabilities.map { capability -> ModifierUpstreamCapability(capability, provider.type, provider.version,
+                            provider.targets, provider.id, provider.config, provider.outputAliases, provider.plugin) }
+                    }
+                    val definition = RigMouthDepthModifier.definition(RigModifierSource.of(f.now.model))
+                    val installed = store.install(staging.toString())
+                    val external = instance.copy(type = installed.manifest.algorithms.single().type)
+                    val adapter = ModifierPluginCatalog.definitions(store, captured = listOf(definition)).single {
+                        it.type == external.type && it.version == external.version
+                    }
+                    val context = adapter.authorContext(external).withUpstream(providers.filter {
+                        it.capability in adapter.requires + adapter.optionalUpstream
+                    })
+                    val previous = assertNotNull(prefix.model.rig.modifierOutput)
+                    assertEquals(actual, (adapter.plugin as ContextualModifierAlgorithmPlugin).evaluate(previous, external, context) {})
+                    ModifierPluginWorkers.stop(installed.reference)
+                    store.uninstall(installed.reference)
+                } finally {
+                    store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+                    preferences.removeNode()
+                    ModifierPluginStore.deleteTree(directory)
+                }
+            }
+            f.edit("modifier_apply", buildJsonObject { put("id", "mouth-depth") })
+            assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(f.now.document)))
+        }
+    }
+
     @Test fun independentMouthCaptureMatchLockedVersionWithHeadTurnAndInstalledWorker(): Unit = runBlocking {
         for (head in listOf("face/legacy", "face/fitted")) {
             val f = Fixture(document(mouthDetails = true))
