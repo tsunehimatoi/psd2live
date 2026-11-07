@@ -1,5 +1,6 @@
 package io.github.psd2live.application
 
+import io.github.psd2live.algorithms.binding.ArmSwingV3Algorithm
 import io.github.psd2live.algorithms.binding.BrowBlinkV3Algorithm
 import io.github.psd2live.algorithms.binding.BrowFittedV3Binding
 import io.github.psd2live.algorithms.binding.BrowLegacyV2Algorithm
@@ -127,7 +128,10 @@ internal object WorkspacePresetInitialization {
                         RigModules.BROW_SPRING.id to BrowSpringV4Algorithm.VERSION)
                     packages(browVersions.filterKeys { type -> stack.instances.any { it.type == type } })
                 } else emptyMap()
-                headAndEye + lids + brows
+                val arms = if (lids.size == plannedLids.size && (!subject.has(SemanticTag.EYEBROW) || brows.isNotEmpty())) {
+                    packages(mapOf(RigModules.BODY_ARMS.id to ArmSwingV3Algorithm.VERSION))
+                } else emptyMap()
+                headAndEye + lids + brows + arms
             }
         } else emptyMap()
         val sourceVersions = if (scaffold != null) buildMap {

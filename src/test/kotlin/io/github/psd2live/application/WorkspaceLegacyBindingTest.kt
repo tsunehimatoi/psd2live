@@ -5765,26 +5765,29 @@ class WorkspaceLegacyBindingTest {
     @Test fun armSwingV3MatchesPairedArms(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true,
             pairedArms = true, chestDetail = true)
-        compareArmSwingV3(art)
+        compareArmSwingV3(art, useDefault = true)
     }
 
-    private suspend fun compareArmSwingV3(art: WorkspaceDocument, mouthVersions: Map<String, Int> = emptyMap()) {
+    private suspend fun compareArmSwingV3(art: WorkspaceDocument, mouthVersions: Map<String, Int> = emptyMap(),
+                                         useDefault: Boolean = false) {
         val choices = WorkspaceInitialPreset(clothing = true)
         val preset = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
         val recipe = if (mouthVersions.isEmpty()) preset.recipe else preset.recipe.copy(
             modules = preset.recipe.modules + (RigModules.MOUTH_TONGUE.id to ModuleChoice(false)))
         val config = preset.copy(recipe = recipe, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, _) = prepareHistoricalModernReference(source, choices)
+        val (initialized, _) = if (useDefault) WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+            else prepareHistoricalModernReference(source, choices)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val arms = stack.instances.single { it.type == "body.arms" }
         val index = stack.index(arms.id)
-        assertEquals(1, arms.version)
+        assertEquals(if (useDefault) 3 else 1, arms.version)
         assertEquals(mouthVersions.keys, stack.instances.take(index).map { it.type }.filter { it in mouthVersions }.toSet())
         val artifact = assertNotNull(BundledAlgorithmArtifacts.find(arms.type, 3))
         val selected = arms.copy(version = 3, plugin = artifact.reference)
+        val legacy = arms.copy(version = 1, plugin = assertNotNull(BuiltinModifierPlugins.reference(arms.type, 1)))
         val prior = stack.copy(instances = stack.instances.map {
-            mouthVersions[it.type]?.let { version ->
+            if (it.id == arms.id) legacy else mouthVersions[it.type]?.let { version ->
                 it.copy(version = version, plugin = assertNotNull(BuiltinModifierPlugins.reference(it.type, version)))
             } ?: it
         })
