@@ -37,10 +37,10 @@ internal object RigEyeSmileModifier {
 
 internal fun captureLidSource(
     source: RigModifierSource, instance: RigModifierInstance, parameterNames: Map<String, String>,
+    fittedEyeId: String = instance.config.getValue("base").jsonPrimitive.content,
 ): ModifierAlgorithmContext = with(source) {
     val scaffold = provider(instance)
-    val baseId = instance.config.getValue("base").jsonPrimitive.content
-    val base = activeBefore(instance).single { it.id == baseId && it.type == "eye/fitted" }
+    val base = activeBefore(instance).single { it.id == fittedEyeId && it.type == "eye/fitted" }
     val options = scaffold.config
     val corrections = WorkspaceSettingsCodec.decodeRecipe(options["corrections"])
     val recipe = RigRecipe(true, bases = mapOf("eye" to BaseChoice(base.type, base.version)),

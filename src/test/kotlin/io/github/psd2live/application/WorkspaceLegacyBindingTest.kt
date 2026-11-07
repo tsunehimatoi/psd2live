@@ -2282,6 +2282,96 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun independentMouthCheekLidMatchesLockedVersionAndInstalledWorker(): Unit = runBlocking {
+        for (paired in listOf(false, true)) {
+            val art = document(eyeDetails = true, bilateralEyes = true, mouthDetails = true)
+            val source = if (!paired) art else {
+                val sourceArt = art.source as WorkspaceSourceArt
+                val white = sourceArt.layers.single { it.id.raw == "white" } as WorkspaceSourceLayer
+                val shared = white.copy(bounds = LayerBounds(18, 20, 28, 8), raster = LayerRaster(28, 8,
+                    ByteArray(28 * 8 * 4) { i -> if ((i / 4) % 28 in 12..15) 0 else 255.toByte() }))
+                art.copy(source = sourceArt.copy(layers = sourceArt.layers.filterNot { it.id.raw == "white-right" }
+                    .map { if (it == white) shared else it }),
+                    layerOverrides = (art.layerOverrides - "white-right") +
+                        ("white" to art.layerOverrides.getValue("white").copy(side = Side.NONE)))
+            }
+            suspend fun setup() = Fixture(source).also { fixture ->
+                fixture.install()
+                fixture.group(listOf("body/legacy", "face/legacy", "eye/fitted", "mouth/fitted"))
+                if (paired) {
+                    val eyeConfig = buildJsonObject { put("scaffold", "structure"); put("base", "eye") }
+                    for (type in listOf("eye.smile", "eye.wide", "eye.lid-fade", "eye.emotion")) {
+                        fixture.edit("modifier_add", fixture.addition(type, type, config = eyeConfig))
+                    }
+                }
+            }
+            val reference = setup()
+            val fixture = setup()
+            val input = assertNotNull(fixture.now.model.rig.modifierOutput)
+            val neutral = fixture.now.model.rig.puppet
+            val config = buildJsonObject {
+                put("scaffold", "structure"); put("base", "mouth")
+                putJsonObject("dependencies") { put("eye/fitted", "eye") }
+                putJsonObject("values") { put("strength", 145f) }
+            }
+            val addition = fixture.addition("mouth.cheek-lid", "cheek-lid", config = config)
+            reference.edit("modifier_add", addition)
+            fixture.edit("modifier_add", JsonObject(addition + ("version" to JsonPrimitive(2))))
+            val old = RigModifierStack.fromJson(reference.now.document.rigEdits.modifierStack!!).instances.last()
+            assertEquals(1, old.version)
+            assertEquals(BuiltinModifierPlugins.reference(old.type, 1), old.plugin)
+            val actual = fixture.now.model
+            val expected = assertNotNull(reference.now.model.rig.modifierOutput)
+            val output = assertNotNull(actual.rig.modifierOutput)
+            assertEquals(expected.deformers.map { it.id }, output.deformers.map { it.id })
+            for ((before, after) in expected.meshes.zip(output.meshes)) {
+                assertTrue(before == after, "Cheek and lid mesh differs: ${before.id}, paired=$paired")
+            }
+            assertTrue(expected == output, "Complete cheek and lid IR differs")
+            if (paired) assertTrue(output.deformers.size > input.deformers.size, "Paired lids must exercise a coupling carrier")
+            val pose = mapOf(StandardParameters.MOUTH_FORM to 1f, StandardParameters.EYE_L_OPEN to .9f,
+                StandardParameters.EYE_R_OPEN to .8f)
+            val evaluator = CpuDeformationEvaluator()
+            val before = evaluator.evaluate(neutral, pose)
+            val after = evaluator.evaluate(actual.rig.puppet, pose)
+            val lash = actual.rig.puppet.drawables.single { it.name == "lash" }.id
+            assertFalse(before.worldPositions.getValue(lash).contentEquals(after.worldPositions.getValue(lash)),
+                "Smiling must move a fitted lid")
+
+            if (paired) {
+                val stack = RigModifierStack.fromJson(fixture.now.document.rigEdits.modifierStack!!)
+                val instance = stack.instances.last()
+                val artifact = assertNotNull(BundledAlgorithmArtifacts.find("mouth.cheek-lid", 2))
+                assertEquals(artifact.reference, instance.plugin)
+                val directory = Files.createTempDirectory("mouth-cheek-lid-package-")
+                val preferences = Preferences.userRoot().node("mouth-cheek-lid-package/" + UUID.randomUUID())
+                val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+                try {
+                    val staging = Files.createDirectory(directory.resolve("package"))
+                    Files.write(staging.resolve("plugin.json"), artifact.bytes)
+                    for (name in artifact.manifest.files.keys) {
+                        assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                    }
+                    val upstream = stack.instances.dropLast(1).map {
+                        ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+                    }
+                    val context = RigMouthCheekLidModifier.definition(RigModifierSource.of(actual)).authorContext(instance).withUpstream(upstream)
+                    val installed = store.install(staging.toString())
+                    assertEquals(artifact.reference, installed.reference)
+                    assertTrue(output == ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(), input,
+                        instance, {}, store, context = context), "Installed JVM worker differs")
+                } finally {
+                    store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+                    preferences.removeNode()
+                    ModifierPluginStore.deleteTree(directory)
+                }
+            }
+            fixture.edit("modifier_apply", buildJsonObject { put("id", "cheek-lid") })
+            assertEquals(RigIrCompiler.compile(reference.now.model), RigIrCompiler.compile(fixture.now.model))
+            assertEquals(RigIrCompiler.compile(reference.now.model), RigIrCompiler.compile(WorkspacePreviewBuilder().build(fixture.now.document)))
+        }
+    }
+
     @Test fun independentBrowLidMatchesLockedVersionAndInstalledWorker(): Unit = runBlocking {
         for (composed in listOf(false, true)) {
             val art = document(eyeDetails = true, pairedBrows = true, bilateralEyes = true, bangOverlay = composed)
