@@ -11,6 +11,7 @@ import io.github.psd2live.project.WorkspaceRevisions
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
 import org.umamo.runtime.model.Deformer
 import org.umamo.runtime.model.PuppetModel
@@ -127,8 +128,10 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
                                 resources: WorkspaceAssetWorkflow?): WorkspacePreparedDraft<RigPreviewModel> {
         val context = currentCoroutineContext()
         val batch = context[WorkspaceBatchJobExecution]
-        val prepared = runtime.prepareDraft(projectId, state,
-            edits.mapIndexed { index, operation -> WorkspaceDraftEdit { draft, model ->
+        val draftInputs = WorkspaceModifierDraftInputs()
+        val draftEdits = edits.mapIndexed { index, operation ->
+            WorkspaceDraftEdit<RigPreviewModel> { draft, model ->
+                draftInputs.pipeline = null
                 batch?.preparing(index)
                 if (operation.operation == "settings_update") {
                     // Settings also release authored poses; both stay in this member's private candidate.
@@ -144,11 +147,15 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
                     batch?.fitting(index, id, fraction) ?: context[WorkspaceJobContext]?.progress(0.1f + 0.65f * fraction, "Fitting physics $id")
                 }, rasterWork.cancellable(context) { fraction, message ->
                     batch?.painting(index, fraction, message) ?: context[WorkspaceJobContext]?.progress(0.05f + 0.75f * fraction, message)
-                }, resources) }
+                }, resources, draftInputs) }
                 draft.copy(document = if (operation.operation in WorkspaceModifierEdits.supported) previews.normalizeMeshEdits(candidate, model)
                     else normalizeCandidate(candidate, model))
-            } },
-            editFailure = { index, failure -> WorkspaceBatchEditException(index, edits[index].operation, failure) })
+            }
+        }
+        val prepared = withContext(draftInputs) {
+            runtime.prepareDraft(projectId, state, draftEdits,
+                editFailure = { index, failure -> WorkspaceBatchEditException(index, edits[index].operation, failure) })
+        }
         runInterruptible(Dispatchers.Default) {
             WorkspaceAssetLayerEdits.validate(prepared.before.document, prepared.draft.document, prepared.model)
             // Tile moves and densities land on their spots or not at all, as the same single commands do; a batch that

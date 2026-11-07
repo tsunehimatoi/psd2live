@@ -6,6 +6,14 @@ import io.github.psd2live.core.sim.*
 import io.github.psd2live.project.WorkspaceDocument
 import io.github.psd2live.project.config
 import kotlinx.serialization.json.*
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
+
+/** Carries an evaluated simulation prefix only between preparation and rebuild of the same draft member. */
+internal class WorkspaceModifierDraftInputs : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<WorkspaceModifierDraftInputs>
+    var pipeline: PSD2LivePipeline? = null
+}
 
 /** Resolve each simulation against its actual upstream prefix, inside the isolated document candidate. */
 internal object WorkspaceModifierSimulation {

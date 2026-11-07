@@ -244,6 +244,7 @@ internal class WorkspacePreviewBuilder {
     private suspend fun buildModel(document: WorkspaceDocument, current: RigPreviewModel?,
                                    legacyDrawOrders: Map<String, Float>): RigPreviewModel {
         val progress = progress(0.6f, 0.85f)
+        val draftInputs = currentCoroutineContext()[WorkspaceModifierDraftInputs]
         return runInterruptible(Dispatchers.Default) {
             val decoded = document.config()
             // Early v1 projects stored draw orders only in their saved presentation. Keep historical
@@ -258,6 +259,11 @@ internal class WorkspacePreviewBuilder {
                     current.analysis.source == document.source && before - "organization" == after - "organization" &&
                     config.copy(rigEdits = config.rigEdits.copy(modifierStack = before)) == current.config)
                     return@runInterruptible current.copy(config = config).retainModifierCachesFrom(current)
+                val prepared = draftInputs?.pipeline
+                if (prepared != null) {
+                    prepared.deferRuntimeBundles = false
+                    return@runInterruptible prepared.buildPreview(document.source, config, progress, current?.atlas)
+                }
                 pipeline.reuseModifierInputs(current)
                 return@runInterruptible pipeline.buildPreview(document.source, config, progress, current?.atlas)
             }

@@ -13,7 +13,7 @@ internal object WorkspaceModifierEdits {
         "modifier_remove", "modifier_move", "modifier_organize", "modifier_apply", "modifier_convert", "modifier_switch")
 
     fun apply(operation: WorkspaceDocumentOperation, document: WorkspaceDocument, model: RigPreviewModel,
-              work: WorkspaceRasterWork = WorkspaceRasterWork.Direct): WorkspaceDocument {
+              work: WorkspaceRasterWork = WorkspaceRasterWork.Direct, draftInputs: WorkspaceModifierDraftInputs? = null): WorkspaceDocument {
         if (operation.operation == "modifier_convert") return WorkspaceModifierConversion.convert(document, model, work)
         if (operation.operation == "modifier_switch") return WorkspacePresetSwitch.apply(document,
             operation.request.getValue("group").jsonPrimitive.content, work, model)
@@ -57,9 +57,12 @@ internal object WorkspaceModifierEdits {
         if (next == stack) return document
         val candidate = if (operation.operation == "modifier_move" && next != stack)
             movePhysicsOrder(document, model, next, requireNotNull(id)) else document
+        val simulationPipeline = PSD2LivePipeline().apply { deferRuntimeBundles = true }
         var prepared = WorkspaceModifierSimulation.prepare(candidate, next, work,
             validatedPrefix = if (candidate == document) WorkspaceModifierSimulation.unchangedPrefix(stack, next) else 0,
-            evaluated = model)
+            pipeline = simulationPipeline, evaluated = model)
+        val preparedPrefix = simulationPipeline.modifierCache.snapshot
+        if (preparedPrefix != null && preparedPrefix !== model.modifierEvaluation) draftInputs?.pipeline = simulationPipeline
         if (operation.operation == "modifier_add_group") {
             val added = prepared.instances.filter { entry -> stack.instances.none { it.id == entry.id } }
             val consumers = added.filter { it.type in setOf("physics", "motion", "simulation") }

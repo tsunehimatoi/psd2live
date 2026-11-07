@@ -37,10 +37,11 @@ internal object WorkspaceDocumentEdits {
               simulationWork: WorkspaceSimulationWork = WorkspaceSimulationWork.Direct,
               physicsWork: WorkspacePhysicsWork = WorkspacePhysicsWork.Direct,
               rasterWork: WorkspaceRasterWork = WorkspaceRasterWork.Direct,
-              assetResources: WorkspaceAssetWorkflow? = null): WorkspaceDocument =
+              assetResources: WorkspaceAssetWorkflow? = null,
+              draftInputs: WorkspaceModifierDraftInputs? = null): WorkspaceDocument =
         // A layer an edit gave pixels of its own no longer shows its material.
         WorkspaceReferenceMeshes.ensure(WorkspaceMaterialLinks.reconcile(document,
-            applyGenerated(operation, document, model, simulationWork, physicsWork, rasterWork, assetResources)), model)
+            applyGenerated(operation, document, model, simulationWork, physicsWork, rasterWork, assetResources, draftInputs)), model)
 
     /** [layerId] showing [raster] over its unchanged rectangle, as `layer_replace_image` does. */
     fun replaceImage(document: WorkspaceDocument, model: RigPreviewModel, layerId: String, raster: org.umamo.format.art.LayerRaster,
@@ -49,13 +50,13 @@ internal object WorkspaceDocumentEdits {
 
     private fun applyGenerated(operation: WorkspaceDocumentOperation, document: WorkspaceDocument, model: RigPreviewModel,
               simulationWork: WorkspaceSimulationWork, physicsWork: WorkspacePhysicsWork, rasterWork: WorkspaceRasterWork,
-              assetResources: WorkspaceAssetWorkflow?): WorkspaceDocument {
+              assetResources: WorkspaceAssetWorkflow?, draftInputs: WorkspaceModifierDraftInputs?): WorkspaceDocument {
         val request = operation.request
         WorkspaceArtPrimitives.requireCurrentReferences(document.rigEdits, request)
         // Every document operation, not only journal edits: a copy over the bangs is made anew on each build.
         refuseCopies(model, request)
         return when (operation.operation) {
-            in WorkspaceModifierEdits.supported -> WorkspaceModifierEdits.apply(operation, document, model, rasterWork)
+            in WorkspaceModifierEdits.supported -> WorkspaceModifierEdits.apply(operation, document, model, rasterWork, draftInputs)
             WorkspaceDrawOrderEdits.OP -> WorkspaceDrawOrderEdits.apply(document, model, request)
             WorkspaceLayerTransform.OP -> WorkspaceLayerTransform.apply(document, model, request)
             WorkspaceRasterEdits.REBUILD_MESH -> WorkspaceRasterEdits.rebuildMesh(document, model, request.text("layer_id"), rasterWork)
