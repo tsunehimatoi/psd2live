@@ -58,7 +58,7 @@ class FittedEyePluginParityTest {
         val analysis = source ?: CharacterAnalyzer.analyze(document.source, neutralConfig)
         val cache = PreviewMeshCache()
         val atlas = AtlasLayout.pack(analysis.layers, neutralConfig)
-        val scaffold = RigBuilder.buildNeutralScaffold(analysis, atlas, neutralConfig, cache)
+        val scaffold = RigBuilder.build(analysis, atlas, neutralConfig, cache)
         val native = RigBuilder.build(analysis, atlas, oldConfig, cache).puppet
         val expected = PuppetIr.toIr(native)
         val layers = analysis.layers.associateBy { it.source.id.raw }

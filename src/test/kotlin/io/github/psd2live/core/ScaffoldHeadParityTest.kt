@@ -69,7 +69,7 @@ class ScaffoldHeadParityTest {
             val native = source.sourceConfig().copy(featureDisplacementEnabled = true, hairSimulationFront = true)
             val atlas = model.modifierAuthorAtlas ?: model.atlas
             val cache = PreviewMeshCache()
-            val legacy = RigBuilder.buildNeutralScaffold(source.analysis, atlas, native, cache).puppet
+            val legacy = RigBuilder.build(source.analysis, atlas, native, cache).puppet
             val neutral = BindingProjection.retain(legacy, emptySet(), mapOf(StandardParameters.MOUTH_OPEN to 1f))
             val all = model.rig.puppet.drawables.filter { it.mesh != null }.map { ModifierTarget("mesh", it.id.raw) }
             val reference = requireNotNull(BuiltinModifierPlugins.reference("rig.scaffold", 1))
@@ -126,10 +126,6 @@ class ScaffoldHeadParityTest {
         val built = RigBuilder.build(analysis, atlas, config, cache)
         val generated = built.puppet
         val legacy = BindingProjection.retain(generated, emptySet(), mapOf(StandardParameters.MOUTH_OPEN to 1f))
-        val optimized = RigBuilder.buildNeutralScaffold(analysis, atlas, config, cache).puppet
-        val optimizedNeutral = BindingProjection.retain(optimized, emptySet(), mapOf(StandardParameters.MOUTH_OPEN to 1f))
-        val before = PuppetIr.toIr(legacy)
-        val after = PuppetIr.toIr(optimizedNeutral)
         val inputs = RigBuilder.scaffoldSourceInputs(analysis, config, cache)
         val pluginFrames = ScaffoldFramesContext.build(inputs.frames)
         assertEquals(legacy.deformers.filter { ScaffoldFramesContext.owns(it.id) }.map(PuppetIr::deformerToIr),
@@ -147,10 +143,6 @@ class ScaffoldHeadParityTest {
         assertEquals(PuppetIr.toIr(legacy.copy(drawables = expectedMeshes)).meshes.associateBy { it.id },
             PuppetIr.toIr(legacy.copy(drawables = pluginMeshes)).meshes.associateBy { it.id },
             "Static meshes computed from unbound source topology")
-        assertEquals(before.deformers, after.deformers, "Complete static deformer scaffold")
-        assertEquals(before.meshes.map { it.id }, after.meshes.map { it.id })
-        before.meshes.zip(after.meshes).forEach { (old, fresh) -> assertEquals(old, fresh, "Static mesh ${old.id}") }
-        assertEquals(before, after, "Complete static scaffold after direct head generation")
         val coreIds = setOf("DeformBodyZBreath", "DeformHeadRotation", "DeformHeadContainer", "DeformFaceNinePose",
             "DeformFaceContour", "DeformFeatureDisplacement", "DeformEyes", "DeformBrows", "DeformEars",
             "DeformHairFrontFollow", "DeformHairFrontPhysics", "DeformHairBackFollow", "DeformHairBackPhysics")

@@ -1,5 +1,6 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.algorithms.binding.BindingProjection
 import io.github.psd2live.algorithms.binding.FittedFaceLattices
 import io.github.psd2live.algorithms.binding.LegacyFaceInputs
 import io.github.psd2live.algorithms.binding.ModelIdRemap
@@ -105,7 +106,8 @@ class FittedFaceLatticeParityTest {
         val atlas = AtlasLayout.pack(analysis.layers, config)
         val scaffoldSource = RigBuilder.scaffoldSourceInputs(analysis, config, cache)
         val context = RigBuilder.rigContext(analysis, config, cache)
-        val static = RigBuilder.buildNeutralScaffold(analysis, atlas, config, cache)
+        val legacy = RigBuilder.build(analysis, atlas, config, cache)
+        val static = legacy.copy(puppet = BindingProjection.retain(legacy.puppet, emptySet(), mapOf(StandardParameters.MOUTH_OPEN to 1f)))
         val layers = analysis.layers.associateBy { it.source.id.raw }
         val targetsByLayer = static.puppet.drawables.associate { drawable ->
             drawable.id.raw to layers.getValue(static.layerIdByDrawableId.getValue(drawable.id.raw))

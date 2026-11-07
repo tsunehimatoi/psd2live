@@ -1,5 +1,6 @@
 package io.github.psd2live.core.modifier
 
+import io.github.psd2live.algorithms.binding.ExpressionChannels
 import io.github.psd2live.algorithms.binding.MouthFittedInputs
 import io.github.psd2live.algorithms.binding.MouthLegacyInputs
 import io.github.psd2live.algorithms.binding.ScaffoldAlgorithm
@@ -31,13 +32,11 @@ internal class RigModifierSource(
     private val projections = java.util.IdentityHashMap<PuppetModel, MutableMap<String, PuppetModel>>()
     private fun generated(strength: Float, tuning: RigTuning, headStrength: Float,
                           recipe: RigRecipe, outline: RigModifierInstance?,
-                          featureDisplacement: Boolean, frontHairSway: Boolean, backHairSway: Boolean,
-                          neutralScaffold: Boolean): BuiltRig {
+                          featureDisplacement: Boolean, frontHairSway: Boolean, backHairSway: Boolean): BuiltRig {
         RigBuildProfile.count("modifier legacy rig builds")
         val native = generationConfig(strength, tuning, headStrength, recipe, outline,
             featureDisplacement, frontHairSway, backHairSway)
-        if (outline == null) return if (neutralScaffold) RigBuilder.buildNeutralScaffold(analysis, atlas, native, meshCache)
-            else RigBuilder.build(analysis, atlas, native, meshCache)
+        if (outline == null) return RigBuilder.build(analysis, atlas, native, meshCache)
         val prepared = MouthLipLayers.prepare(analysis, native, meshCache)
         val lips = prepared.layers.filter { it.source is MouthLipLayer }
         val pack = { RigBuildProfile.stage("source artwork: outline atlas") { RigModifierRasterAssets.append(atlas, lips, native) } }
@@ -379,14 +378,37 @@ internal class RigModifierSource(
         val outline = state[RigModules.MOUTH_OUTLINE.id]
         val corrections = io.github.psd2live.project.WorkspaceSettingsCodec.decodeRecipe(scaffold["corrections"])
         val correctedRecipe = recipe.copy(moves = corrections.moves, eyeParts = corrections.eyeParts)
-        val native = RigBuildProfile.stage("modifier legacy template: ${instances.lastOrNull()?.type ?: "rig.scaffold"}") {
+        val native = RigBuildProfile.stage("modifier legacy template: ${instances.last().type}") {
             generated(bodyStrength, tuning, headStrength, correctedRecipe, outline, scaffold["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
-                scaffold["frontHairSway"]?.jsonPrimitive?.boolean ?: true, scaffold["backHairSway"]?.jsonPrimitive?.boolean ?: true,
-                neutralScaffold = instances.isEmpty())
+                scaffold["frontHairSway"]?.jsonPrimitive?.boolean ?: true, scaffold["backHairSway"]?.jsonPrimitive?.boolean ?: true)
         }
         val chains = native.generatedChains.filter { chain -> instances.any { chain.kind in RigModifierChains.kinds(it.type) } }
             .map { RigModifierChains.Binding(it) }
         return finishTemplate(native.puppet, chains, kept, byArea.keys)
+    }
+
+    private val neutralModels = HashMap<JsonObject, PuppetModel>()
+
+    /** The predecessor of a first legacy binding is the independent scaffold at its material rest pose. */
+    private fun neutralInput(provider: RigModifierInstance): PuppetModel = neutralModels.getOrPut(provider.config) {
+        val targets = primaryByLayer.values.map { ModifierTarget("mesh", it) }
+        val structure = scaffold(provider.copy(targets = targets, plugin = null)) {}
+        val geometry = structure.drawables.associateBy { it.id }
+        val expression = ExpressionChannels.catalog(expressionLayers.values.toList(), staggered = false)
+        val standard = StandardParameters.all
+        val standardIds = standard.mapTo(HashSet()) { it.id }
+        val model = materialBase.copy(
+            parameters = standard + expression.parameters.filterNot { it.id in standardIds },
+            deformers = structure.deformers, parts = structure.parts, rootChildren = structure.rootChildren,
+            rootPartId = structure.rootPartId,
+            drawables = materialBase.drawables.mapNotNull { material ->
+                val bound = geometry[material.id] ?: return@mapNotNull null
+                val opacity = expressionLayers[layersByMesh[material.id.raw]]?.let { ExpressionChannels.opacity(it, expression.switchKeys) }
+                material.copy(mesh = bound.mesh, parentDeformerId = bound.parentDeformerId, geometryGrid = bound.geometryGrid,
+                    channelGrids = opacity?.let { ChannelGrids(mapOf(FormChannel.OPACITY to it)) } ?: ChannelGrids.Empty)
+            },
+        ).withDerivedRenderRoot()
+        finishTemplate(model, emptyList(), emptySet(), emptySet()).model
     }
 
     private fun finishTemplate(input: PuppetModel, chains: List<RigModifierChains.Binding>, kept: Set<ParameterId>,
@@ -435,8 +457,10 @@ internal class RigModifierSource(
 
     private fun transitionProjections(instance: RigModifierInstance, target: ModifierTarget): Pair<RigModifierChains.Projection, RigModifierChains.Projection> {
         val relevant = relevantBefore(instance, target)
+        val scaffold = provider(instance)
         fun projected(items: List<RigModifierInstance>): RigModifierChains.Projection {
-            val template = template(items, provider(instance).config)
+            if (items.isEmpty()) return RigModifierChains.Projection(forTarget(neutralInput(scaffold), target), emptyList())
+            val template = template(items, scaffold.config)
             val model = forTarget(template.model, target)
             return RigModifierChains.projection(model, target, items, template.chains,
                 chainProjections.getOrPut(model) { HashMap() }, ::restricted)
