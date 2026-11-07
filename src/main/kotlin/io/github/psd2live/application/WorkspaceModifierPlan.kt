@@ -1,5 +1,6 @@
 package io.github.psd2live.application
 
+import io.github.psd2live.algorithms.binding.DepthTurnV2Algorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.sim.*
@@ -63,7 +64,8 @@ internal object WorkspaceModifierPlan {
         val type = request["type"]?.jsonPrimitive?.content
         val registry = RigModifierAlgorithms.registry
         val stored = type?.let(registry::storedType)
-        val covered = if (stored in sourceTypes) (stack.instances.filter { it.type == stored }.flatMap { it.targets } +
+        val depthTurn = stored == DepthTurnV2Algorithm.TYPE
+        val covered = if (stored in sourceTypes || depthTurn) (stack.instances.filter { it.type == stored }.flatMap { it.targets } +
             stack.appliedCapabilities.filter { it.type == stored }.flatMap { it.targets }).toSet() else emptySet()
         val targets = requestedTargets.filterNot(covered::contains)
         require(targets.isNotEmpty()) { "This modifier already exists on every captured target; edit or enable the existing instance" }
@@ -83,7 +85,9 @@ internal object WorkspaceModifierPlan {
         val availableTypes = types.toHashSet()
         require(requested.all(availableTypes::contains)) { "Unknown modifier" }
         require(request["preset"] == null || type in setOf("motion", "physics") && request["config"] == null) { "A preset and an explicit configuration are alternative inputs" }
-        require(type in nativeTypes || ModifierPluginCatalog.algorithm(type.orEmpty()) != null || request["config"] == null) { "Source binding configuration is resolved from its captured dependencies" }
+        require(type in nativeTypes || !depthTurn && ModifierPluginCatalog.algorithm(type.orEmpty()) != null || request["config"] == null) {
+            "Source binding configuration is resolved from its captured dependencies"
+        }
         require(type == "swing" || ModifierPluginCatalog.algorithm(type.orEmpty())?.second?.targets?.let { kinds -> targets.all { it.kind in kinds } } == true || targets.all { it.kind == "mesh" }) { "This modifier needs captured mesh targets" }
         val active = model.rig.modifierReport!!.getValue("entries").jsonArray.filter {
             it.jsonObject.getValue("status").jsonPrimitive.content == "active"
@@ -98,10 +102,10 @@ internal object WorkspaceModifierPlan {
             put("targets", JsonArray(capability.targets.map { buildJsonObject { put("kind", it.kind); put("id", it.id) } }))
         }
         fun ensure(requestedType: String, reuse: Boolean = true, scaffold: String? = null, equivalent: Boolean = true): ModifierCapability {
-            val wantsModernFace = group?.startsWith("modern-") == true || group == "fitted" ||
+            val wantsModernFace = !depthTurn && (group?.startsWith("modern-") == true || group == "fitted" ||
                 group == null && type != "face/legacy" && available.none { cap ->
                     cap.type == "face/legacy" && targets.all { it in cap.targets }
-                }
+                })
             val wanted = if (wantsModernFace && requestedType == "face/legacy")
                 RigLegacyBindings.FITTED_FACE else requestedType
             if (reuse) available.firstOrNull { cap -> (cap.type == wanted || equivalent && registry.provides(cap, wanted)) && cap.id != null && targets.all { it in cap.targets } &&
@@ -110,6 +114,8 @@ internal object WorkspaceModifierPlan {
                 return cap
             }
             val storedType = registry.storedType(wanted)
+            val version = requireNotNull(registry.defaultDefinition(wanted)) { "Unknown modifier algorithm: $wanted" }.version
+            RigDepthTurnDefinition.requireCompatible(storedType, version, targets, available.asSequence())
             val spec = RigLegacyBindings.find(storedType)
             val preset = request["preset"]?.jsonPrimitive?.content
             val configuration = if (wanted == "physics" && preset != null) {
@@ -168,14 +174,13 @@ internal object WorkspaceModifierPlan {
             } else if (spec == null) JsonObject(emptyMap()) else {
                 val structure = scaffold ?: requireNotNull(ensure(RigSourceModifiers.SCAFFOLD).id)
                 val base = spec.module?.base?.let { ensure(it, scaffold = structure) }
-                val related = spec.related.associateWith { ensure(it, scaffold = structure) }
+                val related = spec.related.associateWith { ensure(it, scaffold = structure, equivalent = !depthTurn) }
                 buildJsonObject {
                     put("scaffold", structure)
                     base?.id?.let { put("base", it) }
                     if (related.isNotEmpty()) put("dependencies", JsonObject(related.mapValues { JsonPrimitive(requireNotNull(it.value.id)) }))
                 }
             }
-            val version = requireNotNull(registry.defaultDefinition(wanted)) { "Unknown modifier algorithm: $wanted" }.version
             candidate = candidate.add(storedType, version, targets, configuration, group, plugin = ModifierPluginCatalog.algorithm(wanted, version)?.first?.reference)
             val instance = candidate.instances.last()
             val cap = instance.capability()

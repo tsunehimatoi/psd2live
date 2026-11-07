@@ -306,6 +306,31 @@ tasks.register("pluginDepthTurn") {
     }
 }
 
+val depthTurnV2WorkerJar = registerIsolatedBindingWorker(
+    "depthTurnV2", "depth-turn-v2", "worker-depth-turn-v2", "io.github.psd2live.algorithms.binding.DepthTurnV2Worker",
+)
+
+tasks.register("pluginDepthTurnV2") {
+    dependsOn(depthTurnV2WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-depth-turn-v2")
+    inputs.file(depthTurnV2WorkerJar.flatMap { it.archiveFile })
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        depthTurnV2WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.666163652e64657074682d7475726e.v2"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"1.0.0","name":"Depth turn",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/turn","aliases":["face.depth-turn"],"version":2,"name":"Depth turn","category":"face","contextVersion":2,
+               "targets":["mesh"],"requires":["rig.scaffold","face/legacy"],"reads":["*"],"writes":["mesh","deformer"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],"configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 tasks.register("pluginBrowFitted") {
     dependsOn(workerJar)
     val output = layout.buildDirectory.dir("plugin-brow-fitted")

@@ -30,6 +30,8 @@
 
 旧版脸 v2 也可显式选择。它从源测量计算头转，要求带源数据的共享脚手架 v2 和完整目标集，支持使用同一脚手架的旧版身体 v1 或 v2 前置。推荐预设继续使用旧版脸 v1。
 
+景深头转 v2 可在添加面板中按版本选用。它需要带源数据的共享脚手架 v2 和旧版脸 v1 或 v2，可选身体 v1 或 v2。拟合脸与景深头转不能叠加。当前 v2 覆盖壳体转向。
+
 ## 安装与卸载
 
 绑定结构提供算法修订 1／2 的独立包：运行 `./gradlew :algorithms:binding:pluginScaffold1 :algorithms:binding:pluginScaffold2`，输出为 `algorithms/binding/build/plugin-scaffold-1` 和 `plugin-scaffold-2`。包 ID 为 `builtin.7269672e73636166666f6c64.v1`／`.v2`，入口为包命名空间下的 `/structure`，稳定别名为 `rig.scaffold`。两种修订分别固定历史逐目标层级和共享层级语义。

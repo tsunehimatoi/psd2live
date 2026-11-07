@@ -1,5 +1,6 @@
 package io.github.psd2live.application
 
+import io.github.psd2live.algorithms.binding.DepthTurnV2Algorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.project.*
@@ -107,11 +108,16 @@ internal object WorkspaceModifierEdits {
             ModifierTarget(it.getValue("kind").jsonPrimitive.content, it.getValue("id").jsonPrimitive.content)
         } }
         val type = request.getValue("type").jsonPrimitive.content
-        require(type != "face.depth-turn") { "Add face/fitted instead: legacy face binding and fitted turning are alternative algorithms" }
+        require(type != DepthTurnV2Algorithm.TYPE || request["version"]?.jsonPrimitive?.int == DepthTurnV2Algorithm.VERSION) {
+            "Select face.depth-turn v2 explicitly, or add face/fitted"
+        }
         val registry = RigModifierAlgorithms.registry
         val version = request["version"]?.jsonPrimitive?.int ?: registry.defaultDefinition(type)?.version
             ?: error("Unknown modifier algorithm: $type")
-        val candidate = stack.add(registry.storedType(type), version, targets, request.getValue("config").jsonObject,
+        val stored = registry.storedType(type)
+        RigDepthTurnDefinition.requireCompatible(stored, version, targets, stack.appliedCapabilities.asSequence() +
+            stack.instances.asSequence().filter { it.enabled }.map { it.capability() })
+        val candidate = stack.add(stored, version, targets, request.getValue("config").jsonObject,
             request["group"]?.jsonPrimitive?.content, request["id"]?.jsonPrimitive?.content,
             plugin = request["plugin"]?.let { Json.decodeFromJsonElement(ModifierPluginReference.serializer(), it) } ?: ModifierPluginCatalog.algorithm(type, version)?.first?.reference)
         val instance = candidate.instances.last()

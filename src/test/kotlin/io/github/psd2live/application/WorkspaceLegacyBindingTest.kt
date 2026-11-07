@@ -3,6 +3,7 @@ package io.github.psd2live.application
 import io.github.psd2live.algorithms.binding.BrowLegacyV2Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV2Algorithm
 import io.github.psd2live.algorithms.binding.FittedFaceV2Algorithm
+import io.github.psd2live.algorithms.binding.DepthTurnV2Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV2Algorithm
 import io.github.psd2live.algorithms.binding.LegacyFaceV2Algorithm
 import io.github.psd2live.core.*
@@ -11,6 +12,14 @@ import io.github.psd2live.core.recipe.RigRecipe
 import io.github.psd2live.core.recipe.BaseChoice
 import io.github.psd2live.core.recipe.ModuleChoice
 import io.github.psd2live.core.recipe.RigModules
+import io.github.psd2live.format.model.Channel
+import io.github.psd2live.format.model.ChannelValue
+import io.github.psd2live.format.model.Floats
+import io.github.psd2live.format.model.Ints
+import io.github.psd2live.format.model.KeyAxis
+import io.github.psd2live.format.model.KeyCell
+import io.github.psd2live.format.model.KeyGrid
+import io.github.psd2live.format.model.Rgb
 import io.github.psd2live.project.*
 import io.github.psd2live.scenario.Characters
 import kotlinx.coroutines.runBlocking
@@ -2022,6 +2031,136 @@ class WorkspaceLegacyBindingTest {
             io.github.psd2live.format.compile.ExportOptions("outline")) { path, bytes -> files[path] = bytes }
         val imported = Cmo3ModelImport.read(files.getValue("outline.cmo3")).puppet
         assertTrue(ribbons.all { (_, id) -> imported.drawables.any { it.id.raw == id && it.mesh != null } })
+    }
+
+    @Test fun depthTurnPlanAddsTheLegacyFaceAndRejectsFittedFace(): Unit = runBlocking {
+        val fixture = Fixture(document())
+        fixture.install()
+        val type = DepthTurnV2Algorithm.ENTRYPOINT
+        assertTrue(type in WorkspaceModifierPlan.types)
+        val request = buildJsonObject {
+            put("type", type)
+            put("targets", fixture.addition(type, "depth").getValue("targets"))
+        }
+        val plan = WorkspaceModifierPlan.prepare(fixture.now, request)
+        val entries = plan.getValue("entries").jsonArray.map { it.jsonObject }
+        assertEquals(listOf("rig.scaffold", "face/legacy", DepthTurnV2Algorithm.TYPE),
+            entries.map { it.getValue("type").jsonPrimitive.content })
+        assertEquals(2, entries.last().getValue("version").jsonPrimitive.int)
+        fixture.edit("modifier_add_group", buildJsonObject {
+            put("group", plan.getValue("group")); put("entries", plan.getValue("entries"))
+        })
+        assertEquals(ModifierStatus.ACTIVE, fixture.now.model.modifierEvaluation!!.entries.last().status)
+        val fitted = Fixture(document())
+        fitted.install()
+        fitted.group(listOf("face/fitted"))
+        assertFailsWith<IllegalArgumentException> { WorkspaceModifierPlan.prepare(fitted.now, request) }
+    }
+
+    @Test fun independentDepthTurnMatchesLockedStackAndItsInstalledWorker(): Unit = runBlocking {
+        val cases = listOf(Triple(null, 1, 2f), Triple(1, 1, 0f), Triple(2, 1, 2f), Triple(2, 2, 2f))
+        for ((body, faceVersion, style) in cases) {
+            val art = document(sideLock = true)
+            val f = Fixture(art)
+            f.install()
+            f.edit("modifier_add", f.addition("rig.scaffold", "structure"))
+            body?.let { f.edit("modifier_add", JsonObject(f.addition("body/legacy", "body") + ("version" to JsonPrimitive(it)))) }
+            val face = f.addition("face/legacy", "face")
+            f.edit("modifier_add", JsonObject(face + ("version" to JsonPrimitive(faceVersion))))
+            val before = f.now
+            val config = buildJsonObject {
+                put("scaffold", "structure")
+                putJsonObject("dependencies") { put("face/legacy", "face") }
+                putJsonObject("values") { put("style", style); put("turn", 64f); put("depth", 125f) }
+            }
+            val stack = RigModifierStack.fromJson(before.document.rigEdits.modifierStack!!)
+            val targets = stack.instances.first().targets
+            val locked = stack.add(DepthTurnV2Algorithm.TYPE, 1, targets, config, id = "depth")
+            val expected = requireNotNull(f.builder.build(before.document.copy(
+                rigEdits = before.document.rigEdits.copy(modifierStack = locked.toJson()))).rig.modifierOutput)
+            val request = f.addition(DepthTurnV2Algorithm.TYPE, "depth", targets, config)
+            f.edit("modifier_add", JsonObject(request + ("version" to JsonPrimitive(2))))
+            val current = f.now
+            val actual = requireNotNull(current.model.rig.modifierOutput)
+            val selected = RigModifierStack.fromJson(current.document.rigEdits.modifierStack!!).instances.last()
+            val artifact = assertNotNull(BundledAlgorithmArtifacts.find(DepthTurnV2Algorithm.TYPE, 2))
+            assertEquals(artifact.reference, selected.plugin)
+            val differences = buildList {
+                if (actual.parameters != expected.parameters) add("parameters")
+                val meshes = expected.meshes.associateBy { it.id }
+                addAll(actual.meshes.filter { meshes[it.id] != it }.map { "mesh:${it.name}" })
+                val deformers = expected.deformers.associateBy { it.id }
+                addAll(actual.deformers.filter { deformers[it.id] != it }.map { "deformer:${it.name}" })
+                if (actual.meshes.map { it.id } != expected.meshes.map { it.id }) add("mesh order")
+                if (actual.deformers.map { it.id } != expected.deformers.map { it.id }) add("deformer order")
+            }
+            assertTrue(differences.isEmpty(), "body=$body face=$faceVersion style=$style: $differences")
+            assertEquals(expected, actual)
+            if (body != 2 || faceVersion != 2) continue
+            val directory = Files.createTempDirectory("depth-turn-v2-")
+            val preferences = Preferences.userRoot().node("depth-turn-v2/${UUID.randomUUID()}")
+            val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+            try {
+                val staging = Files.createDirectory(directory.resolve("package"))
+                Files.write(staging.resolve("plugin.json"), artifact.bytes)
+                artifact.manifest.files.keys.forEach { name ->
+                    assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                }
+                val installed = store.install(staging.toString())
+                val worker = ModifierPluginCatalog.definitions(store, BuiltinModifierPlugins.definitions(RigModifierSource.of(current.model)))
+                    .single { it.type == DepthTurnV2Algorithm.ENTRYPOINT }
+                val instance = selected.copy(type = worker.type, plugin = installed.reference)
+                val context = worker.authorContext(instance).withUpstream(stack.instances.map {
+                    ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+                })
+                val plugin = worker.plugin as ContextualModifierAlgorithmPlugin
+                val prior = requireNotNull(before.model.rig.modifierOutput)
+                assertEquals(actual, plugin.evaluate(prior, instance, context, {}))
+                val head = prior.meshes.single { it.name == "face" }
+                val tinted = head.copy(opacity = .6f, multiply = Rgb(.8f, .9f, 1f))
+                val authored = prior.copy(meshes = prior.meshes.map { if (it.id == head.id) tinted else it })
+                val result = plugin.evaluate(authored, instance, context, {}).meshes.single { it.id == head.id }
+                assertEquals(tinted.opacity, result.opacity)
+                assertEquals(tinted.multiply, result.multiply)
+                val keys = FloatArray(29) { (it - 14) / 14f }
+                val opacity = KeyGrid<ChannelValue>(listOf(KeyAxis(StandardParameters.BODY_X.raw, Floats.of(keys))),
+                    keys.mapIndexed { i, key -> KeyCell(Ints.values(i), ChannelValue.Scalar(.6f + key * .1f)) })
+                val keyed = tinted.copy(channels = tinted.channels + (Channel.OPACITY to opacity))
+                val dense = authored.copy(meshes = authored.meshes.map { if (it.id == head.id) keyed else it })
+                val outputName = "shared/deformer:${head.id}_Turn"
+                for (invocation in listOf(instance, instance.copy(outputAliases = mapOf(outputName to "pinned-depth-carrier")))) {
+                    val lowered = plugin.evaluate(dense, invocation, context, {})
+                    val mesh = lowered.meshes.single { it.id == head.id }
+                    assertEquals(opacity, mesh.channels[Channel.OPACITY])
+                    assertEquals(invocation.outputId(outputName), mesh.parent)
+                    assertEquals(head.parent, lowered.deformers.single { it.id == mesh.parent }.parent)
+                }
+                val geometry = requireNotNull(head.geometry)
+                val edited = head.copy(geometry = geometry.copy(positions = Floats.of(
+                    geometry.positions.toArray().also { it[0] += .01f })))
+                val rejection = assertFailsWith<IllegalStateException> {
+                    plugin.evaluate(prior.copy(meshes = prior.meshes.map { if (it.id == head.id) edited else it }),
+                        instance, context, {})
+                }
+                assertTrue(rejection.message.orEmpty().contains("unedited source geometry"))
+                store.uninstall(installed.reference)
+                assertTrue(store.snapshot().none { it.reference == installed.reference })
+                assertEquals(installed.reference, store.install(staging.toString()).reference)
+                assertEquals(actual, plugin.evaluate(prior, instance, context, {}))
+            } finally {
+                store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+                preferences.removeNode()
+                ModifierPluginStore.deleteTree(directory)
+            }
+            val compiled = RigIrCompiler.compile(current.model, tileArt = true)
+            f.edit("modifier_enable", buildJsonObject { put("id", "face"); put("enabled", false) })
+            assertEquals(ModifierStatus.MISSING_DEPENDENCY, f.now.model.modifierEvaluation!!.entries.last().status)
+            f.edit("modifier_enable", buildJsonObject { put("id", "face"); put("enabled", true) })
+            f.edit("modifier_apply", buildJsonObject { put("id", "face") })
+            assertEquals(compiled, RigIrCompiler.compile(f.builder.build(f.now.document), tileArt = true))
+            f.edit("modifier_apply", buildJsonObject { put("id", selected.id) })
+            assertEquals(compiled, RigIrCompiler.compile(f.builder.build(f.now.document), tileArt = true))
+        }
     }
 
     @Test fun depthTurnMatchesNativeAcrossHeadAndBodyPoses(): Unit = runBlocking<Unit> {
