@@ -5,6 +5,7 @@ import io.github.psd2live.algorithms.binding.MouthVowelAlgorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV5Algorithm
+import io.github.psd2live.algorithms.binding.MouthVowelV6Algorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.i18n.tr
@@ -44,6 +45,15 @@ internal object RigMouthVowelModifier {
     fun closedDefinition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthVowelV5Algorithm.VERSION, closedAlgorithm)
 
+    private val sourceOutlineAlgorithm = object : ReadingModifierAlgorithmPlugin by MouthVowelV6Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = MouthVowelV6Algorithm.optionalUpstream
+        override val canonicalOptInType = MouthVowelAlgorithm.TYPE
+    }
+
+    fun sourceOutlineDefinition(source: RigModifierSource?): RigModifierDefinition =
+        definition(source, MouthVowelV6Algorithm.VERSION, sourceOutlineAlgorithm)
+
     fun definition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthVowelAlgorithm.VERSION, algorithm)
 
@@ -58,7 +68,7 @@ internal object RigMouthVowelModifier {
     }
 
     private fun RigModifierSource.capture(instance: RigModifierInstance, version: Int): ModifierAlgorithmContext {
-        val closedDrawing = version == MouthVowelV5Algorithm.VERSION
+        val sourceOutline = version == MouthVowelV6Algorithm.VERSION
         val scaffold = provider(instance)
         require(scaffold.version == 2) { "Mouth vowel v$version requires a shared v2 scaffold" }
         val preceding = activeBefore(instance).filter { item ->
@@ -68,9 +78,15 @@ internal object RigMouthVowelModifier {
         val baseId = instance.config.getValue("base").jsonPrimitive.content
         val base = requireNotNull(preceding.singleOrNull {
             it.id == baseId && it.type == "mouth/fitted" &&
-                (if (closedDrawing) it.version == 4 else it.version in 1..2 || version == MouthVowelV4Algorithm.VERSION && it.version == 3)
+                when {
+                    sourceOutline -> it.version == 3 || it.version == 5
+                    version == MouthVowelV5Algorithm.VERSION -> it.version == 4
+                    else -> it.version in 1..2 || version == MouthVowelV4Algorithm.VERSION && it.version == 3
+                }
         }) { "Mouth vowel v$version requires a compatible fitted mouth on the same scaffold" }
+        val closedDrawing = version == MouthVowelV5Algorithm.VERSION || sourceOutline && base.version == 5
         val outlineVersion = when (version) {
+            MouthVowelV6Algorithm.VERSION -> if (closedDrawing) 6 else 7
             MouthVowelV5Algorithm.VERSION -> 5
             MouthVowelV3Algorithm.VERSION, MouthVowelV4Algorithm.VERSION -> 3
             else -> null

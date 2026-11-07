@@ -7752,6 +7752,85 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun fittedVowelsMatchClosedShellWithOneEyeAndInstalledWorker(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true,
+            creatureDetails = true, closedMouth = true).copy(deletedLayerIds = setOf("wing-left"))
+        verifyVowelsAfterSourceOutline(art, fitted = 5, outline = 6, requested = mapOf(
+            "body/legacy" to 2, "face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 3))
+    }
+
+    @Test fun fittedVowelsMatchOpenMouthAfterOrderedOutlineAndInstalledWorker(): Unit = runBlocking {
+        verifyVowelsAfterSourceOutline(
+            document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true),
+            fitted = 3, outline = 7, requested = mapOf("mouth/fitted" to 3, "mouth.outline" to 1))
+    }
+
+    private suspend fun verifyVowelsAfterSourceOutline(
+        art: WorkspaceDocument, fitted: Int, outline: Int, requested: Map<String, Int>,
+    ) {
+        val config = WorkspacePresetBaseline.configure(art.config(), "modern")
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config))
+        val (initialized, legacy) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
+            WorkspaceInitialPreset(clothing = false), requestedVersions = requested)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val vowel = stack.instances.single { it.type == "mouth.vowel" }
+        val index = stack.index(vowel.id)
+        assertEquals(1, vowel.version)
+        val versions = mapOf("mouth/fitted" to fitted, "mouth.outline" to outline, vowel.type to 6)
+        val upgraded = stack.copy(instances = stack.instances.map { entry ->
+            val version = versions[entry.type] ?: return@map entry
+            entry.copy(version = version, plugin = assertNotNull(BundledAlgorithmArtifacts.find(entry.type, version)).reference)
+        })
+        val document = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = upgraded.toJson()))
+        val expected = assertNotNull(legacy.modifierEvaluation).outputs
+        val previous = expected[index - 1]
+        val closed = fitted == 5
+        val mouth = expected[index].meshes.single { it.name == if (closed) "mouth-closed" else "mouth" }
+        val vowelA = mouth.shapes.single { it.parameter == "ParamA" }.shapes.filterNotNull().single()
+        assertTrue(vowelA.deltas.shared().any { it != 0f })
+        if (closed) assertEquals(0f, vowelA.opacity)
+        assertTrue(previous.meshes.single { it.id == mouth.id }.shapes.none { it.parameter == "ParamA" })
+        val compiled = RigIrCompiler.compile(legacy, tileArt = true)
+        fun verify(model: RigPreviewModel) {
+            val evaluation = assertNotNull(model.modifierEvaluation)
+            assertEquals(ModifierStatus.ACTIVE, evaluation.entries[index].status)
+            for (stage in index - 1 until stack.instances.size) {
+                val before = expected[stage]
+                val after = evaluation.outputs[stage]
+                val meshes = before.meshes.zip(after.meshes).filter { (a, b) -> a != b }.map { it.first.name }
+                assertTrue(before == after, "${stack.instances[stage].type}: meshes=$meshes")
+            }
+            assertFaceEquals(compiled, RigIrCompiler.compile(model, tileArt = true))
+        }
+        val actual = WorkspacePreviewBuilder().build(document).also(::verify)
+        val cache = RigStageCache.enabled
+        RigStageCache.enabled = false
+        try { verify(WorkspacePreviewBuilder().build(document)) } finally { RigStageCache.enabled = cache }
+
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(vowel.type, 6))
+        val root = Files.createTempDirectory("source-outline-vowel-package-")
+        val preferences = Preferences.userRoot().node("source-outline-vowel/" + UUID.randomUUID())
+        val store = ModifierPluginStore(root.resolve("installed"), preferences)
+        try {
+            BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+            val worker = store.snapshot().single()
+            val context = assertNotNull(assertNotNull(actual.modifierEvaluation).readAlgorithms[vowel.id]).context
+            for ((type, version) in versions - vowel.type) {
+                val provider = context.upstream.single { it.type == type }
+                assertEquals(version, provider.version)
+                assertEquals(BundledAlgorithmArtifacts.find(type, version)?.reference, provider.plugin)
+            }
+            val instance = upgraded.instances[index]
+            val definition = RigMouthVowelModifier.sourceOutlineDefinition(RigModifierSource.of(actual))
+            assertFaceEquals(expected[index], ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(),
+                previous, instance, {}, store, context = context, declaredParameters = definition.parameters(instance)))
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(root)
+        }
+    }
+
     @Test fun fittedMouthV3PreservesTheFallbackHeadTurnWithOneEye(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true,
             creatureDetails = true).copy(deletedLayerIds = setOf("wing-left"))
