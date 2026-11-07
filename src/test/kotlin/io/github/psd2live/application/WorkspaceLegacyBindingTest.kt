@@ -5,16 +5,21 @@ import io.github.psd2live.algorithms.binding.BrowSpringAlgorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV2Algorithm
 import io.github.psd2live.algorithms.binding.FittedFaceV2Algorithm
 import io.github.psd2live.algorithms.binding.DepthTurnV2Algorithm
+import io.github.psd2live.algorithms.binding.DepthTurnInputs
+import io.github.psd2live.algorithms.binding.DepthTurnMotion
 import io.github.psd2live.algorithms.binding.EyeSmileAlgorithm
 import io.github.psd2live.algorithms.binding.EyeAftershockAlgorithm
 import io.github.psd2live.algorithms.binding.EyeEmotionAlgorithm
 import io.github.psd2live.algorithms.binding.EyeHighlightAlgorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV2Algorithm
 import io.github.psd2live.algorithms.binding.LegacyFaceV2Algorithm
+import io.github.psd2live.algorithms.binding.LegacyBodyMotion
 import io.github.psd2live.core.*
+import io.github.psd2live.core.fit.FaceTurn
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.recipe.RigRecipe
 import io.github.psd2live.core.recipe.BaseChoice
+import io.github.psd2live.core.recipe.FeatureMove
 import io.github.psd2live.core.recipe.ModuleChoice
 import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.format.model.Channel
@@ -27,6 +32,7 @@ import io.github.psd2live.format.model.KeyGrid
 import io.github.psd2live.format.model.Rgb
 import io.github.psd2live.project.*
 import io.github.psd2live.scenario.Characters
+import io.github.psd2live.targets.cubism.PuppetIr
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
 import org.umamo.format.art.*
@@ -5493,6 +5499,45 @@ class WorkspaceLegacyBindingTest {
         val expected = RigIrCompiler.compile(f.now.model)
         f.edit("modifier_apply", buildJsonObject { put("id", "hair") })
         assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
+    @Test fun fittedMouthHeadLatticesCanBeReplayedFromSourceMeasurements() {
+        val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
+        val config = art.config().copy(featureDisplacementEnabled = true)
+        val document = art.copy(settings = WorkspaceSettingsCodec.encode(config))
+        val turn = ModuleChoice(true, values = mapOf("turn" to 60f, "depth" to 125f))
+        val neutralMouth = fittedRecipe(mapOf("eye" to BaseChoice("eye/fitted", 2), "brow" to BaseChoice("brow/fitted")))
+        val beforeRecipe = neutralMouth.copy(modules = neutralMouth.modules + ("face.depth-turn" to turn),
+            moves = mapOf("mouth" to mapOf("upper" to FeatureMove(1f, -2f))))
+        val afterRecipe = beforeRecipe.copy(bases = beforeRecipe.bases + ("mouth" to BaseChoice("mouth/fitted")))
+        val cache = PreviewMeshCache()
+        fun verify(recipe: RigRecipe): List<io.github.psd2live.format.model.Deformer> {
+            val reference = native(document, recipe)
+            val config = reference.config
+            val measured = RigBuilder.rigContext(reference.analysis, config, cache)
+            val parentFrames = measured.deformers.mapNotNull { deformer ->
+                deformer.parent?.let { id -> measured.resolveFrame(id, config)?.let { id to it } }
+            }.toMap()
+            val captured = RigDepthTurnSource.capture(measured, config, emptyMap(), emptyMap(), parentFrames).encode()
+            val source = DepthTurnInputs.decode(captured)
+            if (recipe.base("mouth") == RigModules.MOUTH_FITTED) assertNotNull(source.mouth)
+            val field = FaceTurn(source.landmarks, source.style)
+            assertTrue(field.usable)
+            val projected = LegacyBodyMotion.withFaceLean(DepthTurnMotion.deformers(
+                measured.deformers, field, source.head, source.face, source.container, source.frames,
+                measured.underFace, source.fittedEyes, source.fittedBrows, source.landmarks,
+            ), source.leanDown, source.leanUp).map(PuppetIr::deformerToIr)
+            val expected = reference.rig.puppet.deformers.associateBy { it.id.raw }
+            assertTrue(projected.any { it.id == "DeformFaceNinePose" })
+            for (deformer in projected) {
+                assertEquals(PuppetIr.deformerToIr(expected.getValue(deformer.id)), deformer, deformer.id)
+            }
+            return projected
+        }
+        val before = verify(beforeRecipe).associateBy { it.id }
+        val after = verify(afterRecipe).associateBy { it.id }
+        assertEquals(before.keys, after.keys)
+        assertTrue(before.any { (id, frame) -> frame != after.getValue(id) }, "The fitted mouth must change the head projection")
     }
 
     @Test fun naturalSpeechIncludesVowelsWhenTheSourceHasAMouth(): Unit = runBlocking<Unit> {
