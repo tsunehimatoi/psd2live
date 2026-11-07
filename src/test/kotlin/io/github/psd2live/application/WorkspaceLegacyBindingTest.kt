@@ -992,6 +992,33 @@ class WorkspaceLegacyBindingTest {
         assertEquals(1, RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.last().version)
     }
 
+    @Test fun independentMouthCaptureReplaysAfterFittedOutlineAndIndependentVowels(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
+        val choices = WorkspaceInitialPreset()
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, legacy) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
+            preferSourceBindings = true)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val versions = mapOf("mouth.outline" to 3, "mouth.vowel" to 3, "mouth.capture" to 2)
+        val capture = stack.instances.single { it.type == "mouth.capture" }
+        val index = stack.index(capture.id)
+        assertEquals(1, capture.version)
+        assertEquals(listOf("mouth.outline", "mouth.vowel", "mouth.capture"),
+            stack.instances.filter { it.type in versions }.map { it.type })
+        val locked = stack.copy(instances = stack.instances.map { instance ->
+            val version = versions[instance.type] ?: return@map instance
+            instance.copy(version = version, plugin = assertNotNull(BundledAlgorithmArtifacts.find(instance.type, version)).reference)
+        })
+        val document = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = locked.toJson()))
+        val actual = WorkspacePreviewBuilder().build(document)
+        val output = assertNotNull(actual.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, output.entries[index].status)
+        assertEquals(assertNotNull(legacy.modifierEvaluation).outputs[index], output.outputs[index])
+        assertEquals(RigIrCompiler.compile(legacy, tileArt = true), RigIrCompiler.compile(actual, tileArt = true))
+    }
+
     @Test fun independentMouthCapturePreservesRecommendedPreset(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
         val builder = WorkspacePreviewBuilder()
