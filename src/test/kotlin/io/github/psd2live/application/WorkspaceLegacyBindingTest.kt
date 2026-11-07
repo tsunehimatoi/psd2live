@@ -4716,6 +4716,58 @@ class WorkspaceLegacyBindingTest {
         assertTrue(differences.isEmpty(), differences.joinToString())
     }
 
+    @Test fun fittedFaceV3MatchesCompleteRecommendedPresetAndItsInstalledWorker(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true)
+        val config = WorkspacePresetBaseline.configure(art.config(), "modern")
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
+            WorkspaceInitialPreset(clothing = true), preferSourceBindings = true)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val face = stack.instances.single { it.type == "face/fitted" }
+        val body = stack.instances.single { it.type == "body/legacy" }
+        assertEquals(1, face.version)
+        assertEquals(2, body.version)
+        val index = stack.index(face.id)
+        val expected = assertNotNull(baseline.modifierEvaluation).outputs
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(face.type, 3))
+        val independent = face.copy(version = 3, plugin = artifact.reference)
+        fun withFace(replacement: RigModifierInstance): WorkspaceDocument {
+            val updated = stack.copy(instances = stack.instances.map { if (it.id == face.id) replacement else it })
+            return initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = updated.toJson()))
+        }
+        val oldOptIn = face.copy(version = 2, plugin = assertNotNull(BuiltinModifierPlugins.reference(face.type, 2)))
+        assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(withFace(oldOptIn)) }
+        val actual = WorkspacePreviewBuilder().build(withFace(independent))
+        assertFaceEquals(expected[index], assertNotNull(actual.modifierEvaluation).outputs[index])
+        assertFaceEquals(RigIrCompiler.compile(baseline), RigIrCompiler.compile(actual))
+
+        val directory = Files.createTempDirectory("fitted-face-v3-")
+        val preferences = Preferences.userRoot().node("fitted-face-v3/" + UUID.randomUUID())
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            for (name in artifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val installed = store.install(staging.toString())
+            assertEquals(artifact.reference, installed.reference)
+            val definition = RigFittedFaceDefinition.bodyDefinition(RigModifierSource.of(actual))
+            val upstream = stack.instances.take(index).filter { it.type in definition.requires + definition.optionalUpstream }.map {
+                ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+            }
+            val context = definition.authorContext(independent).withUpstream(upstream)
+            assertFaceEquals(expected[index], ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(),
+                expected[index - 1], independent, {}, store, context = context,
+                declaredParameters = definition.parameters(independent)))
+        } finally {
+            ModifierPluginWorkers.stop(artifact.reference)
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
     @Test fun independentLegacyFaceKeepsHeadMotionWithOrWithoutBody(): Unit = runBlocking {
         for (bodyVersion in listOf(null, 1, 2)) {
             val previous = legacyFaceFixture(null, bodyVersion)

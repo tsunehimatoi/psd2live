@@ -19,7 +19,7 @@ internal object BundledAlgorithmArtifacts {
             "hair-legacy", "eye-lid-fade", "eye-fitted", "mouth-fitted-v2", "mouth-vowel", "mouth-capture", "mouth-jaw", "mouth-tongue", "mouth-depth", "mouth-spring", "mouth-spring-v3", "fitted-face-v2", "eye-squash", "body-legacy-v2",
             "mouth-outline-v2", "brow-fitted-v2", "eye-legacy", "face-legacy-v2", "brow-legacy-v2", "depth-turn-v2",
             "eye-wide", "brow-shape", "eye-smile", "eye-fitted-v4", "brow-spring", "brow-blink", "eye-aftershock", "body-arms", "brow-lid", "brow-lid-v3", "eye-gaze-lid", "eye-emotion", "eye-highlight",
-            "mouth-cheek-lid", "mouth-cheek-lid-v3", "cheek-v2", "gloom-v2", "gloom-v3").map { name ->
+            "mouth-cheek-lid", "mouth-cheek-lid-v3", "cheek-v2", "gloom-v2", "gloom-v3", "fitted-face-v3").map { name ->
             val resource = "/algorithm-plugins/$name/"
             val bytes = requireNotNull(javaClass.getResourceAsStream(resource + "plugin.json")) { "Missing bundled algorithm: $name" }.use { it.readAllBytes() }
             Artifact(resource, bytes, Json.decodeFromString(ModifierPluginManifest.serializer(), bytes.decodeToString()))

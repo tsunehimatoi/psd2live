@@ -284,6 +284,55 @@ tasks.register("pluginFittedFaceV2") {
     }
 }
 
+val fittedFaceV3 = sourceSets.create("fittedFaceV3")
+kotlin.target.compilations.named("fittedFaceV3") {
+    associateWith(kotlin.target.compilations.getByName("main"))
+    associateWith(kotlin.target.compilations.getByName("fittedFaceV2"))
+}
+val fittedFaceV3ClassesJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("fitted-face-v3")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    from(fittedFaceV3.output)
+}
+val fittedFaceV3Elements = configurations.create("fittedFaceV3Elements") {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+}
+artifacts.add(fittedFaceV3Elements.name, fittedFaceV3ClassesJar)
+
+val fittedFaceV3WorkerJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("worker-fitted-face-v3")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest { attributes["Main-Class"] = "io.github.psd2live.algorithms.binding.FittedFaceV3Worker" }
+    from(fittedFaceV3.output)
+    from(fittedFaceV2WorkerJar.flatMap { it.archiveFile }.map { zipTree(it) }) { exclude("META-INF/MANIFEST.MF") }
+}
+
+tasks.register("pluginFittedFaceV3") {
+    dependsOn(fittedFaceV3WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-fitted-face-v3")
+    inputs.file(fittedFaceV3WorkerJar.flatMap { it.archiveFile })
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        fittedFaceV3WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.666163652f666974746564.v3"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"1.0.0","name":"Fitted face v3",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/binding","aliases":["face/fitted"],"version":3,"contextVersion":2,"name":"Fitted face v3","category":"face",
+               "targets":["mesh"],"requires":["rig.scaffold"],"provides":["face/legacy"],"exclusiveFamily":"base:face",
+               "reads":["*"],"writes":["mesh","deformer","parameter","hierarchy","relations"],
+               "composableKinds":["mesh","deformer","parameter","hierarchy","relations"],"configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 tasks.register("pluginDepthTurn") {
     dependsOn(workerJar)
     val output = layout.buildDirectory.dir("plugin-depth-turn")

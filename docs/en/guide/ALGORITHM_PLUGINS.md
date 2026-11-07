@@ -20,6 +20,8 @@ Legacy face v2 is also available by explicit version selection. It computes head
 
 Depth turn v2 is selectable by version. Its shell-turn mode requires a source-aware shared v2 scaffold and legacy face v1 or v2, with optional body v1 or v2. Fitted face and depth turn are mutually exclusive.
 
+Fitted face v3 is selectable after legacy body v1 or v2. It uses the body's pitch tuning and requires the same complete shared v2 scaffold and one preceding body provider. The modern preset still uses fitted face v1 while its fitted-eye path builds a face template.
+
 Eye widening v2 extends fitted eye opening and opacity from source measurements. Use v1 with preceding eye highlights, brow blink, or lid coupling.
 
 Brow shape v2 is selectable by version with a shared v2 scaffold and compatible fitted brows. Add it before other brow motion modifiers. Use v1 if the brow height keys, topology, or parent frame have already been edited.
