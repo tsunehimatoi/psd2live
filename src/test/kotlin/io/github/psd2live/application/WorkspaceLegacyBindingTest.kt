@@ -559,6 +559,70 @@ class WorkspaceLegacyBindingTest {
         assertEquals(RigIrCompiler.compile(expected), RigIrCompiler.compile(current))
     }
 
+    @Test fun independentMouthDepthUsesRealFittedSourceProviderAndInstalledWorker(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
+        val choices = WorkspaceInitialPreset()
+        val baseline = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+        val recipe = baseline.recipe.copy(modules = baseline.recipe.modules + mapOf(
+            RigModules.MOUTH_TONGUE.id to ModuleChoice(false),
+            RigModules.MOUTH_DEPTH.id to ModuleChoice(true, values = mapOf("depth" to 143f))))
+        val config = baseline.copy(recipe = recipe, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, legacy) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
+            preferSourceBindings = true)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val versions = mapOf("mouth/fitted" to 3, "mouth.outline" to 3, "mouth.vowel" to 4,
+            "mouth.capture" to 3, "mouth.jaw" to 3, "mouth.interior-depth" to 3)
+        val depth = stack.instances.single { it.type == "mouth.interior-depth" }
+        val index = stack.index(depth.id)
+        val locked = stack.copy(instances = stack.instances.map { entry ->
+            val version = versions[entry.type] ?: return@map entry
+            entry.copy(version = version, plugin = assertNotNull(BundledAlgorithmArtifacts.find(entry.type, version)).reference)
+        })
+        fun document(candidate: RigModifierStack) = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = candidate.toJson()))
+        val actual = WorkspacePreviewBuilder().build(document(locked))
+        val baselineOutputs = assertNotNull(legacy.modifierEvaluation).outputs
+        val expected = baselineOutputs[index]
+        val previous = baselineOutputs[index - 1]
+        val evaluated = assertNotNull(actual.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, evaluated.entries[index].status)
+        assertTrue(expected.deformers.any { deformer -> previous.deformers.none { it.id == deformer.id } })
+        assertTrue(expected.meshes.zip(previous.meshes).any { (after, before) ->
+            Channel.MULTIPLY_COLOR in after.channels && after.channels != before.channels
+        })
+        assertEquals(expected, evaluated.outputs[index])
+        assertEquals(RigIrCompiler.compile(legacy, tileArt = true), RigIrCompiler.compile(actual, tileArt = true))
+
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(depth.type, 3))
+        val directory = Files.createTempDirectory("fitted-source-depth-package-")
+        val preferences = Preferences.userRoot().node("fitted-source-depth-package/" + UUID.randomUUID())
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            for (name in artifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val entry = store.install(staging.toString())
+            val context = assertNotNull(evaluated.readAlgorithms[depth.id]).context
+            assertTrue(context.upstream.any { it.type == "mouth/fitted" && it.version == 3 })
+            assertTrue(context.upstream.any { it.type == "mouth.capture" && it.version == 3 })
+            assertEquals(expected, ModifierPluginWorkers.evaluate(entry, entry.manifest.algorithms.single(),
+                evaluated.outputs[index - 1], evaluated.entries[index].instance, {}, store, context = context))
+            for (required in listOf("mouth/fitted", "face/legacy")) {
+                val incomplete = context.withUpstream(context.upstream.filterNot { it.capability == required })
+                assertFailsWith<IllegalArgumentException> {
+                    io.github.psd2live.algorithms.binding.MouthDepthV3Algorithm().changes(
+                        evaluated.outputs[index - 1], evaluated.entries[index].instance, incomplete) {}
+                }
+            }
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
     @Test fun independentMouthDepthMatchesLockedVersionWithHeadTurn(): Unit = runBlocking {
         for (head in listOf("face/fitted", "face/legacy")) {
             val f = Fixture(document(mouthDetails = true))

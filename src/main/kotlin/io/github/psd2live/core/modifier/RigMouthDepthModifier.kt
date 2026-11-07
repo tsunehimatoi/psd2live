@@ -1,6 +1,7 @@
 package io.github.psd2live.core.modifier
 
 import io.github.psd2live.algorithms.binding.MouthDepthAlgorithm
+import io.github.psd2live.algorithms.binding.MouthDepthV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthRig.Follow
 import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.RigModules
@@ -15,35 +16,51 @@ internal object RigMouthDepthModifier {
         override val canonicalOptInType = MouthDepthAlgorithm.TYPE
     }
 
+    private val fittedAlgorithm = object : ReadingModifierAlgorithmPlugin by MouthDepthV3Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = MouthDepthV3Algorithm.optionalUpstream
+        override val canonicalOptInType = MouthDepthAlgorithm.TYPE
+    }
+
     fun definition(source: RigModifierSource?): RigModifierDefinition =
+        definition(source, MouthDepthAlgorithm.VERSION, algorithm)
+
+    fun fittedDefinition(source: RigModifierSource?): RigModifierDefinition =
+        definition(source, MouthDepthV3Algorithm.VERSION, fittedAlgorithm)
+
+    private fun definition(source: RigModifierSource?, version: Int,
+                           algorithm: ReadingModifierAlgorithmPlugin): RigModifierDefinition =
         RigLegacyBindings.definition(RigLegacyBindings.spec(MouthDepthAlgorithm.TYPE), source).copy(
-            version = MouthDepthAlgorithm.VERSION,
+            version = version,
             parameters = { emptyList() },
             resolveParameter = { _, _, _ -> null },
             plugin = algorithm,
             upstreamInputs = true,
             changeWrites = setOf("mesh", "deformer"),
             evaluate = { _, _, _ -> error("Mouth interior depth requires captured source inputs") },
-            authorContext = { requireNotNull(source).capture(it) },
+            authorContext = { requireNotNull(source).capture(it, version) },
         )
 
-    private fun RigModifierSource.capture(instance: RigModifierInstance): ModifierAlgorithmContext {
+    private fun RigModifierSource.capture(instance: RigModifierInstance, version: Int): ModifierAlgorithmContext {
+        val fittedSource = version == MouthDepthV3Algorithm.VERSION
+        val sourceVersions = if (fittedSource) 1..3 else 1..2
+        val optional = if (fittedSource) MouthDepthV3Algorithm.optionalUpstream else MouthDepthAlgorithm.optionalUpstream
         val scaffold = provider(instance)
-        require(scaffold.version == 2) { "Mouth interior depth v2 requires a shared v2 scaffold" }
+        require(scaffold.version == 2) { "Mouth interior depth v$version requires a shared v2 scaffold" }
         val preceding = activeBefore(instance).filter { item ->
             item.config["scaffold"] == JsonPrimitive(scaffold.id) && item.targets.any(instance.targets::contains) &&
                 RigLegacyBindings.find(item.type)?.let { !it.expressionToggles && !it.seeThrough } == true
         }
         val baseId = instance.config.getValue("base").jsonPrimitive.content
-        require(preceding.any { it.id == baseId && it.type == "mouth/fitted" && it.version in 1..2 }) {
-            "Mouth interior depth v2 requires a compatible fitted mouth"
+        require(preceding.any { it.id == baseId && it.type == "mouth/fitted" && it.version in sourceVersions }) {
+            "Mouth interior depth v$version requires a compatible fitted mouth"
         }
-        require(preceding.none { it.type.startsWith("mouth.") && it.type !in MouthDepthAlgorithm.optionalUpstream }) {
+        require(preceding.none { it.type.startsWith("mouth.") && it.type !in optional }) {
             "Use mouth interior depth v1 after other mouth modules"
         }
         val (native, context) = RigFittedMouthModuleSource.context(this, scaffold, preceding, RigModules.MOUTH_DEPTH)
         val mouth = requireNotNull(context.fittedMouth(native)?.takeIf { it.source != null }) {
-            "Mouth interior depth v2 requires readable fitted mouth artwork"
+            "Mouth interior depth v$version requires readable fitted mouth artwork"
         }
         val sourceLayers = context.analysis.layers.associateBy { it.source.id.raw }
         val inside = linkedMapOf<String, JsonObject>()
@@ -62,7 +79,7 @@ internal object RigMouthDepthModifier {
             val shade = mouth.covers(layer) && (mouth.follow(layer) in shadedFollows ||
                 (layer.semantic.tag == SemanticTag.MOUTH_OPEN && layer.semantic.role == null && hasDrawnMouth))
             if (depth == 0f && !shade) return@mapNotNull null
-            require(preceding.all { target in it.targets }) { "Mouth interior depth v2 requires a shared source frame" }
+            require(preceding.all { target in it.targets }) { "Mouth interior depth v$version requires a shared source frame" }
             inside[target.id] = buildJsonObject { put("depth", depth); put("shade", shade) }
             target.id to layer
         }.toMap()
