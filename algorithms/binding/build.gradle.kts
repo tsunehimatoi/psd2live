@@ -752,3 +752,55 @@ tasks.register("pluginMouthOutlineSource") {
         """.trimIndent())
     }
 }
+
+val eyeSquash = sourceSets.create("eyeSquash")
+kotlin.target.compilations.named("eyeSquash") {
+    associateWith(kotlin.target.compilations.getByName("main"))
+}
+val eyeSquashClassesJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("eye-squash")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    from(eyeSquash.output)
+}
+val eyeSquashElements = configurations.create("eyeSquashElements") {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+}
+artifacts.add(eyeSquashElements.name, eyeSquashClassesJar)
+
+val eyeSquashWorkerJar by tasks.registering(Jar::class) {
+    dependsOn(workerJar)
+    archiveClassifier.set("worker-eye-squash")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest { attributes["Main-Class"] = "io.github.psd2live.algorithms.binding.EyeSquashWorker" }
+    from(eyeSquash.output)
+    from(workerJar.flatMap { it.archiveFile }.map { zipTree(it) }) { exclude("META-INF/MANIFEST.MF") }
+}
+
+tasks.register("pluginEyeSquash") {
+    dependsOn(eyeSquashWorkerJar)
+    val output = layout.buildDirectory.dir("plugin-eye-squash")
+    val packageVersion = project.version.toString()
+    inputs.file(eyeSquashWorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        eyeSquashWorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6579652e737175617368.v2"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Iris squash",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/squash","aliases":["eye.squash"],"version":2,"name":"Iris squash","category":"eye",
+               "targets":["mesh"],"requires":["rig.scaffold","eye/fitted"],"contextVersion":2,
+               "reads":["mesh","deformer","parameter"],"writes":["mesh"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}

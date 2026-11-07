@@ -507,6 +507,77 @@ class WorkspaceLegacyBindingTest {
         assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
     }
 
+    @Test fun eyeSquashSourceMatchesLockedVersionAndAppliesWithWideLids(): Unit = runBlocking {
+        compareEyeSquash()
+    }
+
+    @Test fun packagedEyeSquashMatchesLockedVersionAndAppliesWithWideLids(): Unit = runBlocking {
+        compareEyeSquash(worker = true)
+    }
+
+    @Test fun eyeSquashSourceRejectsFittedHeadTurnsAtomically(): Unit = runBlocking {
+        compareEyeSquash(head = "face/fitted")
+    }
+
+    private suspend fun compareEyeSquash(worker: Boolean = false, head: String = "face/legacy") {
+        val f = Fixture(document(eyeDetails = true)); f.install()
+        f.group(listOf("body/legacy", head, "eye/fitted"))
+        val config = buildJsonObject { put("scaffold", "structure"); put("base", "eye") }
+        f.edit("modifier_add", f.addition("eye.wide", "wide", config = config))
+        val iris = mesh(f, "iris").id.raw
+        val original = mesh(f, "iris")
+        val authored = original.geometryGrid!!.cells.first().form.positionDeltas.mapIndexed { i, value ->
+            JsonPrimitive(value + if (i % 2 == 1) .005f else 0f)
+        }
+        f.edit("keyform_apply", buildJsonObject { putJsonArray("changes") { addJsonObject {
+            put("op", "set"); put("target", "mesh:$iris")
+            putJsonObject("key") {
+                val grid = original.geometryGrid!!
+                grid.axes.forEachIndexed { axis, entry -> put(entry.parameterId.raw, entry.keys[grid.cells.first().coordinate[axis]]) }
+            }
+            putJsonObject("geometry") { put("positionDeltas", JsonArray(authored)) }
+        } } })
+        val targets = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.single { it.id == "structure" }.targets
+        fun addition(name: String, version: Int) = JsonObject(f.addition(name, if (version == 1) "old-squash" else "squash", targets, config) +
+            ("version" to JsonPrimitive(version)))
+        f.edit("modifier_add", addition("eye.squash", 1))
+        val expected = RigIrCompiler.compile(f.now.model)
+        f.edit("modifier_remove", buildJsonObject { put("id", "old-squash") })
+        if (head == "face/fitted") {
+            val before = f.now
+            val error = assertFailsWith<WorkspaceBatchEditException> { f.edit("modifier_add", addition("eye.squash", 2)) }
+            assertContains(error.message.orEmpty(), "cannot lower fitted head-turn carriers")
+            assertEquals(before, f.now)
+            return
+        }
+        val input = requireNotNull(f.now.model.rig.modifierOutput)
+        f.edit("modifier_add", addition("eye.squash", 2))
+        val actual = RigIrCompiler.compile(f.now.model)
+        assertEquals(expected, actual)
+        if (worker) {
+            val stack = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
+            val instance = stack.instances.last()
+            val artifact = requireNotNull(BundledAlgorithmArtifacts.find("eye.squash", 2))
+            val entry = ModifierPluginStore.shared.snapshot().single { it.reference == artifact.reference }
+            val providers = stack.instances.dropLast(1).map { provider ->
+                ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
+                    provider.id, provider.config, provider.outputAliases, provider.plugin)
+            }
+            val definition = RigEyeSquashModifier.definition(RigModifierSource.of(f.now.model))
+            val context = definition.authorContext(instance).withUpstream(providers)
+            try {
+                val result = ModifierPluginWorkers.evaluate(entry, entry.manifest.algorithms.single(),
+                    input, instance, {}, context = context)
+                assertEquals(f.now.model.rig.modifierOutput, result)
+            } finally {
+                ModifierPluginWorkers.stop(entry.reference)
+            }
+        }
+        f.edit("modifier_apply", buildJsonObject { put("id", "squash") })
+        assertEquals(actual, RigIrCompiler.compile(f.now.model))
+        assertEquals(actual, RigIrCompiler.compile(WorkspacePreviewBuilder().build(f.now.document)))
+    }
+
     @Test fun widenedLidsFadingLinesAndHighlightsComposeWithHeadTurnsAndApplyAsOrdinaryContent(): Unit = runBlocking {
         widenedLidsFadingLinesAndHighlightsCompose("eye.lid-fade", 2)
     }

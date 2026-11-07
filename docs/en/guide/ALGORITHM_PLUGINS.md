@@ -8,7 +8,7 @@ External packages may declare dependencies on bundled package IDs and versions r
 
 Independent packages also cover legacy mouth and hair binding, hair chains, neck tilt, chest bounce, eyelid fade, and the opt-in fitted face v2, fitted eyes v3, and fitted mouth v2. Other bundled bindings still have compatibility paths that extract their results from host-generated templates.
 
-Select fitted face v2, fitted eyes v3, or fitted mouth v2 by version in the add menu. Fitted face v2 requires the complete target set of a neutral shared v2 scaffold. Fitted eyes v3 requires a compatible eye scaffold, and fitted mouth v2 requires a neutral mouth scaffold. Recommended presets use the default versions. The document stores the stable modifier type and the selected package so later modifiers can still resolve the original dependency type.
+Select fitted face v2, fitted eyes v3, or fitted mouth v2 by version in the add menu. Fitted face v2 requires the complete target set of a neutral shared v2 scaffold. Fitted eyes v3 requires a compatible eye scaffold, and fitted mouth v2 requires a neutral mouth scaffold. Recommended presets use the default versions. Iris squash v2 is also selectable by version and requires fitted eyes and the captured iris topology. Use v1 with fitted head turn. The document stores the stable modifier type and the selected package so later modifiers can still resolve the original dependency type.
 
 ## Install and remove
 

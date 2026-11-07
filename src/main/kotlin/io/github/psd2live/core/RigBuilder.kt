@@ -1148,6 +1148,33 @@ object RigBuilder {
         return io.github.psd2live.algorithms.binding.LidFadeInputs.encode(targets)
     }
 
+    /** Captures the fitted crease, source iris topology and its neutral frame without binding motion. */
+    internal fun eyeSquashSourceInputs(
+        analysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig, cache: PreviewMeshCache,
+        targetLayers: Map<String, String>, parentId: (String, String) -> String,
+    ): io.github.psd2live.core.modifier.ModifierAlgorithmContext {
+        val context = rigContext(analysis, config, cache, neutralScaffold = true)
+        val eyes = context.fittedEyes(config)?.rigs.orEmpty()
+        val layers = context.analysis.layers.associateBy { it.source.id.raw }
+        val tuning = config.rigTuning
+        val measurements = targetLayers.mapNotNull { (target, layerId) ->
+            val layer = layers[layerId] ?: return@mapNotNull null
+            if (layer.semantic.tag != SemanticTag.IRIDES || layer.opaquePixels == 0) return@mapNotNull null
+            val placement = atlas.placementByLayerId[layerId] ?: return@mapNotNull null
+            val aligned = context.rigLayer(layer)
+            val eye = eyes[aligned.semantic.side] ?: return@mapNotNull null
+            val (parent, frame) = context.parentAndFrame(layer, config)
+            val source = buildGridMesh(layer, frame, context.headSpaceFor(layer, config), config, cache,
+                MeshResolution.unitScale(config, context.analysis.source))
+            val raw = ScaffoldMesh.RawMesh(source.rigPositions,
+                LayerTexture.packed(layer, placement, atlas).bind(source.mesh.uvs), source.mesh.indices)
+            target to io.github.psd2live.algorithms.binding.EyeSquashInputs(aligned.semantic.side, eye.crease,
+                parent?.raw?.let { parentId(target, it) }, frame,
+                ScaffoldMesh.Geometry.Iris(aligned.centroidX, aligned.centroidY, tuning.irisJellySquash, tuning.irisJellyStretch), raw)
+        }.toMap()
+        return io.github.psd2live.algorithms.binding.EyeSquashInputs.encode(measurements)
+    }
+
     /** Captures the neck's source topology and neutral frames without evaluating any binding stage. */
     internal fun neckSourceInputs(
         analysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig, cache: PreviewMeshCache,
