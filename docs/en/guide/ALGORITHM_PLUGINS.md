@@ -44,7 +44,7 @@ Eye smile v2 requires shared scaffold v2 and fitted eyes v2. It adds smile keys 
 
 Eye smile v3 also supports fitted eyes v5. It recomputes eyelid shapes after fitted head turns and can precede eye widening v3. Use v1 if the change would remove an existing deformer, refit a deformer shared with other meshes, or if the source measurements cannot reproduce the current binding.
 
-Blink aftershock v2 adds eyelid rebound and its physics group. It requires a shared v2 scaffold and compatible fitted eyes. Use v1 with preceding lid coupling or if the source eyelid frame or keyforms have already been edited.
+Blink aftershock v2 adds eyelid rebound and its physics group. It requires a shared v2 scaffold and compatible fitted eyes. v3 supports fitted eyes v5 after gaze v3 and eye emotion, keeping the IDs of reproducible lid carriers. Use v1 when brow-lid or cheek-lid coupling already precedes it, or when the source eyelid frame or keyforms have been edited.
 
 Gaze-following lids v2 adds shared and per-eye gaze from the source eyelids. It requires a shared v2 scaffold and compatible fitted eyes. v3 supports fitted eyes v5 after fitted head turns, including preceding smile and wide v3. It keeps any head-turn carrier it can reconstruct from the source. Use v1 if the source lid geometry has been edited or rebound, brow-lid or cheek-lid coupling already precedes it.
 
