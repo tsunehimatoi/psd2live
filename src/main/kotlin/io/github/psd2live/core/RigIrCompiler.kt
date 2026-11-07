@@ -138,8 +138,10 @@ internal object RigIrCompiler {
         val exported = stack.instances.filter { it.type == "simulation" && it.id in active }.map { instance ->
             val source = RigSimEdit.fromJson(instance.config)
             val edit = RigModifierAlgorithms.simulationOutputs(instance, source)
-            val aliases = RigModifierAlgorithms.simulationPhysics(instance, edit, parameters)
-                .filterValues { it.id in groups }.mapValues { it.value.id }
+            val aliases = requireNotNull(source.bake).pendulums.mapIndexedNotNull { index, pendulum ->
+                val outputId = instance.outputId("physics:$index")
+                if (outputId in groups) pendulum.id to outputId else null
+            }.toMap()
             val scene = SimExport.export(rig.puppet, listOf(edit.copy(id = instance.outputId("simulation"))), parameters, aliases.keys)
             scene.simulations.map { simulation -> simulation.copy(physicsGroups = simulation.physicsGroups.map(aliases::getValue)) } to scene.colliders
         }

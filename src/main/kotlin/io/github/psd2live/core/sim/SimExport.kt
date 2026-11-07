@@ -80,7 +80,7 @@ internal object SimExport {
 			welds = solver.welds.let { SimWelds(Ints.wrap(it.a.copyOf()), Ints.wrap(it.b.copyOf()), floats(it.weightA), floats(it.weightB), floats(it.compliance)) },
 			longRange = solver.longRange.let { SimLongRange(Ints.wrap(it.particle.copyOf()), Ints.wrap(it.root.copyOf()), floats(it.maxDistance)) },
 			parameters = edit.outputParameters.filter { it in parameters },
-			physicsGroups = SimGenerator.writtenPendulums(edit).map { it.id }.filter { it in physicsGroups },
+			physicsGroups = bake.pendulums.map { it.id }.filter { it in physicsGroups },
 			statics = statics,
 			colliders = colliders,
 		)

@@ -100,8 +100,6 @@ internal object RigModifierAlgorithms {
 
     internal fun simulationOutputs(instance: RigModifierInstance, source: RigSimEdit): RigSimEdit =
         io.github.psd2live.algorithms.simulation.SimulationOutputs.outputs(instance, source)
-    internal fun simulationPhysics(instance: RigModifierInstance, edit: RigSimEdit, available: Set<String>): Map<String, RigPhysicsEdit> =
-        io.github.psd2live.algorithms.simulation.SimulationOutputs.physics(instance, edit, available)
 
     internal fun addPhysics(rig: RigIR, groups: List<PhysicsGroup>): RigIR =
         io.github.psd2live.algorithms.physics.PhysicsGroups.append(rig, groups)
