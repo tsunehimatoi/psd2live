@@ -116,14 +116,18 @@ class MouthFittedAlgorithm : ChangingModifierAlgorithmPlugin {
                 (layer.tag in setOf("FACE", "NOSE") || layer.tag == "FACE_DETAIL" && mouth.fit.toMouth(layer.centroidX, layer.centroidY).second > 0f)
             val raw = vertexInputs?.targets?.get(original.id.raw)?.takeIf { it.parent == original.parentDeformerId?.raw }
                 ?.let { rawMeshes.getValue(it.canonical) }
-            val positions = sourcePositions[original.id.raw] ?: if (raw != null && matchesSource(raw, geometry, layer.frame, checkpoint)) raw.rigPositions
-                else positions(geometry.positions, layer.frame)
+            val suppliedPositions = sourcePositions[original.id.raw]
+            val positions by lazy {
+                suppliedPositions ?: if (raw != null && matchesSource(raw, geometry, layer.frame, checkpoint))
+                    raw.rigPositions else positions(geometry.positions, layer.frame)
+            }
             val grid = when {
                 mouth != null && follow != null -> if (layer.tag == "MOUTH_CLOSE") mouth.closedGrid(positions, layer.frame, mouthForm)
                     else mouth.grid(positions, layer.frame, mouthForm, mouthOpen, follow, inputs.chin)
                 mouth != null && faceSkin -> mouth.faceGrid(positions, layer.frame, mouthForm, mouthOpen, inputs.chin)
                 layer.tag in openTags && inputs.fallback != null -> fallbackGrid(positions, layer, inputs.fallback)
-                layer.tag in tags && original.geometryGrid == null -> KeyformGrid(emptyList(), listOf(KeyformCell(IntArray(0), MeshDeltaForm(FloatArray(positions.size)))))
+                layer.tag in tags && original.geometryGrid == null ->
+                    KeyformGrid(emptyList(), listOf(KeyformCell(IntArray(0), MeshDeltaForm(FloatArray(positions.size)))))
                 else -> original.geometryGrid
             }
             val masks = if (layer.tag in components || covered && layer.tag in openTags &&
@@ -148,8 +152,9 @@ class MouthFittedAlgorithm : ChangingModifierAlgorithmPlugin {
             }
             val updated = if (grid === original.geometryGrid && channels == original.channelGrids.gridsByChannel && masks == original.maskedBy)
                 original else original.copy(geometryGrid = grid, channelGrids = ChannelGrids(channels), maskedBy = masks)
-            if (mouth == null || follow == null && !mouthFace) return@map updated
-            val mouthShapes = if (follow != null) {
+            val rebuiltMouthMesh = suppliedPositions != null && layer.tag in tags
+            if (!rebuiltMouthMesh && (mouth == null || follow == null && !mouthFace)) return@map updated
+            val mouthShapes = if (mouth != null && follow != null) {
                 val closed = layer.tag == "MOUTH_CLOSE"
                 val depth = when (follow) {
                     MouthRig.Follow.UPPER_TEETH -> 0.06f
@@ -164,13 +169,15 @@ class MouthFittedAlgorithm : ChangingModifierAlgorithmPlugin {
                     layer.tag == "TONGUE", follow, chin = inputs.chin) +
                     if (depth > 0f && angleX in active && angleY in active)
                         mouth.depthShapes(positions, layer.frame, depth, angleX, angleY) else emptyList()
-            } else mouth.faceShapes(positions, layer.frame, inputs.chin, layer.tag == "NOSE", mouthOpen,
-                MouthRig.SPRING.takeIf { mouth.options.spring }, lippedSkin = faceSkin)
+            } else if (mouth != null && mouthFace) {
+                mouth.faceShapes(positions, layer.frame, inputs.chin, layer.tag == "NOSE", mouthOpen,
+                    MouthRig.SPRING.takeIf { mouth.options.spring }, lippedSkin = faceSkin)
+            } else emptyList()
             val headShapes = if (head != null && layer.turnsWithHeadMesh && angleX in active && angleY in active &&
-                (faceSkin || follow != null)) {
+                (rebuiltMouthMesh || faceSkin || follow != null)) {
                 val rest = when {
-                    faceSkin -> mouth.atRestFace(positions, inputs.chin)
-                    follow != null && layer.tag != "MOUTH_CLOSE" -> mouth.atRest(positions, follow, inputs.chin)
+                    faceSkin && mouth != null -> mouth.atRestFace(positions, inputs.chin)
+                    follow != null && mouth != null && layer.tag != "MOUTH_CLOSE" -> mouth.atRest(positions, follow, inputs.chin)
                     else -> positions
                 }
                 head.shapes(rest, layer.frame, HeadShell.SKIN, angleX, angleY)

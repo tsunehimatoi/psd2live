@@ -374,7 +374,7 @@ internal class RigModifierSource(
                 val nativeConfig = generationConfig(bodyStrength, tuning, headStrength, correctedRecipe, outline,
                     scaffold["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
                     scaffold["frontHairSway"]?.jsonPrimitive?.boolean ?: true, scaffold["backHairSway"]?.jsonPrimitive?.boolean ?: true)
-                return fittedMouthTemplate(instances, scaffold, nativeConfig, kept, byArea.keys)
+                fittedMouthTemplate(instances, scaffold, nativeConfig, kept, byArea.keys)?.let { return it }
             }
             var bindingInput: (() -> PuppetModel)? = null
             val native = RigBuildProfile.stage("modifier legacy template: ${instances.lastOrNull()?.type ?: "rig.scaffold"}") {
@@ -388,10 +388,10 @@ internal class RigModifierSource(
     }
 
     private fun fittedMouthTemplate(instances: List<RigModifierInstance>, scaffold: JsonObject,
-                                    native: PipelineConfig, kept: Set<ParameterId>, areas: Set<String>): Template {
+                                    native: PipelineConfig, kept: Set<ParameterId>, areas: Set<String>): Template? {
+        val context = RigBuilder.rigContext(analysis, native, meshCache).takeIf { it.fittedMouth(native)?.rig != null } ?: return null
         val previous = template(instances.dropLast(1), scaffold)
         val input = requireNotNull(previous.bindingInput) { "Fitted mouth requires captured upstream source geometry" }.invoke()
-        val context = RigBuilder.rigContext(analysis, native, meshCache)
         val sourceLayers = context.analysis.layers.associateBy { it.source.id.raw }
         val layers = input.drawables.mapNotNull { mesh ->
             sourceLayers[layersByMesh[mesh.id.raw]]?.let { mesh.id.raw to it }
@@ -405,7 +405,7 @@ internal class RigModifierSource(
             val layer = layers.getValue(drawable.id.raw)
             if (layer.semantic.tag !in CharacterAnalyzer.MOUTH_TAGS) return@map drawable
             drawable.copy(parentDeformerId = context.parentAndFrame(layer, native).first, mesh = data.mesh,
-                geometryGrid = null, blendShapes = emptyList())
+                geometryGrid = RigBuilder.zeroMeshGrid(data.rigPositions.size), blendShapes = emptyList())
         })
         val headProvider = instances.lastOrNull { it.type in setOf("face/fitted", "face.depth-turn") }?.id
         val captured = RigFittedMouthSource.capture(context, native, source, layers, frames,

@@ -4,7 +4,7 @@ import java.security.MessageDigest
 // Binding kernels use the GPL engine; they are separate from the MIT API/format modules.
 plugins { `java-library`; kotlin("jvm"); kotlin("plugin.serialization") }
 group = "io.github.psd2live.algorithms"
-version = "1.0.58"
+version = "1.0.59"
 kotlin { jvmToolchain(21) }
 dependencies {
     api(project(":umamo"))

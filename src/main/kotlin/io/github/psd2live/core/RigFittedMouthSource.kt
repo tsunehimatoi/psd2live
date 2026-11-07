@@ -36,7 +36,7 @@ internal object RigFittedMouthSource {
             val ownTurn = parent?.raw?.startsWith("DeformMouthShape") != true &&
                 !(styled && parent != null && (parent.raw == "DeformFaceContour" || parent in context.underFace))
             MouthFittedInputs.Layer(layer.semantic.tag.name, layer.semantic.role?.name, layer.semantic.side.name,
-                layer.semantic.variant, frame, layer.bounds, layer.centroidX, layer.centroidY, layer.opaquePixels > 0,
+                layer.semantic.variant, frame, original.bounds, layer.centroidX, layer.centroidY, layer.opaquePixels > 0,
                 layer.source.clipped,
                 (config.layerOverrides[original.source.id.raw]?.type ?: original.semantic.type) == LayerType.PRESET,
                 turnsWithHeadMesh = ownTurn,

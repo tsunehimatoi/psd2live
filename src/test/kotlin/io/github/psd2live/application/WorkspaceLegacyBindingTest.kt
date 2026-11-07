@@ -44,7 +44,7 @@ class WorkspaceLegacyBindingTest {
 
     /** Small public procedural art with distinct eye, brow, mouth, hair and torso inputs. */
     private fun document(eyeDetails: Boolean = false, mouthDetails: Boolean = false, expressionDetails: Boolean = false, skinDetails: Boolean = false, outfitDetails: Boolean = false, sideLock: Boolean = false, bangOverlay: Boolean = false,
-                         chestDetail: Boolean = false): WorkspaceDocument {
+                         chestDetail: Boolean = false, thinMouth: Boolean = false): WorkspaceDocument {
         data class Shape(val id: String, val tag: SemanticTag, val side: Side, val x: Int, val y: Int, val w: Int, val h: Int, val role: PartRole? = null)
         val shapes = listOf(
             Shape("iris", SemanticTag.IRIDES, Side.LEFT, 37, 19, 5, 10),
@@ -52,7 +52,7 @@ class WorkspaceLegacyBindingTest {
             Shape("close", SemanticTag.EYE_CLOSE, Side.LEFT, 34, 25, 12, 2),
             Shape("white", SemanticTag.EYEWHITE, Side.LEFT, 34, 20, 12, 8),
             Shape("brow", SemanticTag.EYEBROW, Side.LEFT, 34, 14, 12, 2),
-            Shape("mouth", SemanticTag.MOUTH, Side.NONE, 25, 35, 14, 6),
+            Shape("mouth", SemanticTag.MOUTH, Side.NONE, 25, 35, 14, if (thinMouth) 1 else 6),
             if (sideLock) Shape("front", SemanticTag.FRONT_HAIR, Side.LEFT, 39, 9, 12, 32, PartRole.SIDE)
             else Shape("front", SemanticTag.FRONT_HAIR, Side.NONE, 14, 4, 36, 13),
             Shape("face", SemanticTag.FACE, Side.NONE, 15, 8, 34, 40),
@@ -343,15 +343,22 @@ class WorkspaceLegacyBindingTest {
     }
 
     @Test fun fittedMouthMatchesNativeBeforeAddingHair(): Unit = runBlocking<Unit> {
-        val f = Fixture(document()); f.install()
-        val recipe = fittedRecipe(mapOf("eye" to BaseChoice("eye/fitted", 2), "brow" to BaseChoice("brow/fitted"), "mouth" to BaseChoice("mouth/fitted")))
-        val original = native(f.document, recipe)
-        f.group(listOf("body/legacy", "face/legacy", "eye/fitted", "brow/fitted", "mouth/fitted"))
-        compare(original, f.now.model, listOf(emptyMap(),
-            mapOf(StandardParameters.ANGLE_X to 20f, StandardParameters.ANGLE_Y to -12f,
-                StandardParameters.MOUTH_OPEN to .6f, StandardParameters.MOUTH_FORM to -.5f)),
-            targets = setOf(mesh(f, "mouth").id))
+        val cases = listOf(Triple(false, false, false), Triple(true, false, false), Triple(true, true, false), Triple(false, true, true))
+        for ((details, depthTurn, thinMouth) in cases) {
+            val f = Fixture(document(mouthDetails = details, thinMouth = thinMouth)); f.install()
+            val recipe = fittedRecipe(mapOf("eye" to BaseChoice("eye/fitted", 2), "brow" to BaseChoice("brow/fitted"), "mouth" to BaseChoice("mouth/fitted")))
+                .let { if (depthTurn) it.copy(modules = it.modules + (RigModules.FACE_DEPTH_TURN.id to ModuleChoice(true))) else it }
+            val original = native(f.document, recipe)
+            val face = if (depthTurn) "face/fitted" else "face/legacy"
+            f.group(listOf("body/legacy", face, "eye/fitted", "brow/fitted", "mouth/fitted"))
+            val targets = original.rig.layerIdByDrawableId.filterValues { it in setOf("mouth", "teeth-top", "teeth-bottom", "tongue") }
+                .keys.mapTo(hashSetOf(), ::DrawableId)
+            compare(original, f.now.model, listOf(emptyMap(),
+                mapOf(StandardParameters.ANGLE_X to 20f, StandardParameters.ANGLE_Y to -12f,
+                    StandardParameters.MOUTH_OPEN to .6f, StandardParameters.MOUTH_FORM to -.5f)), targets = targets)
+        }
     }
+
     @Test fun fittedBaseValuesAreIndependentOfLegacySlidersAndMutuallyExclusiveWithOtherBases(): Unit = runBlocking<Unit> {
         val f = Fixture(document()); f.install()
         f.group(listOf("eye/fitted"))
