@@ -2596,6 +2596,81 @@ class WorkspaceLegacyBindingTest {
         assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(f.now.document)))
     }
 
+    @Test fun eyeEmotionV3MatchesRecommendedFittedHeadAndItsInstalledWorker(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true)
+        val config = WorkspacePresetBaseline.configure(art.config(), "modern")
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
+            WorkspaceInitialPreset(clothing = true), preferSourceBindings = true)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val emotion = stack.instances.single { it.type == "eye.emotion" }
+        val index = stack.index(emotion.id)
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(emotion.type, 3))
+        val independent = emotion.copy(version = 3, plugin = artifact.reference)
+        val expected = assertNotNull(baseline.modifierEvaluation).outputs
+        assertEquals(1, emotion.version)
+        val candidate = stack.copy(instances = stack.instances.map {
+            when (it.type) {
+                "eye.emotion" -> independent
+                "eye.gaze-lid" -> it.copy(version = 3, plugin = assertNotNull(BuiltinModifierPlugins.reference(it.type, 3)))
+                "eye.smile" -> it.copy(version = 3, plugin = assertNotNull(BuiltinModifierPlugins.reference(it.type, 3)))
+                "eye.wide" -> it.copy(version = 3, plugin = assertNotNull(BuiltinModifierPlugins.reference(it.type, 3)))
+                "eye/fitted" -> it.copy(version = 5, plugin = assertNotNull(BuiltinModifierPlugins.reference(it.type, 5)))
+                else -> it
+            }
+        })
+        val candidateDocument = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = candidate.toJson()))
+        val stages = RigStageCache.enabled
+        RigStageCache.enabled = false
+        RigBuildProfile.reset()
+        RigBuildProfile.recording = true
+        val actual = try {
+            WorkspacePreviewBuilder().build(candidateDocument)
+        } finally {
+            RigBuildProfile.recording = false
+            RigStageCache.enabled = stages
+        }
+        val profile = RigBuildProfile.snapshot()
+        RigBuildProfile.reset()
+        assertTrue("modifier evaluate: eye.emotion" in profile)
+        assertTrue(profile.keys.none {
+            it.startsWith("modifier template consumer: ") && it.contains(": eye.emotion ->")
+        })
+        val outputs = assertNotNull(actual.modifierEvaluation).outputs
+        assertFaceEquals(expected[index - 1], outputs[index - 1])
+        assertFaceEquals(expected[index], outputs[index])
+        val headAxes = setOf("ParamAngleX", "ParamAngleY")
+        val before = outputs[index - 1]
+        val after = outputs[index].meshes.associateBy { it.id }
+        assertTrue(before.meshes.any { mesh ->
+            val warp = before.deformers.singleOrNull { it.id == mesh.parent } as? io.github.psd2live.format.model.Deformer.Warp
+            val head = mesh.offsets?.axes.orEmpty() + warp?.lattice?.axes.orEmpty()
+            head.any { it.parameter in headAxes } && mesh != after.getValue(mesh.id) &&
+                mesh.id in emotion.targets.map { it.id }
+        }, "The fixture must exercise emotion over an existing head turn")
+        val compiled = RigIrCompiler.compile(actual, tileArt = true)
+        assertFaceEquals(RigIrCompiler.compile(baseline, tileArt = true), compiled)
+
+        val directory = Files.createTempDirectory("eye-emotion-recommended-")
+        val preferences = Preferences.userRoot().node("eye-emotion-recommended/" + UUID.randomUUID())
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+            val installed = store.snapshot().single()
+            assertEquals(artifact.reference, installed.reference)
+            val definition = RigEyeEmotionModifier.definition(RigModifierSource.of(actual), modern = true)
+            val context = assertNotNull(actual.modifierEvaluation?.readAlgorithms?.get(independent.id)).context
+            assertFaceEquals(expected[index], ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(),
+                outputs[index - 1], independent, {}, store, context = context,
+                declaredParameters = definition.parameters(independent)))
+        } finally {
+            ModifierPluginWorkers.stop(artifact.reference)
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
     @Test fun independentEyeEmotionPreservesTheRecommendedPreset(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
         val builder = WorkspacePreviewBuilder()
