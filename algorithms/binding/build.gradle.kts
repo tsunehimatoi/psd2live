@@ -3054,6 +3054,35 @@ tasks.register("pluginEyeHighlight") {
     }
 }
 
+val eyeHighlightV4WorkerJar = registerIsolatedBindingWorker(
+    "eyeHighlightV4", "eye-highlight-v4", "worker-eye-highlight-v4", "io.github.psd2live.algorithms.binding.EyeHighlightV4Worker",
+)
+
+tasks.register("pluginEyeHighlightV4") {
+    dependsOn(eyeHighlightV4WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-eye-highlight-v4")
+    val packageVersion = project.version.toString()
+    inputs.file(eyeHighlightV4WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        eyeHighlightV4WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6579652e686967686c69676874.v4"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Eye highlight",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/highlight","aliases":["eye.highlight"],"version":4,"name":"Eye highlight","category":"eye",
+               "targets":["mesh"],"requires":["rig.scaffold","eye/fitted","face/legacy"],"contextVersion":2,
+               "reads":["*"],"writes":["mesh","deformer","part","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val eyeHighlightV3WorkerJar = registerIsolatedBindingWorker(
     "eyeHighlightV3", "eye-highlight-v3", "worker-eye-highlight-v3", "io.github.psd2live.algorithms.binding.EyeHighlightV3Worker",
 )

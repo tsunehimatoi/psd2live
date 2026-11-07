@@ -2,9 +2,11 @@ package io.github.psd2live.core.modifier
 
 import io.github.psd2live.algorithms.binding.EyeHighlightAlgorithm
 import io.github.psd2live.algorithms.binding.EyeHighlightV3Algorithm
+import io.github.psd2live.algorithms.binding.EyeHighlightV4Algorithm
 import io.github.psd2live.algorithms.binding.EyeHighlightInput
 import io.github.psd2live.algorithms.binding.EyeModules
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
+import io.github.psd2live.core.ClassifiedLayer
 import io.github.psd2live.core.LayerType
 import io.github.psd2live.core.PartRole
 import io.github.psd2live.core.RigBuilder
@@ -17,6 +19,8 @@ import io.github.psd2live.project.WorkspaceSettingsCodec
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.serialization.json.jsonPrimitive
 
 internal object RigEyeHighlightModifier {
@@ -30,6 +34,67 @@ internal object RigEyeHighlightModifier {
         ModifierOptionalUpstream, ModifierVersionSelection {
         override val optionalUpstream = EyeHighlightV3Algorithm.optionalUpstream
         override val canonicalOptInType = EyeHighlightAlgorithm.TYPE
+    }
+
+    fun sharedFrameDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val projected = object : ChangingModifierAlgorithmPlugin by EyeHighlightV4Algorithm(),
+            ModifierOptionalUpstream, ModifierVersionSelection {
+            override val optionalUpstream = RigLegacyBindings.specs.filter { !it.expressionToggles && !it.seeThrough }
+                .mapTo(linkedSetOf()) { it.type } - EyeHighlightAlgorithm.TYPE
+            override val canonicalOptInType = EyeHighlightAlgorithm.TYPE
+        }
+        return definition(source).copy(version = EyeHighlightV4Algorithm.VERSION, plugin = projected,
+            changeWrites = setOf("mesh", "deformer", "part", "hierarchy"),
+            authorContext = { requireNotNull(source).captureSharedFrames(it) })
+    }
+
+    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val scaffold = provider(instance)
+        val prefix = activeBefore(instance).filter {
+            it.config["scaffold"] == JsonPrimitive(scaffold.id) && it.targets.any(instance.targets::contains) &&
+                RigLegacyBindings.find(it.type)?.let { spec -> !spec.expressionToggles && !spec.seeThrough } == true
+        }
+        require(scaffold.version == 2 && prefix.all { it.targets.containsAll(instance.targets) }) {
+            "Eye highlight v4 requires a shared fitted source"
+        }
+        val face = prefix.single { it.type == "face/fitted" && it.version == 3 }
+        val brow = prefix.single { it.type == "brow/fitted" && it.version == 4 }
+        require(prefix.any { it.id == instance.config.getValue("base").jsonPrimitive.content && it.type == "eye/fitted" && it.version == 5 })
+        val smile = prefix.single { it.type == "eye.smile" && it.version == 4 }
+        require(prefix.none { it.type == EyeHighlightAlgorithm.TYPE })
+        val wide = prefix.single { it.type == "eye.wide" && it.version == 4 }
+        val gaze = prefix.single { it.type == "eye.gaze-lid" && it.version == 4 }
+        val emotion = prefix.single { it.type == "eye.emotion" && it.version == 4 }
+        val (before, old) = RigFittedMouthModuleSource.context(this, scaffold, prefix, null)
+        val (after, next) = RigFittedMouthModuleSource.context(this, scaffold, prefix + instance, null)
+        val eyeTags = setOf(SemanticTag.IRIDES, SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYE_CLOSE)
+        fun eyes(context: RigBuilder.RigContext): Map<String, ClassifiedLayer> {
+            val layers = context.analysis.layers.associateBy { it.source.id.raw }
+            return instance.targets.mapNotNull { target ->
+                val layer = layers[layersByMesh[target.id]] ?: return@mapNotNull null
+                (target.id to layer).takeIf { layer.semantic.tag in eyeTags && layer.source.id.raw in atlas.placementByLayerId }
+            }.toMap()
+        }
+        val prior = eyes(old)
+        val desired = eyes(next)
+        require(prior.isNotEmpty() && prior.keys == desired.keys)
+        val projected = prior.filterValues { it.semantic.tag == SemanticTag.IRIDES }.keys
+        require(prior.values.any { it.semantic.tag == SemanticTag.IRIDES && it.semantic.role == PartRole.HIGHLIGHT }) {
+            "Eye highlight v4 requires separate highlight artwork"
+        }
+        val axes = prefix.flatMapTo(hashSetOf()) { RigLegacyBindings.spec(it.type).parameters }
+        return ModifierAlgorithmContext(buildJsonObject {
+            put("face", face.id)
+            put("brow", brow.id)
+            put("smile", smile.id)
+            put("wide", wide.id)
+            put("gaze", gaze.id)
+            put("emotion", emotion.id)
+        }, mapOf(
+            "before" to outlineShellSource(old, before, prior, axes, includeFaceLean = true, projectedMeshes = projected),
+            "after" to outlineShellSource(next, after, desired, axes + RigLegacyBindings.spec(instance.type).parameters,
+                includeFaceLean = true, projectedMeshes = projected),
+        ))
     }
 
     fun definition(source: RigModifierSource?, modern: Boolean = false): RigModifierDefinition =
