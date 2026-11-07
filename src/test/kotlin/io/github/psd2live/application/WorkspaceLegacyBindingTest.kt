@@ -8898,6 +8898,29 @@ class WorkspaceLegacyBindingTest {
         assertEquals(expected, normalized(f.now.model))
     }
 
+    @Test fun conversionCandidateKeepsNativeRasterOutputIds(): Unit = runBlocking {
+        val art = document(bangOverlay = true)
+        val config = art.config().copy(meshOnly = false, generateDeformers = true, recipe = RigRecipe.Modern,
+            mouthOutlineEnabled = true, seeThroughEyes = true, seeThroughBrows = true, exportMotions = false,
+            rigEdits = RigEditOverlay.Empty)
+        val legacy = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val builder = WorkspacePreviewBuilder()
+        val previous = builder.build(legacy)
+        val stack = WorkspaceModifierConversion.bindings(previous)
+        val outline = stack.instances.single { it.type == "mouth.outline" }
+        val lips = previous.baseRig.layerIdByDrawableId.filterValues(MouthLipLayer::isLipId)
+        assertTrue(lips.isNotEmpty())
+        assertTrue(previous.rig.seeThroughCopies.isNotEmpty())
+        assertEquals(lips.keys, outline.outputAliases.filterKeys { it.startsWith("mouth-lip:") }.values.toSet())
+        assertEquals(lips.values.toSet(), outline.outputAliases.filterKeys { it.startsWith("mouth-art:") }.values.toSet())
+        val paths = previous.baseRig.puppet.deformPaths.filter { it.drawableId.raw in lips }.map { it.id }.toSet()
+        assertEquals(paths, outline.outputAliases.filterKeys { it.startsWith("mouth-path:") }.values.toSet())
+        val candidate = builder.build(legacy.copy(rigEdits = config.rigEdits.copy(modifierStack = stack.toJson())))
+        val generated = candidate.rig.puppet.drawables.mapTo(HashSet()) { it.id.raw }
+        assertTrue(generated.containsAll(lips.keys + previous.rig.seeThroughCopies.keys))
+        assertTrue(candidate.rig.puppet.deformPaths.mapTo(HashSet()) { it.id }.containsAll(paths))
+    }
+
     @Test fun applyingASharedScaffoldPreservesAliasesForRemainingBindings(): Unit = runBlocking<Unit> {
         val art = document()
         val config = art.config().copy(meshOnly = false, generateDeformers = true, generatePhysics = false,

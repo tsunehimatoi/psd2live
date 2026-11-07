@@ -166,6 +166,8 @@ internal object WorkspaceModifierConversion {
                 }
                 if (values.isNotEmpty()) putJsonObject("values") { values.forEach { (key, value) -> put(key, value) } }
             }, hierarchyAliases + buildMap {
+                if (spec.mouthOutline) putAll(mouthOutlineAliases(model))
+                if (spec.seeThrough) putAll(seeThroughAliases(model, spec.module == RigModules.EYE_SEE_THROUGH))
                 nativePhysics.filter { it.id in spec.module?.physicsGroups.orEmpty() }.forEach { put("physics:${it.id}", it.id) }
                 for (chain in chains.filter { it.native.kind in RigModifierChains.kinds(spec.type) }) {
                     chain.parameters.forEach { (native, normalized) -> put("chain-parameter:${normalized.raw.removePrefix("SourceChain:")}", native) }
@@ -229,6 +231,29 @@ internal object WorkspaceModifierConversion {
             add("motion", 1, MotionClips.toJson(captured), mapOf("motion" to clip.id))
         }
         return stack
+    }
+
+    private fun mouthOutlineAliases(model: RigPreviewModel): Map<String, String> = buildMap {
+        val base = model.baseRig
+        val layers = model.analysis.layers.mapNotNull { it.source as? MouthLipLayer }.associateBy { it.id.raw }
+        val meshesByLayer = base.ownLayerIdByDrawableId.entries.groupBy({ it.value }, { it.key })
+        val pathsByMesh = base.puppet.deformPaths.groupBy { it.drawableId.raw }
+        for ((mesh, layer) in base.ownLayerIdByDrawableId) {
+            val lip = layers[layer] ?: continue
+            val owner = meshesByLayer[lip.ownerId]?.singleOrNull { "${it}_lip_${lip.side}" == mesh } ?: continue
+            val suffix = "$owner:${lip.side}"
+            put("mouth-lip:$suffix", mesh)
+            put("mouth-art:$suffix", layer)
+            for (path in pathsByMesh[mesh].orEmpty()) put("mouth-path:$suffix:${path.id}", path.id)
+        }
+    }
+
+    private fun seeThroughAliases(model: RigPreviewModel, eyes: Boolean): Map<String, String> {
+        val rig = model.rig
+        val originals = rig.seeThrough.orEmpty().filter { it.eyes == eyes }.mapTo(HashSet()) { it.original }
+        if (eyes) originals += rig.seeThroughWindows.keys
+        return rig.seeThroughCopies.entries.filter { it.value in originals }
+            .associate { (copy, original) -> "see-through:$original" to copy }
     }
 }
 
