@@ -2,6 +2,7 @@ package io.github.psd2live.core.modifier
 
 import io.github.psd2live.algorithms.binding.MouthFittedInputs
 import io.github.psd2live.algorithms.binding.MouthLegacyInputs
+import io.github.psd2live.algorithms.binding.ScaffoldAlgorithm
 import io.github.psd2live.algorithms.binding.ScaffoldParts
 import io.github.psd2live.algorithms.binding.ScaffoldPartsContext
 import io.github.psd2live.core.*
@@ -251,37 +252,51 @@ internal class RigModifierSource(
 
     private val scaffoldTorsos = HashMap<RigModifierInstance, io.github.psd2live.algorithms.binding.TorsoFrame>()
     private val scaffoldContexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
+    private val sourceScaffoldContexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
     fun scaffoldContext(instance: RigModifierInstance): ModifierAlgorithmContext = scaffoldContexts.getOrPut(instance) {
+        val source = sourceScaffoldContext(instance)
         val pinned = instance.plugin?.takeIf { it.id.startsWith("builtin.") }
             ?.let { ModifierPluginVersion.parse(it.version, legacy = true) }
-        val organization = if (pinned != null && pinned < ModifierPluginVersion.parse("1.0.37")) null else
-            ScaffoldPartsContext.capture(analysis.layers.mapNotNull { layer ->
+        if (pinned == null || pinned >= ModifierPluginVersion.parse("1.0.41")) source
+        else {
+            val canonical = source.values.getValue("canonical_targets").jsonObject.mapValues { it.value.jsonPrimitive.content }
+            val template = scaffold(instance) {}
+            // Old packages received the material drawables in their native order.
+            val order = materialBase.drawables.mapIndexed { index, drawable -> drawable.id to index }.toMap()
+            val nativeOrder = template.drawables.sortedBy { order[it.id] ?: Int.MAX_VALUE }
+            ScaffoldAlgorithm.capture(template.copy(drawables = nativeOrder), materialBase, canonical,
+                source.values.getValue("organization").jsonObject.takeIf { pinned >= ModifierPluginVersion.parse("1.0.37") },
+                source.values.getValue("frames").jsonObject.takeIf { pinned >= ModifierPluginVersion.parse("1.0.38") },
+                source.values.getValue("branches").jsonObject.takeIf { pinned >= ModifierPluginVersion.parse("1.0.40") })
+        }
+    }
+
+    private fun sourceScaffoldContext(instance: RigModifierInstance): ModifierAlgorithmContext =
+        sourceScaffoldContexts.getOrPut(instance) {
+            val organization = ScaffoldPartsContext.capture(analysis.layers.mapNotNull { layer ->
                 primaryByLayer[layer.source.id.raw]?.let { id ->
                     ScaffoldParts.Material(DrawableId(id), RigBuilder.scaffoldSlot(layer, analysis.anchors), layer.source.order)
                 }
             }, label = { io.github.psd2live.i18n.tr(it) })
-        val options = instance.config
-        val corrections = io.github.psd2live.project.WorkspaceSettingsCodec.decodeRecipe(options["corrections"])
-        val native = sourceConfig().copy(
-            bodyStrength = 1f, headTurnStrength = 1f, rigTuning = RigTuning(),
-            recipe = RigRecipe.Legacy.copy(moves = corrections.moves, eyeParts = corrections.eyeParts),
-            featureDisplacementEnabled = options["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
-            hairSimulationFront = !(options["frontHairSway"]?.jsonPrimitive?.boolean ?: true),
-            hairSimulationBack = !(options["backHairSway"]?.jsonPrimitive?.boolean ?: true),
-        )
-        val structure = if (pinned != null && pinned < ModifierPluginVersion.parse("1.0.38")) null else
-            RigBuilder.scaffoldSourceInputs(analysis, native, meshCache)
-        if (structure != null) scaffoldTorsos[instance] = structure.torso
-        val canonical = instance.targets.associate { it.id to primaryByLayer.getValue(layersByMesh.getValue(it.id)) }
-        if (pinned == null || pinned >= ModifierPluginVersion.parse("1.0.41")) {
-            val sources = instance.targets.associate { layersByMesh.getValue(it.id) to canonical.getValue(it.id) }
-            io.github.psd2live.algorithms.binding.ScaffoldAlgorithm.captureSource(materialBase, canonical,
-                requireNotNull(organization), requireNotNull(structure).frames, structure.branches,
+            val options = instance.config
+            val corrections = io.github.psd2live.project.WorkspaceSettingsCodec.decodeRecipe(options["corrections"])
+            val native = sourceConfig().copy(
+                bodyStrength = 1f, headTurnStrength = 1f, rigTuning = RigTuning(),
+                recipe = RigRecipe.Legacy.copy(moves = corrections.moves, eyeParts = corrections.eyeParts),
+                featureDisplacementEnabled = options["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
+                hairSimulationFront = !(options["frontHairSway"]?.jsonPrimitive?.boolean ?: true),
+                hairSimulationBack = !(options["backHairSway"]?.jsonPrimitive?.boolean ?: true),
+            )
+            val structure = RigBuilder.scaffoldSourceInputs(analysis, native, meshCache)
+            scaffoldTorsos[instance] = structure.torso
+            val sources = instance.targets.associate { target ->
+                val layer = layersByMesh.getValue(target.id)
+                layer to primaryByLayer.getValue(layer)
+            }
+            val canonical = instance.targets.associate { it.id to sources.getValue(layersByMesh.getValue(it.id)) }
+            ScaffoldAlgorithm.captureSource(materialBase, canonical, organization, structure.frames, structure.branches,
                 RigBuilder.scaffoldMeshInputs(analysis, atlas, native, meshCache, sources))
-        } else io.github.psd2live.algorithms.binding.ScaffoldAlgorithm.capture(scaffold(instance) {}, materialBase,
-            canonical, organization, structure?.frames,
-            structure?.branches?.takeUnless { pinned < ModifierPluginVersion.parse("1.0.40") })
-    }
+        }
 
     fun legacyMouthContext(instance: RigModifierInstance): ModifierAlgorithmContext {
         val structure = provider(instance)
@@ -561,11 +576,7 @@ internal class RigModifierSource(
     private fun scaffold(instance: RigModifierInstance, checkpoint: () -> Unit): PuppetModel {
         checkpoint()
         val result = sourceScaffolds.getOrPut(instance) {
-            val pinned = instance.plugin?.takeIf { it.id.startsWith("builtin.") }
-                ?.let { ModifierPluginVersion.parse(it.version, legacy = true) }
-            if (pinned == null || pinned >= ModifierPluginVersion.parse("1.0.41"))
-                io.github.psd2live.algorithms.binding.ScaffoldAlgorithm().buildSource(scaffoldContext(instance), checkpoint)
-            else template(emptyList(), instance.config).model
+            ScaffoldAlgorithm().buildSource(sourceScaffoldContext(instance), checkpoint)
         }
         checkpoint()
         return result

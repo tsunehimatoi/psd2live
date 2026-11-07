@@ -1,15 +1,25 @@
 package io.github.psd2live.core
 
 import io.github.psd2live.algorithms.binding.BindingProjection
+import io.github.psd2live.algorithms.binding.ScaffoldAlgorithm
 import io.github.psd2live.algorithms.binding.ScaffoldHead
 import io.github.psd2live.algorithms.binding.ScaffoldFramesContext
 import io.github.psd2live.algorithms.binding.ScaffoldBranchesContext
 import io.github.psd2live.algorithms.binding.ScaffoldMeshContext
+import io.github.psd2live.core.modifier.BuiltinModifierPlugins
+import io.github.psd2live.core.modifier.ModifierTarget
+import io.github.psd2live.core.modifier.RigModifierInstance
 import io.github.psd2live.core.modifier.RigModifierPipeline
+import io.github.psd2live.core.modifier.RigModifierSource
+import io.github.psd2live.core.modifier.RigModifierStack
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.project.rawConfig
 import io.github.psd2live.scenario.Characters
 import io.github.psd2live.targets.cubism.PuppetIr
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -49,6 +59,41 @@ class ScaffoldHeadParityTest {
         assertTrue(ids.containsAll(listOf("DeformEyes", "DeformEyeGazeL", "DeformEyeGazeR",
             "DeformEars", "DeformEarOcclusionL", "DeformEarOcclusionR")))
         assertTrue("DeformFeatureDisplacement" !in ids)
+    }
+
+    @Test fun historicalScaffoldInputsMatchWithoutBuildingALegacyRig() {
+        for (document in listOf(Characters.figure(), Characters.browed())) {
+            val config = document.rawConfig().let { it.copy(rigEdits = it.rigEdits.copy(modifierStack = RigModifierStack().toJson())) }
+            val model = PSD2LivePipeline().buildPreview(document.source, config)
+            val source = RigModifierSource.of(model)
+            val native = source.sourceConfig().copy(featureDisplacementEnabled = true, hairSimulationFront = true)
+            val atlas = model.modifierAuthorAtlas ?: model.atlas
+            val cache = PreviewMeshCache()
+            val legacy = RigBuilder.buildNeutralScaffold(source.analysis, atlas, native, cache).puppet
+            val neutral = BindingProjection.retain(legacy, emptySet(), mapOf(StandardParameters.MOUTH_OPEN to 1f))
+            val all = model.rig.puppet.drawables.filter { it.mesh != null }.map { ModifierTarget("mesh", it.id.raw) }
+            val reference = requireNotNull(BuiltinModifierPlugins.reference("rig.scaffold", 1))
+            for (targets in listOf(all, all.take(1))) {
+                val canonical = targets.associate { it.id to source.primaryByLayer.getValue(source.layersByMesh.getValue(it.id)) }
+                val instance = RigModifierInstance("structure", "rig.scaffold", 1, targets, config = buildJsonObject {
+                    put("featureDisplacement", true)
+                    put("frontHairSway", false)
+                })
+                val current = source.scaffoldContext(instance)
+                for ((version, schema) in listOf("1.0.36" to 1, "1.0.37" to 2, "1.0.38" to 3, "1.0.40" to 4)) {
+                    val pinned = instance.copy(plugin = reference.copy(version = version))
+                    val expected = ScaffoldAlgorithm.capture(neutral, model.baseRig.puppet, canonical,
+                        current.values.getValue("organization").jsonObject.takeIf { schema >= 2 },
+                        current.values.getValue("frames").jsonObject.takeIf { schema >= 3 },
+                        current.values.getValue("branches").jsonObject.takeIf { schema >= 4 })
+                    val actual = source.scaffoldContext(pinned)
+                    assertEquals(JsonPrimitive("scaffold/$schema"), actual.values["schema"])
+                    assertEquals(expected.values, actual.values)
+                    assertEquals(expected.resources.mapValues { it.value.digest }, actual.resources.mapValues { it.value.digest },
+                        "Historical package $version, target count " + targets.size)
+                }
+            }
+        }
     }
 
     private fun compare(analysis: PipelineAnalysis, config: PipelineConfig): List<String> {
