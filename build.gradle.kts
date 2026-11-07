@@ -209,6 +209,16 @@ tasks.test {
 	enabled = true
 }
 
+tasks.register<Test>("testFittedFaceLatticesPackage") {
+	val packageDirectory = project(":algorithms:binding").layout.buildDirectory.dir("plugin-fitted-face-lattices")
+	dependsOn(":algorithms:binding:pluginFittedFaceLattices")
+	inputs.dir(packageDirectory)
+	testClassesDirs = sourceSets.test.get().output.classesDirs
+	classpath = sourceSets.test.get().runtimeClasspath
+	filter.includeTestsMatching("io.github.psd2live.core.FittedFaceLatticeParityTest")
+	systemProperty("psd2live.fittedFaceLatticesPackage", packageDirectory.get().asFile.absolutePath)
+}
+
 
 // Keep Cubism out of classpath resources unless explicitly opted in.
 tasks.processResources {

@@ -1,8 +1,6 @@
 package io.github.psd2live.core
 
 import io.github.psd2live.algorithms.binding.MouthFittedInputs
-import io.github.psd2live.core.recipe.RecipeSubject
-import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.i18n.tr
 import org.umamo.runtime.model.DeformerId
 import org.umamo.runtime.model.PuppetModel
@@ -30,13 +28,10 @@ internal object RigFittedMouthSource {
         headProvider: String?,
     ): MouthFittedInputs {
         val fitted = context.fittedMouth(config)
-        val depthTurn = RigModules.builds(RigModules.FACE_DEPTH_TURN, config, RecipeSubject.of(context.analysis))
-        val head = if (!depthTurn) null else {
+        val head = RigFittedFaceSource.headTurn(context, config)?.let { turn ->
             require(!headProvider.isNullOrBlank()) { "Fitted mouth depth turn requires an explicit provider" }
-            val face = context.faceRig
-            MouthFittedInputs.Head(headProvider, face.centerX, face.centerY, face.radiusX, face.radiusY,
-                config.recipe.value(RigModules.FACE_DEPTH_TURN.id, "turn") / 100f * config.headTurnStrength,
-                config.recipe.value(RigModules.FACE_DEPTH_TURN.id, "depth") / 100f, face.chinY)
+            MouthFittedInputs.Head(headProvider, turn.centerX, turn.centerY, turn.radiusX, turn.radiusY,
+                turn.turn, turn.depth, turn.chinY)
         }
         val styled = context.faceTurn(config) != null
         val captured = layers.mapValues { (id, original) ->

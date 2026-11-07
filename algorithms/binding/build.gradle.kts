@@ -195,6 +195,41 @@ tasks.register("pluginMouthLegacy") {
     }
 }
 
+val fittedFaceLattices = sourceSets.create("fittedFaceLattices")
+kotlin.target.compilations.named("fittedFaceLattices") {
+    associateWith(kotlin.target.compilations.getByName("main"))
+}
+
+val fittedFaceLatticesWorkerJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("worker-fitted-face-lattices")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest { attributes["Main-Class"] = "io.github.psd2live.algorithms.binding.FittedFaceLatticesWorker" }
+    from(fittedFaceLattices.output)
+    from(workerJar.flatMap { it.archiveFile }.map { zipTree(it) }) { exclude("META-INF/MANIFEST.MF") }
+}
+
+tasks.register("pluginFittedFaceLattices") {
+    dependsOn(fittedFaceLatticesWorkerJar)
+    val output = layout.buildDirectory.dir("plugin-fitted-face-lattices")
+    inputs.file(fittedFaceLatticesWorkerJar.flatMap { it.archiveFile })
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        fittedFaceLatticesWorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"psd2live.fitted-face-lattices","version":"1.0.0","name":"Fitted face lattices",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"psd2live.fitted-face-lattices/styled","version":1,"name":"Fitted face lattices","category":"face",
+               "contextVersion":2,"targets":["mesh"],"requires":["rig.scaffold"],"reads":["deformer"],"writes":["deformer"],
+               "composableKinds":["deformer"],"configSchema":{"type":"object","additionalProperties":false},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 tasks.register("pluginDepthTurn") {
     dependsOn(workerJar)
     val output = layout.buildDirectory.dir("plugin-depth-turn")
