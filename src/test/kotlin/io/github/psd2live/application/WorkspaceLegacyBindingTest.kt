@@ -368,6 +368,112 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun independentBrowBlinkMatchesLockedVersionWithWideSmileAndHeadTurn(): Unit = runBlocking {
+        for (head in listOf("face/legacy", "face/fitted")) {
+            val f = Fixture(document(pairedBrows = true, bilateralEyes = true))
+            f.install()
+            f.group(listOf("body/legacy", head, "eye/fitted", "brow/fitted"))
+            fun config(base: String) = buildJsonObject { put("scaffold", "structure"); put("base", base) }
+            if (head == "face/fitted") {
+                for (type in listOf("eye.wide", "eye.smile")) {
+                    val eye = f.addition(type, type, config = config("eye"))
+                    f.edit("modifier_add", JsonObject(eye + ("version" to JsonPrimitive(2))))
+                }
+                val shape = f.addition("brow.shape", "shape", config = config("brow"))
+                f.edit("modifier_add", JsonObject(shape + ("version" to JsonPrimitive(2))))
+            }
+            val prefix = f.now
+            val previous = assertNotNull(prefix.model.rig.modifierOutput)
+            val addition = f.addition("brow.blink", "blink", config = JsonObject(config("brow") + ("values" to buildJsonObject { put("dip", 158f) })))
+            f.edit("modifier_add", addition)
+            val locked = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.last()
+            assertEquals(1, locked.version)
+            val legacy = f.now.model
+            val expected = assertNotNull(legacy.rig.modifierOutput)
+            f.runtime.checkout(f.now.projectId, f.now.state, prefix.historyHead)
+            f.edit("modifier_add", JsonObject(addition + ("version" to JsonPrimitive(2))))
+            val current = f.now.model
+            val actual = assertNotNull(current.rig.modifierOutput)
+            assertEquals(expected.parameters, actual.parameters)
+            assertEquals(expected.parameterTree, actual.parameterTree)
+            for ((old, next) in expected.meshes.zip(actual.meshes)) assertEquals(old, next, old.id)
+            assertEquals(expected, actual)
+            assertEquals(RigIrCompiler.compile(legacy), RigIrCompiler.compile(current))
+            val evaluator = CpuDeformationEvaluator()
+            val pose = mapOf(StandardParameters.ANGLE_X to 18f, StandardParameters.ANGLE_Y to -12f,
+                StandardParameters.EYE_L_OPEN to .36f, StandardParameters.EYE_R_OPEN to 1.7f,
+                ParameterId("ParamEyeLSmile") to .67f, ParameterId("ParamBrowRAngle") to -.7f)
+            val brow = mesh(f, "brow").id
+            val oldPose = evaluator.evaluate(legacy.rig.puppet, pose)
+            val newPose = evaluator.evaluate(current.rig.puppet, pose)
+            assertContentEquals(oldPose.worldPositions.getValue(brow), newPose.worldPositions.getValue(brow))
+            assertFalse(evaluator.evaluate(prefix.model.rig.puppet, pose).worldPositions.getValue(brow).contentEquals(newPose.worldPositions.getValue(brow)))
+
+            val stack = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
+            val instance = stack.instances.last()
+            val artifact = assertNotNull(BundledAlgorithmArtifacts.find("brow.blink", 2))
+            assertEquals(artifact.reference, instance.plugin)
+            if (head == "face/fitted") {
+                val directory = Files.createTempDirectory("brow-blink-package-")
+                val preferences = Preferences.userRoot().node("brow-blink-package/" + UUID.randomUUID())
+                val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+                try {
+                    val staging = Files.createDirectory(directory.resolve("package"))
+                    Files.write(staging.resolve("plugin.json"), artifact.bytes)
+                    for (name in artifact.manifest.files.keys) {
+                        assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                    }
+                    val providers = stack.instances.dropLast(1).map { provider ->
+                        ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
+                            provider.id, provider.config, provider.outputAliases, provider.plugin)
+                    }
+                    val definition = RigBrowBlinkModifier.definition(RigModifierSource.of(current))
+                    repeat(2) {
+                        val installed = store.install(staging.toString())
+                        assertEquals(artifact.reference, installed.reference)
+                        val algorithm = installed.manifest.algorithms.single()
+                        val external = instance.copy(type = algorithm.type)
+                        val adapter = ModifierPluginCatalog.definitions(store, captured = listOf(definition)).single {
+                            it.type == external.type && it.version == external.version
+                        }
+                        val context = adapter.authorContext(external).withUpstream(providers.filter {
+                            it.capability in adapter.requires + adapter.optionalUpstream
+                        })
+                        assertEquals(actual, (adapter.plugin as ContextualModifierAlgorithmPlugin).evaluate(previous, external, context) {})
+                        ModifierPluginWorkers.stop(installed.reference)
+                        store.uninstall(installed.reference)
+                    }
+                } finally {
+                    store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+                    preferences.removeNode()
+                    ModifierPluginStore.deleteTree(directory)
+                }
+            }
+            val compiled = RigIrCompiler.compile(current)
+            f.edit("modifier_apply", buildJsonObject { put("id", "blink") })
+            assertEquals(compiled, RigIrCompiler.compile(f.now.model))
+            assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(f.now.document)))
+        }
+    }
+
+    @Test fun independentBrowBlinkPreservesTheRecommendedPreset(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
+        val builder = WorkspacePreviewBuilder()
+        val stack = WorkspaceModifierPlan.initial(builder.build(art), WorkspaceModifierPlan.RECOMMENDED_GROUP)
+        val locked = stack.instances.single { it.type == "brow.blink" }
+        assertEquals(1, locked.version)
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 2))
+        suspend fun preview(candidate: RigModifierStack) = builder.build(art.copy(
+            rigEdits = art.rigEdits.copy(modifierStack = candidate.toJson()),
+        ))
+        val expected = preview(stack)
+        val current = preview(stack.copy(instances = stack.instances.map {
+            if (it.id == locked.id) it.copy(version = 2, plugin = artifact.reference) else it
+        }))
+        assertEquals(expected.rig.modifierOutput, current.rig.modifierOutput)
+        assertEquals(RigIrCompiler.compile(expected), RigIrCompiler.compile(current))
+    }
+
     @Test fun browShapeV2RejectsEditedHeightGridAtomically(): Unit = runBlocking {
         val f = Fixture(document())
         f.install()
