@@ -1654,6 +1654,35 @@ tasks.register("pluginEyeWide") {
     }
 }
 
+val eyeWideV4WorkerJar = registerIsolatedBindingWorker(
+    "eyeWideV4", "eye-wide-v4", "worker-eye-wide-v4", "io.github.psd2live.algorithms.binding.EyeWideV4Worker",
+)
+
+tasks.register("pluginEyeWideV4") {
+    dependsOn(eyeWideV4WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-eye-wide-v4")
+    val packageVersion = project.version.toString()
+    inputs.file(eyeWideV4WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        eyeWideV4WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6579652e77696465.v4"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Eye widening",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/wide","aliases":["eye.wide"],"version":4,"name":"Eye widening","category":"eye",
+               "targets":["mesh"],"requires":["rig.scaffold","eye/fitted"],"contextVersion":2,
+               "reads":["*"],"writes":["mesh","deformer","part","parameter","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val eyeWideV3WorkerJar = registerIsolatedBindingWorker(
     "eyeWideV3", "eye-wide-v3", "worker-eye-wide-v3", "io.github.psd2live.algorithms.binding.EyeWideV3Worker",
 )
