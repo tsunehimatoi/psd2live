@@ -45,11 +45,17 @@ class WorkspaceSourceImporterTest {
                 assertTrue(stack.instances.any { it.type == "face/fitted" })
                 assertTrue(stack.instances.none { it.type == "face/legacy" || it.type == "face.depth-turn" })
                 assertTrue(installed.model.rig.puppet.deformers.isNotEmpty())
-                val body = stack.instances.single { it.type == "body/legacy" }
-                assertEquals(2, body.version)
-                assertEquals(assertNotNull(BuiltinModifierPlugins.reference(body.type, 2)), body.plugin)
-                val legacy = body.copy(version = 1, plugin = assertNotNull(BuiltinModifierPlugins.reference(body.type, 1)))
-                val locked = stack.copy(instances = stack.instances.map { if (it.id == body.id) legacy else it })
+                val independent = mapOf("body/legacy" to 2, "face/fitted" to 3, "eye/fitted" to 5)
+                for ((type, version) in independent) {
+                    val instance = stack.instances.single { it.type == type }
+                    assertEquals(version, instance.version, type)
+                    assertEquals(assertNotNull(BuiltinModifierPlugins.reference(type, version)), instance.plugin)
+                }
+                val previous = mapOf("body/legacy" to 1, "face/fitted" to 1, "eye/fitted" to 2)
+                val locked = stack.copy(instances = stack.instances.map { instance ->
+                    val version = previous[instance.type] ?: return@map instance
+                    instance.copy(version = version, plugin = assertNotNull(BuiltinModifierPlugins.reference(instance.type, version)))
+                })
                 val reference = installed.document.copy(rigEdits = installed.document.rigEdits.copy(modifierStack = locked.toJson()))
                 assertEquals(RigIrCompiler.compile(builder.build(reference)), RigIrCompiler.compile(installed.model))
             }

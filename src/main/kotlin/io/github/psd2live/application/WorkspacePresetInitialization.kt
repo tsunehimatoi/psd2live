@@ -1,7 +1,9 @@
 package io.github.psd2live.application
 
 import io.github.psd2live.algorithms.binding.BrowLegacyV2Algorithm
+import io.github.psd2live.algorithms.binding.EyeFittedV5Algorithm
 import io.github.psd2live.algorithms.binding.EyeLegacySourceAlgorithm
+import io.github.psd2live.algorithms.binding.FittedFaceV3Algorithm
 import io.github.psd2live.algorithms.binding.LegacyBodyV2Algorithm
 import io.github.psd2live.algorithms.binding.LegacyFaceV2Algorithm
 import io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm
@@ -79,6 +81,20 @@ internal object WorkspacePresetInitialization {
             version to reference
         }
         val scaffold = stack.instances.singleOrNull { it.type == RigSourceModifiers.SCAFFOLD && it.version == 2 }
+        val fittedSources = if (preferSourceBindings && scaffold != null && config.recipe == RigRecipe.Modern && fittedFace &&
+            !config.featureDisplacementEnabled && config.rigTuning == RigTuning() && requestedVersions.isEmpty() && freshSource(config)) {
+            val versions = mapOf(RigLegacyBindings.FITTED_FACE to FittedFaceV3Algorithm.VERSION,
+                RigModules.EYE_FITTED.id to EyeFittedV5Algorithm.VERSION)
+            val packages = versions.mapNotNull { (type, version) ->
+                val entry = stack.instances.singleOrNull { it.type == type } ?: return@mapNotNull null
+                if (entry.config["scaffold"] != JsonPrimitive(scaffold.id) || entry.targets.toSet() != scaffold.targets.toSet()) return@mapNotNull null
+                val reference = BuiltinModifierPlugins.reference(type, version) ?: return@mapNotNull null
+                if (!ModifierPluginCatalog.available(type, version, reference)) return@mapNotNull null
+                type to (version to reference)
+            }
+            // Face and eye versions are one compatible source profile.
+            if (packages.size == versions.size) packages.toMap() else emptyMap()
+        } else emptyMap()
         val sourceVersions = if (preferSourceBindings && scaffold != null) buildMap {
             put(LegacyBodyV2Algorithm.TYPE, LegacyBodyV2Algorithm.VERSION)
             if (!config.featureDisplacementEnabled) {
@@ -126,7 +142,7 @@ internal object WorkspacePresetInitialization {
                 }
             }
             val configured = entry.copy(config = settings, presetGroup = group)
-            lockedVersions[entry.type]?.let { (version, plugin) ->
+            (lockedVersions[entry.type] ?: fittedSources[entry.type])?.let { (version, plugin) ->
                 return@map configured.copy(version = version, plugin = plugin)
             }
             val sourceVersion = sourceVersions[entry.type]
@@ -186,10 +202,13 @@ internal object WorkspacePresetInitialization {
         return current() to build("final preview").also { work.checkpoint(); it.runtimeBundle.materialize(); work.checkpoint() }
     }
 
+    private fun freshSource(config: PipelineConfig): Boolean =
+        config.rigEdits.copy(modifierStack = null) == RigEditOverlay.Empty &&
+            config.meshOverrides.isEmpty() && config.parentOverrides.isEmpty() &&
+            !config.deferRig && config.rigPendingLayerIds.isEmpty()
+
     private fun supportsClassicOutline(analysis: PipelineAnalysis, config: PipelineConfig): Boolean {
-        if (config.rigEdits.copy(modifierStack = null) != RigEditOverlay.Empty ||
-            config.meshOverrides.isNotEmpty() || config.parentOverrides.isNotEmpty() ||
-            config.deferRig || config.rigPendingLayerIds.isNotEmpty()) return false
+        if (!freshSource(config)) return false
         val mouthLayers = analysis.layers.filter {
             it.semantic.tag == SemanticTag.MOUTH || it.semantic.tag == SemanticTag.MOUTH_OPEN
         }
