@@ -6585,6 +6585,61 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun classicOutlineReusesLiveLegacyFaceAndMatchesInstalledWorker(): Unit = runBlocking {
+        val art = document(mouthDetails = true, closedMouth = true, pairedBrows = true, bilateralEyes = true)
+        val choices = WorkspaceModelPresetLibrary.shared.get("legacy").choices
+        val config = WorkspacePresetBaseline.configure(art.config(), "legacy")
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, actual) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
+            preferSourceBindings = true, requestedVersions = mapOf("mouth.outline" to 1))
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val index = stack.instances.indexOfFirst { it.type == "mouth.outline" }
+        assertEquals(2, stack.instances.single { it.type == "face/legacy" }.version)
+        assertEquals(2, stack.instances.single { it.type == "mouth/legacy" }.version)
+        val outputs = assertNotNull(actual.modifierEvaluation).outputs
+        val before = outputs[index - 1]
+        val after = outputs[index]
+        assertEquals(before.meshes.size + 2, after.meshes.size)
+        assertNotEquals(before.deformers, after.deformers)
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find("mouth.outline", 4))
+        val candidate = stack.copy(instances = stack.instances.mapIndexed { i, instance ->
+            if (i == index) instance.copy(version = 4, plugin = artifact.reference) else instance
+        })
+        val locked = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = candidate.toJson()))
+        val current = WorkspacePreviewBuilder().build(locked)
+        val evaluation = assertNotNull(current.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, evaluation.entries[index].status)
+        for (stage in index until stack.instances.size) {
+            assertTrue(outputs[stage] == evaluation.outputs[stage], stack.instances[stage].type)
+        }
+        val compiled = RigIrCompiler.compile(actual, tileArt = true)
+        assertEquals(compiled, RigIrCompiler.compile(current, tileArt = true))
+        assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(locked), tileArt = true))
+        val instance = candidate.instances[index]
+        val context = assertNotNull(evaluation.readAlgorithms[instance.id]).context
+        val directory = Files.createTempDirectory("classic-outline-package-")
+        val preferences = Preferences.userRoot().node("classic-outline-package/${UUID.randomUUID()}")
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            for (name in artifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val installed = store.install(staging.toString())
+            assertEquals(artifact.reference, installed.reference)
+            assertEquals(after, ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(), before,
+                instance, {}, store, context = context, resolveRasters = { rig, rasters, checkpoint ->
+                    RigModifierRasterAssets.attach(rig, rasters, current.config, checkpoint)
+                }))
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
     @Test fun mouthOutlineV2UsesCapturedLegacyMouthAndReplaysWithoutSwitchingTheDefault(): Unit = runBlocking {
         suspend fun fixture(): Fixture = Fixture(document()).also { it.install(); it.group(listOf("mouth/legacy")) }
         suspend fun add(f: Fixture, type: String) {

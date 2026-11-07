@@ -184,6 +184,7 @@ dependencies {
 	implementation("org.jetbrains.compose.material:material:1.11.1")
 	implementation(project(path = ":algorithms:binding", configuration = "mouthOutlineElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthOutlineV2Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "mouthOutlineV4Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthOutlineV3Elements"))
 	testImplementation(kotlin("test"))
 }
@@ -338,6 +339,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginMouthOutlineV2")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-outline-v2")) {
         into("algorithm-plugins/mouth-outline-v2")
+    }
+    dependsOn(":algorithms:binding:pluginMouthOutlineV4")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-outline-v4")) {
+        into("algorithm-plugins/mouth-outline-v4")
     }
     dependsOn(":algorithms:binding:pluginMouthVowelV3")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-vowel-v3")) {
