@@ -31,26 +31,28 @@ internal object RigEyeSmileModifier {
             plugin = algorithm,
             changeWrites = EyeSmileAlgorithm.WRITES,
             upstreamInputs = true,
-            authorContext = { requireNotNull(source).capture(it) },
+            authorContext = { captureLidSource(requireNotNull(source), it, parameterNames()) },
         )
+}
 
-    private fun RigModifierSource.capture(instance: RigModifierInstance): ModifierAlgorithmContext {
-        val scaffold = provider(instance)
-        val baseId = instance.config.getValue("base").jsonPrimitive.content
-        val base = activeBefore(instance).single { it.id == baseId && it.type == "eye/fitted" }
-        val options = scaffold.config
-        val corrections = WorkspaceSettingsCodec.decodeRecipe(options["corrections"])
-        val recipe = RigRecipe(true, bases = mapOf("eye" to BaseChoice(base.type, base.version)),
-            modules = RigModules.modules.associate { it.id to ModuleChoice(false) },
-            moves = corrections.moves, eyeParts = corrections.eyeParts)
-        val native = sourceConfig().copy(recipe = recipe, rigTuning = RigLegacyBindings.tuning(base, RigTuning()),
-            headTurnStrength = 1f, bodyStrength = 1f,
-            featureDisplacementEnabled = options["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
-            hairSimulationFront = !(options["frontHairSway"]?.jsonPrimitive?.boolean ?: true),
-            hairSimulationBack = !(options["backHairSway"]?.jsonPrimitive?.boolean ?: true))
-        return RigBuilder.eyeSmileSourceInputs(analysis, atlas, native, meshCache,
-            instance.targets.associate { it.id to layersByMesh.getValue(it.id) }, parameterNames()) { mesh, parent ->
-            ScaffoldBinding.deformerId(scaffold, mesh, parent)
-        }
+internal fun captureLidSource(
+    source: RigModifierSource, instance: RigModifierInstance, parameterNames: Map<String, String>,
+): ModifierAlgorithmContext = with(source) {
+    val scaffold = provider(instance)
+    val baseId = instance.config.getValue("base").jsonPrimitive.content
+    val base = activeBefore(instance).single { it.id == baseId && it.type == "eye/fitted" }
+    val options = scaffold.config
+    val corrections = WorkspaceSettingsCodec.decodeRecipe(options["corrections"])
+    val recipe = RigRecipe(true, bases = mapOf("eye" to BaseChoice(base.type, base.version)),
+        modules = RigModules.modules.associate { it.id to ModuleChoice(false) },
+        moves = corrections.moves, eyeParts = corrections.eyeParts)
+    val native = sourceConfig().copy(recipe = recipe, rigTuning = RigLegacyBindings.tuning(base, RigTuning()),
+        headTurnStrength = 1f, bodyStrength = 1f,
+        featureDisplacementEnabled = options["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
+        hairSimulationFront = !(options["frontHairSway"]?.jsonPrimitive?.boolean ?: true),
+        hairSimulationBack = !(options["backHairSway"]?.jsonPrimitive?.boolean ?: true))
+    RigBuilder.eyeSmileSourceInputs(analysis, atlas, native, meshCache,
+        instance.targets.associate { it.id to layersByMesh.getValue(it.id) }, parameterNames) { mesh, parent ->
+        ScaffoldBinding.deformerId(scaffold, mesh, parent)
     }
 }
