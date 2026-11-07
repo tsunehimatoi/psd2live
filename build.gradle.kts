@@ -161,6 +161,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "browShapeV4Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browBlinkElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browBlinkV3Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "browBlinkV4Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLidElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLidV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLidV4Elements"))
@@ -537,6 +538,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginBrowBlinkV3")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-blink-v3")) {
         into("algorithm-plugins/brow-blink-v3")
+    }
+    dependsOn(":algorithms:binding:pluginBrowBlinkV4")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-blink-v4")) {
+        into("algorithm-plugins/brow-blink-v4")
     }
     dependsOn(":algorithms:binding:pluginBrowLidV3")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-lid-v3")) {

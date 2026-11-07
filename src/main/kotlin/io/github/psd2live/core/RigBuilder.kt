@@ -3529,6 +3529,12 @@ object RigBuilder {
 		return turnLoweringSource(layer, context, config, atlas, cache, channels)
 	}
 
+	internal fun browBlinkLoweringSource(layer: ClassifiedLayer, context: RigContext, config: PipelineConfig,
+	                                     atlas: PackedAtlas, cache: PreviewMeshCache, channels: Drawable): Drawable {
+		require(layer.semantic.tag == SemanticTag.EYEBROW)
+		return meshLoweringSource(layer, context, config, atlas, cache, channels)
+	}
+
 	internal fun browTurnSourceBranch(context: RigContext, config: PipelineConfig, cache: PreviewMeshCache,
 	                                  parents: Set<DeformerId>): List<Deformer> {
 		val deformers = faceTurnAndLean(context, config, stagesOf(cache)).associateBy { it.id }

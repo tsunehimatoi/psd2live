@@ -2,6 +2,8 @@ package io.github.psd2live.core.modifier
 
 import io.github.psd2live.algorithms.binding.BrowBlinkAlgorithm
 import io.github.psd2live.algorithms.binding.BrowBlinkV3Algorithm
+import io.github.psd2live.algorithms.binding.BrowBlinkV4Algorithm
+import io.github.psd2live.algorithms.binding.BrowShapeInputs
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.RigTuning
@@ -11,7 +13,15 @@ import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.core.recipe.RigRecipe
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.project.WorkspaceSettingsCodec
+import io.github.psd2live.format.compile.RigIrBinary
+import io.github.psd2live.format.model.Canvas
+import io.github.psd2live.format.model.RigIR
+import io.github.psd2live.targets.cubism.PuppetIr
 import kotlinx.serialization.json.*
+import org.umamo.runtime.model.BlendMode
+import org.umamo.runtime.model.DeformerId
+import org.umamo.runtime.model.Drawable
+import org.umamo.runtime.model.DrawableId
 
 internal object RigBrowBlinkModifier {
     private val algorithm = object : ReadingModifierAlgorithmPlugin by BrowBlinkAlgorithm(),
@@ -30,6 +40,49 @@ internal object RigBrowBlinkModifier {
         version = BrowBlinkV3Algorithm.VERSION,
         plugin = fittedAlgorithm,
     )
+
+    private val fallbackAlgorithm = object : ReadingModifierAlgorithmPlugin by BrowBlinkV4Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = BrowBlinkV3Algorithm.optionalUpstream + setOf(
+            "face/fitted", "face/legacy", "mouth/fitted", "brow.lid-coupling",
+        )
+        override val canonicalOptInType = BrowBlinkAlgorithm.TYPE
+    }
+
+    fun fallbackDefinition(source: RigModifierSource?): RigModifierDefinition = definition(source).copy(
+        version = BrowBlinkV4Algorithm.VERSION, plugin = fallbackAlgorithm,
+        authorContext = { requireNotNull(source).captureFallback(it) },
+    )
+
+    private fun RigModifierSource.captureFallback(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val observations = capture(instance)
+        val fitted = BrowShapeInputs.decode(ModifierAlgorithmContext(
+            JsonObject(observations.values - "carrier_names"), observations.resources)) {}
+        val scaffold = provider(instance)
+        val prefix = activeBefore(instance).filter { entry ->
+            entry.config["scaffold"] == JsonPrimitive(scaffold.id) && entry.targets.any(instance.targets::contains) &&
+                RigLegacyBindings.find(entry.type)?.let { !it.expressionToggles && !it.seeThrough } == true
+        }
+        fun phase(entries: List<RigModifierInstance>): ModifierAlgorithmResource {
+            val (native, measured) = RigFittedMouthModuleSource.context(this, scaffold, entries, null)
+            val layers = measured.analysis.layers.associateBy { it.source.id.raw }
+            val raw = fitted.targets.keys.map { id ->
+                val layer = layers.getValue(layersByMesh.getValue(id))
+                val channels = Drawable(DrawableId(id), layer.source.name, null, BlendMode.Normal, emptyList(), null, null)
+                PuppetIr.meshToIr(RigBuilder.browBlinkLoweringSource(layer, measured, native, atlas, meshCache, channels))
+            }
+            val branch = RigBuilder.browTurnSourceBranch(measured, native, meshCache, raw.mapNotNullTo(hashSetOf()) {
+                it.parent?.let(::DeformerId)
+            }).map(PuppetIr::deformerToIr)
+            return ModifierAlgorithmResource(RigIrBinary.encode(RigIR(Canvas(1f, 1f), emptyList(), meshes = raw, deformers = branch)))
+        }
+        val ids = JsonObject(fitted.targets.keys.associateWith { id -> JsonPrimitive(primaryByLayer.getValue(layersByMesh.getValue(id))) })
+        return ModifierAlgorithmContext(buildJsonObject {
+            put("native_ids", ids)
+            put("shape_names", observations.values.getValue("carrier_names"))
+            put("turn_name", tr("model.deformer.meshTurn", "{meshName}"))
+        }, mapOf("before" to phase(prefix), "after" to phase(prefix + instance)))
+    }
 
     fun definition(source: RigModifierSource?): RigModifierDefinition =
         RigLegacyBindings.definition(RigLegacyBindings.spec(BrowBlinkAlgorithm.TYPE), source).copy(
