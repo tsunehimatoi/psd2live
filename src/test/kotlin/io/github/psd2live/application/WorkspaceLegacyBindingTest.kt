@@ -3277,44 +3277,63 @@ class WorkspaceLegacyBindingTest {
         val expected = outputs[index]
         assertTrue(expected.deformers.size > input.deformers.size)
         assertEquals(input.deformers.map { it.id }, expected.deformers.take(input.deformers.size).map { it.id })
-        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 3))
-        val instance = locked.copy(version = 3, plugin = artifact.reference)
-        val independent = stack.copy(instances = stack.instances.map { if (it.id == locked.id) instance else it })
-        val updated = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = independent.toJson()))
-        val actual = WorkspacePreviewBuilder().build(updated)
-        val actualStage = assertNotNull(actual.modifierEvaluation).outputs[index]
-        assertEquals(expected.deformers.map { it.id }, actualStage.deformers.map { it.id })
-        for ((old, new) in expected.meshes.zip(actualStage.meshes)) {
-            assertEquals(old.parent, new.parent, old.id)
-            assertEquals(old.shapes.map { it.parameter }, new.shapes.map { it.parameter }, old.id)
-            assertTrue(old == new, "Brow and lid mesh differs: ${old.id}")
-        }
-        assertTrue(expected == actualStage, "Complete brow and lid stage IR differs")
-        assertEquals(model.rig.modifierOutput, actual.rig.modifierOutput)
-        assertEquals(RigIrCompiler.compile(model), RigIrCompiler.compile(actual))
+        for (version in 3..4) {
+            val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, version))
+            val instance = locked.copy(version = version, plugin = artifact.reference)
+            val versions = if (version == 3) emptyMap() else mapOf(
+                "brow/fitted" to 3, "eye/fitted" to 5, "eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3)
+            val independent = stack.copy(instances = stack.instances.map { item ->
+                if (item.id == locked.id) instance else {
+                    val selected = versions[item.type] ?: return@map item
+                    item.copy(version = selected, plugin = assertNotNull(BundledAlgorithmArtifacts.find(item.type, selected)).reference)
+                }
+            })
+            val updated = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = independent.toJson()))
+            val actual = WorkspacePreviewBuilder().build(updated)
+            val actualOutputs = assertNotNull(actual.modifierEvaluation).outputs
+            val actualStage = actualOutputs[index]
+            stack.instances.forEachIndexed { stage, item ->
+                if (item.type in versions || item.type == "eye.emotion") assertFaceEquals(outputs[stage], actualOutputs[stage])
+            }
+            assertEquals(expected.deformers.map { it.id }, actualStage.deformers.map { it.id })
+            for ((old, new) in expected.meshes.zip(actualStage.meshes)) {
+                assertEquals(old.parent, new.parent, old.id)
+                assertEquals(old.shapes.map { it.parameter }, new.shapes.map { it.parameter }, old.id)
+                assertTrue(old == new, "Brow and lid mesh differs: ${old.id}")
+            }
+            assertTrue(expected == actualStage, "Complete brow and lid stage IR differs")
+            assertEquals(model.rig.modifierOutput, actual.rig.modifierOutput)
+            assertEquals(RigIrCompiler.compile(model), RigIrCompiler.compile(actual))
 
-        val directory = Files.createTempDirectory("brow-lid-v3-package-")
-        val preferences = Preferences.userRoot().node("brow-lid-v3-package/" + UUID.randomUUID())
-        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
-        try {
-            val staging = Files.createDirectory(directory.resolve("package"))
-            Files.write(staging.resolve("plugin.json"), artifact.bytes)
-            for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            val directory = Files.createTempDirectory("brow-lid-v$version-package-")
+            val preferences = Preferences.userRoot().node("brow-lid-v$version-package/" + UUID.randomUUID())
+            val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+            try {
+                val staging = Files.createDirectory(directory.resolve("package"))
+                Files.write(staging.resolve("plugin.json"), artifact.bytes)
+                for (name in artifact.manifest.files.keys) {
+                    assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                }
+                val owner = RigModifierSource.of(actual)
+                val definition = if (version == 3) RigBrowLidModifier.fittedDefinition(owner) else RigBrowLidModifier.fittedEyeDefinition(owner)
+                val upstream = independent.instances.take(index).filter { it.type in definition.requires + definition.optionalUpstream }.map {
+                    ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+                }
+                val context = definition.authorContext(instance).withUpstream(upstream)
+                if (version == 4) {
+                    assertEquals(5, context.upstream.single { it.type == "eye/fitted" }.version)
+                    assertEquals(3, context.upstream.single { it.type == "brow/fitted" }.version)
+                    assertEquals(3, context.upstream.single { it.type == "eye.gaze-lid" }.version)
+                }
+                val installed = store.install(staging.toString())
+                assertEquals(artifact.reference, installed.reference)
+                assertEquals(expected, ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(), actualOutputs[index - 1],
+                    instance, {}, store, context = context))
+            } finally {
+                store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+                preferences.removeNode()
+                ModifierPluginStore.deleteTree(directory)
             }
-            val definition = RigBrowLidModifier.fittedDefinition(RigModifierSource.of(actual))
-            val upstream = stack.instances.take(index).filter { it.type in definition.requires + definition.optionalUpstream }.map {
-                ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
-            }
-            val context = definition.authorContext(instance).withUpstream(upstream)
-            val installed = store.install(staging.toString())
-            assertEquals(artifact.reference, installed.reference)
-            assertEquals(expected, ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(), input,
-                instance, {}, store, context = context))
-        } finally {
-            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
-            preferences.removeNode()
-            ModifierPluginStore.deleteTree(directory)
         }
     }
 

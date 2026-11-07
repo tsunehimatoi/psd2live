@@ -33,7 +33,7 @@ internal object BuiltinModifierPlugins {
         RigLegacyEyeDefinition.definition(source), RigLegacyBrowDefinition.definition(source),
         RigDepthTurnDefinition.definition(source), RigEyeWideModifier.definition(source), RigEyeWideModifier.modernDefinition(source),
         RigMouthSpringModifier.definition(source), RigMouthSpringModifier.fullDefinition(source), RigMouthSpringModifier.fittedDefinition(source), RigMouthSpringModifier.tongueDefinition(source), RigMouthCheekLidModifier.definition(source), RigMouthCheekLidModifier.fittedDefinition(source), RigMouthCheekLidModifier.fittedMouthDefinition(source), RigMouthCheekLidModifier.fittedEyeDefinition(source), RigMouthDepthModifier.definition(source), RigMouthDepthModifier.fittedDefinition(source),
-        RigBrowShapeModifier.definition(source), RigBrowSpringModifier.definition(source), RigBrowSpringModifier.composedDefinition(source), RigBrowLidModifier.definition(source), RigBrowLidModifier.fittedDefinition(source),
+        RigBrowShapeModifier.definition(source), RigBrowSpringModifier.definition(source), RigBrowSpringModifier.composedDefinition(source), RigBrowLidModifier.definition(source), RigBrowLidModifier.fittedDefinition(source), RigBrowLidModifier.fittedEyeDefinition(source),
         RigCheekModifier.definition(source), RigBrowBlinkModifier.definition(source), RigEyeSmileModifier.definition(source), RigEyeSmileModifier.modernDefinition(source),
         RigEyeAftershockModifier.definition(source), RigArmSwingModifier.definition(source), RigArmSwingModifier.definition(source, modern = true),
         RigEyeGazeLidModifier.definition(source), RigEyeGazeLidModifier.definition(source, modern = true), RigEyeEmotionModifier.definition(source), RigEyeHighlightModifier.definition(source),
