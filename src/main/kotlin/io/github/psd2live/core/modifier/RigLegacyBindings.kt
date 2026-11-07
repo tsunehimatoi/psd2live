@@ -5,7 +5,9 @@ import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.RigModule
 import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.core.recipe.RecipeKnob
+import io.github.psd2live.format.model.Mesh
 import io.github.psd2live.format.model.RigIR
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.*
 import org.umamo.runtime.model.ParameterId
 
@@ -118,12 +120,28 @@ internal object RigLegacyBindings {
                               checkpoint: () -> Unit): RigIR {
             val evaluated = algorithm.evaluate(input, instance, context, checkpoint)
             if (evaluated === input || instance.outputAliases.isEmpty()) return evaluated
-            // Native output aliases represent the old generated copies, which are selected through their original.
-            val native = instance.outputAliases.mapNotNull { (local, id) ->
-                id.takeIf { local.startsWith("see-through:") && id == local.removePrefix("see-through:") + SeeThroughLayers.SUFFIX }
-            }.toSet()
-            return if (native.isEmpty()) evaluated else evaluated.copy(meshes = evaluated.meshes.map { mesh ->
-                if (mesh.id in native && mesh.textureSource != null) mesh.copy(selectable = false) else mesh
+            val earlier = Json.decodeFromJsonElement(ListSerializer(RigModifierInstance.serializer()),
+                context.values.getValue("earlier_owners"))
+            val native = buildMap {
+                for (owner in earlier + instance) for ((local, id) in owner.outputAliases) {
+                    if (!local.startsWith("see-through:")) continue
+                    val original = local.removePrefix("see-through:")
+                    if (id == original + SeeThroughLayers.SUFFIX) put(id, original)
+                }
+            }
+            val order = evaluated.meshes.withIndex().associateBy { it.value.id }
+            val copies = evaluated.meshes.filter { it.textureSource != null && native[it.id]?.let(order::containsKey) == true }
+            if (copies.isEmpty()) return evaluated
+            fun original(copy: Mesh) = order.getValue(native.getValue(copy.id))
+            // The combined legacy pass appended feature copies in source order, then the windows in the bangs.
+            val (windows, features) = copies.partition { copy ->
+                val owner = original(copy).value
+                owner.invertMask && owner.maskedBy == copy.maskedBy
+            }
+            val sorted = (features.sortedBy { original(it).index } + windows).iterator()
+            val copiedIds = copies.mapTo(HashSet()) { it.id }
+            return evaluated.copy(meshes = evaluated.meshes.map { mesh ->
+                if (mesh.id in copiedIds) sorted.next().copy(selectable = false) else mesh
             })
         }
     }
