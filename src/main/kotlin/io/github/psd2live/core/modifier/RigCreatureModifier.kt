@@ -2,6 +2,7 @@ package io.github.psd2live.core.modifier
 
 import io.github.psd2live.algorithms.binding.CreatureAlgorithm
 import io.github.psd2live.algorithms.binding.CreatureInputs
+import io.github.psd2live.algorithms.binding.CreatureResidualAlgorithm
 import io.github.psd2live.algorithms.binding.ScaffoldPairs
 import io.github.psd2live.algorithms.binding.ScaffoldParts
 import io.github.psd2live.core.*
@@ -25,6 +26,21 @@ internal object RigCreatureModifier {
             changeWrites = CreatureAlgorithm.WRITES,
             plugin = algorithm,
         )
+
+    fun residualDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val worker = object : ReadingModifierAlgorithmPlugin by CreatureResidualAlgorithm(),
+            ModifierVersionSelection, ModifierOptionalUpstream {
+            override val canonicalOptInType = CreatureAlgorithm.TYPE
+            override val optionalUpstream = CreatureResidualAlgorithm.PROFILE.keys
+        }
+        return definition(source).copy(version = CreatureResidualAlgorithm.VERSION, plugin = worker,
+            authorContext = { instance ->
+                val author = requireNotNull(source)
+                val base = capture(author, instance)
+                val affected = CreatureInputs.decode(base).layers.flatMap { it.meshes }.toSet()
+                author.captureAttachmentResidual(instance, affected, "creature", base)
+            })
+    }
 
     fun capture(source: RigModifierSource, instance: RigModifierInstance): ModifierAlgorithmContext {
         val previous = source.activeBefore(instance)

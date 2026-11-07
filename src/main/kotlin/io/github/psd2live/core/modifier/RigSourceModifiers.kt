@@ -8,6 +8,7 @@ import io.github.psd2live.algorithms.binding.ScaffoldParts
 import io.github.psd2live.algorithms.binding.ScaffoldPartsContext
 import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.*
+import io.github.psd2live.format.compile.RigIrBinary
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.targets.cubism.PuppetIr
 import kotlinx.serialization.json.*
@@ -397,14 +398,28 @@ internal class RigModifierSource(
             scaffold["frontHairSway"]?.jsonPrimitive?.boolean ?: true, scaffold["backHairSway"]?.jsonPrimitive?.boolean ?: true)
     }
 
-    fun ribbonProjection(instance: RigModifierInstance, targets: List<ModifierTarget>, active: Boolean): List<Pair<PuppetModel, PuppetModel>> {
+    fun captureAttachmentResidual(instance: RigModifierInstance, affected: Set<String>, namespace: String,
+                                  base: ModifierAlgorithmContext): ModifierAlgorithmContext {
+        val targets = instance.targets.filter { it.id in affected }
+        val resources = base.resources.toMutableMap()
+        for ((suffix, active) in listOf("before" to false, "after" to true)) {
+            for ((native, static) in attachmentProjection(instance, targets, active)) {
+                val id = native.drawables.single().id.raw
+                resources["$namespace/$id/$suffix"] = ModifierAlgorithmResource(RigIrBinary.encode(PuppetIr.toIr(native)))
+                resources["$namespace/$id/$suffix-static"] = ModifierAlgorithmResource(RigIrBinary.encode(PuppetIr.toIr(static)))
+            }
+        }
+        return ModifierAlgorithmContext(base.values, resources)
+    }
+
+    private fun attachmentProjection(instance: RigModifierInstance, targets: List<ModifierTarget>, active: Boolean): List<Pair<PuppetModel, PuppetModel>> {
         val scaffold = provider(instance)
         return targets.groupBy { relevantBefore(instance, it) }.flatMap { (preceding, selected) ->
             val items = if (active) preceding + instance else preceding
             val config = nativeBindingConfig(items, scaffold.config)
             val sources = selected.associate { target -> layersByMesh.getValue(target.id) to DrawableId(target.id) }
-            require(sources.size == selected.size) { "Ribbon source requires one mesh per drawing" }
-            val (native, generatedChains) = RigBuilder.ribbonBindingSource(analysis, atlas, config, meshCache, sources)
+            require(sources.size == selected.size) { "${instance.type} source requires one mesh per drawing" }
+            val (native, generatedChains) = RigBuilder.attachmentBindingSource(analysis, atlas, config, meshCache, sources)
             val chains = generatedChains.filter { chain -> items.any { chain.kind in RigModifierChains.kinds(it.type) } }
                 .map(RigModifierChains::Binding)
             val kept = items.flatMapTo(hashSetOf()) { RigLegacyBindings.spec(it.type).parameters } + chains.flatMap { it.native.parameters }

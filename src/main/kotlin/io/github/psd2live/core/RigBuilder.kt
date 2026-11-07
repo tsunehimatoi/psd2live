@@ -3539,7 +3539,7 @@ object RigBuilder {
 	}
 
     /** Source meshes and frames needed by clothing attachment residuals. */
-    internal fun ribbonBindingSource(analysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig,
+    internal fun attachmentBindingSource(analysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig,
                                      cache: PreviewMeshCache, ids: Map<String, DrawableId>): Pair<PuppetModel, List<io.github.psd2live.core.fit.HairChain>> {
         val prepared = if (config.mouthOutlineEnabled) MouthLipLayers.prepare(analysis, config, cache) else analysis
         val context = rigContext(prepared, config, cache)

@@ -6655,6 +6655,71 @@ class WorkspaceLegacyBindingTest {
         assertFaceEquals(expected, RigIrCompiler.compile(current, tileArt = true))
     }
 
+    @Test fun creatureV3MatchesFreshModernWithClothingSimulation(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true,
+            pairedBrows = true, bilateralEyes = true, chestDetail = true, closedMouth = true,
+            ribbonDetails = true, creatureDetails = true)
+        val choices = WorkspaceInitialPreset(clothing = true)
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+        val raster = object : SourceArt by art.source {
+            override val layers = art.source.layers.filterNot { it.id.raw == "wing-left" }
+        }
+        val source = art.copy(source = raster, settings = WorkspaceSettingsCodec.encode(config))
+        val (initialized, prepared) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        val fresh = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val stack = fresh.copy(instances = fresh.instances.map { entry ->
+            if (entry.type != "outfit.creature" || entry.version == 1) entry
+            else entry.copy(version = 1, plugin = assertNotNull(BuiltinModifierPlugins.reference(entry.type, 1)))
+        })
+        fun documentFor(replay: RigModifierStack) = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = replay.toJson()))
+        val baseline = if (fresh == stack) prepared else WorkspacePreviewBuilder().build(documentFor(stack))
+        val profile = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 3,
+            "mouth/fitted" to 4, "outfit.skirt" to 2, "outfit.ribbons" to 3)
+        assertEquals(profile, stack.instances.filter { it.type in profile }.associate { it.type to it.version })
+        val locked = stack.instances.single { it.type == "outfit.creature" }
+        assertEquals(1, locked.version)
+        val index = stack.index(locked.id)
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 3))
+        val instance = locked.copy(version = 3, plugin = artifact.reference)
+        val candidate = stack.copy(instances = stack.instances.map { if (it.id == locked.id) instance else it })
+        val expected = assertNotNull(baseline.modifierEvaluation)
+        val before = expected.outputs[index - 1]
+        val after = expected.outputs[index]
+        val changed = after.meshes.filter { mesh -> before.meshes.single { it.id == mesh.id } != mesh }.map { it.name }.toSet()
+        assertEquals(setOf("animal-ear", "head-animal-ear", "tail", "wing"), changed)
+        assertEquals(8, RigModifierPhysics.entries(locked, after).size)
+        assertTrue(stack.instances.any { it.type == "simulation" && it.inputFingerprint != null &&
+            io.github.psd2live.core.sim.RigSimEdit.fromJson(it.config).bake != null })
+        val prefix = candidate.copy(instances = candidate.instances.take(index + 1))
+        val cached = RigStageCache.enabled
+        RigStageCache.enabled = false
+        val current = try { WorkspacePreviewBuilder().build(documentFor(prefix)) } finally { RigStageCache.enabled = cached }
+        val actual = assertNotNull(current.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, actual.entries[index].status)
+        assertTrue(before == actual.outputs[index - 1], "different inputs")
+        val output = actual.outputs[index]
+        val directory = Files.createTempDirectory("modern-creature-worker")
+        val preferences = Preferences.userRoot().node("modern-creature-worker/" + UUID.randomUUID())
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+            val installed = store.snapshot().single()
+            val context = assertNotNull(actual.readAlgorithms[locked.id]).context
+            assertTrue(context.upstream.any { it.capability == "face/legacy" && it.type == "face/fitted" && it.version == 3 })
+            assertTrue(output == ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(), before,
+                instance, {}, store, context = context))
+        } finally {
+            ModifierPluginWorkers.stop(artifact.reference)
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+        assertFaceEquals(after, output)
+        assertEquals(candidate, WorkspaceModifierSimulation.prepare(documentFor(candidate), candidate, WorkspaceRasterWork.Direct, allowRebake = false))
+        val full = WorkspacePreviewBuilder().build(documentFor(candidate))
+        assertTrue(expected.outputs == assertNotNull(full.modifierEvaluation).outputs)
+        assertTrue(RigIrCompiler.compile(baseline, tileArt = true) == RigIrCompiler.compile(full, tileArt = true))
+    }
+
     @Test fun creatureV2KeepsLegacyBindingAndRunsInstalledWorker(): Unit = runBlocking {
         suspend fun fixture(version: Int, withClothing: Boolean): Fixture {
             val f = Fixture(document(outfitDetails = true, expressionDetails = true))

@@ -101,6 +101,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "ribbonsElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "ribbonsV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "creatureElements"))
+	implementation(project(path = ":algorithms:binding", configuration = "creatureV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browSpringElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browSpringV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browSpringV4Elements"))
@@ -351,9 +352,12 @@ tasks.processResources {
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-outfit-ribbons-v3")) {
         into("algorithm-plugins/outfit-ribbons-v3")
     }
-    dependsOn(":algorithms:binding:pluginCreature")
+    dependsOn(":algorithms:binding:pluginCreature", ":algorithms:binding:pluginCreatureV3")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-outfit-creature")) {
         into("algorithm-plugins/outfit-creature")
+    }
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-outfit-creature-v3")) {
+        into("algorithm-plugins/outfit-creature-v3")
     }
     dependsOn(":algorithms:binding:pluginHairChains")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-hair-chains")) {
