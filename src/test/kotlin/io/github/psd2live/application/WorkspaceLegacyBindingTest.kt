@@ -1,6 +1,7 @@
 package io.github.psd2live.application
 
 import io.github.psd2live.algorithms.binding.MouthFittedV2Algorithm
+import io.github.psd2live.algorithms.binding.FittedFaceV2Algorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.recipe.RigRecipe
@@ -8,6 +9,7 @@ import io.github.psd2live.core.recipe.BaseChoice
 import io.github.psd2live.core.recipe.ModuleChoice
 import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.project.*
+import io.github.psd2live.scenario.Characters
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
 import org.umamo.format.art.*
@@ -1241,6 +1243,69 @@ class WorkspaceLegacyBindingTest {
             preferences.removeNode()
             ModifierPluginStore.deleteTree(directory)
         }
+    }
+
+    @Test fun fittedFaceV2KeepsV1DefaultAndMatchesItsInstalledWorker(): Unit = runBlocking<Unit> {
+        val source = Characters.eyed(legacyEyes = true)
+        val document = source.copy(
+            settings = WorkspaceSettingsCodec.encode(RigModifierPipeline.ordinaryConfig(source.rawConfig())),
+            rigEdits = source.rigEdits.copy(modifierStack = RigModifierStack().toJson()),
+        )
+        val prior = Fixture(document)
+        prior.install()
+        prior.edit("modifier_add", prior.addition("rig.scaffold", "structure"))
+        prior.edit("modifier_add", prior.addition("face/fitted", "face"))
+        assertEquals(1, RigModifierStack.fromJson(prior.now.document.rigEdits.modifierStack!!).instances.last().version)
+        val legacy = assertNotNull(prior.now.model.rig.modifierOutput)
+        val fixture = Fixture(document)
+        fixture.install()
+        fixture.edit("modifier_add", fixture.addition("rig.scaffold", "structure"))
+        val request = fixture.addition("face/fitted", "face")
+        fixture.edit("modifier_add", JsonObject(request + ("version" to JsonPrimitive(2))))
+        val actual = assertNotNull(fixture.now.model.rig.modifierOutput)
+        val stack = RigModifierStack.fromJson(fixture.now.document.rigEdits.modifierStack!!)
+        val (scaffold, face) = stack.instances
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(FittedFaceV2Algorithm.TYPE, 2))
+        assertEquals(artifact.reference, face.plugin)
+        assertEquals(2, face.version)
+        val evaluation = assertNotNull(fixture.now.model.modifierEvaluation)
+        val root = Files.createTempDirectory("fitted-face-v2-")
+        val preferences = Preferences.userRoot().node("fitted-face-v2/${UUID.randomUUID()}")
+        val store = ModifierPluginStore(root.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(root.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            artifact.manifest.files.keys.forEach { name ->
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val installed = store.install(staging.toString())
+            val workerType = artifact.manifest.algorithms.single().type
+            val worker = ModifierPluginCatalog.definitions(store, BuiltinModifierPlugins.definitions(RigModifierSource.of(fixture.now.model)))
+                .single { it.type == workerType }
+            val instance = face.copy(type = workerType, plugin = installed.reference)
+            val context = worker.authorContext(instance).withUpstream(listOf(
+                ModifierUpstreamCapability(scaffold.type, scaffold.type, scaffold.version, scaffold.targets,
+                    scaffold.id, scaffold.config, scaffold.outputAliases, scaffold.plugin),
+            ))
+            val plugin = worker.plugin as ContextualModifierAlgorithmPlugin
+            assertEquals(actual, plugin.evaluate(evaluation.outputs.first(), instance, context, {}))
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(root)
+        }
+        val legacyMeshes = legacy.meshes.associateBy { it.id }
+        val legacyDeformers = legacy.deformers.associateBy { it.id }
+        val differences = buildList {
+            if (actual.parameters != legacy.parameters) add("parameters")
+            if (actual.parameterTree != legacy.parameterTree) add("parameterTree")
+            if (actual.parameterLinks != legacy.parameterLinks) add("parameterLinks")
+            addAll(actual.meshes.filter { legacyMeshes[it.id] != it }.map { "mesh:${it.id}" })
+            addAll(actual.deformers.filter { legacyDeformers[it.id] != it }.map { "deformer:${it.name}" })
+            if (actual.meshes.map { it.id } != legacy.meshes.map { it.id }) add("mesh order")
+            if (actual.deformers.map { it.id } != legacy.deformers.map { it.id }) add("deformer order")
+        }
+        assertTrue(differences.isEmpty(), differences.joinToString())
     }
 
     @Test fun depthTurnMatchesNativeAcrossHeadAndBodyPoses(): Unit = runBlocking<Unit> {

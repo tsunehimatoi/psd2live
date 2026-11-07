@@ -6,9 +6,9 @@ Bundled entries are catalogued and enabled independently by algorithm type and r
 
 External packages may declare dependencies on bundled package IDs and versions returned by `plugin_list`. Installation locks their content digests; disabling or losing a required bundled version makes the dependent package unavailable too. The aggregate `builtin` identity is reserved. Installable `builtin.*` archives must declare a stable type alias matching their package ID and algorithm revision, for historical bundled algorithm restoration. Enabled states persist in preferences but evaluation reads an in-memory snapshot instead of accessing system preferences per entry.
 
-Independent packages also cover legacy mouth and hair binding, hair chains, neck tilt, chest bounce, eyelid fade, and the opt-in fitted eyes v3 and fitted mouth v2. Other bundled bindings still have compatibility paths that extract their results from host-generated templates.
+Independent packages also cover legacy mouth and hair binding, hair chains, neck tilt, chest bounce, eyelid fade, and the opt-in fitted face v2, fitted eyes v3, and fitted mouth v2. Other bundled bindings still have compatibility paths that extract their results from host-generated templates.
 
-Select fitted eyes v3 or fitted mouth v2 by version in the add menu. They require a compatible eye scaffold and a neutral mouth scaffold respectively. Stacks with existing fitted head turn continue to use the default versions. The document stores the stable modifier type and the selected package, so later modifiers can still resolve the original dependency type.
+Select fitted face v2, fitted eyes v3, or fitted mouth v2 by version in the add menu. Fitted face v2 requires the complete target set of a neutral shared v2 scaffold. Fitted eyes v3 requires a compatible eye scaffold, and fitted mouth v2 requires a neutral mouth scaffold. Recommended presets use the default versions. The document stores the stable modifier type and the selected package so later modifiers can still resolve the original dependency type.
 
 ## Install and remove
 

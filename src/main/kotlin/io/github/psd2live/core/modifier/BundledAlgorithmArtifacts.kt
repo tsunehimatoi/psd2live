@@ -15,7 +15,7 @@ internal object BundledAlgorithmArtifacts {
     val artifacts: List<Artifact> by lazy {
         listOf("physics", "motion", "swing", "simulation", "binding", "see-through-eye", "see-through-brow",
             "skin-clip", "scaffold-1", "scaffold-2", "mouth-legacy", "hair-chains", "face-neck", "body-bust",
-            "hair-legacy", "eye-lid-fade", "eye-fitted", "mouth-fitted-v2").map { name ->
+            "hair-legacy", "eye-lid-fade", "eye-fitted", "mouth-fitted-v2", "fitted-face-v2").map { name ->
             val resource = "/algorithm-plugins/$name/"
             val bytes = requireNotNull(javaClass.getResourceAsStream(resource + "plugin.json")) { "Missing bundled algorithm: $name" }.use { it.readAllBytes() }
             Artifact(resource, bytes, Json.decodeFromString(ModifierPluginManifest.serializer(), bytes.decodeToString()))

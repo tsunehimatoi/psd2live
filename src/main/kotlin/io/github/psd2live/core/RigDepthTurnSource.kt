@@ -25,7 +25,7 @@ internal object RigDepthTurnSource {
         val centerCanvas = face.coordinateSpace.toCanvas(face.centerX, face.centerY).first
         val module = RigModules.FACE_DEPTH_TURN.id
         val mouthParent = parents.values.firstOrNull { it?.raw == "DeformMouthShapeBoth" }
-        val mouthFrame = mouthParent?.let { context.resolveFrame(it, config) }
+        val mouthFrame = mouthParent?.let(parentFrames::get)
         val mouthWarp = face.regions.firstOrNull { it.feature == FaceFeature.MOUTH && it.bounds == mouthFrame }?.let { region ->
             parentFrames[DeformerId("DeformFaceNinePose")]?.let { parent ->
                 DepthTurnMouthWarp(region.bounds, parent, tuning.yawEase, tuning.pitchEase, tuning.featurePlane,
