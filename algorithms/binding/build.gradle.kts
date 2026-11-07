@@ -907,3 +907,55 @@ tasks.register("pluginMouthOutlineV2") {
         """.trimIndent())
     }
 }
+
+val browFitted = sourceSets.create("browFitted")
+kotlin.target.compilations.named("browFitted") {
+    associateWith(kotlin.target.compilations.getByName("main"))
+}
+val browFittedClassesJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("brow-fitted")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    from(browFitted.output)
+}
+val browFittedElements = configurations.create("browFittedElements") {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+}
+artifacts.add(browFittedElements.name, browFittedClassesJar)
+
+val browFittedWorkerJar by tasks.registering(Jar::class) {
+    dependsOn(workerJar)
+    archiveClassifier.set("worker-brow-fitted-v2")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest { attributes["Main-Class"] = "io.github.psd2live.algorithms.binding.BrowFittedWorker" }
+    from(browFitted.output)
+    from(workerJar.flatMap { it.archiveFile }.map { zipTree(it) }) { exclude("META-INF/MANIFEST.MF") }
+}
+
+tasks.register("pluginBrowFittedV2") {
+    dependsOn(browFittedWorkerJar)
+    val output = layout.buildDirectory.dir("plugin-brow-fitted-v2")
+    val packageVersion = project.version.toString()
+    inputs.file(browFittedWorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        browFittedWorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.62726f772f666974746564.v2"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Fitted brows",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/binding","aliases":["brow/fitted"],"version":2,"name":"Fitted brows","category":"brow",
+               "targets":["mesh"],"requires":["rig.scaffold"],"exclusiveFamily":"base:brow","contextVersion":2,
+               "reads":["*"],"writes":["mesh","deformer","parameter","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}

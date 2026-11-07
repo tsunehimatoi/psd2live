@@ -10,6 +10,8 @@ Independent packages also cover legacy mouth and hair binding, hair chains, neck
 
 Select fitted face v2, fitted eyes v3, or fitted mouth v2 by version in the add menu. Fitted face v2 requires the complete target set of a neutral shared v2 scaffold. Fitted eyes v3 requires a compatible eye scaffold, and fitted mouth v2 requires a neutral mouth scaffold. Recommended presets use the default versions. Legacy body v2 is also selectable. It computes body motion and head pitch from source measurements and requires a source-aware scaffold. Shared scaffolds require their full target set. Mouth outline v2 requires legacy mouth v2 on the same static scaffold with no other preceding active bindings. Iris squash v2 is also selectable by version and requires fitted eyes and the captured iris topology. Use v1 with fitted head turn. The document stores the stable modifier type and the selected package so later modifiers can still resolve the original dependency type.
 
+Fitted brows v2 is available through explicit version selection in the add panel. It requires a shared v2 scaffold and supports compatible preceding body, head turn, and eye versions. Recommended presets use fitted brows v1.
+
 ## Install and remove
 
 Binding structure has separate packages for algorithm revisions 1 and 2. Build them with `./gradlew :algorithms:binding:pluginScaffold1 :algorithms:binding:pluginScaffold2`; outputs are `algorithms/binding/build/plugin-scaffold-1` and `plugin-scaffold-2`. Package IDs are `builtin.7269672e73636166666f6c64.v1` and `.v2`, each exposing `/structure` in its namespace with stable alias `rig.scaffold`. The revisions retain per-target and shared hierarchy semantics respectively.

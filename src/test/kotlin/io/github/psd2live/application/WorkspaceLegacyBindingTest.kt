@@ -51,7 +51,7 @@ class WorkspaceLegacyBindingTest {
 
     /** Small public procedural art with distinct eye, brow, mouth, hair and torso inputs. */
     private fun document(eyeDetails: Boolean = false, mouthDetails: Boolean = false, expressionDetails: Boolean = false, skinDetails: Boolean = false, outfitDetails: Boolean = false, sideLock: Boolean = false, bangOverlay: Boolean = false,
-                         chestDetail: Boolean = false, thinMouth: Boolean = false): WorkspaceDocument {
+                         chestDetail: Boolean = false, thinMouth: Boolean = false, pairedBrows: Boolean = false): WorkspaceDocument {
         data class Shape(val id: String, val tag: SemanticTag, val side: Side, val x: Int, val y: Int, val w: Int, val h: Int, val role: PartRole? = null)
         val shapes = listOf(
             Shape("iris", SemanticTag.IRIDES, Side.LEFT, 37, 19, 5, 10),
@@ -66,7 +66,9 @@ class WorkspaceLegacyBindingTest {
             Shape("back", SemanticTag.BACK_HAIR, Side.NONE, 12, 5, 40, 50),
             Shape("top", SemanticTag.TOPWEAR, Side.NONE, 12, 46, 40, 32),
         )
-        val allShapes = shapes + (if (eyeDetails) listOf(
+        val rightFeatures = if (pairedBrows) shapes.filter { it.tag in setOf(SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYEBROW) }
+            .map { it.copy(id = "${it.id}-right", side = Side.RIGHT, x = 64 - it.x - it.w) } else emptyList()
+        val allShapes = shapes + rightFeatures + (if (eyeDetails) listOf(
             Shape("lid", SemanticTag.EYELASH, Side.LEFT, 34, 18, 12, 2, PartRole.LID),
             Shape("lid-shadow", SemanticTag.EYELASH, Side.LEFT, 34, 20, 12, 2, PartRole.SHADOW),
             Shape("highlight", SemanticTag.IRIDES, Side.LEFT, 39, 20, 2, 3, PartRole.HIGHLIGHT),
@@ -124,6 +126,125 @@ class WorkspaceLegacyBindingTest {
     private fun fittedRecipe(choices: Map<String, BaseChoice>) = RigRecipe(true,
         bases = RigModules.areas.associate { it.id to (choices[it.id] ?: BaseChoice(it.legacy.id, it.legacy.version)) },
         modules = RigModules.modules.associate { it.id to ModuleChoice(false, it.version) })
+
+    @Test fun fittedBrowWorkerMatchesNativeHeightAndHeadMotion(): Unit = runBlocking {
+        val document = document()
+        val artifact = requireNotNull(BundledAlgorithmArtifacts.find("brow/fitted", 2))
+        val algorithm = artifact.manifest.algorithms.single()
+        for (hasEye in listOf(false, true)) {
+            val f = Fixture(document)
+            f.install()
+            f.group(listOf("body/legacy", "face/legacy") + if (hasEye) listOf("eye/fitted") else emptyList())
+            val before = f.now.model.rig.puppet
+            val brow = before.drawables.single { f.now.model.rig.layerIdByDrawableId[it.id.raw] == "brow" }
+            f.edit("modifier_add", JsonObject(f.addition(algorithm.type, "brow") +
+                ("version" to JsonPrimitive(2))))
+            val actual = f.now.model
+            val recipe = fittedRecipe(buildMap {
+                put("brow", BaseChoice("brow/fitted"))
+                if (hasEye) put("eye", BaseChoice("eye/fitted", 2))
+            })
+            val neutralHead = listOf(-1f, 0f, .45f, 1f).map { mapOf(StandardParameters.BROW_L_Y to it) }
+            val native = native(document, recipe)
+            val legacy = Fixture(document)
+            legacy.install()
+            legacy.group(listOf("body/legacy", "face/legacy") + if (hasEye) listOf("eye/fitted") else emptyList())
+            legacy.edit("modifier_add", JsonObject(legacy.addition("brow/fitted", "brow") +
+                ("version" to JsonPrimitive(1))))
+            val turns = neutralHead.flatMap { pose -> listOf(pose,
+                pose + mapOf(StandardParameters.ANGLE_X to 18f, StandardParameters.ANGLE_Y to -12f),
+                pose + mapOf(StandardParameters.ANGLE_X to -25f, StandardParameters.ANGLE_Y to 20f))
+            }
+            val oldRig = RigIrCompiler.compile(legacy.now.model)
+            val newRig = RigIrCompiler.compile(actual)
+            assertEquals(oldRig.meshes.single { it.id == brow.id.raw }, newRig.meshes.single { it.id == brow.id.raw })
+            val oldNodes = oldRig.deformers.associateBy { it.id }
+            val newNodes = newRig.deformers.associateBy { it.id }
+            for (parent in generateSequence(brow.parentDeformerId?.raw) { newNodes.getValue(it).parent })
+                assertEquals(oldNodes.getValue(parent), newNodes.getValue(parent), parent)
+            try { compare(legacy.now.model, actual, turns, targets = setOf(brow.id)) }
+            catch (failure: AssertionError) { throw AssertionError("Mixed stack with fitted eye $hasEye: ${failure.message}", failure) }
+            try { compare(native, actual, neutralHead, targets = setOf(brow.id)) }
+            catch (failure: AssertionError) { throw AssertionError("Native rig with fitted eye $hasEye: ${failure.message}", failure) }
+            val after = actual.rig.puppet.drawables.single { it.id == brow.id }
+            assertEquals(brow.parentDeformerId, after.parentDeformerId)
+            assertEquals(listOf(StandardParameters.BROW_L_Y), after.geometryGrid?.axes?.map { it.parameterId })
+            val group = actual.rig.puppet.parameterTree.filterIsInstance<ParameterNode.Group>().single {
+                it.children.contains(ParameterNode.Param(StandardParameters.BROW_L_Y))
+            }
+            val instance = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.single { it.id == "brow" }
+            assertEquals(instance.outputId("parameter-folder:ParamGroupBrows"), group.id.raw)
+            assertEquals(RigIrCompiler.compile(actual), RigIrCompiler.compile(f.builder.build(f.now.document)))
+        }
+    }
+
+    @Test fun fittedBrowPreservesStyledHeadTurnInMixedStack(): Unit = runBlocking {
+        val document = document(pairedBrows = true)
+        suspend fun bind(version: Int): RigPreviewModel {
+            val f = Fixture(document)
+            f.install()
+            f.group(listOf("body/legacy", "face/fitted", "eye/fitted"))
+            val before = f.now.model
+            val face = before.rig.puppet.deformers.filterIsInstance<Deformer.Warp>().single { it.name == io.github.psd2live.i18n.tr("model.deformer.face") }
+            assertTrue(face.geometryGrid!!.axes.single { it.parameterId == StandardParameters.ANGLE_X }.keys.size > 3)
+            f.edit("modifier_add", JsonObject(f.addition("brow/fitted", "brow") + ("version" to JsonPrimitive(version))))
+            val shape = f.addition("brow.shape", "shape", config = buildJsonObject {
+                put("scaffold", "structure")
+                put("base", "brow")
+            })
+            f.edit("modifier_add", shape)
+            if (version == 2) {
+                val beforeApply = RigIrCompiler.compile(f.now.model)
+                f.edit("modifier_apply", buildJsonObject { put("id", "brow") })
+                assertEquals(beforeApply, RigIrCompiler.compile(f.now.model))
+            }
+            return f.now.model
+        }
+
+        val legacy = bind(1)
+        val independent = bind(2)
+        assertEquals(RigIrCompiler.compile(legacy), RigIrCompiler.compile(independent))
+    }
+
+    @Test fun fittedBrowRetainsAuthoredGeometryAfterHeadTurnIsApplied(): Unit = runBlocking {
+        val f = Fixture(document())
+        f.install()
+        f.group(listOf("face/fitted", "eye/fitted"))
+        f.edit("modifier_apply", buildJsonObject { put("id", "eye") })
+        val brow = mesh(f, "brow")
+        val baseline = requireNotNull(brow.geometryGrid)
+        val key = key(f, baseline.axes)
+        val neutral = baseline.cells.single { cell -> baseline.axes.indices.all { index ->
+            baseline.axes[index].keys[cell.coordinate[index]] == key.getValue(baseline.axes[index].parameterId.raw).jsonPrimitive.float
+        } }.form.positionDeltas
+        f.edit("keyform_apply", buildJsonObject { putJsonArray("changes") { addJsonObject {
+            put("op", "set"); put("target", "mesh:${brow.id.raw}"); put("key", key)
+            putJsonObject("geometry") {
+                put("positionDeltas", JsonArray(neutral.mapIndexed { index, value -> JsonPrimitive(value + if (index == 0) .0125f else 0f) }))
+            }
+        } } })
+        val before = f.now.model.rig.puppet
+        val poses = listOf(emptyMap(), mapOf(StandardParameters.ANGLE_X to 24f, StandardParameters.ANGLE_Y to -18f))
+        val addition = f.addition("brow/fitted", "brow")
+        f.edit("modifier_add", JsonObject(addition + ("version" to JsonPrimitive(2))))
+        val after = f.now.model.rig.puppet
+        val drawable = after.drawables.single { it.id == brow.id }
+        assertEquals(brow.parentDeformerId, drawable.parentDeformerId)
+        assertEquals(baseline.axes.map { it.parameterId } + StandardParameters.BROW_L_Y,
+            drawable.geometryGrid?.axes?.map { it.parameterId })
+        val evaluator = CpuDeformationEvaluator()
+        for (pose in poses) {
+            val original = evaluator.evaluate(before, pose).worldPositions.getValue(brow.id)
+            val rest = evaluator.evaluate(after, pose).worldPositions.getValue(brow.id)
+            assertTrue(original.indices.all { abs(original[it] - rest[it]) < .001f })
+            val raised = evaluator.evaluate(after, pose + (StandardParameters.BROW_L_Y to 1f)).worldPositions.getValue(brow.id)
+            assertTrue(raised.indices.any { abs(raised[it] - rest[it]) > .1f })
+        }
+        val compiled = RigIrCompiler.compile(f.now.model)
+        assertEquals(compiled, RigIrCompiler.compile(f.builder.build(f.now.document)))
+        f.edit("modifier_apply", buildJsonObject { put("id", "brow") })
+        assertEquals(compiled, RigIrCompiler.compile(f.now.model))
+    }
 
     private fun compare(native: RigPreviewModel, actual: RigPreviewModel, poses: List<Map<ParameterId, Float>>,
                         aliases: Map<String, String> = emptyMap(), targets: Set<DrawableId>? = null) {
@@ -2204,7 +2325,7 @@ class WorkspaceLegacyBindingTest {
             val poses = listOf("rest" to emptyMap(), "blink + turn" to mapOf("ParamEyeLOpen" to .25f, "ParamAngleX" to 18f))
             val frames = listOf("legacy" to original, "stack" to f.now.model).flatMap { (label, preview) ->
                 val renderer = io.github.psd2live.tools.Renderer(preview, 480)
-                poses.map { (pose, values) -> "$label · $pose" to renderer.render(values, area) }
+                poses.map { (pose, values) -> "$label 路 $pose" to renderer.render(values, area) }
             }
             io.github.psd2live.tools.sheet(frames,
                 io.github.psd2live.tools.output("modifier-see-through").resolve("comparison.png"), columns = poses.size)

@@ -74,6 +74,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "bodyLegacyV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthFittedV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "fittedFaceV2Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "browFittedElements"))
 	implementation(platform("io.ktor:ktor-bom:3.5.1"))
 	// Engine ported from Umamo (format, runtime, interop, render, edit); it brings its own libraries.
 	implementation(project(":umamo"))
@@ -258,6 +259,10 @@ tasks.processResources {
         into("algorithm-plugins/mouth-outline-v2")
     }
     dependsOn(":algorithms:binding:pluginMouthFittedV2")
+    dependsOn(":algorithms:binding:pluginBrowFittedV2")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-fitted-v2")) {
+        into("algorithm-plugins/brow-fitted-v2")
+    }
     dependsOn(":algorithms:binding:pluginFittedFaceV2")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-fitted-face-v2")) {
         into("algorithm-plugins/fitted-face-v2")
