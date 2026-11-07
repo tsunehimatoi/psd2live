@@ -17,6 +17,7 @@ class ModifierPerfTool {
         System.setProperty("psd2live.validatePreviewBundles", "false")
         val sample = Sample.fromEnvironment()
         val report = StringBuilder()
+        val baseline = setting("PSD2LIVE_BASELINE_MODIFIER", "")
         val recording = if (setting("PSD2LIVE_JFR", "0") == "1")
             jdk.jfr.Recording(jdk.jfr.Configuration.getConfiguration("profile")).apply { start() } else null
         RigBuildProfile.recording = true
@@ -73,14 +74,8 @@ class ModifierPerfTool {
                         val expected = RigIrCompiler.compile(capture.model, tileArt = true)
                         val replayed = RigIrCompiler.compile(cold, tileArt = true)
                         if (expected != replayed) {
-                            val fields = RigIR::class.java.declaredFields.filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
-                                .filter { field -> field.isAccessible = true; field.get(expected) != field.get(replayed) }
-                                .joinToString { it.name }
-                            val warmSteps = capture.model.modifierEvaluation?.outputs.orEmpty()
-                            val coldSteps = cold.modifierEvaluation?.outputs.orEmpty()
-                            val first = warmSteps.zip(coldSteps).indexOfFirst { (warm, rebuilt) -> warm != rebuilt }
-                            val modifier = cold.modifierEvaluation?.entries?.getOrNull(first)?.instance?.type
-                            val detail = "Uncached replay differs in $fields" + (modifier?.let { ". First differing step $it" } ?: "")
+                            val fields = differingFields(expected, replayed)
+                            val detail = "Uncached replay differs in $fields" + differingStep(capture.model, cold)
                             report.appendLine(detail)
                             output("modifier-perf").resolve("report.txt").writeText(report.toString())
                             fail(detail)
@@ -89,10 +84,44 @@ class ModifierPerfTool {
                         output("modifier-perf").resolve("report.txt").writeText(report.toString())
                     } finally { RigStageCache.enabled = enabled }
                 }
+                if (round == 1 && baseline.isNotEmpty()) {
+                    val type = baseline.substringBeforeLast('@')
+                    val version = baseline.substringAfterLast('@').toInt()
+                    val captured = runtime.capture()
+                    val overlay = captured.document.rigEdits
+                    val stack = RigModifierStack.fromJson(requireNotNull(overlay.modifierStack))
+                    require(stack.instances.any { it.type == type && it.version != version }) { "No alternate version to compare for $baseline" }
+                    val plugin = requireNotNull(BuiltinModifierPlugins.reference(type, version)) { "Unknown builtin algorithm $baseline" }
+                    val locked = stack.copy(instances = stack.instances.map { instance ->
+                        if (instance.type == type) instance.copy(version = version, plugin = plugin)
+                        else instance
+                    })
+                    val reference = captured.document.copy(rigEdits = overlay.copy(modifierStack = locked.toJson()))
+                    val replay = PSD2LivePipeline().buildPreview(reference.source, reference.config())
+                    val expected = RigIrCompiler.compile(captured.model, tileArt = true)
+                    val actual = RigIrCompiler.compile(replay, tileArt = true)
+                    val detail = if (expected == actual) "identical complete IR" else
+                        "differs in ${differingFields(expected, actual)}" + differingStep(captured.model, replay)
+                    report.appendLine("locked baseline $baseline: $detail")
+                    output("modifier-perf").resolve("report.txt").writeText(report.toString())
+                    if (expected != actual) fail("Locked baseline $baseline $detail")
+                }
             }
         } finally {
             RigBuildProfile.recording = false
             recording?.use { it.stop(); it.dump(output("modifier-perf").resolve("profile.jfr").toPath()) }
         }
+    }
+
+    private fun differingFields(expected: RigIR, actual: RigIR): String = RigIR::class.java.declaredFields
+        .filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
+        .filter { field -> field.isAccessible = true; field.get(expected) != field.get(actual) }
+        .joinToString { it.name }
+
+    private fun differingStep(expected: RigPreviewModel, actual: RigPreviewModel): String {
+        val reference = expected.modifierEvaluation?.outputs.orEmpty()
+        val replay = actual.modifierEvaluation ?: return ""
+        val first = reference.zip(replay.outputs).indexOfFirst { (left, right) -> left != right }
+        return replay.entries.getOrNull(first)?.instance?.type?.let { ". First differing step $it" }.orEmpty()
     }
 }
