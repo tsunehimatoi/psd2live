@@ -31,6 +31,8 @@ import org.umamo.edit.withDrawablesDeleted
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.FutureTask
 import io.github.psd2live.core.legacy.RigGenerationMigration
 
 class PSD2LivePipeline {
@@ -110,7 +112,8 @@ class PSD2LivePipeline {
             return RigPreviewModel(importedAnalysis, atlas, rig, config, bundle, PreviewRigSources.of(baseRig))
         }
         val inputs = generationInputs(analysis, config, progress, previousAtlas)
-        val (effectiveAnalysis, fullAtlas, generated) = generatedBase(inputs, config, progress)
+        val (effectiveAnalysis, fullAtlas, generated) = if (ordinaryMaterials && config.rigEdits == RigEditOverlay.Empty)
+            generateWithAtlasEncoding(inputs, config, progress) else generatedBase(inputs, config, progress)
         val baseRig = if (ordinaryMaterials) io.github.psd2live.core.modifier.RigOrdinaryMaterials.of(generated, effectiveAnalysis) else generated
 		// The base packs superseded layers (the originals of a split) too; once no mesh samples them the model
 		// packs only the layers it shows, as exports do.
@@ -223,6 +226,29 @@ class PSD2LivePipeline {
 	private fun generatedBase(input: PipelineAnalysis, config: PipelineConfig, progress: ProgressListener,
 	                          previousAtlas: PackedAtlas? = null): GeneratedBase =
 		generatedBase(generationInputs(input, config, progress, previousAtlas), config, progress)
+
+	private fun generateWithAtlasEncoding(inputs: GenerationInputs, config: PipelineConfig,
+	                                      progress: ProgressListener): GeneratedBase {
+		val pages = inputs.atlas.pages.filterNot { it.hasCanonicalPng }
+		if (pages.isEmpty()) return generatedBase(inputs, config, progress)
+		// A fresh ordinary source uses this same atlas for the modifier IR. Mesh generation only needs its layout.
+		val encoding = FutureTask {
+			RigBuildProfile.stage("modifier author: encode atlas pages") {
+				pages.parallelStream().forEach { it.png }
+			}
+		}
+		Thread.ofVirtual().name("psd2live-author-atlas").start(encoding)
+		try {
+			val base = generatedBase(inputs, config, progress)
+			RigBuildProfile.stage("modifier author: wait for atlas pages") {
+				try { encoding.get() }
+				catch (failure: ExecutionException) { throw failure.cause ?: failure }
+			}
+			return base
+		} finally {
+			encoding.cancel(true)
+		}
+	}
 
 	private fun generatedBase(inputs: GenerationInputs, config: PipelineConfig, progress: ProgressListener): GeneratedBase {
 		val baselineConfig = inputs.baselineConfig

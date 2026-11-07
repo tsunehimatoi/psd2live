@@ -460,7 +460,9 @@ class AtlasPage private constructor(
 	constructor(image: BufferedImage) : this(image, null, null, null)
 
 	/** The canonical PNG (ImageIO), byte for byte what exports have always written. */
-	val png: ByteArray by lazy { encoded ?: AtlasPagePng.canonical(image) }
+	private val canonicalEncoding = lazy { encoded ?: AtlasPagePng.canonical(image) }
+	val png: ByteArray by canonicalEncoding
+	internal val hasCanonicalPng: Boolean get() = encoded != null || canonicalEncoding.isInitialized()
 
 	private val stripEncoding = lazy {
 		val reused = base?.takeIf { it.image.width == image.width && it.image.height == image.height }?.strips
