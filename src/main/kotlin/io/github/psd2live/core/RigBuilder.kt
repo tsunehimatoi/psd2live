@@ -3482,7 +3482,7 @@ object RigBuilder {
 	 */
 	internal fun skinLoweringSource(layer: ClassifiedLayer, context: RigContext, config: PipelineConfig,
 	                                atlas: PackedAtlas, cache: PreviewMeshCache, channels: Drawable): Drawable {
-		require(layer.semantic.tag in setOf(SemanticTag.FACE, SemanticTag.NOSE))
+		require(layer.semantic.tag in setOf(SemanticTag.FACE, SemanticTag.NOSE, SemanticTag.FACE_DETAIL))
 		val aligned = context.rigLayer(layer)
 		val (parent, frame) = context.parentAndFrame(layer, config)
 		val parts = buildDrawableMesh(layer, aligned, context, parent, frame, context.headSpaceFor(layer, config), config, cache)

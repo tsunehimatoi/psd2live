@@ -52,6 +52,8 @@ Mouth interior depth v2 adds parallax to teeth and other interior layers and sha
 
 Mouth spring v2 adds lower-face settling after the mouth opens. It uses the fitted mouth and jaw on a shared source scaffold and honors the physics toggle. Use v1 for separate closed-mouth drawings, edited target geometry or combinations with a preceding tongue modifier.
 
+Mouth spring v3 is selectable by version and supports preceding tongue, cheek-lid coupling and interior depth in the modern preset. If lower-face geometry has been moved into a deformer, v3 replays and checks the source allocation before adding spring motion. It requires the original fitted artwork and a shared v2 scaffold.
+
 Cheek-lid coupling v2 is selectable by version. It requires a shared v2 scaffold, fitted eyes v2, and a fitted mouth with a live mouth form grid. Use v1 with edited lid meshes or parent frames, fitted head turn, or preceding gaze or brow-lid coupling.
 
 Cheek-lid coupling v3 is also selectable by version. With the same source requirements, it supports fitted head turn and preceding gaze and brow-lid coupling, preserving the existing deformer IDs. Use v1 for edited lid meshes or parent frames, repeated cheek-lid coupling, or a separate depth-turn modifier.

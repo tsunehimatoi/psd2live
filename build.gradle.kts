@@ -86,6 +86,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "creatureElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browSpringElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthSpringElements"))
+	implementation(project(path = ":algorithms:binding", configuration = "mouthSpringV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "bodyLegacyV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "armSwingElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "faceLegacyV2Elements"))
@@ -421,6 +422,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginMouthSpring")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-spring")) {
         into("algorithm-plugins/mouth-spring")
+    }
+    dependsOn(":algorithms:binding:pluginMouthSpringV3")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-spring-v3")) {
+        into("algorithm-plugins/mouth-spring-v3")
     }
     dependsOn(":algorithms:binding:pluginBodyLegacyV2")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-body-legacy-v2")) {

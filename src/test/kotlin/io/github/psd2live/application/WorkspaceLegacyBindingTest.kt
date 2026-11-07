@@ -747,6 +747,59 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun independentMouthSpringPreservesFullModernPreset(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
+        val builder = WorkspacePreviewBuilder()
+        val stack = WorkspaceModifierPlan.initial(builder.build(art), "modern-full")
+        val locked = stack.instances.single { it.type == "mouth.spring" }
+        assertEquals(1, locked.version)
+        assertTrue(stack.instances.takeWhile { it != locked }.any { it.type == "mouth.cheek-lid" })
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 3))
+        fun withStack(candidate: RigModifierStack) = art.copy(rigEdits = art.rigEdits.copy(modifierStack = candidate.toJson()))
+        val expected = builder.build(withStack(stack))
+        val upgraded = stack.copy(instances = stack.instances.map {
+            if (it.id == locked.id) it.copy(version = 3, plugin = artifact.reference) else it
+        })
+        val current = builder.build(withStack(upgraded))
+        val before = assertNotNull(expected.rig.modifierOutput)
+        val after = assertNotNull(current.rig.modifierOutput)
+        assertTrue(before.meshes.any { mesh -> mesh.shapes.any { it.parameter == "ParamMouthSpring" } })
+        for ((legacy, independent) in before.meshes.zip(after.meshes)) {
+            assertEquals(legacy.shapes.map { it.parameter }, independent.shapes.map { it.parameter }, legacy.id)
+            assertEquals(legacy, independent, legacy.id)
+        }
+        assertEquals(before, after)
+        assertEquals(RigIrCompiler.compile(expected), RigIrCompiler.compile(current))
+
+        val prefix = stack.instances.takeWhile { it != locked }
+        val input = assertNotNull(builder.build(withStack(stack.copy(instances = prefix))).rig.modifierOutput)
+        val output = assertNotNull(builder.build(withStack(stack.copy(instances = prefix + locked))).rig.modifierOutput)
+        val directory = Files.createTempDirectory("mouth-spring-v3-package-")
+        val preferences = Preferences.userRoot().node("mouth-spring-v3-package/" + UUID.randomUUID())
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            for (name in artifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val installed = store.install(staging.toString())
+            assertEquals(artifact.reference, installed.reference)
+            val definition = RigMouthSpringModifier.fullDefinition(RigModifierSource.of(current))
+            val instance = locked.copy(type = installed.manifest.algorithms.single().type, version = 3, plugin = installed.reference)
+            val adapter = ModifierPluginCatalog.definitions(store, captured = listOf(definition)).single { it.type == instance.type }
+            val providers = prefix.filter { it.type in adapter.requires + adapter.optionalUpstream }.map {
+                ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+            }
+            val context = adapter.authorContext(instance).withUpstream(providers)
+            assertEquals(output, (adapter.plugin as ContextualModifierAlgorithmPlugin).evaluate(input, instance, context) {})
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
     @Test fun independentMouthSpringMatchesLegacyAndInstalledWorker(): Unit = runBlocking {
         data class Mode(val head: String, val physics: Boolean, val capture: Boolean = false)
         for ((head, physics, capture) in listOf(Mode("face/legacy", true), Mode("face/fitted", false, capture = true))) {
