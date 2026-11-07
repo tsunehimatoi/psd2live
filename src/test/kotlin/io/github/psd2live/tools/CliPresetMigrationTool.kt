@@ -35,6 +35,31 @@ class CliPresetMigrationTool {
 
     @Test fun compareWithoutDeformers() = compareRawPreset(meshOnly = false, generateDeformers = false)
 
+    @Test fun buildSharedFrameWorkspace(): Unit = runBlocking {
+        requireTools()
+        val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
+        val config = PipelineConfig()
+        val overlay = config.rigEdits.copy(modifierStack = RigModifierStack().toJson())
+        val document = WorkspaceDocument(source, emptyMap(), emptySet(), emptyMap(), emptyMap(), overlay,
+            WorkspaceSettingsCodec.encode(config.copy(rigEdits = overlay)))
+        val (saved, model) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct)
+        val stack = RigModifierStack.fromJson(assertNotNull(saved.rigEdits.modifierStack))
+        val evaluated = assertNotNull(model.modifierEvaluation)
+        val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4,
+            "brow.shape" to 5, "brow.lid-coupling" to 7, "brow.blink" to 5, "brow.spring" to 6,
+            "eye.smile" to 4, "eye.wide" to 4, "eye.gaze-lid" to 4, "eye.emotion" to 4,
+            "eye.aftershock" to 5, "eye.squash" to 5)
+        for ((type, version) in versions) {
+            val instance = stack.instances.single { it.type == type }
+            assertEquals(version, instance.version, type)
+            assertEquals(BuiltinModifierPlugins.reference(type, version), assertNotNull(instance.plugin), type)
+            assertEquals(ModifierStatus.ACTIVE, evaluated.entries[stack.index(instance.id)].status, type)
+        }
+        val ir = RigIrCompiler.compile(model, tileArt = true, simulations = true)
+        val reopened = WorkspacePreviewBuilder().build(saved)
+        assertEquals(ir, RigIrCompiler.compile(reopened, tileArt = true, simulations = true))
+    }
+
     @Test fun compareProjectConversion() = runBlocking {
         requireTools()
         val sample = Sample.fromEnvironment()

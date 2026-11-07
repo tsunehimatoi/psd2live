@@ -4,26 +4,38 @@ import io.github.psd2live.algorithms.binding.ArmSwingV3Algorithm
 import io.github.psd2live.algorithms.binding.ArmSwingV4Algorithm
 import io.github.psd2live.algorithms.binding.BrowBlinkV3Algorithm
 import io.github.psd2live.algorithms.binding.BrowBlinkV4Algorithm
+import io.github.psd2live.algorithms.binding.BrowBlinkV5Algorithm
 import io.github.psd2live.algorithms.binding.BrowFittedV3Binding
+import io.github.psd2live.algorithms.binding.BrowFittedV4Binding
 import io.github.psd2live.algorithms.binding.BrowLegacyV2Algorithm
 import io.github.psd2live.algorithms.binding.BrowLidV5Algorithm
 import io.github.psd2live.algorithms.binding.BrowLidV6Algorithm
+import io.github.psd2live.algorithms.binding.BrowLidV7Algorithm
 import io.github.psd2live.algorithms.binding.BrowShapeV3Algorithm
 import io.github.psd2live.algorithms.binding.BrowShapeV4Algorithm
+import io.github.psd2live.algorithms.binding.BrowShapeV5Algorithm
 import io.github.psd2live.algorithms.binding.BrowSpringV4Algorithm
 import io.github.psd2live.algorithms.binding.BrowSpringV5Algorithm
+import io.github.psd2live.algorithms.binding.BrowSpringV6Algorithm
 import io.github.psd2live.algorithms.binding.BustBindingV3Algorithm
 import io.github.psd2live.algorithms.binding.CheekCarrierAlgorithm
 import io.github.psd2live.algorithms.binding.CreatureResidualAlgorithm
 import io.github.psd2live.algorithms.binding.EyeAftershockV4Algorithm
+import io.github.psd2live.algorithms.binding.EyeAftershockV5Algorithm
 import io.github.psd2live.algorithms.binding.EyeEmotionV3Algorithm
+import io.github.psd2live.algorithms.binding.EyeEmotionV4Algorithm
 import io.github.psd2live.algorithms.binding.EyeFittedV5Algorithm
 import io.github.psd2live.algorithms.binding.EyeGazeLidV3Algorithm
+import io.github.psd2live.algorithms.binding.EyeGazeLidV4Algorithm
 import io.github.psd2live.algorithms.binding.EyeHighlightV3Algorithm
+import io.github.psd2live.algorithms.binding.EyeHighlightV4Algorithm
 import io.github.psd2live.algorithms.binding.EyeLegacySourceAlgorithm
 import io.github.psd2live.algorithms.binding.EyeSmileV3Algorithm
+import io.github.psd2live.algorithms.binding.EyeSmileV4Algorithm
 import io.github.psd2live.algorithms.binding.EyeSquashV4Algorithm
+import io.github.psd2live.algorithms.binding.EyeSquashV5Algorithm
 import io.github.psd2live.algorithms.binding.EyeWideV3Algorithm
+import io.github.psd2live.algorithms.binding.EyeWideV4Algorithm
 import io.github.psd2live.algorithms.binding.FittedFaceV3Algorithm
 import io.github.psd2live.algorithms.binding.GloomCarrierAlgorithm
 import io.github.psd2live.algorithms.binding.LegacyBodyV2Algorithm
@@ -125,6 +137,32 @@ internal object WorkspacePresetInitialization {
             put("group", "$group-standard")
             put("targets", JsonArray(targets.map { buildJsonObject { put("kind", it.kind); put("id", it.id) } }))
         }, types).first
+        stack = stack.copy(instances = stack.instances.map { entry ->
+            val spec = RigLegacyBindings.find(entry.type)
+            val settings = buildJsonObject {
+                entry.config.forEach { (key, value) -> put(key, value) }
+                if (entry.type == RigSourceModifiers.SCAFFOLD) {
+                    put("featureDisplacement", config.featureDisplacementEnabled)
+                    put("frontHairSway", !config.hairSimulationFront); put("backHairSway", !config.hairSimulationBack)
+                }
+                if (spec != null) {
+                    if (spec.strength) put("strength", if (spec.area == "body") config.bodyStrength else config.headTurnStrength)
+                    if (spec.fields.isNotEmpty()) putJsonObject("tuning") { spec.fields.forEach { put(it.id, it.get(config.rigTuning)) } }
+                    if (spec.hasPhysics) put("physicsEnabled", config.generatePhysics)
+                    if (spec.mouthOutline) config.mouthColor?.let { put("color", it and 0xffffff) }
+                    if (spec.knobs.isNotEmpty()) putJsonObject("values") {
+                        for (knob in spec.knobs) put(knob.id, when {
+                            spec.seeThrough -> config.seeThroughOpacity * 100f
+                            spec.mouthOutline -> config.mouthThickness
+                            entry.type == RigLegacyBindings.FITTED_FACE -> config.recipe.value(RigModules.FACE_DEPTH_TURN.id, knob.id)
+                            spec.module != null -> config.recipe.value(entry.type, knob.id)
+                            else -> config.recipe.baseValue(spec.area, knob.id)
+                        })
+                    }
+                }
+            }
+            entry.copy(config = settings, presetGroup = group)
+        })
         val lockedVersions = requestedVersions.mapValues { (type, version) ->
             require(stack.instances.any { it.type == type }) { "Preset has no modifier of type $type" }
             val reference = requireNotNull(BuiltinModifierPlugins.reference(type, version)) {
@@ -165,7 +203,32 @@ internal object WorkspacePresetInitialization {
             val moodVersions = mapOf(RigModules.EXPRESSION_CHEEK.id to CheekCarrierAlgorithm.VERSION,
                 RigModules.EXPRESSION_GLOOM.id to GloomCarrierAlgorithm.VERSION).filterKeys { it in plannedTypes }
             val headAndEye = packages(headVersions)
-            if (headAndEye.isEmpty()) headAndEye else if (singleEyeClosedMouth) {
+            val brow = stack.instances.singleOrNull { it.type == RigModules.BROW_FITTED.id }
+            val sharedBrow = completeEyePair && headAndEye.isNotEmpty() && brow != null &&
+                brow.targets.toSet() == scaffold.targets.toSet() &&
+                RigBrowFittedModifier.requiresSharedFrames(RigModifierSource.of(model), scaffold,
+                    stack.instances.take(stack.index(brow.id)).filter { it.config["scaffold"] == JsonPrimitive(scaffold.id) }, brow)
+            if (headAndEye.isEmpty()) headAndEye else if (sharedBrow) {
+                val eyeShape = setOf(RigModules.EYE_SMILE.id, RigModules.EYE_WIDE.id, RigModules.EYE_GAZE_LID.id, RigModules.EYE_EMOTION.id)
+                if (plannedTypes.containsAll(eyeShape)) {
+                    val sharedVersions = mapOf(
+                        RigModules.BROW_FITTED.id to BrowFittedV4Binding.VERSION,
+                        RigModules.BROW_SHAPE.id to BrowShapeV5Algorithm.VERSION,
+                        RigModules.BROW_LID.id to BrowLidV7Algorithm.VERSION,
+                        RigModules.BROW_BLINK.id to BrowBlinkV5Algorithm.VERSION,
+                        RigModules.BROW_SPRING.id to BrowSpringV6Algorithm.VERSION,
+                        RigModules.EYE_SMILE.id to EyeSmileV4Algorithm.VERSION,
+                        RigModules.EYE_WIDE.id to EyeWideV4Algorithm.VERSION,
+                        RigModules.EYE_GAZE_LID.id to EyeGazeLidV4Algorithm.VERSION,
+                        RigModules.EYE_EMOTION.id to EyeEmotionV4Algorithm.VERSION,
+                        RigModules.EYE_LID_FADE.id to LidFadeV3Algorithm.VERSION,
+                        RigModules.EYE_HIGHLIGHT.id to EyeHighlightV4Algorithm.VERSION,
+                        RigModules.EYE_AFTERSHOCK.id to EyeAftershockV5Algorithm.VERSION,
+                        RigModules.EYE_SQUASH.id to EyeSquashV5Algorithm.VERSION,
+                    )
+                    packages(headVersions + sharedVersions.filterKeys { it in plannedTypes })
+                } else emptyMap()
+            } else if (singleEyeClosedMouth) {
                 val mouth = sourceMouthVersions(model.analysis, config, types, singleEye = true)
                 if (mouth.isEmpty()) emptyMap() else {
                     val brows = mapOf(RigModules.BROW_FITTED.id to BrowFittedV3Binding.VERSION,
@@ -227,40 +290,16 @@ internal object WorkspacePresetInitialization {
             }
         } else emptyMap()
         stack = stack.copy(instances = stack.instances.map { entry ->
-            val spec = RigLegacyBindings.find(entry.type)
-            val settings = buildJsonObject {
-                entry.config.forEach { (key, value) -> put(key, value) }
-                if (entry.type == RigSourceModifiers.SCAFFOLD) {
-                    put("featureDisplacement", config.featureDisplacementEnabled)
-                    put("frontHairSway", !config.hairSimulationFront); put("backHairSway", !config.hairSimulationBack)
-                }
-                if (spec != null) {
-                    if (spec.strength) put("strength", if (spec.area == "body") config.bodyStrength else config.headTurnStrength)
-                    if (spec.fields.isNotEmpty()) putJsonObject("tuning") { spec.fields.forEach { put(it.id, it.get(config.rigTuning)) } }
-                    if (spec.hasPhysics) put("physicsEnabled", config.generatePhysics)
-                    if (spec.mouthOutline) config.mouthColor?.let { put("color", it and 0xffffff) }
-                    if (spec.knobs.isNotEmpty()) putJsonObject("values") {
-                        for (knob in spec.knobs) put(knob.id, when {
-                            spec.seeThrough -> config.seeThroughOpacity * 100f
-                            spec.mouthOutline -> config.mouthThickness
-                            entry.type == RigLegacyBindings.FITTED_FACE -> config.recipe.value(RigModules.FACE_DEPTH_TURN.id, knob.id)
-                            spec.module != null -> config.recipe.value(entry.type, knob.id)
-                            else -> config.recipe.baseValue(spec.area, knob.id)
-                        })
-                    }
-                }
-            }
-            val configured = entry.copy(config = settings, presetGroup = group)
             (lockedVersions[entry.type] ?: fittedSources[entry.type])?.let { (version, plugin) ->
-                return@map configured.copy(version = version, plugin = plugin)
+                return@map entry.copy(version = version, plugin = plugin)
             }
             val sourceVersion = sourceVersions[entry.type]
-            if (sourceVersion != null && scaffold != null && entry.version == 1 && settings["scaffold"] == JsonPrimitive(scaffold.id) &&
+            if (sourceVersion != null && scaffold != null && entry.version == 1 && entry.config["scaffold"] == JsonPrimitive(scaffold.id) &&
                 entry.targets.toSet() == scaffold.targets.toSet()) {
-                val plugin = BuiltinModifierPlugins.reference(entry.type, sourceVersion) ?: return@map configured
-                val independent = configured.copy(version = sourceVersion, plugin = plugin)
-                independent.takeIf(ModifierPluginCatalog::available) ?: configured
-            } else configured
+                val plugin = BuiltinModifierPlugins.reference(entry.type, sourceVersion) ?: return@map entry
+                val independent = entry.copy(version = sourceVersion, plugin = plugin)
+                independent.takeIf(ModifierPluginCatalog::available) ?: entry
+            } else entry
         })
         if (fittedSources.isNotEmpty()) {
             val fittedBody = mapOf(RigSourceModifiers.SCAFFOLD to 2, LegacyBodyV2Algorithm.TYPE to LegacyBodyV2Algorithm.VERSION,
