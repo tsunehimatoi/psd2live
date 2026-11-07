@@ -58,8 +58,9 @@ class PSD2LivePipeline {
 		return PsdReader.read(bytes)
 	}
 
-	fun buildPreview(psd: Path, config: PipelineConfig = PipelineConfig()): RigPreviewModel =
-		buildPreview(readPsd(psd), config)
+	fun buildPreview(psd: Path, config: PipelineConfig = PipelineConfig(),
+	                 progress: ProgressListener = ProgressListener { _, _ -> }): RigPreviewModel =
+		buildPreview(readPsd(psd), config, progress)
 
 	/**
 	 * The preview of [source] under [config]. [previousAtlas] - the atlas of the model a commit starts from - only
@@ -655,7 +656,7 @@ class PSD2LivePipeline {
 		progress: ProgressListener = ProgressListener { _, _ -> },
 	): PipelineResult {
 		progress.update(tr("progress.readPsd"), 0.04)
-		val model = buildPreview(inspect(psd, config), config, building(progress))
+		val model = buildPreview(psd, config, building(progress))
 		return export(model, psd.fileName.toString(), outputDirectory, progress)
 	}
 
