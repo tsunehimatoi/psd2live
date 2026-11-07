@@ -61,7 +61,7 @@ internal object RigModifierPipeline {
         }
         val ordinary = ordinaryConfig(config)
         // Mesh-only is a construction input here, not an export gate on the ordinary authored content.
-        val baseKey = listOf(artwork, ordinary, config.meshOnly && stack.instances.none { it.enabled } && stack.appliedCapabilities.isEmpty(), pipeline.deferRuntimeBundles, io.github.psd2live.i18n.I18n.currentLanguage)
+        val baseKey = listOf(artwork, ordinary, config.meshOnly && stack.instances.none { it.enabled } && stack.appliedCapabilities.isEmpty(), io.github.psd2live.i18n.I18n.currentLanguage)
         val retained = pipeline.modifierBase?.takeIf { it.key == baseKey }
         val base = retained?.model ?: RigBuildProfile.stage("modifier author input") {
             pipeline.buildOrdinaryPreview(artwork, ordinary.copy(meshOnly = true),
@@ -70,8 +70,11 @@ internal object RigModifierPipeline {
         if (retained != null) RigBuildProfile.count("modifier author input cache hits")
         val input = retained?.input ?: compileOrdinary(base.analysis, base.atlas, base.rig, config)
         val source = RigModifierSource(base.analysis, base.atlas, config, base.rig.layerIdByDrawableId, base.rig.copiedDrawableIds, base.baseRig.puppet, pipeline.meshCache)
-        val context = listOf(artwork, config.copy(rigEdits = config.rigEdits.copy(modifierStack = null)),
-            io.github.psd2live.i18n.I18n.currentLanguage)
+        // Saving the initial automatic layout as an explicit arrangement is presentation bookkeeping.
+        // Compare the resolved layout and let the evaluator compare the complete authored IR, including
+        // page content, before reusing a prefix or its captured inputs.
+        val context = listOf(artwork, config.copy(atlasArrangement = null, rigEdits = config.rigEdits.copy(modifierStack = null)),
+            base.atlas.placementByLayerId, base.atlas.fit, base.atlas.footprints, io.github.psd2live.i18n.I18n.currentLanguage)
         val result = ModifierPluginStore.shared.withArchivedBundles(stack.pluginReferences()) {
             RigModifierAlgorithms.evaluator(source, stack).evaluate(input, stack, pipeline.modifierCache, context,
                 reuseCapturedAuthorInputs = true) {
