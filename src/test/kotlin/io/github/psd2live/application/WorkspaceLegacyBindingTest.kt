@@ -1794,8 +1794,10 @@ class WorkspaceLegacyBindingTest {
     @Test fun closedMouthSourceChainMatchesLockedVersionsAndInstalledWorkers(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true, closedMouth = true)
         val choices = WorkspaceInitialPreset()
-        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
-            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val defaults = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+        val config = defaults.copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()),
+            recipe = defaults.recipe.copy(modules = defaults.recipe.modules +
+                ("mouth.jaw" to ModuleChoice(true, values = mapOf("share" to 22f)))))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
         val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices, preferSourceBindings = true)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
@@ -1907,6 +1909,37 @@ class WorkspaceLegacyBindingTest {
         }
         assertEquals(compiled, RigIrCompiler.compile(capturePreview, tileArt = true))
         assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(captureDocument), tileArt = true))
+        val jawIndex = captureStack.instances.indexOfFirst { it.type == "mouth.jaw" }
+        assertEquals(1, captureStack.instances.take(jawIndex).single { it.type == "mouth.tongue" }.version)
+        val jawBefore = captureEvaluation.outputs[jawIndex - 1]
+        val jawAfter = captureEvaluation.outputs[jawIndex]
+        assertEquals(jawBefore.meshes.single { it.name == "mouth-closed" }, jawAfter.meshes.single { it.name == "mouth-closed" })
+        val skinBefore = jawBefore.meshes.single { it.name == "face" }
+        val skinAfter = jawAfter.meshes.single { it.name == "face" }
+        assertNotEquals(skinBefore.offsets, skinAfter.offsets)
+        assertNotEquals(jawBefore.meshes.single { it.name == "nose" }.offsets, jawAfter.meshes.single { it.name == "nose" }.offsets)
+        assertNotEquals(skinBefore.shapes.single { it.parameter == "ParamJawOpen" }, skinAfter.shapes.single { it.parameter == "ParamJawOpen" })
+        fun jawDocument(version: Int, plugin: ModifierPluginReference): WorkspaceDocument {
+            val jawStack = captureStack.copy(instances = captureStack.instances.mapIndexed { i, entry ->
+                if (i == jawIndex) entry.copy(version = version, plugin = plugin) else entry
+            })
+            return document.copy(rigEdits = document.rigEdits.copy(modifierStack = jawStack.toJson()))
+        }
+        for (version in 3..4) {
+            val old = assertNotNull(BundledAlgorithmArtifacts.find("mouth.jaw", version))
+            val error = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(jawDocument(version, old.reference)) }
+            assertTrue(error.message.orEmpty().contains("compatible fitted mouth"))
+        }
+        val jawArtifact = assertNotNull(BundledAlgorithmArtifacts.find("mouth.jaw", 5))
+        val lockedJaw = jawDocument(5, jawArtifact.reference)
+        val jawPreview = WorkspacePreviewBuilder().build(lockedJaw)
+        val jawEvaluation = assertNotNull(jawPreview.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, jawEvaluation.entries[jawIndex].status)
+        for (stage in jawIndex until stack.instances.size) {
+            assertTrue(reference[stage] == jawEvaluation.outputs[stage], stack.instances[stage].type)
+        }
+        assertEquals(compiled, RigIrCompiler.compile(jawPreview, tileArt = true))
+        assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(lockedJaw), tileArt = true))
         val instance = candidate.instances[index]
         val definition = RigFittedMouthDefinition.closedDefinition(RigModifierSource.of(actual))
         val context = definition.authorContext(instance).withUpstream(candidate.instances.take(index).map {
@@ -1960,6 +1993,17 @@ class WorkspaceLegacyBindingTest {
             val captureDefinition = RigMouthCaptureModifier.closedDefinition(RigModifierSource.of(capturePreview))
             assertEquals(captureAfter, ModifierPluginWorkers.evaluate(captureWorker, captureWorker.manifest.algorithms.single(),
                 captureBefore, captureInstance, {}, store, context = captureContext, declaredParameters = captureDefinition.parameters(captureInstance)))
+            val jawInstance = jawEvaluation.entries[jawIndex].instance
+            val jawStaging = Files.createDirectory(directory.resolve("jaw-package"))
+            Files.write(jawStaging.resolve("plugin.json"), jawArtifact.bytes)
+            for (name in jawArtifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(jawArtifact.resource + name)).use { Files.copy(it, jawStaging.resolve(name)) }
+            }
+            val jawWorker = store.install(jawStaging.toString())
+            assertEquals(jawArtifact.reference, jawWorker.reference)
+            val jawContext = assertNotNull(jawEvaluation.readAlgorithms[jawInstance.id]).context
+            assertEquals(jawAfter, ModifierPluginWorkers.evaluate(jawWorker, jawWorker.manifest.algorithms.single(),
+                jawBefore, jawInstance, {}, store, context = jawContext))
         } finally {
             store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
             preferences.removeNode()

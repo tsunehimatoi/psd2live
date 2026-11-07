@@ -3,6 +3,7 @@ package io.github.psd2live.core.modifier
 import io.github.psd2live.algorithms.binding.MouthJawAlgorithm
 import io.github.psd2live.algorithms.binding.MouthJawV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV4Algorithm
+import io.github.psd2live.algorithms.binding.MouthJawV5Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldMesh
 import io.github.psd2live.algorithms.binding.ScaffoldMeshContext
 import io.github.psd2live.core.*
@@ -35,6 +36,15 @@ internal object RigMouthJawModifier {
     fun tongueDefinition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthJawV4Algorithm.VERSION, tongueAlgorithm)
 
+    private val closedAlgorithm = object : ReadingModifierAlgorithmPlugin by MouthJawV5Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = MouthJawV5Algorithm.optionalUpstream
+        override val canonicalOptInType = MouthJawAlgorithm.TYPE
+    }
+
+    fun closedDefinition(source: RigModifierSource?): RigModifierDefinition =
+        definition(source, MouthJawV5Algorithm.VERSION, closedAlgorithm)
+
     fun fittedDefinition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthJawV3Algorithm.VERSION, fittedAlgorithm)
 
@@ -55,14 +65,23 @@ internal object RigMouthJawModifier {
             item.config["scaffold"] == JsonPrimitive(scaffold.id) && item.targets.any(instance.targets::contains) &&
                 RigLegacyBindings.find(item.type)?.let { !it.expressionToggles && !it.seeThrough } == true
         }
-        val sourceBinding = version in MouthJawV3Algorithm.VERSION..MouthJawV4Algorithm.VERSION
-        val fittedVersions = if (sourceBinding) 3..3 else 1..2
+        val closedDrawing = version == MouthJawV5Algorithm.VERSION
+        val sourceBinding = version >= MouthJawV3Algorithm.VERSION
+        val fittedVersions = when {
+            closedDrawing -> 4..4
+            sourceBinding -> 3..3
+            else -> 1..2
+        }
         val baseId = instance.config.getValue("base").jsonPrimitive.content
         require(preceding.any { it.id == baseId && it.type == "mouth/fitted" && it.version in fittedVersions }) {
             "Mouth jaw v$version requires a compatible fitted mouth"
         }
         val allowTongue = version == MouthJawV4Algorithm.VERSION
-        val mouthUpstream = if (allowTongue) MouthJawV4Algorithm.mouthUpstream else MouthJawAlgorithm.mouthUpstream
+        val mouthUpstream = when {
+            closedDrawing -> MouthJawV5Algorithm.mouthUpstream
+            allowTongue -> MouthJawV4Algorithm.mouthUpstream
+            else -> MouthJawAlgorithm.mouthUpstream
+        }
         require(preceding.none { it.type.startsWith("mouth.") && it.type !in mouthUpstream }) {
             "Use mouth jaw v1 after other mouth modules"
         }
@@ -95,10 +114,11 @@ internal object RigMouthJawModifier {
             featureDisplacementEnabled = scaffold.config["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
             hairSimulationFront = !(scaffold.config["frontHairSway"]?.jsonPrimitive?.boolean ?: true),
             hairSimulationBack = !(scaffold.config["backHairSway"]?.jsonPrimitive?.boolean ?: true))
-        val context = RigBuilder.rigContext(analysis, native, meshCache)
+        val context = RigBuilder.rigContext(analysis, native, meshCache, neutralScaffold = closedDrawing)
         val fitted = requireNotNull(context.fittedMouth(native))
         val measured = requireNotNull(fitted.source) { "Mouth jaw v$version requires readable fitted mouth artwork" }
         require(!fitted.layered) { "Use mouth jaw v1 for artwork with separate lip or line layers" }
+        require(!closedDrawing || fitted.closedLine) { "Mouth jaw v5 requires a separate closed drawing" }
         val sourceLayers = context.analysis.layers.associateBy { it.source.id.raw }
         val materials = mutableListOf<ScaffoldMeshContext.Material>()
         val targets = buildJsonObject {
@@ -135,7 +155,11 @@ internal object RigMouthJawModifier {
             put("chin", fitted.chin)
             put("targets", targets)
             putJsonObject("providers") {
-                val optionalUpstream = if (allowTongue) MouthJawV4Algorithm.optionalUpstream else MouthJawAlgorithm.optionalUpstream
+                val optionalUpstream = when {
+                    closedDrawing -> MouthJawV5Algorithm.optionalUpstream
+                    allowTongue -> MouthJawV4Algorithm.optionalUpstream
+                    else -> MouthJawAlgorithm.optionalUpstream
+                }
                 for (provider in preceding.filter { it.type in optionalUpstream }) {
                     put(provider.type, provider.id)
                 }
