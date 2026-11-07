@@ -2289,6 +2289,43 @@ tasks.register("pluginEyeHighlight") {
     }
 }
 
+val eyeHighlightV3WorkerJar = registerIsolatedBindingWorker(
+    "eyeHighlightV3", "eye-highlight-v3", "worker-eye-highlight-v3", "io.github.psd2live.algorithms.binding.EyeHighlightV3Worker",
+)
+
+kotlin.target.compilations.named("eyeHighlightV3") {
+    associateWith(kotlin.target.compilations.getByName("eyeHighlight"))
+    associateWith(kotlin.target.compilations.getByName("eyeSquash"))
+}
+eyeHighlightV3WorkerJar.configure {
+    from(sourceSets["eyeHighlight"].output)
+    from(sourceSets["eyeSquash"].output)
+}
+tasks.register("pluginEyeHighlightV3") {
+    dependsOn(eyeHighlightV3WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-eye-highlight-v3")
+    val packageVersion = project.version.toString()
+    inputs.file(eyeHighlightV3WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        eyeHighlightV3WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6579652e686967686c69676874.v3"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Highlight parallax",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/highlight","aliases":["eye.highlight"],"version":3,"name":"Highlight parallax","category":"eye",
+               "targets":["mesh"],"requires":["rig.scaffold","eye/fitted","face/legacy"],"contextVersion":2,
+               "reads":["mesh","parameter","hierarchy","canvas","deformer"],"writes":["mesh","deformer"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val mouthTongueWorkerJar = registerIsolatedBindingWorker(
     "mouthTongue", "mouth-tongue", "worker-mouth-tongue", "io.github.psd2live.algorithms.binding.MouthTongueWorker",
 )

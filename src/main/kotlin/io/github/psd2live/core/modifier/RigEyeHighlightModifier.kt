@@ -1,6 +1,7 @@
 package io.github.psd2live.core.modifier
 
 import io.github.psd2live.algorithms.binding.EyeHighlightAlgorithm
+import io.github.psd2live.algorithms.binding.EyeHighlightV3Algorithm
 import io.github.psd2live.algorithms.binding.EyeHighlightInput
 import io.github.psd2live.algorithms.binding.EyeModules
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
@@ -11,7 +12,10 @@ import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.RigTuning
 import io.github.psd2live.core.recipe.BaseChoice
 import io.github.psd2live.core.recipe.RigRecipe
+import io.github.psd2live.i18n.tr
 import io.github.psd2live.project.WorkspaceSettingsCodec
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -22,19 +26,25 @@ internal object RigEyeHighlightModifier {
         override val canonicalOptInType = EyeHighlightAlgorithm.TYPE
     }
 
-    fun definition(source: RigModifierSource?): RigModifierDefinition =
+    private val modernAlgorithm = object : ReadingModifierAlgorithmPlugin by EyeHighlightV3Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = EyeHighlightV3Algorithm.optionalUpstream
+        override val canonicalOptInType = EyeHighlightAlgorithm.TYPE
+    }
+
+    fun definition(source: RigModifierSource?, modern: Boolean = false): RigModifierDefinition =
         RigLegacyBindings.definition(RigLegacyBindings.spec(EyeHighlightAlgorithm.TYPE), source).copy(
-            version = EyeHighlightAlgorithm.VERSION,
+            version = if (modern) EyeHighlightV3Algorithm.VERSION else EyeHighlightAlgorithm.VERSION,
             parameters = { emptyList() },
             resolveParameter = { _, _, _ -> null },
             evaluate = { _, _, _ -> error("Eye highlight requires resolved modifier inputs") },
-            plugin = algorithm,
-            changeWrites = setOf("mesh"),
+            plugin = if (modern) modernAlgorithm else algorithm,
+            changeWrites = if (modern) EyeHighlightV3Algorithm.WRITES else setOf("mesh"),
             upstreamInputs = true,
-            authorContext = { requireNotNull(source).capture(it) },
+            authorContext = { requireNotNull(source).capture(it, modern) },
         )
 
-    private fun RigModifierSource.capture(instance: RigModifierInstance): ModifierAlgorithmContext {
+    private fun RigModifierSource.capture(instance: RigModifierInstance, modern: Boolean): ModifierAlgorithmContext {
         val scaffold = provider(instance)
         val baseId = instance.config.getValue("base").jsonPrimitive.content
         val base = activeBefore(instance).single { it.id == baseId && it.type == "eye/fitted" }
@@ -65,6 +75,16 @@ internal object RigEyeHighlightModifier {
                 parent?.raw?.let { ScaffoldBinding.deformerId(scaffold, target.id, it) },
                 layer.source.opacity.coerceIn(0f, 1f), automaticOpacity)
         }.toMap()
-        return EyeHighlightInput.encode(targets)
+        val captured = EyeHighlightInput.encode(targets)
+        if (!modern || targets.isEmpty()) return captured
+        val iris = RigBuilder.eyeSquashSourceInputs(analysis, atlas, native, meshCache,
+            targets.keys.associateWith(layersByMesh::getValue)) { target, parent ->
+            ScaffoldBinding.deformerId(scaffold, target, parent)
+        }
+        val source = ModifierAlgorithmContext(JsonObject(captured.values + mapOf(
+            "iris" to iris.values,
+            "turn_name" to JsonPrimitive(tr("model.deformer.meshTurn", "{meshName}")),
+        )), iris.resources)
+        return captureLidHeadSource(instance, scaffold, base, native, source)
     }
 }
