@@ -156,7 +156,7 @@ Bundled calls avoid IPC. External workers reuse processes, content-addressed buf
 
 The acceptance limit is four seconds from reading the PSD through complete presets, preview and initial project history, minus the actual synchronous simulation-baking time. Baking must still finish; it cannot be deferred or omitted. Reports show total time, excluded baking time and counted time separately for first and repeated generation. Further baking optimization is currently deferred.
 
-Some bundled binding algorithms still generate templates and extract their local contribution; their full separation into local algorithms is not complete. Stack evaluation remains serial, without independent-item scheduling. Plugin support and cache hits do not establish performance acceptance; first and repeated generation are evaluated separately.
+Some bundled binding algorithms still extract their results from generated templates. Adjacent built-in algorithms can compute changes in parallel when their declared read and write domains are disjoint and their dependencies are already satisfied. The host checks actual reads and write preconditions and merges changes in stack order. Other algorithms evaluate in sequence. First and repeated generation are timed separately.
 
 ## Versions and dependency graph
 

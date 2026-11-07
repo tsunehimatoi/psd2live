@@ -409,6 +409,34 @@ class RigModifierStackTest {
         assertEquals(123, allowed.evaluate(authored, stack).rig.parts.first().drawOrder)
         assertNotEquals(123, authored.parts.first().drawOrder)
     }
+    @Test fun parallelSuccessorRechecksActualReadsBeforeApplyingInStackOrder() {
+        val caller = Thread.currentThread()
+        val reads = java.util.concurrent.ConcurrentLinkedQueue<Pair<Float, Boolean>>()
+        val physics = object : ReadingModifierAlgorithmPlugin {
+            override fun changes(input: ModifierEvaluationInput, instance: RigModifierInstance, checkpoint: () -> Unit) =
+                ModifierModelChanges(physicsFps = ModifierFieldChange(input.physics.fps, 120f))
+        }
+        val motion = object : ReadingModifierAlgorithmPlugin {
+            override fun changes(input: ModifierEvaluationInput, instance: RigModifierInstance, checkpoint: () -> Unit): ModifierModelChanges {
+                val fps = requireNotNull(input.physics.fps)
+                reads += fps to (Thread.currentThread() == caller)
+                val clip = Clip(instance.outputId("motion"), "Read", "Read", "read", 1f, fps, false, curves = emptyList())
+                return ModifierModelChanges(clips = ModifierObjectChanges(added = listOf(clip)))
+            }
+        }
+        val engine = RigModifierEvaluator(RigModifierRegistry(listOf(
+            RigModifierDefinition("physics", 1, evaluate = physics::evaluate, plugin = physics, changeWrites = setOf("physics")),
+            RigModifierDefinition("motion", 1, evaluate = motion::evaluate, plugin = motion, changeWrites = setOf("motion")),
+        )))
+        val input = authored.copy(physics = Physics(fps = 30f))
+        val result = engine.evaluate(input, RigModifierStack(listOf(entry("a", "physics"), entry("b", "motion"))))
+        val expectedReads = if (java.util.concurrent.ForkJoinPool.getCommonPoolParallelism() >= 2)
+            listOf(30f to false, 120f to true) else listOf(120f to true)
+        assertEquals(expectedReads, reads.toList())
+        assertEquals(120f, result.rig.clips.single().fps)
+        assertEquals(listOf("a", "b"), result.entries.map { it.instance.id })
+    }
+
     @Test fun directReadCacheReusesOnlyUnchangedObservedInputsAfterUpstreamEdits() {
         var calls = 0
         val algorithm = object : ReadingModifierAlgorithmPlugin {

@@ -141,7 +141,12 @@ internal class RigModifierEvaluator(
 ) {
     fun evaluate(authored: RigIR, stack: RigModifierStack,
                  cache: RigModifierEvaluationCache? = null, context: Any = Unit,
-                 checkpoint: () -> Unit = {}): RigModifierResult {
+                 checkpoint: () -> Unit = {}): RigModifierResult = ModifierReadAhead().use {
+        evaluate(authored, stack, cache, context, it, checkpoint)
+    }
+
+    private fun evaluate(authored: RigIR, stack: RigModifierStack, cache: RigModifierEvaluationCache?, context: Any,
+                         ahead: ModifierReadAhead, checkpoint: () -> Unit): RigModifierResult {
         val pluginRevision = ModifierPluginStore.shared.revision.value
         val definitions = resolveDefinitions(stack)
         validateOrder(stack, definitions)
@@ -259,7 +264,8 @@ internal class RigModifierEvaluator(
                 val plugin = definition.plugin
                 when (plugin) {
                     is ReadingModifierAlgorithmPlugin -> {
-                        val cachedRead = readCache[instance.id]?.takeIf {
+                        val speculative = ahead.take(index)
+                        val cachedRead = (speculative ?: readCache[instance.id])?.takeIf {
                             it.instance == instance && it.plugin === plugin && it.context == authorContext && it.reads.matches(before, authorContext)
                         }
                         val reused = cachedRead?.let {
@@ -268,9 +274,31 @@ internal class RigModifierEvaluator(
                             try { it.changes.applyWithResources(before, checkpoint, resolveRasters) } catch (_: IllegalArgumentException) { null }
                         }
                         if (reused != null) {
-                            io.github.psd2live.core.RigBuildProfile.count("modifier read cache hits")
+                            if (speculative != null && cachedRead === speculative) {
+                                RigBuildProfile.count("modifier parallel evaluations")
+                                readCache[instance.id] = speculative
+                            } else RigBuildProfile.count("modifier read cache hits")
                             reused
                         } else {
+                            val next = stack.instances.getOrNull(index + 1)
+                            val nextDefinition = definitions.getOrNull(index + 1)
+                            val nextPlugin = nextDefinition?.plugin as? ReadingModifierAlgorithmPlugin
+                            if (next != null && next.enabled && nextDefinition != null && nextPlugin != null &&
+                                nextDefinition.requires.isEmpty() && nextDefinition.optionalUpstream.isEmpty() &&
+                                nextDefinition.exclusiveFamily == null && next.id !in readCache &&
+                                physicsOrder.isEmpty() && stack.overrides[instance.id].isNullOrEmpty() &&
+                                ahead.canOverlap(definition, nextDefinition) &&
+                                next.parameterProviders.all { (parameter, provider) ->
+                                    available.any { it.id == provider } && parameter in existing
+                                }) {
+                                // Source capture stays on the caller. A rejected probe is validated in stack order.
+                                val nextContext = try {
+                                    if (nextDefinition.motionInputs(next).all { id -> before.clips.any { it.id == id } })
+                                        capture(next).withUpstream(emptyList())
+                                    else null
+                                } catch (_: IllegalArgumentException) { null }
+                                if (nextContext != null) ahead.start(index + 1, next, nextPlugin, before, nextContext)
+                            }
                             val view = ModifierEvaluationInput(before, authorContext)
                             val changes = plugin.changes(view, instance, checkpoint)
                             changes.requireWrites(requireNotNull(definition.changeWrites) { "${instance.type}: missing change write contract" })
