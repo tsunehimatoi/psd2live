@@ -24,6 +24,8 @@ Eye widening v2 extends fitted eye opening and opacity from source measurements.
 
 Brow shape v2 is selectable by version with a shared v2 scaffold and compatible fitted brows. Add it before other brow motion modifiers. Use v1 if the brow height keys, topology, or parent frame have already been edited.
 
+Brow spring v2 adds rebound shapes and physics. It requires shared scaffold v2, fitted brows v1 or v2, and fitted eyes v2 when fitted eyes are present. Use v1 with edited brow geometry or keyforms, or when a lid or brow coupling already precedes it.
+
 Eye smile v2 requires shared scaffold v2 and fitted eyes v2. It adds smile keys to the source eyelids. Use v1 when the eyelid geometry has been edited or when a coupled lid or brow modifier already precedes it.
 
 ## Install and remove

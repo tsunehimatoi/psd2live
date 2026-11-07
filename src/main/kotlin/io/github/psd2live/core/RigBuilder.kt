@@ -1,6 +1,8 @@
 package io.github.psd2live.core
 
 import io.github.psd2live.algorithms.binding.BodyStance
+import io.github.psd2live.algorithms.binding.BindingProjection
+import io.github.psd2live.algorithms.binding.BrowSpringInputs
 import io.github.psd2live.algorithms.binding.EyeFittedInputs
 import io.github.psd2live.algorithms.binding.EyeSmileInputs
 import io.github.psd2live.algorithms.binding.EyeWideInputs
@@ -1297,6 +1299,55 @@ object RigBuilder {
         }.toMap()
         return BrowShapeInputs(names, tr("model.group.brows"), targets,
             eyeProvider.takeIf { targets.values.any { it.eye != null } })
+    }
+
+    /** Captures the fitted brow's artwork and fingerprints its expected native parent branch. */
+    internal fun browSpringSourceInputs(
+        analysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig, cache: PreviewMeshCache,
+        targetLayers: Map<String, String>, kept: Set<ParameterId>, eyeProvider: String?, shapeProvider: String?,
+        parentId: (String, String) -> String,
+    ): BrowSpringInputs {
+        val context = rigContext(analysis, config, cache)
+        val (fits, eyes) = context.fittedBrowMeasurements(config)
+        val module = io.github.psd2live.core.recipe.RigModules.BROW_SPRING
+        val names = if (!module.applies(io.github.psd2live.core.recipe.RecipeSubject.of(context.analysis))) emptyMap() else
+            listOf(Side.LEFT, Side.RIGHT).zip(module.defines.map { tr(it.nameKey) }).toMap()
+        val layers = context.analysis.layers.associateBy { it.source.id.raw }
+        val ordered = orderMouthLayers(context.analysis.layers.sortedBy { it.source.order })
+        val step = generatedOrderStep(config.drawOrderStep, ordered.size)
+        val defaultOrders = ordered.mapIndexed { index, layer -> layer.source.id.raw to ((ordered.size - index) * step).toFloat() }.toMap()
+        val sourceParents = faceTurnAndLean(context, config, stagesOf(cache)).associateBy { it.id }
+        val parameters = standardParameters(context, config) + moduleParameters(context, config, emptyList())
+        val targets = targetLayers.mapNotNull { (id, layerId) ->
+            val layer = layers[layerId]?.takeIf {
+                it.semantic.tag == SemanticTag.EYEBROW && it.semantic.role == null && it.opaquePixels > 0
+            } ?: return@mapNotNull null
+            val fit = fits[layer.semantic.side] ?: return@mapNotNull null
+            val placement = atlas.placementByLayerId[layerId] ?: return@mapNotNull null
+            val (parent, frame) = context.parentAndFrame(layer, config)
+            val data = buildGridMesh(layer, frame, context.headSpaceFor(layer, config), config, cache,
+                MeshResolution.unitScale(config, context.analysis.source))
+            val raw = ScaffoldMesh.RawMesh(data.rigPositions,
+                LayerTexture.packed(layer, placement, atlas).bind(data.mesh.uvs), data.mesh.indices)
+            val nativeBranch = generateSequence(parent) { sourceParents.getValue(it).parent }.map(sourceParents::getValue).toList()
+            val native = PuppetModel(parameters, emptyList(), nativeBranch, emptyList(), emptyList(), null)
+            val projected = BindingProjection.retain(native, kept, mapOf(StandardParameters.MOUTH_OPEN to 1f))
+            val branch = projected.deformers.map { deformer ->
+                val ref = io.github.psd2live.targets.cubism.PuppetIr.deformerToIr(deformer)
+                val mappedParent = ref.parent?.let { parentId(id, it) }
+                val mappedId = parentId(id, ref.id)
+                BrowSpringInputs.fingerprint(when (ref) {
+                    is io.github.psd2live.format.model.Deformer.Warp -> ref.copy(id = mappedId, parent = mappedParent)
+                    is io.github.psd2live.format.model.Deformer.Rotation -> ref.copy(id = mappedId, parent = mappedParent)
+                })
+            }
+            val eye = eyes?.rigs?.get(fit.side)?.let { BrowSpringInputs.Eye(it.opening, it.fit.width) }
+            val order = config.drawOrderOverrides[layerId] ?: config.drawOrderOverrides[id] ?: defaultOrders.getValue(layerId)
+            id to BrowSpringInputs.Target(fit, eye, frame, raw, branch, order.coerceIn(0f, 1000f), layer.source.opacity.coerceIn(0f, 1f))
+        }.toMap()
+        return BrowSpringInputs(names, listOf(Side.LEFT, Side.RIGHT).zip(listOf("L", "R").map {
+            tr("model.physics.browSpring", it)
+        }).toMap(), tr("model.group.physics"), targets, eyeProvider.takeIf { targets.values.any { it.eye != null } }, shapeProvider)
     }
 
     /** Captures the neck's source topology and neutral frames without evaluating any binding stage. */

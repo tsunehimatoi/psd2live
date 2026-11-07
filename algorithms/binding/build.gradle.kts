@@ -1157,3 +1157,32 @@ tasks.register("pluginEyeFittedV4") {
         """.trimIndent())
     }
 }
+
+val browSpringWorkerJar = registerIsolatedBindingWorker(
+    "browSpring", "brow-spring", "worker-brow-spring", "io.github.psd2live.algorithms.binding.BrowSpringWorker",
+)
+
+tasks.register("pluginBrowSpring") {
+    dependsOn(browSpringWorkerJar)
+    val output = layout.buildDirectory.dir("plugin-brow-spring")
+    val packageVersion = project.version.toString()
+    inputs.file(browSpringWorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        browSpringWorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.62726f772e737072696e67.v2"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Brow spring",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/spring","aliases":["brow.spring"],"version":2,"name":"Brow spring","category":"brow",
+               "targets":["mesh"],"requires":["rig.scaffold","brow/fitted"],"contextVersion":2,
+               "reads":["mesh","deformer","parameter","hierarchy","physics"],"writes":["mesh","parameter","hierarchy","physics"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}

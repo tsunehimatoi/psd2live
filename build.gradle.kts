@@ -75,6 +75,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "eyeSquashElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "eyeWideElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "eyeSmileElements"))
+	implementation(project(path = ":algorithms:binding", configuration = "browSpringElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "bodyLegacyV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "faceLegacyV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLegacyV2Elements"))
@@ -309,6 +310,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginEyeWide")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-wide")) {
         into("algorithm-plugins/eye-wide")
+    }
+    dependsOn(":algorithms:binding:pluginBrowSpring")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-spring")) {
+        into("algorithm-plugins/brow-spring")
     }
     dependsOn(":algorithms:binding:pluginBodyLegacyV2")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-body-legacy-v2")) {

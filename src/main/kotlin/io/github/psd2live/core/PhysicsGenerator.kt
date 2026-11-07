@@ -1,5 +1,7 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.algorithms.binding.BrowSpringPhysics
+
 import io.github.psd2live.i18n.tr
 
 /**
@@ -90,17 +92,7 @@ object PhysicsGenerator {
 				normalization = PhysicsNormalization(angleMin = -20f, angleMax = 20f)))
 		}
 		// Each brow's overshoot as it stops: a short springy pendulum on its height and angle.
-		for (side in listOf("L", "R")) {
-			val spring = "ParamBrow${side}Spring"
-			if (spring !in available) continue
-			val inputs = listOf(PhysicsInput("ParamBrow${side}Y", 70f, PhysicsSourceType.X), PhysicsInput("ParamBrow${side}Angle", 30f, PhysicsSourceType.X))
-				.filter { it.parameter in available }
-			if (inputs.isEmpty()) continue
-			add(RigPhysicsEdit(id = "PhysicsBrow${side}Spring", name = tr("model.physics.browSpring", side), inputs = inputs,
-				outputs = listOf(PhysicsOutput(spring, 2, 1.2f)),
-				segments = listOf(PhysicsSegment(1f, 0.92f, 0.55f, 1.6f), PhysicsSegment(1f, 0.85f, 0.45f, 1.8f)),
-				normalization = PhysicsNormalization(-1f, 0f, 1f, -10f, 0f, 10f)))
-		}
+		addAll(BrowSpringPhysics.rules(available) { tr("model.physics.browSpring", it) })
 		// The chest settling after the body moves and lifting with the breath: up and down on the nod, the lean and the
 		// breath, side to side on the body's turn and sway.
 		if ("ParamBustY" in available) add(RigPhysicsEdit(id = "PhysicsBustY", name = tr("model.physics.bust", "Y"),

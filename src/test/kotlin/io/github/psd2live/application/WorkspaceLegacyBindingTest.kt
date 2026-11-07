@@ -1,6 +1,7 @@
 package io.github.psd2live.application
 
 import io.github.psd2live.algorithms.binding.BrowLegacyV2Algorithm
+import io.github.psd2live.algorithms.binding.BrowSpringAlgorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV2Algorithm
 import io.github.psd2live.algorithms.binding.FittedFaceV2Algorithm
 import io.github.psd2live.algorithms.binding.DepthTurnV2Algorithm
@@ -1470,6 +1471,136 @@ class WorkspaceLegacyBindingTest {
         assertEquals(edited, RigIrCompiler.compile(f.now.model))
         assertEquals(4, f.now.document.rigEdits.physicsEdits.size)
         assertEquals(edited, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
+    @Test fun independentBrowSpringV2MatchesLegacyAcrossCompatibleBrowAndHeadBindings(): Unit = runBlocking {
+        data class Mode(val head: String?, val fitted: Int, val shape: Int?, val body: Int? = null)
+        val modes = buildList {
+            add(Mode(null, 1, null))
+            add(Mode("face/legacy", 1, 1, body = 1))
+            add(Mode("face/legacy", 2, 1, body = 2))
+            add(Mode("face/fitted", 1, 1))
+            if (BundledAlgorithmArtifacts.find("brow.shape", 2) != null) add(Mode("face/legacy", 2, 2))
+        }
+        for (mode in modes) {
+            val document = document(pairedBrows = mode.head != null, bilateralEyes = mode.head != null)
+            suspend fun bind(version: Int?): Fixture {
+                val f = Fixture(document)
+                f.install()
+                f.group(emptyList())
+                if (mode.body != null) f.edit("modifier_add", JsonObject(f.addition("body/legacy", "body") +
+                    ("version" to JsonPrimitive(mode.body))))
+                if (mode.head != null) {
+                    f.edit("modifier_add", f.addition(mode.head, "face"))
+                    f.edit("modifier_add", f.addition("eye/fitted", "eye"))
+                }
+                f.edit("modifier_add", JsonObject(f.addition("brow/fitted", "brow", config = buildJsonObject {
+                    put("scaffold", "structure"); putJsonObject("values") { put("lift", 52f) }
+                }) + ("version" to JsonPrimitive(mode.fitted))))
+                if (mode.shape != null) f.edit("modifier_add", JsonObject(f.addition("brow.shape", "shape", config = buildJsonObject {
+                    put("scaffold", "structure"); put("base", "brow")
+                    putJsonObject("values") { put("strength", 81f) }
+                }) + ("version" to JsonPrimitive(mode.shape))))
+                val spring = f.addition("brow.spring", "spring", config = buildJsonObject {
+                    put("scaffold", "structure"); put("base", "brow")
+                    if (mode.head == null) put("physicsEnabled", false)
+                    if (mode.head == "face/legacy" && mode.fitted == 1) putJsonObject("physics") {
+                        val edited = RigPhysicsEdit("PhysicsBrowLSpring", "Edited spring",
+                            inputs = listOf(PhysicsInput("ParamBrowLY", 100f, PhysicsSourceType.X)),
+                            outputs = listOf(PhysicsOutput("ParamBrowLSpring", 1, 1.7f)),
+                            segments = listOf(PhysicsSegment(1.4f, .8f, .5f, 1.2f)))
+                        put(edited.id, edited.toJson())
+                    }
+                })
+                f.edit("modifier_add", if (version == null) spring else JsonObject(spring + ("version" to JsonPrimitive(version))))
+                return f
+            }
+            val old = bind(null)
+            val current = bind(2)
+            val expected = assertNotNull(old.now.model.rig.modifierOutput)
+            val actual = assertNotNull(current.now.model.rig.modifierOutput)
+            val oldInstance = RigModifierStack.fromJson(old.now.document.rigEdits.modifierStack!!).instances.last()
+            assertEquals(1, oldInstance.version)
+            for ((before, after) in expected.meshes.zip(actual.meshes))
+                assertTrue(before == after, "$mode mesh ${before.name} differs")
+            assertEquals(expected.physics, actual.physics, mode.toString())
+            assertTrue(expected == actual, "$mode differs outside mesh and physics outputs")
+            val compiled = RigIrCompiler.compile(current.now.model)
+            assertTrue(RigIrCompiler.compile(old.now.model) == compiled, "$mode compiled output differs")
+            if (mode.head == "face/legacy" && mode.fitted == 1) verifyBrowSpringWorker(current)
+            current.edit("modifier_apply", buildJsonObject { put("id", "spring") })
+            assertEquals(compiled, RigIrCompiler.compile(current.now.model))
+            assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(current.now.document)))
+        }
+    }
+
+    private suspend fun verifyBrowSpringWorker(fixture: Fixture) {
+        val evaluated = assertNotNull(fixture.now.model.modifierEvaluation).outputs
+        val before = evaluated[evaluated.lastIndex - 1]
+        val after = evaluated.last()
+        val stack = RigModifierStack.fromJson(fixture.now.document.rigEdits.modifierStack!!)
+        val spring = stack.instances.last()
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(BrowSpringAlgorithm.TYPE, BrowSpringAlgorithm.VERSION))
+        assertEquals(artifact.reference, spring.plugin)
+        val directory = Files.createTempDirectory("brow-spring-v2-")
+        val preferences = Preferences.userRoot().node("brow-spring-v2/${UUID.randomUUID()}")
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            for (name in artifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val providers = stack.instances.dropLast(1).map {
+                ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+            }
+            repeat(2) {
+                val installed = store.install(staging.toString())
+                assertEquals(artifact.reference, installed.reference)
+                val owner = RigModifierSource.of(fixture.now.model)
+                val worker = ModifierPluginCatalog.definitions(store, BuiltinModifierPlugins.definitions(owner))
+                    .single { it.type == BrowSpringAlgorithm.ENTRYPOINT }
+                val instance = spring.copy(type = worker.type, plugin = installed.reference)
+                val context = worker.authorContext(instance).withUpstream(providers)
+                val plugin = worker.plugin as ContextualModifierAlgorithmPlugin
+                assertEquals(after, plugin.evaluate(before, instance, context, {}))
+                ModifierPluginWorkers.stop(installed.reference)
+                store.uninstall(installed.reference)
+            }
+            val owner = RigModifierSource.of(fixture.now.model)
+            val definition = RigBrowSpringModifier.definition(owner)
+            val context = definition.authorContext(spring).withUpstream(providers)
+            val physics = after.physics.groups.single { it.outputs.any { output -> output.parameter == "ParamBrowLSpring" } }
+            val existing = physics.copy(id = "shared", name = "Shared")
+            val algorithm = BrowSpringAlgorithm()
+            val reused = algorithm.changes(before.copy(physics = before.physics.copy(groups = listOf(existing))), spring, context) {}
+            assertEquals(listOf(existing), reused.physicsGroups.reused)
+            assertFailsWith<IllegalArgumentException> {
+                val incompatible = existing.copy(segments = existing.segments.map { it.copy(length = it.length * 2f) })
+                algorithm.changes(before.copy(physics = before.physics.copy(groups = listOf(incompatible))), spring, context) {}
+            }
+            val mesh = before.meshes.single { it.name == "brow" }
+            val edited = before.copy(meshes = before.meshes.map { if (it.id == mesh.id) it.copy(parent = null) else it })
+            val failure = assertFailsWith<IllegalArgumentException> { algorithm.changes(edited, spring, context) {} }
+            assertContains(failure.message.orEmpty(), "native fitted brow mesh and parent branch")
+
+            val snapshot = fixture.now
+            val history = fixture.runtime.history()
+            val historyStore = WorkspaceStore(directory.resolve("project"))
+            historyStore.persistHistory(snapshot.projectId, history)
+            val archive = directory.resolve("spring.psd2live")
+            val repository = ProjectRepository(writeHeadCache = false)
+            repository.save(ProjectSaveCapture(snapshot.projectId, history, JsonObject(emptyMap()), null, historyStore), archive)
+            repository.open(archive).use { opened ->
+                val restored = opened.history.head().snapshot
+                assertEquals(spring, RigModifierStack.fromJson(restored.rigEdits.modifierStack!!).instances.last())
+                assertEquals(after, fixture.builder.build(restored).rig.modifierOutput)
+            }
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
     }
 
     @Test fun mouthCaptureJawTongueDepthAndMoodsComposeAndKeepTheirColorChannelsThroughApplication(): Unit = runBlocking<Unit> {
