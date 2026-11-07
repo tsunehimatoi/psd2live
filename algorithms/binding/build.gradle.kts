@@ -3612,6 +3612,34 @@ tasks.register("pluginMouthOutlineV7") {
     }
 }
 
+
+val mouthOutlineV8WorkerJar = registerIsolatedBindingWorker(
+    "mouthOutlineV8", "mouth-outline-v8", "worker-mouth-outline-v8", "io.github.psd2live.algorithms.binding.MouthOutlineV8Worker",
+)
+
+tasks.register("pluginMouthOutlineV8") {
+    dependsOn(mouthOutlineV8WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-outline-v8")
+    inputs.file(mouthOutlineV8WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", project.version.toString())
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthOutlineV8WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682e6f75746c696e65.v8"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"${project.version}","name":"Fitted mouth outline",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/outline","aliases":["mouth.outline"],"version":8,"contextVersion":2,"name":"Fitted mouth outline","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","mouth/fitted"],"exclusiveFamily":"mouth.outline",
+               "reads":["*"],"writes":["mesh","deformer","part","hierarchy","textures","authoring"],
+               "composableKinds":["mesh","deformer","part","hierarchy"],"configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val mouthFittedV3WorkerJar = registerIsolatedBindingWorker(
     "mouthFittedV3", "mouth-fitted-v3", "worker-mouth-fitted-v3", "io.github.psd2live.algorithms.binding.MouthFittedV3Worker",
 )
