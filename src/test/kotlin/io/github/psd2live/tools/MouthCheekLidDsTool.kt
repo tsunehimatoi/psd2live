@@ -12,7 +12,11 @@ import java.util.prefs.Preferences
 import kotlin.test.*
 
 class MouthCheekLidDsTool {
-    @Test fun compareSharedFrameCheekLid(): Unit = runBlocking {
+    @Test fun compareSharedFrameCheekLid(): Unit = verify(1)
+
+    @Test fun compareSharedFrameCheekLidAfterSourceJaw(): Unit = verify(8)
+
+    private fun verify(jawVersion: Int): Unit = runBlocking {
         requireTools()
         val config = PipelineConfig(meshSpacing = 64)
         val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
@@ -22,7 +26,7 @@ class MouthCheekLidDsTool {
         val analysis = RigGenerationSource.prepare(RigGenerationSource.analyze(source, config), config)
         val bindings = CliPresetBindings(analysis, config)
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4,
-            "mouth/fitted" to 6, "mouth.outline" to 8, "mouth.vowel" to 7, "mouth.capture" to 6, "mouth.jaw" to 1, "mouth.cheek-lid" to 1,
+            "mouth/fitted" to 6, "mouth.outline" to 8, "mouth.vowel" to 7, "mouth.capture" to 6, "mouth.jaw" to jawVersion, "mouth.cheek-lid" to 1,
             "eye.smile" to 4, "eye.wide" to 4, "eye.gaze-lid" to 4, "eye.emotion" to 4, "eye.aftershock" to 5, "eye.squash" to 5,
             "brow.shape" to 5, "brow.lid-coupling" to 7, "brow.blink" to 5, "brow.spring" to 6)
         val (planned, historical) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
@@ -32,6 +36,12 @@ class MouthCheekLidDsTool {
         val index = stack.index(entry.id)
         val evaluation = assertNotNull(historical.modifierEvaluation)
         val expected = evaluation.outputs
+        val jaw = stack.instances.single { it.type == "mouth.jaw" }
+        val jawIndex = stack.index(jaw.id)
+        assertEquals(jawVersion, jaw.version)
+        assertTrue(jawIndex in 1 until index)
+        assertEquals(ModifierStatus.ACTIVE, evaluation.entries[jawIndex].status)
+        assertNotEquals(expected[jawIndex - 1], expected[jawIndex], "Jaw must change the real preceding stage")
         fun diff(before: RigIR, after: RigIR): String {
             val fields = RigIR::class.java.declaredFields.filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
                 .filter { it.isAccessible = true; it.get(before) != it.get(after) }.map { it.name }
