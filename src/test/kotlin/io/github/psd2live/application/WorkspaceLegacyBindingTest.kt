@@ -3483,6 +3483,68 @@ class WorkspaceLegacyBindingTest {
         assertContains(failure.message.orEmpty(), "use Gloom v1")
     }
 
+    @Test fun packagedGloomV3ReplaysCompletePresetCarriers(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true)
+        val config = WorkspacePresetBaseline.configure(art.config(), "modern")
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, expectedModel) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
+            WorkspaceInitialPreset(clothing = true), preferSourceBindings = true)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val gloom = stack.instances.single { it.type == "expression.gloom" }
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(gloom.type, 3))
+        val instance = gloom.copy(version = 3, plugin = artifact.reference)
+        val independent = stack.copy(instances = stack.instances.map {
+            if (it.id == gloom.id) instance else it
+        })
+        val updated = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = independent.toJson()))
+        val actualModel = WorkspacePreviewBuilder().build(updated)
+        val index = stack.index(gloom.id)
+        val expected = assertNotNull(expectedModel.modifierEvaluation).outputs[index]
+        val actual = assertNotNull(actualModel.modifierEvaluation).outputs[index]
+        assertEquals(expected.deformers.map { it.id }, actual.deformers.map { it.id })
+        assertEquals(expected.meshes.map { it.id }, actual.meshes.map { it.id })
+        for ((expectedMesh, actualMesh) in expected.meshes.zip(actual.meshes)) {
+            assertTrue(expectedMesh == actualMesh, "Mesh differs: ${expectedMesh.id}")
+        }
+        for ((expectedDeformer, actualDeformer) in expected.deformers.zip(actual.deformers)) {
+            if (expectedDeformer is io.github.psd2live.format.model.Deformer.Warp && actualDeformer is io.github.psd2live.format.model.Deformer.Warp) {
+                assertEquals(expectedDeformer.copy(lattice = null), actualDeformer.copy(lattice = null), "Carrier metadata")
+                assertTrue(expectedDeformer.lattice == actualDeformer.lattice, "Carrier lattice differs: ${expectedDeformer.id}")
+            } else assertTrue(expectedDeformer == actualDeformer, "Deformer differs: ${expectedDeformer.id}")
+        }
+        assertEquals(expected.parameters, actual.parameters)
+        assertEquals(expected.parameterTree, actual.parameterTree)
+        assertTrue(expected == actual, "Gloom prefix differs")
+        assertTrue(assertNotNull(expectedModel.modifierEvaluation).outputs.last() == assertNotNull(actualModel.modifierEvaluation).outputs.last(),
+            "Complete generated rig differs")
+
+        val directory = Files.createTempDirectory("gloom-v3-package-")
+        val preferences = Preferences.userRoot().node("gloom-v3-package/" + UUID.randomUUID())
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            for (name in artifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val definition = RigGloomModifier.carrierDefinition(RigModifierSource.of(actualModel))
+            val upstream = stack.instances.take(index).filter { it.type in definition.requires + definition.optionalUpstream }.map {
+                ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+            }
+            val context = definition.authorContext(instance).withUpstream(upstream)
+            val installed = store.install(staging.toString())
+            assertEquals(artifact.reference, installed.reference)
+            val input = assertNotNull(expectedModel.modifierEvaluation).outputs[index - 1]
+            assertEquals(expected, ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(), input,
+                instance, {}, store, context = context))
+        } finally {
+            ModifierPluginWorkers.stop(artifact.reference)
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
     @Test fun skinClippingAndLegacyNeckFollowSurvivePrefixApplication(): Unit = runBlocking {
         skinClippingAndNeckFollowSurvivePrefixApplication(1)
     }

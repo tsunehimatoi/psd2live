@@ -60,6 +60,8 @@ Cheek color v2 adds blush and skin warmth to a shared v2 scaffold. Use v1 when a
 
 Gloom v2 adds a cool shadow and fades highlights while preserving authored channel edits. Use v1 in the modern recommended preset or whenever adding the color axis changes the mesh keyform budget enough to move existing motion to a deformer.
 
+Gloom v3 can recreate that deformer for face and nose meshes on a shared v2 scaffold. It verifies the original skin geometry and its upstream bindings before adding the color axis. Select v3 explicitly. Use v1 if the source frame has been edited, another Gloom already applies, or the budget is exceeded on a different part.
+
 Skirt sway v2 is selectable for topwear or bottomwear attached under the torso. It uses a shared source frame and preserves the existing skirt mesh, physics and simulation bindings in compatible presets.
 
 Arm swing v2 is selectable for the original hanging-arm frames of a shared v2 scaffold, with body and face bindings on that scaffold. Use v1 if an arm has been reparented or its neutral lattice edited.

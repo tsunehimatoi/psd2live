@@ -11,13 +11,13 @@ import kotlinx.serialization.json.*
 /** Source fitting and raw vertex measurements shared by fitted-mouth add-ons. */
 internal object RigFittedMouthModuleSource {
     fun context(source: RigModifierSource, scaffold: RigModifierInstance, preceding: List<RigModifierInstance>,
-                activeModule: RigModule): Pair<PipelineConfig, RigBuilder.RigContext> {
+                activeModule: RigModule?): Pair<PipelineConfig, RigBuilder.RigContext> {
         val native = nativeConfig(source, scaffold, preceding, activeModule)
         return native to RigBuilder.rigContext(source.analysis, native, source.meshCache)
     }
 
     private fun nativeConfig(source: RigModifierSource, scaffold: RigModifierInstance, preceding: List<RigModifierInstance>,
-                             activeModule: RigModule): PipelineConfig {
+                             activeModule: RigModule?): PipelineConfig {
         val state = preceding.associateBy { it.type }
         val bases = preceding.filter { RigLegacyBindings.spec(it.type).isBase }.associateBy { RigLegacyBindings.spec(it.type).area }
         val corrections = WorkspaceSettingsCodec.decodeRecipe(scaffold.config["corrections"])

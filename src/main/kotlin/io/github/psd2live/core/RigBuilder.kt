@@ -3475,6 +3475,25 @@ object RigBuilder {
 		return MeshData(DrawableMesh(positions, uvs, data.mesh.indices), data.rigPositions)
 	}
 
+	/**
+	 * Rebuilds one skin mesh's ordinary forms before keyform allocation. [channels] supplies the
+	 * upstream static values and channel tracks used to neutralize the forms. Its geometry may
+	 * already be lowered, so none of that geometry participates in this capture.
+	 */
+	internal fun skinLoweringSource(layer: ClassifiedLayer, context: RigContext, config: PipelineConfig,
+	                                atlas: PackedAtlas, cache: PreviewMeshCache, channels: Drawable): Drawable {
+		require(layer.semantic.tag in setOf(SemanticTag.FACE, SemanticTag.NOSE))
+		val aligned = context.rigLayer(layer)
+		val (parent, frame) = context.parentAndFrame(layer, config)
+		val parts = buildDrawableMesh(layer, aligned, context, parent, frame, context.headSpaceFor(layer, config), config, cache)
+		val placement = atlas.placementByLayerId.getValue(layer.source.id.raw)
+		val texture = LayerTexture.packed(layer, placement, atlas)
+		val mesh = DrawableMesh(parts.mesh.positions, texture.bind(parts.mesh.uvs), parts.mesh.indices)
+		val native = channels.copy(name = layer.source.name, parentDeformerId = parent, mesh = mesh, geometryGrid = parts.geometryGrid,
+			texturePage = placement.page)
+		return native.copy(blendShapes = neutralized(parts.blendShapes, native))
+	}
+
 	/** Raw mouth topology for the outline binding, before replacing the opening with shared columns. */
 	internal fun mouthOutlineSourceMesh(
 		layer: ClassifiedLayer,

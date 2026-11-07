@@ -96,6 +96,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "mouthJawElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "cheekElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "gloomV2Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "gloomV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthTongueElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthDepthElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "fittedFaceV2Elements"))
@@ -320,6 +321,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginGloomV2")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-gloom-v2")) {
         into("algorithm-plugins/gloom-v2")
+    }
+    dependsOn(":algorithms:binding:pluginGloomV3")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-gloom-v3")) {
+        into("algorithm-plugins/gloom-v3")
     }
     dependsOn(":algorithms:binding:pluginMouthTongue")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-tongue")) {

@@ -1812,3 +1812,33 @@ tasks.register("pluginGloomV2") {
         """.trimIndent())
     }
 }
+
+val gloomV3WorkerJar = registerIsolatedBindingWorker(
+    "gloomV3", "gloom-v3", "worker-gloom-v3", "io.github.psd2live.algorithms.binding.GloomV3Worker",
+)
+
+tasks.register("pluginGloomV3") {
+    dependsOn(gloomV3WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-gloom-v3")
+    val packageVersion = project.version.toString()
+    inputs.file(gloomV3WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        gloomV3WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.65787072657373696f6e2e676c6f6f6d.v3"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Gloom",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/gloom","aliases":["expression.gloom"],"version":3,"name":"Gloom","category":"expression",
+               "targets":["mesh"],"requires":["rig.scaffold"],"exclusiveFamily":"expression.gloom","contextVersion":2,
+               "reads":["canvas","mesh","parameter","deformer","hierarchy"],"writes":["mesh","parameter","deformer","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "parameters":[{"id":"ParamGloom","name":"Gloom","min":0,"max":1,"default":0}],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
