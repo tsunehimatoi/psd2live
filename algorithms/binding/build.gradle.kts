@@ -971,6 +971,10 @@ kotlin.target.compilations.named("eyeSquashV4") {
 }
 eyeSquashV4WorkerJar.configure { from(sourceSets["eyeSquash"].output) }
 
+val eyeSquashV5WorkerJar = registerIsolatedBindingWorker(
+    "eyeSquashV5", "eye-squash-v5", "worker-eye-squash-v5", "io.github.psd2live.algorithms.binding.EyeSquashV5Worker",
+)
+
 val browShapeWorkerJar = registerIsolatedBindingWorker(
     "browShape", "brow-shape", "worker-brow-shape", "io.github.psd2live.algorithms.binding.BrowShapeWorker",
 )
@@ -1329,6 +1333,31 @@ tasks.register("pluginEyeSquashV4") {
              "algorithms":[{"type":"$id/squash","aliases":["eye.squash"],"version":4,"name":"Iris squash","category":"eye",
                "targets":["mesh"],"requires":["rig.scaffold","eye/fitted"],"contextVersion":2,
                "reads":["mesh","deformer","parameter","canvas"],"writes":["mesh","deformer"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
+tasks.register("pluginEyeSquashV5") {
+    dependsOn(eyeSquashV5WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-eye-squash-v5")
+    val packageVersion = project.version.toString()
+    inputs.file(eyeSquashV5WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        eyeSquashV5WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6579652e737175617368.v5"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Iris squash",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/squash","aliases":["eye.squash"],"version":5,"name":"Iris squash","category":"eye",
+               "targets":["mesh"],"requires":["rig.scaffold","eye/fitted"],"contextVersion":2,
+               "reads":["*"],"writes":["mesh","deformer","part","hierarchy"],
                "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
                "configSchema":{"type":"object"},"defaults":{}}]}
         """.trimIndent())

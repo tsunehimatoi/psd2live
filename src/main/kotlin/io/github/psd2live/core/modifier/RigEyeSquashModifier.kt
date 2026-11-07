@@ -3,6 +3,9 @@ package io.github.psd2live.core.modifier
 import io.github.psd2live.algorithms.binding.EyeSquashAlgorithm
 import io.github.psd2live.algorithms.binding.EyeSquashV3Algorithm
 import io.github.psd2live.algorithms.binding.EyeSquashV4Algorithm
+import io.github.psd2live.algorithms.binding.EyeSquashV5Algorithm
+import io.github.psd2live.core.ClassifiedLayer
+import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.RigTuning
 import io.github.psd2live.core.recipe.BaseChoice
@@ -46,6 +49,48 @@ internal object RigEyeSquashModifier {
             upstreamInputs = true,
             authorContext = { requireNotNull(source).capture(it, modern) },
         )
+
+    fun sharedFrameDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val projected = object : ChangingModifierAlgorithmPlugin by EyeSquashV5Algorithm, ModifierOptionalUpstream, ModifierVersionSelection {
+            override val optionalUpstream = RigLegacyBindings.specs.filter { !it.expressionToggles && !it.seeThrough }
+                .mapTo(linkedSetOf()) { it.type } - setOf(EyeSquashAlgorithm.TYPE, "eye/fitted")
+            override val canonicalOptInType = EyeSquashAlgorithm.TYPE
+        }
+        return definition(source).copy(version = EyeSquashV5Algorithm.VERSION, plugin = projected,
+            changeWrites = EyeSquashV5Algorithm.WRITES, authorContext = { requireNotNull(source).captureSharedFrames(it) })
+    }
+
+    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val scaffold = provider(instance)
+        val prior = activeBefore(instance).filter { entry ->
+            entry.config["scaffold"] == JsonPrimitive(scaffold.id) && entry.targets.any(instance.targets::contains) &&
+                RigLegacyBindings.find(entry.type)?.let { !it.expressionToggles && !it.seeThrough } == true
+        }
+        require(scaffold.version == 2 && prior.all { it.targets.containsAll(instance.targets) } &&
+            prior.none { it.type == EyeSquashAlgorithm.TYPE }) { "Eye squash v5 requires a shared fitted source" }
+        val required = setOf("face/fitted", "eye/fitted", "brow/fitted", "eye.smile", "eye.wide", "eye.gaze-lid", "eye.emotion")
+        val (old, before) = RigFittedMouthModuleSource.context(this, scaffold, prior, null)
+        val (next, after) = RigFittedMouthModuleSource.context(this, scaffold, prior + instance, null)
+        val witnesses = setOf(SemanticTag.IRIDES, SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYE_CLOSE, SemanticTag.EYEBROW)
+        fun sources(context: RigBuilder.RigContext): Map<String, ClassifiedLayer> {
+            val layers = context.analysis.layers.associateBy { it.source.id.raw }
+            return instance.targets.mapNotNull { target ->
+                val layer = layers[layersByMesh[target.id]] ?: return@mapNotNull null
+                (target.id to layer).takeIf { layer.semantic.tag in witnesses && layer.source.id.raw in atlas.placementByLayerId }
+            }.toMap()
+        }
+        val oldLayers = sources(before)
+        val nextLayers = sources(after)
+        require(oldLayers.keys == nextLayers.keys)
+        val scope = oldLayers.filterValues { it.semantic.tag == SemanticTag.IRIDES }.keys
+        val axes = prior.flatMapTo(hashSetOf()) { RigLegacyBindings.spec(it.type).parameters }
+        return ModifierAlgorithmContext(buildJsonObject {
+            putJsonObject("providers") { for (type in required) put(type, prior.single { it.type == type }.id) }
+        }, mapOf(
+            "before" to outlineShellSource(before, old, oldLayers, axes, includeFaceLean = true, projectedMeshes = scope),
+            "after" to outlineShellSource(after, next, nextLayers, axes, includeFaceLean = true, projectedMeshes = scope),
+        ))
+    }
 
     private fun RigModifierSource.capture(instance: RigModifierInstance, modern: Boolean, highlights: Boolean = false): ModifierAlgorithmContext {
         val scaffold = provider(instance)
