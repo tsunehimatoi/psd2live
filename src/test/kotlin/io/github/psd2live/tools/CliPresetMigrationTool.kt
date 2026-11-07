@@ -9,12 +9,15 @@ import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.RigModifierChains
 import io.github.psd2live.core.modifier.RigModifierInstance
 import io.github.psd2live.core.modifier.RigModifierStack
+import io.github.psd2live.core.recipe.RecipeSubject
+import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.format.model.Mesh as RigIRMesh
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.project.WorkspaceDocument
 import io.github.psd2live.project.WorkspaceSettingsCodec
 import kotlinx.coroutines.runBlocking
 import org.umamo.runtime.model.DrawableId
+import org.umamo.runtime.model.ParameterId
 import kotlin.test.Test
 
 /** Compare a raw PSD export with a stack that uses names derived from the same source. */
@@ -50,7 +53,7 @@ class CliPresetMigrationTool {
         val layerByMesh = independent.baseRig.layerIdByDrawableId
         val sharedParts = ScaffoldParts.build(emptyList()) { it }.parts.associate { "shared/part:${it.id.raw}" to it.id.raw }
         val ids = evaluated.deformers.map { it.id } + evaluated.parts.map { it.id } + evaluated.parameters.map { it.id } +
-            evaluated.meshes.map { it.id } + evaluated.physics.groups.map { it.id } + evaluated.clips.map { it.id }
+            evaluated.meshes.map { it.id } + evaluated.physics.groups.map { it.id } + evaluated.clips.map { it.id } + evaluated.authoring.paths.map { it.id }
         val renamed = stack.copy(instances = stack.instances.map { instance ->
             val names = ids.mapNotNull(instance::localOutputName).distinct()
             val aliases = names.mapNotNull { local ->
@@ -58,10 +61,15 @@ class CliPresetMigrationTool {
             }.toMap()
             val rasterAliases = if (instance.type == "mouth.outline") mouthRasters(names, layerByMesh) else emptyMap()
             val partAliases = if (instance.type == "rig.scaffold") sharedParts else emptyMap()
-            instance.copy(outputAliases = instance.outputAliases + aliases + rasterAliases + partAliases)
+            val export = if (instance.type == "motion") {
+                val clip = MotionClips.fromJson(instance.config)
+                MotionClips.toJson(clip.copy(fileStem = MotionPresets.exportFileStem(clip.name),
+                    exportGroup = MotionPresets.exportGroup(clip.name), runtimeDefaultFades = true))
+            } else instance.config
+            instance.copy(config = export, outputAliases = instance.outputAliases + aliases + rasterAliases + partAliases)
         })
         val candidate = WorkspacePreviewBuilder().build(initialized.copy(
-            rigEdits = initialized.rigEdits.copy(modifierStack = renamed.toJson())))
+            rigEdits = initialized.rigEdits.copy(modifierStack = rawPsdOrder(renamed).toJson())))
         val expected = RigIrCompiler.compile(native, tileArt = true)
         val before = RigIrCompiler.compile(independent, tileArt = true)
         val after = RigIrCompiler.compile(candidate, tileArt = true)
@@ -76,9 +84,43 @@ class CliPresetMigrationTool {
             if (repacked != null) {
                 appendLine("  shared atlas placement differences = " +
                     repackedAtlas.placementByLayerId.keys.filter { repackedAtlas.placementByLayerId[it] != native.atlas.placementByLayerId[it] })
-                compare("shared atlas", expected, RigIrCompiler.compile(candidate.copy(rig = repacked, atlas = repackedAtlas), tileArt = true))
+                val packed = candidate.copy(rig = repacked, atlas = repackedAtlas)
+                compare("shared atlas", expected, RigIrCompiler.compile(packed, tileArt = true))
+                val moduleIds = RigModules.parameters(config, RecipeSubject.of(measured)).map { ParameterId(it.id) } +
+                    chains.flatMap { it.native.parameters }
+                val ordered = orderExportMetadata(packed, moduleIds, config)
+                compare("shared export layout", expected, RigIrCompiler.compile(ordered, tileArt = true))
             } else appendLine("Shared atlas comparison unavailable: a mesh has no matching source tile.")
         })
+    }
+
+    private fun rawPsdOrder(stack: RigModifierStack): RigModifierStack {
+        val outline = stack.instances.singleOrNull { it.type == "mouth.outline" && it.version == 7 } ?: return stack
+        val postponed = stack.instances.take(stack.index(outline.id)).filter {
+            it.type in setOf("hair/chains", "eye.see-through", "brow.see-through")
+        }
+        if (postponed.isEmpty()) return stack
+        return stack.copy(instances = stack.instances.filterNot { it in postponed }.toMutableList().apply {
+            addAll(indexOf(outline) + 1, postponed)
+        })
+    }
+
+    private fun orderExportMetadata(preview: RigPreviewModel, moduleIds: List<ParameterId>, config: PipelineConfig): RigPreviewModel {
+        val rig = preview.rig
+        val puppet = rig.puppet
+        val parameters = puppet.parameters.associateBy { it.id }
+        val modules = moduleIds.distinct().filter { it in parameters }
+        val standard = StandardParameters.all.map { it.id }
+        val preset = standard + modules
+        val custom = parameters.keys.filterNot { it in preset }
+        val output = requireNotNull(rig.modifierOutput)
+        // Compare the historical evaluation order. The generated values remain the plugin outputs.
+        val physicsOrder = PhysicsCatalog.groups(preview.analysis, config, parameters.keys.mapTo(HashSet()) { it.raw })
+            .map { it.id }
+        val ordered = puppet.copy(parameters = (preset + custom).mapNotNull(parameters::get),
+            parameterTree = StandardParameters.tree(custom, modules), parameterLinks = StandardParameters.links(preset.toSet()))
+        return preview.copy(rig = rig.copy(puppet = ordered, modifierOutput = output.copy(
+            physics = output.physics.copy(groups = PhysicsCatalog.ordered(output.physics.groups, physicsOrder) { it.id }))))
     }
 
     private fun nativeName(instance: RigModifierInstance, local: String, chainWarps: Map<String, String>,
@@ -93,6 +135,7 @@ class CliPresetMigrationTool {
         local == "physics" && instance.type == "physics" -> RigPhysicsEdit.fromJson(instance.config).id
         local == "motion" && instance.type == "motion" -> MotionClips.fromJson(instance.config).name
         local.startsWith("see-through:") -> SeeThroughLayers.copyId(DrawableId(local.removePrefix("see-through:"))).raw
+        local.startsWith("mouth-path:") -> local.substringAfterLast(':')
         local.startsWith("mouth-lip:") -> local.removePrefix("mouth-lip:").let {
             "${it.substringBeforeLast(':')}_lip_${it.substringAfterLast(':')}"
         }
@@ -111,17 +154,28 @@ class CliPresetMigrationTool {
         val fields = RigIR::class.java.declaredFields.filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
             .filter { field -> field.isAccessible = true; field.get(expected) != field.get(actual) }.map { it.name }
         appendLine("$label IR differences = $fields")
-        fun ids(kind: String, reference: List<String>, observed: List<String>) {
-            val missing = reference - observed.toSet()
-            val extra = observed - reference.toSet()
-            appendLine("  $kind missing=${missing.size} ${missing.take(8)} extra=${extra.size} ${extra.take(8)}")
+        fun <T> records(kind: String, reference: List<T>, observed: List<T>, id: (T) -> String) {
+            val before = reference.associateBy(id)
+            val after = observed.associateBy(id)
+            val missing = before.keys - after.keys
+            val extra = after.keys - before.keys
+            val common = before.keys.intersect(after.keys)
+            val changed = common.filter { before.getValue(it) != after.getValue(it) }
+            val reordered = before.keys.filter { it in common } != after.keys.filter { it in common }
+            appendLine("  $kind missing=${missing.size} ${missing.take(8)} extra=${extra.size} ${extra.take(8)} " +
+                "changed=${changed.size} ${changed.take(12)} reordered=$reordered")
         }
-        ids("parameters", expected.parameters.map { it.id }, actual.parameters.map { it.id })
-        ids("meshes", expected.meshes.map { it.id }, actual.meshes.map { it.id })
-        ids("deformers", expected.deformers.map { it.id }, actual.deformers.map { it.id })
-        ids("parts", expected.parts.map { it.id }, actual.parts.map { it.id })
-        ids("physics", expected.physics.groups.map { it.id }, actual.physics.groups.map { it.id })
-        ids("motions", expected.clips.map { it.id }, actual.clips.map { it.id })
+        records("parameters", expected.parameters, actual.parameters) { it.id }
+        records("meshes", expected.meshes, actual.meshes) { it.id }
+        records("deformers", expected.deformers, actual.deformers) { it.id }
+        records("parts", expected.parts, actual.parts) { it.id }
+        records("physics", expected.physics.groups, actual.physics.groups) { it.id }
+        records("motions", expected.clips, actual.clips) { it.id }
+        records("tiles", expected.textures.tiles, actual.textures.tiles) { it.id }
+        records("paths", expected.authoring.paths, actual.authoring.paths) { it.id }
+        appendLine("  texture pages match = ${expected.textures.pages == actual.textures.pages}")
+        appendLine("  parameter links reordered only = ${expected.parameterLinks != actual.parameterLinks &&
+            expected.parameterLinks.toSet() == actual.parameterLinks.toSet()}")
         val meshes = expected.meshes.associateBy { it.id }
         fun <T> meshDifferences(kind: String, value: (RigIRMesh) -> T) {
             val changed = actual.meshes.mapNotNull { mesh ->
