@@ -42,7 +42,7 @@ internal class RigModifierSource(
             listOf(atlas, lips, native.effectiveAtlasBudget()), pack) else pack()
         return RigBuilder.build(prepared, packed, native, meshCache, capture)
     }
-
+    val skeletonEnabled: Boolean get() = config.rigEdits.skeleton?.enabled == true
     private fun generationConfig(strength: Float, tuning: RigTuning, headStrength: Float, recipe: RigRecipe,
                                  outline: RigModifierInstance?, featureDisplacement: Boolean,
                                  frontHairSway: Boolean, backHairSway: Boolean) = sourceConfig().copy(

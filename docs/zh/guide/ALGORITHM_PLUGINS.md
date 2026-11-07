@@ -58,6 +58,8 @@
 
 飘带与挂坠 v2 可按版本选择，适用于共享同一源坐标框的目标。它按原有挂点生成摆动和物理，并保留兼容预设中的模拟烘焙。跨源坐标框时使用 v1。
 
+兽耳、尾巴与翅膀 v2 可按版本选择，适用于共享同一源坐标框的目标。配件沿各自的源挂点摆动，兽耳保留眨眼抖动，启用骨架时尾巴和翅膀由骨架负责。
+
 ## 安装与卸载
 
 绑定结构提供算法修订 1／2 的独立包：运行 `./gradlew :algorithms:binding:pluginScaffold1 :algorithms:binding:pluginScaffold2`，输出为 `algorithms/binding/build/plugin-scaffold-1` 和 `plugin-scaffold-2`。包 ID 为 `builtin.7269672e73636166666f6c64.v1`／`.v2`，入口为包命名空间下的 `/structure`，稳定别名为 `rig.scaffold`。两种修订分别固定历史逐目标层级和共享层级语义。

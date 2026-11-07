@@ -46,6 +46,8 @@ Arm swing v2 is selectable for the original hanging-arm frames of a shared v2 sc
 
 Ribbon and pendant sway v2 is selectable for targets that share a source frame. It adds motion and physics at the source attachments and preserves simulation bakes in compatible presets. Use v1 for targets with different source frames.
 
+Animal ear, tail and wing sway v2 is selectable for targets sharing a source frame. It binds each part at its source attachment, keeps the animal ears' blink response, and leaves tail and wing motion to an enabled skeleton.
+
 ## Install and remove
 
 Binding structure has separate packages for algorithm revisions 1 and 2. Build them with `./gradlew :algorithms:binding:pluginScaffold1 :algorithms:binding:pluginScaffold2`; outputs are `algorithms/binding/build/plugin-scaffold-1` and `plugin-scaffold-2`. Package IDs are `builtin.7269672e73636166666f6c64.v1` and `.v2`, each exposing `/structure` in its namespace with stable alias `rig.scaffold`. The revisions retain per-target and shared hierarchy semantics respectively.

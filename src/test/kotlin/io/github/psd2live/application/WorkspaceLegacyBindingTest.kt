@@ -67,7 +67,7 @@ class WorkspaceLegacyBindingTest {
     /** Small public procedural art with distinct eye, brow, mouth, hair and torso inputs. */
     private fun document(eyeDetails: Boolean = false, mouthDetails: Boolean = false, expressionDetails: Boolean = false, skinDetails: Boolean = false, outfitDetails: Boolean = false, sideLock: Boolean = false, bangOverlay: Boolean = false,
                          chestDetail: Boolean = false, pairedArms: Boolean = false, thinMouth: Boolean = false, pairedBrows: Boolean = false, bilateralEyes: Boolean = false,
-                         closedMouth: Boolean = false, ribbonDetails: Boolean = false): WorkspaceDocument {
+                         closedMouth: Boolean = false, ribbonDetails: Boolean = false, creatureDetails: Boolean = false): WorkspaceDocument {
         data class Shape(val id: String, val tag: SemanticTag, val side: Side, val x: Int, val y: Int, val w: Int, val h: Int, val role: PartRole? = null)
         val shapes = listOf(
             Shape("iris", SemanticTag.IRIDES, Side.LEFT, 37, 19, 5, 10),
@@ -125,6 +125,10 @@ class WorkspaceLegacyBindingTest {
             Shape("matched-right", SemanticTag.TOPWEAR, Side.RIGHT, 43, 50, 3, 8, PartRole.RIBBON),
             Shape("hair-ribbon", SemanticTag.BACK_HAIR, Side.NONE, 38, 24, 5, 20, PartRole.RIBBON),
         ) else emptyList()
+        val creatureShapes = if (creatureDetails) listOf(
+            Shape("head-animal-ear", SemanticTag.HEADWEAR, Side.NONE, 35, 1, 8, 12, PartRole.ANIMAL),
+            Shape("wing-left", SemanticTag.WINGS, Side.LEFT, 3, 45, 13, 15),
+        ) else emptyList()
         val chestShapes = if (chestDetail) listOf(Shape("chest-panel", SemanticTag.TOPWEAR, Side.NONE, 26, 48, 12, 15)) else emptyList()
         val armShapes = if (pairedArms) listOf(
             Shape("glove-l", SemanticTag.HANDWEAR, Side.LEFT, 4, 51, 6, 26),
@@ -132,7 +136,7 @@ class WorkspaceLegacyBindingTest {
         ) else emptyList()
         val classified = if (bangOverlay) listOf(allShapes.single { it.id == "front" }.copy(h = 24)) +
             allShapes.filterNot { it.id == "front" } + skinShapes + outfitShapes
-        else allShapes + skinShapes + outfitShapes + chestShapes + armShapes + ribbonShapes
+        else allShapes + skinShapes + outfitShapes + chestShapes + armShapes + ribbonShapes + creatureShapes
         val source = WorkspaceSourceArt(64, 80, classified.mapIndexed { index, shape ->
             val color = if (!bangOverlay) 0xffffff else when (shape.tag) {
                 SemanticTag.FRONT_HAIR, SemanticTag.BACK_HAIR -> 0x725672
@@ -2915,6 +2919,123 @@ class WorkspaceLegacyBindingTest {
         val report = assertNotNull(current.rig.modifierReport).getValue("entries").jsonArray
         assertTrue(report.all { it.jsonObject.getValue("status").jsonPrimitive.content == "active" })
         assertFaceEquals(expected, RigIrCompiler.compile(current, tileArt = true))
+    }
+
+    @Test fun creatureV2KeepsLegacyBindingAndRunsInstalledWorker(): Unit = runBlocking {
+        suspend fun fixture(version: Int, withClothing: Boolean): Fixture {
+            val f = Fixture(document(outfitDetails = true, expressionDetails = true))
+            f.install()
+            f.group(listOf("body/legacy", "face/legacy", "eye/legacy", "expression.toggles") + if (withClothing) listOf("hair/chains", "outfit.skirt", "outfit.ribbons") else emptyList())
+            val config = buildJsonObject {
+                put("scaffold", "structure")
+                putJsonObject("dependencies") { put("body/legacy", "body"); put("face/legacy", "face") }
+                putJsonObject("values") { put("swing", 140f) }
+            }
+            f.edit("modifier_add", JsonObject(f.addition("outfit.creature", "creature", config = config) +
+                ("version" to JsonPrimitive(version))))
+            return f
+        }
+        val plainLegacy = fixture(1, false)
+        val plain = fixture(2, false)
+        assertFaceEquals(RigIrCompiler.compile(plainLegacy.now.model), RigIrCompiler.compile(plain.now.model))
+        val legacy = fixture(1, true)
+        val direct = fixture(2, true)
+        val snapshot = assertNotNull(direct.now.model.modifierEvaluation)
+        val instance = snapshot.stack.instances.last()
+        val before = snapshot.outputs[snapshot.outputs.lastIndex - 1]
+        val expected = RigIrCompiler.compile(legacy.now.model)
+        val actual = RigIrCompiler.compile(direct.now.model)
+        val axes = actual.parameters.filter { it.id.startsWith("modifier:creature:") }
+        assertEquals(10, axes.size)
+        assertEquals(axes.map { it.id }, RigIrCompiler.compile(plain.now.model).parameters
+            .filter { it.id.startsWith("modifier:creature:") }.map { it.id })
+        assertTrue(axes.any { it.name.contains("AnimalTail") })
+        val physics = RigModifierPhysics.entries(instance, actual)
+        val ear = physics.entries.single { (slot, _) -> slot.startsWith("chain:Ear:") && !slot.endsWith(":Y") }.value
+        assertTrue(Physics3Json.setting(ear).inputs.any { it.parameter == StandardParameters.EYE_L_OPEN.raw && it.weight == 15f })
+        val tail = physics.entries.single { (slot, _) -> slot.startsWith("chain:AnimalTail:") && !slot.endsWith(":Y") }.value
+        assertTrue(Physics3Json.setting(tail).inputs.none { it.parameter == StandardParameters.EYE_L_OPEN.raw })
+        assertEquals(6, physics.size)
+        assertFaceEquals(expected, actual)
+        val pose = axes.mapIndexed { i, parameter -> ParameterId(parameter.id) to if (i % 2 == 0) .65f else -.75f }.toMap()
+        compare(legacy.now.model, direct.now.model, listOf(emptyMap(), pose,
+            pose + mapOf(StandardParameters.BODY_X to 7f, StandardParameters.ANGLE_X to 23f, StandardParameters.BREATH to .6f, StandardParameters.EYE_L_OPEN to .1f)))
+
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find("outfit.creature", 2))
+        assertEquals(artifact.reference, instance.plugin)
+        val directory = Files.createTempDirectory("creature-v2-")
+        val preferences = Preferences.userRoot().node("creature-v2/${UUID.randomUUID()}")
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            artifact.manifest.files.keys.forEach { name ->
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val providers = RigLegacyBindings.providers(instance).map { (capability, id) ->
+                val provider = snapshot.stack.instances.single { it.id == id }
+                ModifierUpstreamCapability(capability, provider.type, provider.version, provider.targets, provider.id,
+                    provider.config, provider.outputAliases, provider.plugin)
+            }
+            val context = RigCreatureModifier.capture(RigModifierSource.of(direct.now.model), instance).withUpstream(providers)
+            repeat(2) {
+                val entry = store.install(staging.toString())
+                val worker = entry.manifest.algorithms.single()
+                assertEquals(snapshot.outputs.last(),
+                    ModifierPluginWorkers.evaluate(entry, worker, before, instance, {}, context = context))
+                ModifierPluginWorkers.stop(entry.reference)
+                store.uninstall(entry.reference)
+                assertTrue(store.snapshot().isEmpty())
+            }
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+        val (slot, group) = RigModifierPhysics.entries(instance, actual).entries.first()
+        val override = Physics3Json.setting(group).copy(name = "Adjusted creature pendulum")
+        direct.edit("modifier_update", buildJsonObject {
+            put("id", instance.id)
+            put("type", instance.type)
+            put("config", JsonObject(instance.config + ("physics" to buildJsonObject { put(slot, override.toJson()) })))
+        })
+        val edited = RigIrCompiler.compile(direct.now.model)
+        assertEquals(override.name, edited.physics.groups.single { it.id == group.id }.name)
+        direct.edit("modifier_apply", buildJsonObject { put("id", instance.id) })
+        assertEquals(edited, RigIrCompiler.compile(WorkspacePreviewBuilder().build(direct.now.document)))
+    }
+
+    @Test fun creatureV2LeavesPairedWingsAndSkeletonLimbsToTheirOwners(): Unit = runBlocking {
+        val base = document(outfitDetails = true, creatureDetails = true)
+        suspend fun fixture(version: Int, skeleton: Boolean): Fixture {
+            val doc = if (skeleton) base.copy(rigEdits = base.rigEdits.copy(skeleton = SkeletonSpec())) else base
+            val f = Fixture(doc)
+            f.install()
+            f.group(listOf("body/legacy", "face/legacy"))
+            val config = buildJsonObject {
+                put("scaffold", "structure")
+                putJsonObject("dependencies") { put("body/legacy", "body"); put("face/legacy", "face") }
+                put("physicsEnabled", false)
+            }
+            f.edit("modifier_add", JsonObject(f.addition("outfit.creature", "creature", config = config) +
+                ("version" to JsonPrimitive(version))))
+            return f
+        }
+        val legacy = fixture(1, false)
+        val current = fixture(2, false)
+        val rig = RigIrCompiler.compile(current.now.model)
+        assertFaceEquals(RigIrCompiler.compile(legacy.now.model), rig)
+        val axes = rig.parameters.filter { it.id.startsWith("modifier:creature:") }
+        assertTrue(axes.any { it.name.startsWith("head-animal-ear ") })
+        assertTrue(axes.none { it.name.startsWith("wing ") || it.name.startsWith("wing-left ") })
+        val snapshot = assertNotNull(current.now.model.modifierEvaluation)
+        assertTrue(RigModifierPhysics.entries(snapshot.stack.instances.last(), rig).isEmpty())
+
+        val withSkeleton = fixture(2, true)
+        val skeletonRig = RigIrCompiler.compile(withSkeleton.now.model)
+        val skeletonAxes = skeletonRig.parameters.filter { it.id.startsWith("modifier:creature:") }
+        assertEquals(6, skeletonAxes.size)
+        assertTrue(skeletonAxes.all { it.name.startsWith("animal-ear ") || it.name.startsWith("head-animal-ear ") })
     }
 
     @Test fun ribbonsV2KeepsLegacyBindingAndRunsInstalledWorker(): Unit = runBlocking {
