@@ -21,6 +21,7 @@ internal object RigModifierAlgorithms {
     val physics get() = PhysicsAlgorithmPlugin.definition
     val motion get() = MotionAlgorithmPlugin.definition
 
+    private val emptyRegistry = RigModifierRegistry(emptyList())
     @Volatile private var catalog: Pair<Long, RigModifierRegistry>? = null
     val registry: RigModifierRegistry get() {
         val revision = ModifierPluginStore.shared.revision.value
@@ -48,7 +49,11 @@ internal object RigModifierAlgorithms {
         }
 
     fun evaluator(source: RigModifierSource? = null, stack: RigModifierStack? = null) = RigModifierEvaluator(
-        if (source == null) registry else registryFor(source, stack),
+        when {
+            stack?.instances?.isEmpty() == true -> emptyRegistry
+            source == null -> registry
+            else -> registryFor(source, stack)
+        },
         sourceTargetExists = { it.kind == "layer" && source?.hasLayer(it.id) == true },
         physicsOrder = source?.physicsOrder.orEmpty(),
         resolveRasters = source?.let { it::resolveRasters } ?: RigModifierRasterAssets::resolve) { rig, instance, commands ->

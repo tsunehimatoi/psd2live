@@ -8,6 +8,8 @@ import io.github.psd2live.core.recipe.*
 import io.github.psd2live.core.sim.ModelPresets
 import io.github.psd2live.project.*
 import kotlinx.serialization.json.*
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.FutureTask
 
 /** A preset is a recipe for explicit instances, never a second model-generation pipeline. */
 internal object WorkspacePresetInitialization {
@@ -27,9 +29,23 @@ internal object WorkspacePresetInitialization {
             val candidate = current()
             pipeline.buildPreview(candidate.source, candidate.config(), ProgressListener { _, _ -> work.checkpoint() })
         }
-        var model = build("author preview")
-        val targets = model.rig.puppet.drawables.filter { it.mesh != null && it.id.raw in model.rig.ownLayerIdByDrawableId }
-            .map { ModifierTarget("mesh", it.id.raw) }
+        // Planning needs the package graph, but making the ordinary source meshes only needs the empty stack.
+        val catalog = if (preferSourceBindings) FutureTask { RigModifierAlgorithms.registry }.also {
+            Thread.ofVirtual().name("psd2live-preset-catalog").start(it)
+        } else null
+        var model: RigPreviewModel
+        val targets = try {
+            model = build("author preview")
+            model.rig.puppet.drawables.filter { it.mesh != null && it.id.raw in model.rig.ownLayerIdByDrawableId }
+                .map { ModifierTarget("mesh", it.id.raw) }.also {
+                    if (it.isNotEmpty() && catalog != null) RigBuildProfile.stage("source preset: wait for modifier catalog") {
+                        try { catalog.get() }
+                        catch (failure: ExecutionException) { throw failure.cause ?: failure }
+                    }
+                }
+        } finally {
+            catalog?.cancel(true)
+        }
         if (targets.isEmpty()) {
             model.runtimeBundle.materialize()
             return document to model
