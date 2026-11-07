@@ -1593,6 +1593,37 @@ tasks.register("pluginArmSwing") {
     }
 }
 
+val armSwingV3WorkerJar = registerIsolatedBindingWorker(
+    "armSwingV3", "body-arms-v3", "worker-body-arms-v3", "io.github.psd2live.algorithms.binding.ArmSwingV3Worker",
+)
+
+kotlin.target.compilations.named("armSwingV3") {
+    associateWith(kotlin.target.compilations.getByName("armSwing"))
+}
+armSwingV3WorkerJar.configure { from(sourceSets["armSwing"].output) }
+tasks.register("pluginArmSwingV3") {
+    dependsOn(armSwingV3WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-arm-swing-v3")
+    inputs.file(armSwingV3WorkerJar.flatMap { it.archiveFile })
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        armSwingV3WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.626f64792e61726d73.v3"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"1.0.0","name":"Arm swing",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/swing","aliases":["body.arms"],"version":3,"name":"Arm swing","category":"body",
+               "targets":["mesh"],"requires":["rig.scaffold","body/legacy","face/legacy"],"contextVersion":2,
+               "reads":["mesh","deformer","parameter","hierarchy","physics"],"writes":["mesh","deformer","parameter","hierarchy","physics"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter","physics"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val browLidWorkerJar = registerIsolatedBindingWorker(
     "browLid", "brow-lid", "worker-brow-lid", "io.github.psd2live.algorithms.binding.BrowLidWorker",
 )
