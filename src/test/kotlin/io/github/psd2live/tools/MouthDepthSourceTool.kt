@@ -23,31 +23,7 @@ class MouthDepthSourceTool {
         requireTools()
         val artwork = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
         val config = PipelineConfig(meshSpacing = 40, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
-        val sourceAnalysis = RigGenerationSource.analyze(artwork, config)
-        val inside = setOf(SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE, SemanticTag.MOUTH_OPEN)
-        assertTrue(sourceAnalysis.layers.none { it.opaquePixels > 0 && it.semantic.tag in inside })
-        val owner = sourceAnalysis.layers.filter { it.semantic.tag == SemanticTag.MOUTH && it.semantic.role == null &&
-            !it.source.clipped }.maxBy { it.opaquePixels }
-        val bounds = owner.source.bounds
-        val additions = (listOf(SemanticTag.TOOTH_T) + listOfNotNull(SemanticTag.TONGUE.takeIf { tongue })).mapIndexed { index, tag ->
-            val id = LayerId("source-mouth-interior-" + tag.name.lowercase())
-            val width = (bounds.width / 3).coerceAtLeast(5)
-            val height = (bounds.height / 5).coerceAtLeast(4)
-            val top = bounds.top + if (index == 0) bounds.height / 4 else bounds.height / 2
-            val shape = LayerBounds(bounds.left + (bounds.width - width) / 2, top, width, height)
-            val raster = LayerRaster(width, height, ByteArray(width * height * 4) { -1 })
-            WorkspaceSourceLayer(id, id.raw + (owner.semantic.variant?.let { " $it" } ?: ""), owner.source.groupPath, SourceLayerKind.Raster, true, owner.source.order,
-                shape, 1f, true, LayerBlend.Normal, ChannelMask.ALL, raster, null, null, false) to
-                LayerClassificationOverride(LayerType.PRESET, tag, owner.semantic.side)
-        }
-        val source = object : SourceArt by artwork {
-            override val layers = artwork.layers.flatMap { layer ->
-                if (layer.id == owner.source.id) additions.map { it.first } + layer else listOf(layer)
-            }.mapIndexed { index, layer -> WorkspaceSourceLayer.copyOf(layer, index) }
-        }
-        val overrides = additions.associate { (layer, classification) -> layer.id.raw to classification }
-        val document = WorkspaceDocument(source, emptyMap(), emptySet(), overrides, emptyMap(), config.rigEdits,
-            WorkspaceSettingsCodec.encode(config))
+        val document = dsMouthInteriorDocument(artwork, config, tongue)
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4, "mouth/fitted" to 6,
             "eye.smile" to 4, "eye.wide" to 4, "eye.gaze-lid" to 4, "eye.emotion" to 4, "eye.aftershock" to 5,
             "eye.squash" to 5, "brow.shape" to 5, "brow.lid-coupling" to 7, "brow.blink" to 5, "brow.spring" to 6,
@@ -137,4 +113,32 @@ class MouthDepthSourceTool {
             ModifierPluginStore.deleteTree(root)
         }
     }
+}
+
+internal fun dsMouthInteriorDocument(artwork: SourceArt, config: PipelineConfig, tongue: Boolean): WorkspaceDocument {
+    val sourceAnalysis = RigGenerationSource.analyze(artwork, config)
+    val inside = setOf(SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE, SemanticTag.MOUTH_OPEN)
+    assertTrue(sourceAnalysis.layers.none { it.opaquePixels > 0 && it.semantic.tag in inside })
+    val owner = sourceAnalysis.layers.filter { it.semantic.tag == SemanticTag.MOUTH && it.semantic.role == null &&
+        !it.source.clipped }.maxBy { it.opaquePixels }
+    val bounds = owner.source.bounds
+    val additions = (listOf(SemanticTag.TOOTH_T) + listOfNotNull(SemanticTag.TONGUE.takeIf { tongue })).mapIndexed { index, tag ->
+        val id = LayerId("source-mouth-interior-" + tag.name.lowercase())
+        val width = (bounds.width / 3).coerceAtLeast(5)
+        val height = (bounds.height / 5).coerceAtLeast(4)
+        val top = bounds.top + if (index == 0) bounds.height / 4 else bounds.height / 2
+        val shape = LayerBounds(bounds.left + (bounds.width - width) / 2, top, width, height)
+        val raster = LayerRaster(width, height, ByteArray(width * height * 4) { -1 })
+        WorkspaceSourceLayer(id, id.raw + (owner.semantic.variant?.let { " $it" } ?: ""), owner.source.groupPath, SourceLayerKind.Raster, true, owner.source.order,
+            shape, 1f, true, LayerBlend.Normal, ChannelMask.ALL, raster, null, null, false) to
+            LayerClassificationOverride(LayerType.PRESET, tag, owner.semantic.side)
+    }
+    val source = object : SourceArt by artwork {
+        override val layers = artwork.layers.flatMap { layer ->
+            if (layer.id == owner.source.id) additions.map { it.first } + layer else listOf(layer)
+        }.mapIndexed { index, layer -> WorkspaceSourceLayer.copyOf(layer, index) }
+    }
+    val overrides = additions.associate { (layer, classification) -> layer.id.raw to classification }
+    return WorkspaceDocument(source, emptyMap(), emptySet(), overrides, emptyMap(), config.rigEdits,
+        WorkspaceSettingsCodec.encode(config))
 }
