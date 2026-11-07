@@ -2,7 +2,9 @@ package io.github.psd2live.core.modifier
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
 
 /** An applied provider remains available to downstream modifiers at the same captured targets. */
 @Serializable
@@ -87,9 +89,18 @@ internal data class RigModifierStack(
 
     fun toJson(): JsonObject = codec.encodeToJsonElement(serializer(), this) as JsonObject
 
+    fun pluginReferences(): List<ModifierPluginReference> = instances.mapNotNull { it.plugin } + appliedCapabilities.mapNotNull { it.plugin }
+
     companion object {
         // Reject unknown state rather than silently discard ownership or a newer algorithm's configuration.
         private val codec = Json { encodeDefaults = true }
         fun fromJson(value: JsonObject): RigModifierStack = codec.decodeFromJsonElement(serializer(), value)
+
+        /** Read only lock metadata when archiving a history whose snapshots are still lazy. */
+        fun pluginReferences(value: JsonObject): List<ModifierPluginReference> = sequenceOf("instances", "appliedCapabilities")
+            .flatMap { (value[it] as? JsonArray).orEmpty() }
+            .mapNotNull { (it as? JsonObject)?.get("plugin") as? JsonObject }
+            .map { codec.decodeFromJsonElement<ModifierPluginReference>(it) }
+            .toList()
     }
 }

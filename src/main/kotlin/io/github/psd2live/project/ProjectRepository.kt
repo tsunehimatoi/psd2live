@@ -1,5 +1,6 @@
 package io.github.psd2live.project
 
+import io.github.psd2live.core.modifier.ModifierPluginReference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
@@ -115,10 +116,11 @@ internal class ProjectRepository(
                 val id = manifest.getValue("projectId").jsonPrimitive.content
                 val version = manifest.getValue("version").jsonPrimitive.int
                 // v2 splits each revision into document nodes; the working store takes whole snapshots.
-                if (version == ProjectFormatV2.VERSION) ProjectFormatV2.unpack(root, id)
+                val packedReferences = if (version == ProjectFormatV2.VERSION) ProjectFormatV2.unpack(root, id) else null
                 val store = WorkspaceStore(root.resolve("workspace"))
                 progress.report(ProjectStage.READING, 0.3)
                 val tree = withContext(Dispatchers.IO) { store.loadHistory(id) ?: error("Project has no history") }
+                val pluginReferences = packedReferences ?: store.legacyPluginReferences(id, tree.nodes().map { it.snapshotHash })
                 progress.report(ProjectStage.READING, 0.7)
                 // Non-authoritative: seeds generator caches the head's rebuild then hits; never fails the open.
                 ProjectHeadCache.seed(root, ProjectHeadCache.Key(tree.head().node.revisionId))
@@ -141,7 +143,7 @@ internal class ProjectRepository(
                 ui[OwnedProjectSource.KEY] = owned.descriptor
                 store.validateAssetCatalog(id, WorkspaceAssetCatalog.read(JsonObject(ui)) ?: store.existingAssetCatalog(id))
                 progress.report(ProjectStage.READING, 1.0)
-                OpenedProject(id, path.toAbsolutePath().normalize(), root, source, JsonObject(ui), tree, store, version)
+                OpenedProject(id, path.toAbsolutePath().normalize(), root, source, JsonObject(ui), tree, store, version, pluginReferences)
             }
         } catch (failure: Throwable) {
             extracted?.let { withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { ProjectArchive.deleteTemporaryDirectory(it) } }
@@ -196,6 +198,7 @@ internal class OpenedProject(
     val store: WorkspaceStore,
     /** The archive's format version; a v1 project migrates to v2 on its next save. */
     val formatVersion: Int = ProjectFormatV2.VERSION,
+    val pluginReferences: Set<ModifierPluginReference> = emptySet(),
 ) : AutoCloseable {
     private var owned = true
     fun transferDirectory(): Path {

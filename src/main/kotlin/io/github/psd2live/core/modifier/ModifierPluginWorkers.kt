@@ -37,8 +37,10 @@ internal object ModifierPluginWorkers {
                  resolveRasters: ModifierRasterResolver = RigModifierRasterAssets::resolve): RigIR {
         require(timeoutMillis > 0)
         store.requireAvailable(entry.reference)
-        if (!workers.containsKey(entry.reference)) store.verify(entry.reference)
-        val worker = workers.computeIfAbsent(entry.reference) { Worker(entry, store) }
+        val worker = workers[entry.reference] ?: run {
+            val installed = store.workerPackage(entry.reference)
+            workers.computeIfAbsent(entry.reference) { Worker(installed, store) }
+        }
         try {
             val result = worker.evaluate(algorithm, rig, instance, checkpoint, timeoutMillis, context, declaredParameters, resolveRasters)
             store.requireAvailable(entry.reference)

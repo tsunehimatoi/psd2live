@@ -226,6 +226,45 @@ class ModifierPluginTest {
         reopened.verify(restored.reference)
     }
 
+    @Test fun bundledWorkersAndLockedDependenciesAreArchivedOnlyWhenNeeded() = fixture { root, _, preferences ->
+        val store = ModifierPluginStore(root.resolve("bundled"), preferences, bundledWorkers = true)
+        val physics = assertNotNull(BundledAlgorithmArtifacts.find("physics", 1))
+        val motion = assertNotNull(BundledAlgorithmArtifacts.find("motion", 1))
+        val swing = assertNotNull(BundledAlgorithmArtifacts.find("swing", 1))
+        val entry = store.runnablePackages().single { it.reference == physics.reference }
+        assertTrue(store.snapshot().isEmpty())
+        assertTrue(store.resolution(entry.reference).available)
+        val initialRevision = store.revision.value
+
+        val rig = RigIR(Canvas(1f, 1f), listOf(Parameter("input", "Input", -1f, 1f, 0f), Parameter("output", "Output", -1f, 1f, 0f)),
+            meshes = listOf(Mesh("body", "Body", null, geometry = null, offsets = null)))
+        val config = RigPhysicsEdit("draft", "Pendulum", listOf(PhysicsInput("input")), listOf(PhysicsOutput("output"))).toJson()
+        val instance = RigModifierInstance("physics1", "physics", 1, listOf(ModifierTarget("mesh", "body")),
+            config = config, plugin = entry.reference)
+        try {
+            val expected = PhysicsAlgorithmPlugin.definition.plugin.evaluate(rig, instance) {}
+            val actual = ModifierPluginWorkers.evaluate(entry, entry.manifest.algorithms.single(), rig, instance, {}, store)
+            assertEquals(expected, actual)
+            assertEquals(listOf(physics.reference), store.snapshot().map { it.reference })
+            assertEquals(initialRevision, store.revision.value)
+        } finally { ModifierPluginWorkers.stop(entry.reference) }
+
+        val source = packageAt(root.resolve("dependent"))
+        val manifestPath = source.resolve("plugin.json")
+        val manifest = Json.decodeFromString(ModifierPluginManifest.serializer(), Files.readString(manifestPath))
+        store.setBuiltinEnabled(swing.reference, false)
+        Files.writeString(manifestPath, Json.encodeToString(ModifierPluginManifest.serializer(), manifest.copy(
+            dependencies = listOf(ModifierPluginDependency(motion.reference.id, ModifierPluginVersionRange(exact = motion.reference.version))),
+            conflicts = listOf(ModifierPluginDependency(swing.reference.id)))))
+        val dependent = store.install(source.toString())
+        assertEquals(listOf(motion.reference), dependent.dependencyLock)
+        store.retainBundledReferences(listOf(swing.reference))
+        assertFalse(store.resolution(swing.reference).available)
+        val reopened = ModifierPluginStore(store.root, preferences)
+        assertEquals(setOf(physics.reference, motion.reference, swing.reference, dependent.reference), reopened.snapshot().map { it.reference }.toSet())
+        assertTrue(reopened.resolution(dependent.reference).available)
+    }
+
     @Test fun queuedCancellationDoesNotKillActiveWorkerAndUninstallStopsIt() = fixture { root, store, _ ->
         val source = packageAt(root.resolve("package"))
         val entry = store.install(source.toString())

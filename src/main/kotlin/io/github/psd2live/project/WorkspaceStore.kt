@@ -15,6 +15,8 @@ import io.github.psd2live.core.RigTargetRef
 import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.Side
 import io.github.psd2live.core.SkeletonSpec
+import io.github.psd2live.core.modifier.ModifierPluginReference
+import io.github.psd2live.core.modifier.RigModifierStack
 import io.github.psd2live.history.WorkspaceHistoryNode
 import io.github.psd2live.history.WorkspaceHistorySelection
 import io.github.psd2live.history.WorkspaceHistoryState
@@ -183,6 +185,17 @@ internal class WorkspaceStore(
 		val file = project.resolve("history/snapshots/$key.json")
 		if (Files.isRegularFile(file)) return expandSnapshot(project, readJson(file), shared)
 		return ArchiveMirror(project.resolve(ArchiveMirror.FOLDER)).snapshot(key, shared)
+	}
+
+	/** Read plugin locks from a v1 archive's snapshot metadata without loading its raster blobs. */
+	internal fun legacyPluginReferences(projectId: String, snapshotHashes: Collection<String>): Set<ModifierPluginReference> = buildSet {
+		val snapshots = projectRoot(projectId).resolve("history/snapshots")
+		for (hash in snapshotHashes.toSet()) {
+			val file = snapshots.resolve("${fileKey(hash)}.json")
+			if (!Files.isRegularFile(file)) continue
+			val stack = ((readJson(file)["rigEdits"] as? JsonObject)?.get("modifierStack") as? JsonObject) ?: continue
+			addAll(RigModifierStack.pluginReferences(stack))
+		}
 	}
 
     /** Legacy v1 projects have no index; capture their existing immutable IDs once. */

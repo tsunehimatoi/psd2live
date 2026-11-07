@@ -1,5 +1,7 @@
 package io.github.psd2live.project
 
+import io.github.psd2live.core.modifier.ModifierPluginReference
+import io.github.psd2live.core.modifier.RigModifierStack
 import kotlinx.serialization.json.*
 import java.nio.file.Files
 import java.nio.file.Path
@@ -165,7 +167,7 @@ internal object ProjectFormatV2 {
 	}
 
 	/** Rebuilds the working-store layout under [root]/workspace/[projectId] from an extracted v2 archive. */
-	fun unpack(root: Path, projectId: String) {
+	fun unpack(root: Path, projectId: String): Set<ModifierPluginReference> {
 		require(projectId.matches(Regex("[A-Za-z0-9][A-Za-z0-9._-]*"))) { "Invalid project ID" }
 		val history = root.resolve("history")
 		require(Files.isRegularFile(history.resolve("HEAD.json"))) { "Project has no history" }
@@ -178,10 +180,17 @@ internal object ProjectFormatV2 {
 		val written = HashSet<String>()
 		val adopted = LinkedHashMap<String, Pair<JsonObject, Collection<String>>>()
 		val present = HashSet<String>()
+		val scannedRigs = HashSet<JsonElement>()
+		val pluginReferences = LinkedHashSet<ModifierPluginReference>()
 		if (Files.isDirectory(revisions)) Files.list(revisions).use { paths -> paths.sorted().toList() }.forEach { file ->
 			val index = json.parseToJsonElement(Files.readString(file)).jsonObject
 			// Revisions name mostly the same rig objects: each is looked for once.
 			val snapshot = join(root, index, cache) { hash -> hash in present || Files.isRegularFile(root.resolve(RIG_OBJECTS).resolve("$hash.bin")).also { if (it) present.add(hash) } }
+			index.getValue("nodes").jsonObject["rig"]?.takeIf(scannedRigs::add)?.let {
+				((snapshot["rigEdits"] as? JsonObject)?.get("modifierStack") as? JsonObject)?.let { stack ->
+					pluginReferences.addAll(RigModifierStack.pluginReferences(stack))
+				}
+			}
 			val key = file.fileName.toString().removeSuffix(".json")
 			if (key.matches(HASH) && isCurrent(index, snapshot)) adopted[key] = index to WorkspaceStore.rasterFiles(snapshot)
 			// The working store reads an adopted revision from the mirror when it is first used.
@@ -199,6 +208,7 @@ internal object ProjectFormatV2 {
 		// The working store reads these revisions from their nodes, and the next save links them.
 		ArchiveMirror(store.resolve(ArchiveMirror.FOLDER)).adopt(root, adopted)
 		deleteTree(history); deleteTree(root.resolve("document")); deleteTree(root.resolve("auxiliary"))
+		return pluginReferences
 	}
 
 	/**

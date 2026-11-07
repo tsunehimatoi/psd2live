@@ -395,7 +395,7 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
         return
     }
     val available = if (groups) WorkspaceModifierPlan.groupCatalog.map { it.id }
-        else if (dialog.targets.all { it.kind == "mesh" }) WorkspaceModifierPlan.types.filterNot { it == RigSourceModifiers.SCAFFOLD } else listOf("swing") + ModifierPluginStore.shared.snapshot().filter { ModifierPluginStore.shared.resolution(it.reference).available }.flatMap { it.manifest.algorithms }.filter { algorithm -> dialog.targets.all { it.kind in algorithm.targets } }.map { it.type }
+        else if (dialog.targets.all { it.kind == "mesh" }) WorkspaceModifierPlan.types.filterNot { it == RigSourceModifiers.SCAFFOLD } else listOf("swing") + ModifierPluginStore.shared.runnablePackages().filter { ModifierPluginStore.shared.resolution(it.reference).available }.flatMap { it.manifest.algorithms }.filter { algorithm -> dialog.targets.all { it.kind in algorithm.targets } }.map { it.type }
     val pluginRevision by ModifierPluginStore.shared.revision.collectAsState()
     val visibleAvailable = available.filter { type -> groups || state.previewModel?.let { !dialog.availability(it, type).hidden } != false }
     fun category(type: String): String = when {

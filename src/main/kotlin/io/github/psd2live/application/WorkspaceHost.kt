@@ -1858,6 +1858,9 @@ internal class WorkspaceHost<V>(
             }.use { opened ->
                 val state = presentation.decode(opened.presentation)
                 progress(WorkspaceProjectStep.BUILDING, path, 0.6f, 1f)
+                runInterruptible(Dispatchers.IO) {
+                    io.github.psd2live.core.modifier.ModifierPluginStore.shared.retainBundledReferences(opened.pluginReferences)
+                }
                 val installed = withContext(WorkspacePreviewProgress { progress(WorkspaceProjectStep.BUILDING, path, 0.6f, 1f, it.toDouble()) }) {
                     installProject(opened.projectId, opened.file, opened.source, state,
                         opened.history, opened.store, expected, discardUnsaved, opened.presentation)

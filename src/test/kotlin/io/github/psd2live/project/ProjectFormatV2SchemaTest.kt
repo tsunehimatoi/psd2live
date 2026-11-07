@@ -1,5 +1,9 @@
 package io.github.psd2live.project
 
+import io.github.psd2live.core.modifier.ModifierCapability
+import io.github.psd2live.core.modifier.ModifierPluginReference
+import io.github.psd2live.core.modifier.ModifierTarget
+import io.github.psd2live.core.modifier.RigModifierStack
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
@@ -76,6 +80,23 @@ class ProjectFormatV2SchemaTest {
 		assertEquals(JsonPrimitive(ProjectFormatV2.NODE_SCHEMA_SIDECARS), clips["schema"])
 		assertEquals(snapshot.getValue("rigEdits"), (ProjectFormatV2.join(root, index).getValue("rigEdits") as JsonObject)
 			.let { JsonObject(it.filterKeys { key -> key in setOf("motions", "expressions", "pose") }) })
+	}
+
+	@Test fun unpackFindsExactPluginLocksInHistoricalRevisions(@org.junit.jupiter.api.io.TempDir root: java.nio.file.Path) {
+		val swing = ModifierPluginReference("example.swing", "1.2.0", "1".repeat(64))
+		val physics = ModifierPluginReference("example.physics", "1.0.0", "2".repeat(64))
+		val targets = listOf(ModifierTarget("mesh", "body"))
+		val historical = RigModifierStack(appliedCapabilities = listOf(ModifierCapability("physics", 1, targets, plugin = physics)))
+			.add("swing", 1, targets, id = "spring", plugin = swing).update("spring") { it.copy(enabled = false) }
+		val stackNode = ProjectFormatV2.split(root, buildJsonObject {
+			putJsonObject("rigEdits") { put("modifierStack", historical.toJson()) }
+		})
+		val emptyHead = ProjectFormatV2.split(root, buildJsonObject {})
+		ProjectFormatV2.writeRevision(root, "1".repeat(64), stackNode)
+		ProjectFormatV2.writeRevision(root, "2".repeat(64), emptyHead)
+		java.nio.file.Files.writeString(root.resolve("history/HEAD.json"), "{}")
+
+		assertEquals(setOf(swing, physics), ProjectFormatV2.unpack(root, "project"))
 	}
 
 }

@@ -76,6 +76,7 @@ internal object RigModifierPipeline {
             if (Thread.currentThread().isInterrupted) throw CancellationException("Modifier evaluation cancelled")
             progress.update("Evaluating modifier stack", .85)
         }
+        ModifierPluginStore.shared.retainBundledReferences(stack.pluginReferences())
         val rig = base.rig.withModifierMeshes(PuppetIr.toPuppet(result.rig), result.rig.textures.tileArt)
             .copy(modifierOutput = result.rig, modifierReport = result.report())
         val extra = RigModifierRasterAssets.layers(rig, config).filterNot { it.source.id.raw in base.atlas.placementByLayerId }

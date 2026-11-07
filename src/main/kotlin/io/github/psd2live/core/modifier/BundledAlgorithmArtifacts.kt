@@ -4,7 +4,7 @@ import io.github.psd2live.core.RigBuildProfile
 import kotlinx.serialization.json.Json
 import java.nio.file.Files
 
-/** Full executable packages shipped with the app and retained before any new document pins them. */
+/** Full executable packages shipped with the app. Preserve exact payloads used by a project or worker. */
 internal object BundledAlgorithmArtifacts {
     data class Artifact(val resource: String, val bytes: ByteArray, val manifest: ModifierPluginManifest) {
         val reference = ModifierPluginReference(manifest.id, manifest.version, ModifierPluginStore.hash(
@@ -28,20 +28,25 @@ internal object BundledAlgorithmArtifacts {
     fun find(type: String, version: Int): Artifact? = artifacts.singleOrNull { artifact ->
         artifact.manifest.algorithms.any { it.version == version && type in it.aliases }
     }
-    fun retain(store: ModifierPluginStore) = RigBuildProfile.stage("plugin load: retain bundled packages") {
+    fun retain(store: ModifierPluginStore, requested: List<Artifact> = artifacts) {
         val retained = store.snapshot().mapTo(HashSet()) { it.reference }
-        for (artifact in artifacts.filterNot { it.reference in retained }) {
-            Files.createDirectories(store.root)
-            val staging = Files.createTempDirectory(store.root, ".bundled-")
-            try {
-                Files.write(staging.resolve("plugin.json"), artifact.bytes)
-                for (name in artifact.manifest.files.keys) {
-                    val path = ModifierPluginStore.inside(staging, name)
-                    Files.createDirectories(path.parent)
-                    requireNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, path) }
-                }
-                store.installBundled(staging, artifact.reference)
-            } finally { ModifierPluginStore.deleteTree(staging) }
+        val missing = requested.filterNot { it.reference in retained }
+        if (missing.isEmpty()) return
+        RigBuildProfile.stage("plugin load: retain bundled packages") {
+            for (artifact in missing) {
+                Files.createDirectories(store.root)
+                val staging = Files.createTempDirectory(store.root, ".bundled-")
+                try {
+                    Files.write(staging.resolve("plugin.json"), artifact.bytes)
+                    for (name in artifact.manifest.files.keys) {
+                        val path = ModifierPluginStore.inside(staging, name)
+                        Files.createDirectories(path.parent)
+                        requireNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, path) }
+                    }
+                    store.installBundled(staging, artifact.reference)
+                    RigBuildProfile.count("plugin load: bundled packages retained")
+                } finally { ModifierPluginStore.deleteTree(staging) }
+            }
         }
     }
 }

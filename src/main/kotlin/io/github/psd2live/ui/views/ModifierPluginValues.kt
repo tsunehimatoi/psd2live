@@ -15,7 +15,7 @@ import kotlinx.serialization.json.*
 /** Plugin configurations use the existing compact fields, with validation before submitting a document edit. */
 @Composable
 internal fun ModifierPluginValues(instance: RigModifierInstance, enabled: Boolean, vm: PSD2LiveViewModel) {
-    val entry = ModifierPluginStore.shared.snapshot().firstOrNull { it.reference == instance.plugin } ?: return
+    val entry = ModifierPluginStore.shared.runnablePackages().firstOrNull { it.reference == instance.plugin } ?: return
     val definition = entry.manifest.algorithms.single { it.type == instance.type && it.version == instance.version }
     var failure by remember(instance.id) { mutableStateOf<String?>(null) }
     fun update(name: String, value: JsonElement) {

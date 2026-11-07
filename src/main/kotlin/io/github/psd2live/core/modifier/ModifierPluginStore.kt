@@ -22,12 +22,13 @@ internal data class InstalledModifierPlugin(val manifest: ModifierPluginManifest
     val dependencyLock: List<ModifierPluginReference>? = null)
 
 /** Installation never executes package code. Payloads are immutable, and references pin their complete contents. */
-internal class ModifierPluginStore(val root: Path, private val preferences: Preferences) {
+internal class ModifierPluginStore(val root: Path, private val preferences: Preferences,
+                                   private val bundledWorkers: Boolean = false) {
     companion object {
         val shared by lazy {
             val prefs = Preferences.userRoot().node("io.github.psd2live.settings/algorithm-plugins")
-            ModifierPluginStore(Path.of(prefs.get("directory", Path.of(System.getProperty("user.home"), ".psd2live", "plugins").toString())), prefs)
-                .also(BundledAlgorithmArtifacts::retain)
+            ModifierPluginStore(Path.of(prefs.get("directory", Path.of(System.getProperty("user.home"), ".psd2live", "plugins").toString())), prefs,
+                bundledWorkers = true)
         }
         val platform: String get() {
             val os = System.getProperty("os.name").lowercase().let { when { "win" in it -> "windows"; "mac" in it -> "macos"; else -> "linux" } }
@@ -79,6 +80,7 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
     }
 
     private val lock = Any()
+    private val archiveLock = Any()
     @Volatile private var builtinEnabled = preferences.getBoolean("builtins", true)
     @Volatile private var builtinOverrides = preferences.keys().filter { it.startsWith("builtin.") }
         .associateWith { preferences.getBoolean(it, builtinEnabled) }
@@ -89,8 +91,24 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
     private data class CatalogSnapshot(val revision: Long, val packages: List<InstalledModifierPlugin>,
                                        val resolutions: MutableMap<ModifierPluginReference, ModifierPluginResolution> = LinkedHashMap())
     private var catalogSnapshot: CatalogSnapshot? = null
+    private val shippedWorkers by lazy {
+        if (bundledWorkers) BundledAlgorithmArtifacts.artifacts.map { artifact ->
+            InstalledModifierPlugin(artifact.manifest, artifact.reference, root.resolve(artifact.reference.digest), enabled = true)
+        } else emptyList()
+    }
 
     fun snapshot(): List<InstalledModifierPlugin> = synchronized(lock) { installed.toList() }
+    fun runnablePackages(): List<InstalledModifierPlugin> = synchronized(lock) {
+        (installed + shippedWorkers).distinctBy { it.reference }
+    }
+
+    fun retainBundledReferences(references: Collection<ModifierPluginReference>) {
+        if (!bundledWorkers || references.isEmpty()) return
+        val requested = references.toSet()
+        val artifacts = BundledAlgorithmArtifacts.artifacts.filter { it.reference in requested }
+        if (artifacts.isEmpty()) return
+        synchronized(archiveLock) { BundledAlgorithmArtifacts.retain(this, artifacts) }
+    }
     private fun catalog(): CatalogSnapshot {
         catalogSnapshot?.takeIf { it.revision == changes.value }?.let { return it }
         val packages = (BuiltinModifierPlugins.packages(this) + installed.map { entry ->
@@ -120,6 +138,11 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
     fun verify(reference: ModifierPluginReference) = synchronized(lock) {
         val entry = installed.single { it.reference == reference && it.enabled }
         require(inspectDirectory(entry.directory, entry.gitCommit).reference.copy(dependencyDigests = reference.dependencyDigests) == reference) { "Plugin contents changed after installation" }
+        entry
+    }
+    fun workerPackage(reference: ModifierPluginReference): InstalledModifierPlugin {
+        retainBundledReferences(listOf(reference))
+        return verify(reference)
     }
     fun builtinsEnabled() = builtinEnabled
     fun builtinEnabled(id: String): Boolean = builtinOverrides[id] ?: builtinEnabled
@@ -164,11 +187,12 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
     }
 
     fun inspect(source: String, ref: String? = null): InstalledModifierPlugin = stage(source, ref) { directory, commit ->
-        inspectDirectory(directory, commit).also { checkDependencies(snapshot() + it) }
+        inspectDirectory(directory, commit).also { checkDependencies(runnablePackages() + it) }
     }
 
     fun install(source: String, ref: String? = null): InstalledModifierPlugin = stage(source, ref) { directory, commit ->
-        publish(inspectDirectory(directory, commit))
+        val checked = inspectDirectory(directory, commit)
+        synchronized(archiveLock) { publish(checked) }
     }
 
     /** The bundled copier already wrote into an isolated directory on the store's volume. */
@@ -179,23 +203,30 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
         }
         val checked = inspectDirectory(directory, null)
         require(checked.reference == expected) { "Bundled algorithm checksum mismatch: ${expected.id}" }
-        return publish(checked)
+        return publish(checked, archiveOnly = bundledWorkers)
     }
 
-    private fun publish(checked: InstalledModifierPlugin): InstalledModifierPlugin = synchronized(lock) {
+    private fun publish(checked: InstalledModifierPlugin, archiveOnly: Boolean = false): InstalledModifierPlugin = synchronized(lock) {
         checkCancelled()
-        checkDependencies(installed + checked)
+        checkDependencies(runnablePackages() + checked)
         installed.firstOrNull { it.reference.digest == checked.reference.digest }?.let { return@synchronized it }
+        require(shippedWorkers.none { it.reference.id == checked.reference.id && it.reference.version == checked.reference.version &&
+            it.reference != checked.reference }) { "This bundled plugin version has different contents; use a new package version" }
         require(installed.none { it.reference.id == checked.reference.id && it.reference.version == checked.reference.version }) {
             "This plugin version is already installed with different contents; use a new package version"
         }
         require(installed.none { it.reference.id != checked.reference.id && it.manifest.algorithms.any { old -> checked.manifest.algorithms.any { it.type == old.type } } }) {
             "Another plugin owns this algorithm type"
         }
-        val resolution = ModifierPluginDependencies.resolve(checked.reference,
-            packages().filterNot { it.reference == checked.reference } + checked)
-        require(resolution.available) { resolution.issues.joinToString("; ") }
-        Files.writeString(checked.directory.resolve(".dependencies"), codec.encodeToString(kotlinx.serialization.builtins.ListSerializer(ModifierPluginReference.serializer()), resolution.dependencies))
+        // A shipped package can be archived for a disabled historical instance even while activation would conflict.
+        val dependencies = if (archiveOnly && checked.manifest.dependencies.isEmpty()) emptyList() else {
+            val resolution = ModifierPluginDependencies.resolve(checked.reference,
+                packages().filterNot { it.reference == checked.reference } + checked)
+            require(resolution.available) { resolution.issues.joinToString("; ") }
+            if (!archiveOnly) retainBundledReferences(resolution.dependencies)
+            resolution.dependencies
+        }
+        Files.writeString(checked.directory.resolve(".dependencies"), codec.encodeToString(kotlinx.serialization.builtins.ListSerializer(ModifierPluginReference.serializer()), dependencies))
         val destination = root.resolve(checked.reference.digest)
         if (Files.exists(destination)) {
             // A damaged installation is not active. Retain it outside the catalog until cleanup succeeds.
@@ -204,11 +235,12 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
             runCatching { deleteTree(damaged) }
         }
         movePackage(checked.directory, destination)
-        val result = checked.copy(directory = destination, dependencyLock = resolution.dependencies, reference = checked.reference.copy(
-            dependencyDigests = resolution.dependencies.associate { "${it.id}@${it.version}" to it.digest }))
+        val result = checked.copy(directory = destination, dependencyLock = dependencies, reference = checked.reference.copy(
+            dependencyDigests = dependencies.associate { "${it.id}@${it.version}" to it.digest }))
         installed = installed + result
         loadProblems.removeAll { it.startsWith(checked.reference.digest + ":") }
-        changes.value++
+        // The same exact reference was already in the catalog. Archiving its bytes cannot invalidate a candidate.
+        if (!archiveOnly) changes.value++
         result
     }
 
