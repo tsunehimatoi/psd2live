@@ -2,6 +2,7 @@ package io.github.psd2live.core.modifier
 
 import io.github.psd2live.algorithms.binding.MouthJawAlgorithm
 import io.github.psd2live.algorithms.binding.MouthJawV3Algorithm
+import io.github.psd2live.algorithms.binding.MouthJawV4Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldMesh
 import io.github.psd2live.algorithms.binding.ScaffoldMeshContext
 import io.github.psd2live.core.*
@@ -25,6 +26,15 @@ internal object RigMouthJawModifier {
         override val canonicalOptInType = MouthJawAlgorithm.TYPE
     }
 
+    private val tongueAlgorithm = object : ReadingModifierAlgorithmPlugin by MouthJawV4Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = MouthJawV4Algorithm.optionalUpstream
+        override val canonicalOptInType = MouthJawAlgorithm.TYPE
+    }
+
+    fun tongueDefinition(source: RigModifierSource?): RigModifierDefinition =
+        definition(source, MouthJawV4Algorithm.VERSION, tongueAlgorithm)
+
     fun fittedDefinition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthJawV3Algorithm.VERSION, fittedAlgorithm)
 
@@ -46,13 +56,19 @@ internal object RigMouthJawModifier {
             item.config["scaffold"] == JsonPrimitive(scaffold.id) && item.targets.any(instance.targets::contains) &&
                 RigLegacyBindings.find(item.type)?.let { !it.expressionToggles && !it.seeThrough } == true
         }
-        val fittedVersions = if (version == MouthJawV3Algorithm.VERSION) 3..3 else 1..2
+        val sourceBinding = version in MouthJawV3Algorithm.VERSION..MouthJawV4Algorithm.VERSION
+        val fittedVersions = if (sourceBinding) 3..3 else 1..2
         val baseId = instance.config.getValue("base").jsonPrimitive.content
         require(preceding.any { it.id == baseId && it.type == "mouth/fitted" && it.version in fittedVersions }) {
             "Mouth jaw v$version requires a compatible fitted mouth"
         }
-        require(preceding.none { it.type.startsWith("mouth.") && it.type !in MouthJawAlgorithm.mouthUpstream }) {
+        val allowTongue = version == MouthJawV4Algorithm.VERSION
+        val mouthUpstream = if (allowTongue) MouthJawV4Algorithm.mouthUpstream else MouthJawAlgorithm.mouthUpstream
+        require(preceding.none { it.type.startsWith("mouth.") && it.type !in mouthUpstream }) {
             "Use mouth jaw v1 after other mouth modules"
+        }
+        require(!allowTongue || preceding.filter { it.type == "mouth.tongue" }.all { it.version == 3 }) {
+            "Mouth jaw v4 requires a compatible tongue provider"
         }
         val state = preceding.associateBy { it.type }
         val bases = preceding.filter { RigLegacyBindings.spec(it.type).isBase }.associateBy { RigLegacyBindings.spec(it.type).area }
@@ -107,7 +123,7 @@ internal object RigMouthJawModifier {
             }
         }
         val fit = measured.fit
-        val fittedSource = if (version == MouthJawV3Algorithm.VERSION) measured.encode() else null
+        val fittedSource = if (sourceBinding) measured.encode() else null
         return ModifierAlgorithmContext(buildJsonObject {
             if (fittedSource != null) {
                 put("schema", "mouth-jaw/2")
@@ -120,7 +136,8 @@ internal object RigMouthJawModifier {
             put("chin", fitted.chin)
             put("targets", targets)
             putJsonObject("providers") {
-                for (provider in preceding.filter { it.type in MouthJawAlgorithm.optionalUpstream }) {
+                val optionalUpstream = if (allowTongue) MouthJawV4Algorithm.optionalUpstream else MouthJawAlgorithm.optionalUpstream
+                for (provider in preceding.filter { it.type in optionalUpstream }) {
                     put(provider.type, provider.id)
                 }
             }
