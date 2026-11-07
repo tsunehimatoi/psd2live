@@ -3478,6 +3478,11 @@ object RigBuilder {
 	internal fun skinLoweringSource(layer: ClassifiedLayer, context: RigContext, config: PipelineConfig,
 	                                atlas: PackedAtlas, cache: PreviewMeshCache, channels: Drawable): Drawable {
 		require(layer.semantic.tag in setOf(SemanticTag.FACE, SemanticTag.NOSE, SemanticTag.FACE_DETAIL))
+		return meshLoweringSource(layer, context, config, atlas, cache, channels)
+	}
+
+	private fun meshLoweringSource(layer: ClassifiedLayer, context: RigContext, config: PipelineConfig,
+	                               atlas: PackedAtlas, cache: PreviewMeshCache, channels: Drawable): Drawable {
 		val aligned = context.rigLayer(layer)
 		val (parent, frame) = context.parentAndFrame(layer, config)
 		val parts = buildDrawableMesh(layer, aligned, context, parent, frame, context.headSpaceFor(layer, config), config, cache)
@@ -3487,6 +3492,34 @@ object RigBuilder {
 		val native = channels.copy(name = layer.source.name, parentDeformerId = parent, mesh = mesh, geometryGrid = parts.geometryGrid,
 			texturePage = placement.page)
 		return native.copy(blendShapes = neutralized(parts.blendShapes, native))
+	}
+
+	/** Projects the closed-mouth fallback's source meshes and arm frames without building the complete rig. */
+	internal fun closedMouthShellProjection(context: RigContext, config: PipelineConfig, atlas: PackedAtlas,
+	                                      cache: PreviewMeshCache, material: PuppetModel,
+	                                      layers: Map<String, ClassifiedLayer>, kept: Set<ParameterId>): PuppetModel {
+		val switches = io.github.psd2live.algorithms.binding.ExpressionChannels.catalog(context.analysis.layers.mapNotNull { layer ->
+			val override = config.layerOverrides[layer.source.id.raw]
+			val type = override?.type ?: layer.semantic.type
+			val parameter = (override?.parameter ?: layer.semantic.parameter).trim()
+			if (type == LayerType.PRESET || parameter.isEmpty()) null else
+				io.github.psd2live.algorithms.binding.ExpressionChannels.Layer(parameter,
+					if (type == LayerType.SWITCH) override?.switchId ?: layer.semantic.switchId else null)
+		}, staggered = false).switchKeys
+		val originals = material.drawables.associateBy { it.id.raw }
+		val drawables = layers.map { (id, layer) ->
+			val grids = withEyeOpacity(buildChannels(layer, config.layerOverrides[layer.source.id.raw], switches,
+				config.rigTuning, context.hasClosedMouth, eyeSwap(context, config, layer), mouthSwap(context, config, layer),
+				eyeOpenMax(context, config), context.fittedMouth(config)?.let { it.rig?.fit?.layered != null && it.covers(layer) } == true),
+				context, config, layer)
+			val original = originals.getValue(id).copy(channelGrids = grids)
+			meshLoweringSource(layer, context, config, atlas, cache, original)
+		}
+		val parameters = standardParameters(context, config) + moduleParameters(context, config, emptyList())
+		val model = material.copy(parameters = parameters, deformers = context.deformers, drawables = drawables,
+			parameterTree = parameterTree(), parameterLinks = emptyList())
+		val projected = CubismBlendShapes.lawful(withoutLegacyHairSway(model, config))
+		return BindingProjection.retain(projected, kept, mapOf(StandardParameters.MOUTH_OPEN to 1f))
 	}
 
 	/** Raw mouth topology for the outline binding, before replacing the opening with shared columns. */

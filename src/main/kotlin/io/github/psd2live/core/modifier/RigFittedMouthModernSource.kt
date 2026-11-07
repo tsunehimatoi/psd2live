@@ -7,7 +7,8 @@ import kotlinx.serialization.json.*
 
 /** Captures the source-only transition for the fitted mouth and its shared head field. */
 internal object RigFittedMouthModernSource {
-    fun capture(owner: RigModifierSource, instance: RigModifierInstance, closedDrawing: Boolean = false): ModifierAlgorithmContext {
+    fun capture(owner: RigModifierSource, instance: RigModifierInstance, closedDrawing: Boolean = false,
+                fallbackClosedShell: Boolean = false): ModifierAlgorithmContext {
         val scaffold = owner.provider(instance)
         require(scaffold.version == 2 && instance.targets.toSet() == scaffold.targets.toSet())
         val prefix = owner.activeBefore(instance).filter { it.id != scaffold.id && it.targets.any(instance.targets::contains) }
@@ -31,7 +32,7 @@ internal object RigFittedMouthModernSource {
         val fitted = new.fittedMouth(after)
         require(fitted?.source != null && local.isNotEmpty()) { "Fitted mouth v3 requires source mouth measurements" }
         require(!closedDrawing || fitted.closedLine) { "Fitted mouth v4 requires a separate closed drawing" }
-        val styled = if (styleCandidates.isNotEmpty() && !fitted.closedLine &&
+        val styled = if (fallbackClosedShell) emptyMap() else if (styleCandidates.isNotEmpty() && !fitted.closedLine &&
             old.faceTurn(before) == null && new.faceTurn(after) == null) {
             // An open-mouth fit can keep the preceding shell turn when no styled field was built.
             require(RigBuilder.headTurnMeasurements(old.faceRig, before) == RigBuilder.headTurnMeasurements(new.faceRig, after) &&

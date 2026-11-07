@@ -4,6 +4,7 @@ import io.github.psd2live.algorithms.binding.MouthFittedInputs
 import io.github.psd2live.algorithms.binding.MouthFittedV2Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV4Algorithm
+import io.github.psd2live.algorithms.binding.MouthFittedV5Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
 import io.github.psd2live.algorithms.binding.ScaffoldMesh
 import io.github.psd2live.algorithms.binding.ScaffoldMeshContext
@@ -55,6 +56,16 @@ internal object RigFittedMouthDefinition {
         }
         return modern.copy(version = MouthFittedV4Algorithm.VERSION, plugin = plugin,
             authorContext = { RigFittedMouthModernSource.capture(requireNotNull(source), it, closedDrawing = true) })
+    }
+
+    fun closedShellDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val modern = modernDefinition(source)
+        val plugin = object : ChangingModifierAlgorithmPlugin by MouthFittedV5Algorithm(), ModifierOptionalUpstream, ModifierVersionSelection {
+            override val optionalUpstream = modern.optionalUpstream
+            override val canonicalOptInType = TYPE
+        }
+        return modern.copy(version = MouthFittedV5Algorithm.VERSION, plugin = plugin,
+            authorContext = { requireNotNull(source).closedMouthShellContext(it) })
     }
 
     private fun parameters(instance: RigModifierInstance) = MouthFittedV2Algorithm.parameters(

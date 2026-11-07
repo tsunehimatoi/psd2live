@@ -246,6 +246,9 @@ internal class RigModifierSource(
                 "ParamGroupBody" to tr("model.group.body"), "ParamGroupPhysics" to tr("model.group.physics")))
     }
 
+    fun closedMouthShellContext(instance: RigModifierInstance) =
+        RigClosedMouthShellProjection.capture(this, materialBase, instance)
+
     private val staticModels = java.util.IdentityHashMap<PuppetModel, PuppetModel>()
     fun static(model: PuppetModel) = staticModels.getOrPut(model) { restricted(model, emptySet()) }
 
