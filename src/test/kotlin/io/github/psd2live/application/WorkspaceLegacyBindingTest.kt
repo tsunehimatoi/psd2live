@@ -743,6 +743,77 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun closedMouthDepthMatchesLockedVersionAndInstalledWorker(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true, closedMouth = true)
+        val choices = WorkspaceInitialPreset()
+        val defaults = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+        val config = defaults.copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()),
+            recipe = defaults.recipe.copy(modules = defaults.recipe.modules + mapOf(
+                RigModules.MOUTH_DEPTH.id to ModuleChoice(true, values = mapOf("depth" to 143f)),
+                RigModules.MOUTH_SPRING.id to ModuleChoice(true))))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices, preferSourceBindings = true)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val depth = stack.instances.single { it.type == "mouth.interior-depth" }
+        val index = stack.index(depth.id)
+        assertEquals(1, depth.version)
+        val versions = mapOf("mouth/fitted" to 4, "mouth.outline" to 5, "mouth.vowel" to 5,
+            "mouth.capture" to 4, "mouth.tongue" to 4, "mouth.jaw" to 6, depth.type to 4)
+        val locked = stack.copy(instances = stack.instances.map { entry ->
+            val version = versions[entry.type] ?: return@map entry
+            entry.copy(version = version, plugin = assertNotNull(BundledAlgorithmArtifacts.find(entry.type, version)).reference)
+        })
+        val document = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = locked.toJson()))
+        val preview = WorkspacePreviewBuilder().build(document)
+        val actual = assertNotNull(preview.modifierEvaluation)
+        val reference = assertNotNull(baseline.modifierEvaluation).outputs
+        val previous = reference[index - 1]
+        val expected = reference[index]
+        val tongue = expected.meshes.single { it.name == "tongue" }
+        assertTrue(Channel.MULTIPLY_COLOR in tongue.channels)
+        assertNotEquals(previous.meshes.single { it.id == tongue.id }.channels, tongue.channels)
+        assertTrue(expected.deformers.any { deformer -> previous.deformers.none { it.id == deformer.id } })
+        assertEquals(previous.meshes.single { it.name == "mouth-closed" }, expected.meshes.single { it.name == "mouth-closed" })
+        assertEquals(ModifierStatus.ACTIVE, actual.entries[index].status)
+        for (stage in index - 1 until stack.instances.size) {
+            val a = reference[stage]
+            val b = actual.outputs[stage]
+            val meshes = a.meshes.zip(b.meshes).filter { (old, new) -> old != new }.joinToString { (old, new) ->
+                "${old.name} geometry=${old.geometry != new.geometry} shapes=${old.shapes != new.shapes} channels=${old.channels != new.channels}"
+            }
+            assertTrue(a == b, "${stack.instances[stage].type}: $meshes")
+        }
+        val compiled = RigIrCompiler.compile(baseline, tileArt = true)
+        assertEquals(compiled, RigIrCompiler.compile(preview, tileArt = true))
+        assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(document), tileArt = true))
+
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(depth.type, 4))
+        val directory = Files.createTempDirectory("closed-mouth-depth-package-")
+        val preferences = Preferences.userRoot().node("closed-mouth-depth-package/" + UUID.randomUUID())
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            for (name in artifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val worker = store.install(staging.toString())
+            assertEquals(artifact.reference, worker.reference)
+            val context = assertNotNull(actual.readAlgorithms[depth.id]).context
+            for ((type, version) in versions - depth.type) {
+                val provider = context.upstream.single { it.type == type }
+                assertEquals(version, provider.version)
+                assertEquals(BundledAlgorithmArtifacts.find(type, version)?.reference, provider.plugin)
+            }
+            assertEquals(expected, ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(),
+                actual.outputs[index - 1], actual.entries[index].instance, {}, store, context = context))
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
     @Test fun independentMouthDepthMatchesLockedVersionWithHeadTurn(): Unit = runBlocking {
         for (head in listOf("face/fitted", "face/legacy")) {
             val f = Fixture(document(mouthDetails = true))

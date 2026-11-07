@@ -2,6 +2,7 @@ package io.github.psd2live.core.modifier
 
 import io.github.psd2live.algorithms.binding.MouthDepthAlgorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV3Algorithm
+import io.github.psd2live.algorithms.binding.MouthDepthV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthRig.Follow
 import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.RigModules
@@ -22,11 +23,20 @@ internal object RigMouthDepthModifier {
         override val canonicalOptInType = MouthDepthAlgorithm.TYPE
     }
 
+    private val closedAlgorithm = object : ReadingModifierAlgorithmPlugin by MouthDepthV4Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = MouthDepthV4Algorithm.optionalUpstream
+        override val canonicalOptInType = MouthDepthAlgorithm.TYPE
+    }
+
     fun definition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthDepthAlgorithm.VERSION, algorithm)
 
     fun fittedDefinition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthDepthV3Algorithm.VERSION, fittedAlgorithm)
+
+    fun closedDefinition(source: RigModifierSource?): RigModifierDefinition =
+        definition(source, MouthDepthV4Algorithm.VERSION, closedAlgorithm)
 
     private fun definition(source: RigModifierSource?, version: Int,
                            algorithm: ReadingModifierAlgorithmPlugin): RigModifierDefinition =
@@ -41,9 +51,17 @@ internal object RigMouthDepthModifier {
         )
 
     private fun RigModifierSource.capture(instance: RigModifierInstance, version: Int): ModifierAlgorithmContext {
-        val fittedSource = version == MouthDepthV3Algorithm.VERSION
-        val sourceVersions = if (fittedSource) 1..3 else 1..2
-        val optional = if (fittedSource) MouthDepthV3Algorithm.optionalUpstream else MouthDepthAlgorithm.optionalUpstream
+        val closed = version == MouthDepthV4Algorithm.VERSION
+        val sourceVersions = when (version) {
+            MouthDepthV4Algorithm.VERSION -> 4..4
+            MouthDepthV3Algorithm.VERSION -> 1..3
+            else -> 1..2
+        }
+        val optional = when (version) {
+            MouthDepthV4Algorithm.VERSION -> MouthDepthV4Algorithm.optionalUpstream
+            MouthDepthV3Algorithm.VERSION -> MouthDepthV3Algorithm.optionalUpstream
+            else -> MouthDepthAlgorithm.optionalUpstream
+        }
         val scaffold = provider(instance)
         require(scaffold.version == 2) { "Mouth interior depth v$version requires a shared v2 scaffold" }
         val preceding = activeBefore(instance).filter { item ->
@@ -58,7 +76,7 @@ internal object RigMouthDepthModifier {
             "Use mouth interior depth v1 after other mouth modules"
         }
         val (native, context) = RigFittedMouthModuleSource.context(this, scaffold, preceding, RigModules.MOUTH_DEPTH)
-        val mouth = requireNotNull(context.fittedMouth(native)?.takeIf { it.source != null }) {
+        val mouth = requireNotNull(context.fittedMouth(native)?.takeIf { it.source != null && (!closed || it.closedLine) }) {
             "Mouth interior depth v$version requires readable fitted mouth artwork"
         }
         val sourceLayers = context.analysis.layers.associateBy { it.source.id.raw }

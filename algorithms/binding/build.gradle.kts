@@ -2648,6 +2648,35 @@ tasks.register("pluginMouthDepthV3") {
     }
 }
 
+val mouthDepthV4WorkerJar = registerIsolatedBindingWorker(
+    "mouthDepthV4", "mouth-depth-v4", "worker-mouth-depth-v4", "io.github.psd2live.algorithms.binding.MouthDepthV4Worker",
+)
+
+tasks.register("pluginMouthDepthV4") {
+    dependsOn(mouthDepthV4WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-depth-v4")
+    val packageVersion = project.version.toString()
+    inputs.file(mouthDepthV4WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthDepthV4WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682e696e746572696f722d6465707468.v4"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Mouth interior depth",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/depth","aliases":["mouth.interior-depth"],"version":4,"name":"Mouth interior depth","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","mouth/fitted","face/legacy"],"contextVersion":2,
+               "reads":["mesh","parameter","hierarchy","canvas","deformer"],"writes":["mesh","deformer"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val cheekWorkerJar = registerIsolatedBindingWorker(
     "cheek", "cheek", "worker-cheek", "io.github.psd2live.algorithms.binding.CheekWorker",
 )
