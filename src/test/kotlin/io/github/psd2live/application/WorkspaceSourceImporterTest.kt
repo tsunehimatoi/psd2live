@@ -59,7 +59,7 @@ class WorkspaceSourceImporterTest {
         }
     }
 
-    @Test fun newLegacyPresetUsesIndependentFaceWithoutChangingTheModel() = runBlocking<Unit> {
+    @Test fun newLegacyPresetUsesIndependentFaceEyesAndBrowsWithoutChangingTheModel() = runBlocking<Unit> {
         val original = Characters.head(physics = false)
         val path = Files.createFile(directory.resolve("legacy-face.psd")).toAbsolutePath()
         val builder = WorkspacePreviewBuilder()
@@ -70,12 +70,17 @@ class WorkspaceSourceImporterTest {
             modifiers = WorkspaceInitialModifiers.CUSTOM,
             preset = WorkspaceInitialPreset(headStrength = .7f, bodyStrength = 1.3f, clothing = false)).capture
         val stack = RigModifierStack.fromJson(assertNotNull(installed.document.rigEdits.modifierStack))
-        val face = stack.instances.single { it.type == "face/legacy" }
-        assertEquals(2, face.version)
-        assertEquals(assertNotNull(BuiltinModifierPlugins.reference(face.type, 2)), face.plugin)
+        val replaced = setOf("face/legacy", "eye/legacy", "brow/legacy")
+        assertEquals(replaced, stack.instances.filter { it.type in replaced }.mapTo(HashSet()) { entry ->
+            assertEquals(2, entry.version, entry.type)
+            assertEquals(assertNotNull(BuiltinModifierPlugins.reference(entry.type, 2)), entry.plugin)
+            entry.type
+        })
         assertEquals(1, runtime.history().selections.size)
-        val legacy = face.copy(version = 1, plugin = assertNotNull(BuiltinModifierPlugins.reference(face.type, 1)))
-        val locked = stack.copy(instances = stack.instances.map { if (it.id == face.id) legacy else it })
+        val locked = stack.copy(instances = stack.instances.map { entry ->
+            if (entry.type in replaced) entry.copy(version = 1, plugin = assertNotNull(BuiltinModifierPlugins.reference(entry.type, 1)))
+            else entry
+        })
         val reference = installed.document.copy(rigEdits = installed.document.rigEdits.copy(modifierStack = locked.toJson()))
         assertEquals(RigIrCompiler.compile(builder.build(reference), tileArt = true),
             RigIrCompiler.compile(installed.model, tileArt = true))

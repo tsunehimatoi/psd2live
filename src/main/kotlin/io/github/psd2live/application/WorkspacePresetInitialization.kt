@@ -1,5 +1,7 @@
 package io.github.psd2live.application
 
+import io.github.psd2live.algorithms.binding.BrowLegacyV2Algorithm
+import io.github.psd2live.algorithms.binding.EyeLegacySourceAlgorithm
 import io.github.psd2live.algorithms.binding.LegacyBodyV2Algorithm
 import io.github.psd2live.algorithms.binding.LegacyFaceV2Algorithm
 import io.github.psd2live.core.*
@@ -14,7 +16,8 @@ import java.util.concurrent.FutureTask
 /** A preset is a recipe for explicit instances, never a second model-generation pipeline. */
 internal object WorkspacePresetInitialization {
     fun create(document: WorkspaceDocument, work: WorkspaceRasterWork,
-               choices: WorkspaceInitialPreset = WorkspaceInitialPreset()): WorkspaceDocument = prepare(document, work, choices).first
+               choices: WorkspaceInitialPreset = WorkspaceInitialPreset()): WorkspaceDocument =
+        prepare(document, work, choices, preferSourceBindings = true).first
 
     fun prepare(document: WorkspaceDocument, work: WorkspaceRasterWork,
                 choices: WorkspaceInitialPreset = WorkspaceInitialPreset(),
@@ -76,7 +79,14 @@ internal object WorkspacePresetInitialization {
         val scaffold = stack.instances.singleOrNull { it.type == RigSourceModifiers.SCAFFOLD && it.version == 2 }
         val sourceVersions = if (preferSourceBindings && scaffold != null) buildMap {
             put(LegacyBodyV2Algorithm.TYPE, LegacyBodyV2Algorithm.VERSION)
-            if (!config.featureDisplacementEnabled) put(LegacyFaceV2Algorithm.TYPE, LegacyFaceV2Algorithm.VERSION)
+            if (!config.featureDisplacementEnabled) {
+                put(LegacyFaceV2Algorithm.TYPE, LegacyFaceV2Algorithm.VERSION)
+                // These source versions are verified for a fresh legacy-style scaffold and ordinary head turn.
+                if (!config.recipe.modern && config.rigTuning == RigTuning() && config.rigEdits.authoringJournal.isEmpty()) {
+                    put(EyeLegacySourceAlgorithm.TYPE, EyeLegacySourceAlgorithm.VERSION)
+                    put(BrowLegacyV2Algorithm.TYPE, BrowLegacyV2Algorithm.VERSION)
+                }
+            }
         } else emptyMap()
         stack = stack.copy(instances = stack.instances.map { entry ->
             val spec = RigLegacyBindings.find(entry.type)
