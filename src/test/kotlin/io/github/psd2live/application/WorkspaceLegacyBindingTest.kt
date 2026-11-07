@@ -65,7 +65,7 @@ class WorkspaceLegacyBindingTest {
 
     /** Small public procedural art with distinct eye, brow, mouth, hair and torso inputs. */
     private fun document(eyeDetails: Boolean = false, mouthDetails: Boolean = false, expressionDetails: Boolean = false, skinDetails: Boolean = false, outfitDetails: Boolean = false, sideLock: Boolean = false, bangOverlay: Boolean = false,
-                         chestDetail: Boolean = false, thinMouth: Boolean = false, pairedBrows: Boolean = false, bilateralEyes: Boolean = false): WorkspaceDocument {
+                         chestDetail: Boolean = false, pairedArms: Boolean = false, thinMouth: Boolean = false, pairedBrows: Boolean = false, bilateralEyes: Boolean = false): WorkspaceDocument {
         data class Shape(val id: String, val tag: SemanticTag, val side: Side, val x: Int, val y: Int, val w: Int, val h: Int, val role: PartRole? = null)
         val shapes = listOf(
             Shape("iris", SemanticTag.IRIDES, Side.LEFT, 37, 19, 5, 10),
@@ -116,9 +116,13 @@ class WorkspaceLegacyBindingTest {
             Shape("wing", SemanticTag.WINGS, Side.RIGHT, 48, 45, 13, 15),
         ) else emptyList()
         val chestShapes = if (chestDetail) listOf(Shape("chest-panel", SemanticTag.TOPWEAR, Side.NONE, 26, 48, 12, 15)) else emptyList()
+        val armShapes = if (pairedArms) listOf(
+            Shape("glove-l", SemanticTag.HANDWEAR, Side.LEFT, 4, 51, 6, 26),
+            Shape("glove-r", SemanticTag.HANDWEAR, Side.RIGHT, 54, 51, 6, 26),
+        ) else emptyList()
         val classified = if (bangOverlay) listOf(allShapes.single { it.id == "front" }.copy(h = 24)) +
             allShapes.filterNot { it.id == "front" } + skinShapes + outfitShapes
-        else allShapes + skinShapes + outfitShapes + chestShapes
+        else allShapes + skinShapes + outfitShapes + chestShapes + armShapes
         val source = WorkspaceSourceArt(64, 80, classified.mapIndexed { index, shape ->
             val color = if (!bangOverlay) 0xffffff else when (shape.tag) {
                 SemanticTag.FRONT_HAIR, SemanticTag.BACK_HAIR -> 0x725672
@@ -2107,6 +2111,117 @@ class WorkspaceLegacyBindingTest {
         assertEquals(result, RigIrCompiler.compile(f.builder.build(f.now.document)))
         f.edit("modifier_apply", buildJsonObject { put("id", "outfit.creature") })
         assertEquals(result, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
+    @Test fun independentArmSwingPreservesRecommendedBindingAndRunsInstalledWorker(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true,
+            pairedArms = true, chestDetail = true)
+        val builder = WorkspacePreviewBuilder()
+        val stack = WorkspaceModifierPlan.initial(builder.build(art), WorkspaceModifierPlan.RECOMMENDED_GROUP)
+        val body = stack.instances.single { it.type == "body/legacy" }
+        val arms = stack.instances.single { it.type == "body.arms" }
+        assertEquals(1, arms.version)
+        val bodyPackage = assertNotNull(BundledAlgorithmArtifacts.find(body.type, 2))
+        val armPackage = assertNotNull(BundledAlgorithmArtifacts.find(arms.type, 2))
+        val baseline = stack.copy(instances = stack.instances.map {
+            if (it.id == body.id) it.copy(version = 2, plugin = bodyPackage.reference) else it
+        })
+        val direct = baseline.copy(instances = baseline.instances.map {
+            if (it.id == arms.id) it.copy(version = 2, plugin = armPackage.reference) else it
+        })
+        fun documentFor(candidate: RigModifierStack) = art.copy(rigEdits = art.rigEdits.copy(modifierStack = candidate.toJson()))
+        val old = builder.build(documentFor(baseline))
+        val current = builder.build(documentFor(direct))
+        val expected = assertNotNull(old.rig.modifierOutput)
+        val actual = assertNotNull(current.rig.modifierOutput)
+        assertEquals(expected.parameters, actual.parameters)
+        assertEquals(expected.parameterTree, actual.parameterTree)
+        assertEquals(expected.physics, actual.physics)
+        for ((a, b) in expected.deformers.zip(actual.deformers)) assertEquals(a, b, a.id)
+        assertEquals(expected, actual)
+        assertEquals(RigIrCompiler.compile(old), RigIrCompiler.compile(current))
+        val evaluation = assertNotNull(current.modifierEvaluation)
+        val index = direct.instances.indexOfFirst { it.id == arms.id }
+        val before = evaluation.outputs[index - 1]
+        val after = evaluation.outputs[index]
+        assertEquals(before.meshes, after.meshes)
+        assertEquals(before.deformers.filterIsInstance<io.github.psd2live.format.model.Deformer.Warp>().map { it.lattice },
+            after.deformers.filterIsInstance<io.github.psd2live.format.model.Deformer.Warp>().map { it.lattice })
+        val pose = mapOf(StandardParameters.BODY_X to -6f, StandardParameters.BODY_Z to 7f, StandardParameters.BODY_LEAN to 3f,
+            StandardParameters.PROPORTION to -5f, StandardParameters.BREATH to .6f, StandardParameters.ANGLE_X to 12f,
+            ParameterId("ParamArmLSwing") to .7f, ParameterId("ParamArmRSwing") to -.5f)
+        compare(old, current, listOf(pose))
+
+        val directory = Files.createTempDirectory("arm-swing-package-")
+        val preferences = Preferences.userRoot().node("arm-swing-package/" + UUID.randomUUID())
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), armPackage.bytes)
+            for (name in armPackage.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(armPackage.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val instance = direct.instances[index]
+            val definition = RigArmSwingModifier.definition(RigModifierSource.of(current))
+            val dependencies = RigLegacyBindings.providers(instance)
+            val providers = dependencies.map { (capability, id) ->
+                val provider = direct.instances.single { it.id == id }
+                ModifierUpstreamCapability(capability, provider.type, provider.version, provider.targets, provider.id,
+                    provider.config, provider.outputAliases, provider.plugin)
+            }
+            repeat(2) {
+                val installed = store.install(staging.toString())
+                assertEquals(armPackage.reference, installed.reference)
+                val external = instance.copy(type = installed.manifest.algorithms.single().type)
+                val adapter = ModifierPluginCatalog.definitions(store, captured = listOf(definition)).single { it.type == external.type }
+                val context = adapter.authorContext(external).withUpstream(providers)
+                assertEquals(after, (adapter.plugin as ContextualModifierAlgorithmPlugin).evaluate(before, external, context) {})
+                ModifierPluginWorkers.stop(installed.reference)
+                store.uninstall(installed.reference)
+            }
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+
+        val fixture = Fixture(documentFor(direct))
+        fixture.install()
+        fixture.edit("modifier_apply", buildJsonObject { put("id", arms.id) })
+        assertEquals(RigIrCompiler.compile(current), RigIrCompiler.compile(WorkspacePreviewBuilder().build(fixture.now.document)))
+    }
+
+    @Test fun independentArmSwingRejectsAnEditedNeutralLatticeAtomically(): Unit = runBlocking {
+        val fixture = Fixture(document(outfitDetails = true))
+        fixture.install()
+        fixture.group(listOf("body/legacy", "face/legacy"))
+        val arm = fixture.now.model.rig.puppet.deformers.filterIsInstance<Deformer.Warp>().single {
+            it.id == mesh(fixture, "arm").parentDeformerId
+        }
+        val lattice = assertNotNull(arm.geometryGrid)
+        val pose = key(fixture, lattice.axes)
+        val coordinate = lattice.axes.map { axis ->
+            axis.keys.indexOfFirst { it == pose.getValue(axis.parameterId.raw).jsonPrimitive.float }
+        }
+        val points = lattice.cells.single { it.coordinate.toList() == coordinate }.form.controlPoints
+        fixture.edit("keyform_apply", buildJsonObject { putJsonArray("changes") { addJsonObject {
+            put("op", "set")
+            put("target", "warp:${arm.id.raw}")
+            put("key", pose)
+            putJsonObject("geometry") {
+                put("controlPoints", JsonArray(points.mapIndexed { index, point -> JsonPrimitive(if (index == 0) point + .03f else point) }))
+            }
+        } } })
+        val before = fixture.now
+        val request = fixture.addition("body.arms", "arms", config = buildJsonObject {
+            put("scaffold", "structure")
+            putJsonObject("dependencies") { put("body/legacy", "body"); put("face/legacy", "face") }
+        })
+        val failure = assertFailsWith<WorkspaceBatchEditException> {
+            fixture.edit("modifier_add", JsonObject(request + ("version" to JsonPrimitive(2))))
+        }
+        assertTrue(failure.message.orEmpty().contains("source neutral arm lattice"))
+        assertEquals(before, fixture.now)
     }
 
     @Test fun chestBounceV2MatchesLegacyWorkerAndAppliedOutput(): Unit = runBlocking<Unit> {

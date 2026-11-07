@@ -79,6 +79,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "skirtElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browSpringElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "bodyLegacyV2Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "armSwingElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "faceLegacyV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLegacyV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthFittedV2Elements"))
@@ -278,6 +279,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginBrowFittedV2")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-fitted-v2")) {
         into("algorithm-plugins/brow-fitted-v2")
+    }
+    dependsOn(":algorithms:binding:pluginArmSwing")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-arm-swing")) {
+        into("algorithm-plugins/body-arms")
     }
     dependsOn(":algorithms:binding:pluginBrowBlink")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-blink")) {

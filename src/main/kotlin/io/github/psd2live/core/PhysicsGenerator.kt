@@ -80,17 +80,7 @@ object PhysicsGenerator {
 		}
 		addAll(io.github.psd2live.core.fit.HairChain.physics(available, hairSoftness, impulses))
 		// Each hanging arm swinging a little behind the body's turn and sway.
-		for (side in listOf("L", "R")) {
-			val swing = "ParamArm${side}Swing"
-			if (swing !in available) continue
-			val inputs = listOf(PhysicsInput("ParamBodyAngleX", 60f, PhysicsSourceType.X), PhysicsInput("ParamBodyAngleZ", 40f, PhysicsSourceType.ANGLE),
-				PhysicsInput("ParamAngleX", 15f, PhysicsSourceType.X)).filter { it.parameter in available }
-			if (inputs.isEmpty()) continue
-			add(RigPhysicsEdit(id = "PhysicsArm${side}Swing", name = tr("model.physics.armSwing", side), inputs = inputs,
-				outputs = listOf(PhysicsOutput(swing, 1, 1.2f)),
-				segments = listOf(PhysicsSegment(11f, 0.88f, 1.1f, 1.0f)),
-				normalization = PhysicsNormalization(angleMin = -20f, angleMax = 20f)))
-		}
+		addAll(io.github.psd2live.algorithms.binding.ArmSwingMotion.physics(available) { tr("model.physics.armSwing", it) })
 		// Each brow's overshoot as it stops: a short springy pendulum on its height and angle.
 		addAll(BrowSpringPhysics.rules(available) { tr("model.physics.browSpring", it) })
 		// The chest settling after the body moves and lifting with the breath: up and down on the nod, the lean and the

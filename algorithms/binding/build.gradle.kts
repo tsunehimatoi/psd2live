@@ -1285,3 +1285,30 @@ tasks.register("pluginSkirt") {
         """.trimIndent())
     }
 }
+
+val armSwingWorkerJar = registerIsolatedBindingWorker(
+    "armSwing", "body-arms", "worker-body-arms", "io.github.psd2live.algorithms.binding.ArmSwingWorker",
+)
+
+tasks.register("pluginArmSwing") {
+    dependsOn(armSwingWorkerJar)
+    val output = layout.buildDirectory.dir("plugin-arm-swing")
+    inputs.file(armSwingWorkerJar.flatMap { it.archiveFile })
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        armSwingWorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.626f64792e61726d73.v2"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"1.0.0","name":"Arm swing",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/swing","aliases":["body.arms"],"version":2,"name":"Arm swing","category":"body",
+               "targets":["mesh"],"requires":["rig.scaffold","body/legacy","face/legacy"],"contextVersion":2,
+               "reads":["mesh","deformer","parameter","hierarchy","physics"],"writes":["deformer","parameter","hierarchy","physics"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter","physics"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}

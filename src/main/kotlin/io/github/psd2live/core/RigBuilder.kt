@@ -3183,21 +3183,9 @@ object RigBuilder {
 			}
 			val id = DeformerId("DeformArmHang_" + (if (side == Side.LEFT) "L" else "R"))
 			// The arm's swing (`body.arms`): turned about the shoulder, more toward the hand, as a hanging arm lags.
-			val shapes = if (!swing) emptyList() else {
-				fun turned(degrees: Float) = org.umamo.runtime.model.WarpForm(FloatArray((ARM_HANG_COLUMNS + 1) * (ARM_HANG_ROWS + 1) * 2).also { points ->
-					for (row in 0..ARM_HANG_ROWS) for (column in 0..ARM_HANG_COLUMNS) {
-						val i = (row * (ARM_HANG_COLUMNS + 1) + column) * 2
-						val v = row.toFloat() / ARM_HANG_ROWS
-						val x = frame.left + column.toFloat() / ARM_HANG_COLUMNS * frame.width; val y = frame.top + v * frame.height
-						val a = Math.toRadians(degrees * (0.6f + 0.4f * v).toDouble()).toFloat()
-						val dx = x - shoulderX; val dy = y - frame.top
-						val rx = shoulderX + dx * kotlin.math.cos(a) - dy * kotlin.math.sin(a); val ry = frame.top + dx * kotlin.math.sin(a) + dy * kotlin.math.cos(a)
-						points[i] = normalizeX(rx, parentFrame); points[i + 1] = normalizeY(ry, parentFrame)
-					}
-				})
-				listOf(org.umamo.runtime.model.BlendShapeBinding(ParameterId(if (side == Side.LEFT) "ParamArmLSwing" else "ParamArmRSwing"),
-					floatArrayOf(-1f, 0f, 1f), 1, listOf(turned(-7f), null, turned(7f))))
-			}
+			val shapes = if (!swing) emptyList() else listOf(io.github.psd2live.algorithms.binding.ArmSwingMotion.shape(
+				if (side == Side.LEFT) "L" else "R", ARM_HANG_ROWS, ARM_HANG_COLUMNS, frame, parentFrame, shoulderX,
+			))
 			warps += Deformer.Warp(id, tr("model.deformer.armHang", arms.first().source.name),
 				parentId, partId, ARM_HANG_ROWS, ARM_HANG_COLUMNS, true, KeyformGrid(axes, cells), blendShapes = shapes)
 			frames[id.raw] = frame
