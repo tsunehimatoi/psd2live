@@ -7,6 +7,7 @@ import io.github.psd2live.algorithms.binding.FittedFaceV2Algorithm
 import io.github.psd2live.algorithms.binding.DepthTurnV2Algorithm
 import io.github.psd2live.algorithms.binding.EyeSmileAlgorithm
 import io.github.psd2live.algorithms.binding.EyeAftershockAlgorithm
+import io.github.psd2live.algorithms.binding.EyeEmotionAlgorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV2Algorithm
 import io.github.psd2live.algorithms.binding.LegacyFaceV2Algorithm
 import io.github.psd2live.core.*
@@ -1287,6 +1288,137 @@ class WorkspaceLegacyBindingTest {
         f.edit("modifier_apply", buildJsonObject { put("id", "gaze") })
         assertEquals(compiled, RigIrCompiler.compile(f.now.model))
         assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(f.now.document)))
+    }
+
+    @Test fun independentEyeEmotionMatchesLockedVersionAndInstalledWorker(): Unit = runBlocking {
+        val f = Fixture(document(eyeDetails = true, bilateralEyes = true))
+        f.install()
+        f.group(listOf("body/legacy", "face/fitted"))
+        f.edit("modifier_add", JsonObject(f.addition("eye/fitted", "eye") + ("version" to JsonPrimitive(4))))
+        val dependency = buildJsonObject { put("scaffold", "structure"); put("base", "eye") }
+        for (type in listOf("eye.wide", "eye.squash", "eye.lid-fade", "eye.smile")) {
+            f.edit("modifier_add", f.addition(type, type, config = dependency))
+        }
+        val config = JsonObject(dependency + ("values" to buildJsonObject { put("strength", 148f) }))
+        val addition = f.addition("eye.emotion", "emotion", config = config)
+        val prefix = f.now
+        val previous = assertNotNull(prefix.model.rig.modifierOutput)
+        f.edit("modifier_add", addition)
+        val expected = assertNotNull(f.now.model.rig.modifierOutput)
+        assertEquals(1, RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.last().version)
+        f.runtime.checkout(f.now.projectId, f.now.state, prefix.historyHead)
+        f.edit("modifier_add", JsonObject(addition + ("version" to JsonPrimitive(2))))
+        val current = f.now.model
+        val actual = assertNotNull(current.rig.modifierOutput)
+        assertEquals(expected.parameters, actual.parameters)
+        assertEquals(expected.parameterTree, actual.parameterTree)
+        for ((old, new) in expected.meshes.zip(actual.meshes)) assertEquals(old, new, old.id)
+        assertEquals(expected, actual)
+
+        val stack = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
+        val instance = stack.instances.last()
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find("eye.emotion", 2))
+        assertEquals(artifact.reference, instance.plugin)
+        val directory = Files.createTempDirectory("eye-emotion-package-")
+        val preferences = Preferences.userRoot().node("eye-emotion-package/" + UUID.randomUUID())
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            for (name in artifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val providers = stack.instances.dropLast(1).map { provider ->
+                ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
+                    provider.id, provider.config, provider.outputAliases, provider.plugin)
+            }
+            val definition = RigEyeEmotionModifier.definition(RigModifierSource.of(current))
+            val context = definition.authorContext(instance).withUpstream(providers)
+            val white = mesh(f, "white").id.raw
+            val editedKeys = previous.copy(meshes = previous.meshes.map {
+                if (it.id == white) it.copy(offsets = null) else it
+            })
+            val failure = assertFailsWith<IllegalArgumentException> {
+                EyeEmotionAlgorithm().changes(editedKeys, instance, context) {}
+            }
+            assertContains(failure.message.orEmpty(), "cannot migrate edited or lowered lid geometry")
+
+            repeat(2) {
+                val installed = store.install(staging.toString())
+                assertEquals(artifact.reference, installed.reference)
+                val algorithm = installed.manifest.algorithms.single()
+                val external = instance.copy(type = algorithm.type)
+                val adapter = ModifierPluginCatalog.definitions(store, captured = listOf(definition)).single {
+                    it.type == external.type && it.version == external.version
+                }
+                val workerContext = adapter.authorContext(external).withUpstream(providers.filter {
+                    it.capability in adapter.requires + adapter.optionalUpstream
+                })
+                assertEquals(actual, (adapter.plugin as ContextualModifierAlgorithmPlugin).evaluate(previous, external, workerContext) {})
+                ModifierPluginWorkers.stop(installed.reference)
+                store.uninstall(installed.reference)
+            }
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+        val compiled = RigIrCompiler.compile(current)
+        f.edit("modifier_apply", buildJsonObject { put("id", "emotion") })
+        assertEquals(compiled, RigIrCompiler.compile(f.now.model))
+        assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(f.now.document)))
+    }
+
+    @Test fun independentEyeEmotionPreservesTheRecommendedPreset(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
+        val builder = WorkspacePreviewBuilder()
+        val stack = WorkspaceModifierPlan.initial(builder.build(art), WorkspaceModifierPlan.RECOMMENDED_GROUP)
+        val locked = stack.instances.single { it.type == "eye.emotion" }
+        assertEquals(1, locked.version)
+        val downstream = stack.instances.dropWhile { it.id != locked.id }.drop(1)
+        assertTrue(downstream.map { it.type }.containsAll(listOf("eye.gaze-lid", "brow.blink", "brow.lid-coupling")))
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 2))
+        suspend fun preview(candidate: RigModifierStack) = builder.build(art.copy(
+            rigEdits = art.rigEdits.copy(modifierStack = candidate.toJson()),
+        ))
+        val expected = preview(stack)
+        val current = preview(stack.copy(instances = stack.instances.map {
+            if (it.id == locked.id) it.copy(version = 2, plugin = artifact.reference) else it
+        }))
+        assertEquals(expected.rig.modifierOutput, current.rig.modifierOutput)
+        assertEquals(RigIrCompiler.compile(expected), RigIrCompiler.compile(current))
+
+        val full = WorkspaceModifierPlan.initial(builder.build(art), "modern-full")
+        val aftershock = full.instances.single { it.type == "eye.aftershock" }
+        val fullEmotion = full.instances.single { it.type == "eye.emotion" }
+        assertTrue(full.instances.indexOf(aftershock) < full.instances.indexOf(fullEmotion))
+        val independentFull = full.copy(instances = full.instances.map {
+            if (it.id == fullEmotion.id) it.copy(version = 2, plugin = artifact.reference) else it
+        })
+        assertEquals(preview(full).rig.modifierOutput, preview(independentFull).rig.modifierOutput)
+
+        val downstreamAftershock = stack.copy(instances = stack.instances + aftershock.copy(id = "aftershock-after-emotion"))
+        val independentDownstream = downstreamAftershock.copy(instances = downstreamAftershock.instances.map {
+            if (it.id == locked.id) it.copy(version = 2, plugin = artifact.reference) else it
+        })
+        assertEquals(preview(downstreamAftershock).rig.modifierOutput, preview(independentDownstream).rig.modifierOutput)
+    }
+
+    @Test fun independentEyeEmotionKeepsTheUndrivenSideOrdinary(): Unit = runBlocking {
+        val f = Fixture(document(eyeDetails = true))
+        f.install()
+        f.group(listOf("body/legacy", "face/legacy", "eye/fitted"))
+        val addition = f.addition("eye.emotion", "emotion", config = buildJsonObject {
+            put("scaffold", "structure"); put("base", "eye")
+        })
+        val prefix = f.now
+        f.edit("modifier_add", addition)
+        val expected = assertNotNull(f.now.model.rig.modifierOutput)
+        assertFalse(expected.parameters.single { it.id == "ParamEyeRForm" }.blend)
+        assertTrue(expected.parameters.single { it.id == "ParamEyeLForm" }.blend)
+        f.runtime.checkout(f.now.projectId, f.now.state, prefix.historyHead)
+        f.edit("modifier_add", JsonObject(addition + ("version" to JsonPrimitive(2))))
+        assertEquals(expected, f.now.model.rig.modifierOutput)
     }
 
     @Test fun independentEyeAftershockMatchesLockedVersionWithWideLids(): Unit = runBlocking {

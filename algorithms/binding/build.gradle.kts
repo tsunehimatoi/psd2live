@@ -1444,3 +1444,39 @@ tasks.register("pluginRibbons") {
         """.trimIndent())
     }
 }
+
+val eyeEmotionWorkerJar = registerIsolatedBindingWorker(
+    "eyeEmotion", "eye-emotion", "worker-eye-emotion", "io.github.psd2live.algorithms.binding.EyeEmotionWorker",
+)
+
+kotlin.target.compilations.named("eyeEmotion") {
+    associateWith(kotlin.target.compilations.getByName("eyeSmile"))
+}
+eyeEmotionWorkerJar.configure {
+    from(sourceSets["eyeSmile"].output) { include("**/EyeSmileInputs*.class") }
+}
+
+tasks.register("pluginEyeEmotion") {
+    dependsOn(eyeEmotionWorkerJar)
+    val output = layout.buildDirectory.dir("plugin-eye-emotion")
+    val packageVersion = project.version.toString()
+    inputs.file(eyeEmotionWorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        eyeEmotionWorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6579652e656d6f74696f6e.v2"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Emotion eye shapes",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/emotion","aliases":["eye.emotion"],"version":2,"name":"Emotion eye shapes","category":"eye",
+               "targets":["mesh"],"requires":["rig.scaffold","eye/fitted"],"contextVersion":2,
+               "reads":["mesh","parameter","hierarchy","canvas","deformer"],"writes":["mesh","parameter","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
