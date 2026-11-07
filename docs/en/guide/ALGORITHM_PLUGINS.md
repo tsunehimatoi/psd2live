@@ -8,7 +8,7 @@ External packages may declare dependencies on bundled package IDs and versions r
 
 The application ships at least one independently executable package for each of the 49 modifier types. Historical instances replay their locked revisions. Some recommended presets still use v1 bindings that extract results from host-generated templates.
 
-Select fitted face v2, fitted eyes v3, or fitted mouth v2 by version in the add menu. Fitted face v2 requires the complete target set of a neutral shared v2 scaffold. Fitted eyes v3 requires a compatible eye scaffold, and fitted mouth v2 requires a neutral mouth scaffold. Fitted eyes v4 also supports a complete shared v2 scaffold with fitted face v1 and, when present, legacy body v1. It can move the head frames needed by the eyes and rejects combinations where it cannot preserve authored geometry or references. New source projects with presets use legacy body v2 when the full shared v2 scaffold and the package are available. Legacy body v2 can also be selected by version. It computes body motion and head pitch from source measurements and requires a source-aware scaffold. Shared scaffolds require their full target set. Mouth outline v2 requires legacy mouth v2 on the same static scaffold with no other preceding active bindings. Iris squash v2 is also selectable by version and requires fitted eyes and the captured iris topology. Use v1 with fitted head turn. The document stores the stable modifier type and the selected package so later modifiers can still resolve the original dependency type.
+Select fitted face v2, fitted eyes v3, or fitted mouth v2 by version in the add menu. Fitted face v2 requires the complete target set of a neutral shared v2 scaffold. Fitted eyes v3 requires a compatible eye scaffold, and fitted mouth v2 requires a neutral mouth scaffold. Fitted eyes v4 also supports a complete shared v2 scaffold with fitted face v1 and, when present, legacy body v1. It can move the head frames needed by the eyes and rejects combinations where it cannot preserve authored geometry or references. New source projects with presets use legacy body v2 when the full shared v2 scaffold and the package are available. Legacy body v2 can also be selected by version. It computes body motion and head pitch from source measurements and requires a source-aware scaffold. Shared scaffolds require their full target set. Mouth outline v2 requires legacy mouth v2 on the same static scaffold with no other preceding active bindings. Iris squash v2 is also selectable by version and requires fitted eyes and the captured iris topology. Iris squash v3 supports fitted head turns and source-based lid bindings through aftershock v3. Use v1 with edited iris topology or if an earlier highlight added shapes to the same head-turn carrier. The document stores the stable modifier type and the selected package so later modifiers can still resolve the original dependency type.
 
 Legacy eyes v2 is selectable by version. It requires the complete target set of a source-aware v2 scaffold. Use v1 with fitted head turn or edited eye topology.
 
@@ -30,13 +30,13 @@ Eye widening v2 extends fitted eye opening and opacity from source measurements.
 
 Eye widening v3 can also recompute eyelid shapes after fitted head turns, including the head-turn deformer for a closed-eyelid drawing. Use v1 if widening would remove an existing deformer, refit a deformer shared with other meshes, or if the source measurements cannot reproduce the current binding.
 
-Brow shape v2 is selectable by version with a shared v2 scaffold and compatible fitted brows. Add it before other brow motion modifiers. Use v1 if the brow height keys, topology, or parent frame have already been edited.
+Brow shape v2 is selectable by version with a shared v2 scaffold and compatible fitted brows. v3 supports fitted brows v3 and fitted eyes v5, and can follow iris squash v3. Add it before other brow motion modifiers. Use v1 if the brow height keys, topology, or parent frame have already been edited.
 
 Brow spring v2 adds rebound shapes and physics. It requires shared scaffold v2, fitted brows v1 or v2, and fitted eyes v2 when fitted eyes are present. Use v1 with edited brow geometry or keyforms, or when a lid or brow coupling already precedes it.
 
-Brow spring v3 is selectable after compatible brow blink and brow-lid coupling. It adds rebound shapes and physics while preserving the preceding brow frame and carriers. Use v1 with edited source frames or if the preceding carrier cannot be reproduced.
+Brow spring v3 is selectable after compatible brow blink and brow-lid coupling. It adds rebound shapes and physics while preserving the preceding brow frame and carriers. v4 also accepts fitted brows v3, fitted eyes v5, brow blink v3 and brow-lid coupling v4. Use v1 with edited source frames or if the preceding carrier cannot be reproduced.
 
-Brow blink v2 links brow motion to blinking, widening and smiling. It requires a shared v2 scaffold and compatible fitted brows with their original height and angle grids. Use v1 if the brow topology or those keyforms have been edited.
+Brow blink v2 links brow motion to blinking, widening and smiling. It requires a shared v2 scaffold and compatible fitted brows with their original height and angle grids. v3 also accepts fitted brows v3, fitted eyes v5 and the preceding source-based lid bindings in the recommended order. Use v1 if the brow topology or those keyforms have been edited.
 
 Brow-lid coupling v2 through v4 are selectable by version. v2 and v3 require a shared v2 scaffold, fitted eyes v2 and compatible fitted brows. v3 supports fitted head turn and preceding gaze coupling while preserving existing deformer IDs. v4 also supports fitted eyes v5, fitted brows v3, and preceding gaze v3 and eye emotion in the verified TML preset order. Use v1 for edited eye topology or parent frames, earlier cheek-lid or brow-lid coupling, or a separate depth-turn modifier.
 
@@ -50,7 +50,7 @@ Gaze-following lids v2 adds shared and per-eye gaze from the source eyelids. It 
 
 Eye emotion v2 adds fitted anger, sadness and squint shapes. It requires a shared v2 scaffold and compatible fitted eyes. v3 supports fitted eyes v5 after gaze v3 and preserves the IDs of reproducible carriers. Use v1 with edited lid geometry, preceding brow-lid or cheek-lid coupling, or if shared carriers need to change or be retired.
 
-Eye highlight v2 computes parallax and fade from source measurements and the fitted eye and head bindings. Use v1 when the highlight has been reparented or needs a new head-turn deformer.
+Eye highlight v2 computes parallax and fade from source measurements and the fitted eye and head bindings. v3 supports fitted eyes v5 and widening v3, including source artwork that needs a new head-turn deformer. Use v1 for reparented artwork. Iris squash v3 still requires an iris carrier without additional preceding highlight shapes.
 
 Mouth vowels v2 adds the five standard vowel parameters and their fitted shapes. It requires a shared source scaffold and a compatible fitted mouth. Use v1 with a separate closed-mouth drawing, preceding mouth modules or edited mouth topology or frames.
 
@@ -96,9 +96,7 @@ Animal ear, tail and wing sway v2 is selectable for targets sharing a source fra
 
 Binding structure has separate packages for algorithm revisions 1 and 2. Build them with `./gradlew :algorithms:binding:pluginScaffold1 :algorithms:binding:pluginScaffold2`; outputs are `algorithms/binding/build/plugin-scaffold-1` and `plugin-scaffold-2`. Package IDs are `builtin.7269672e73636166666f6c64.v1` and `.v2`, each exposing `/structure` in its namespace with stable alias `rig.scaffold`. The revisions retain per-target and shared hierarchy semantics respectively.
 
-`ScaffoldAlgorithm` uses author schema `scaffold/1`: `canonical_targets` maps targets to source-template mesh IDs, while `template` and `materials` are content-addressed binary RigIR resources. One template is captured and target renaming happens inside the plugin; no host callback crosses the boundary. Structure creation and coordinate transport execute in the plugin, but the host still generates the initial static template, so that complete-generation cost remains.
-
-Captured resources include only this instance's target meshes. Templates retain their static geometry, parents and complete part/deformer ordering; ordinary materials retain positions, UVs and topology for untouched-material checks. Unrelated meshes, source-file inventories, atlas inventories and mesh appearance metadata are omitted. Existing complete `scaffold/1` resources remain readable.
+The current `scaffold/5` contract captures the target identities, source layers, neutral coordinate measurements, unbound mesh topology and atlas UVs. The plugin computes the part tree, deformers, mesh attachment and default keyforms. Historical `scaffold/1` through `scaffold/4` packages retain their original input contracts, including template resources where required.
 
 The physics-group implementation now lives in `:algorithms:physics`. `PendulumAlgorithm` implements the public evaluation interface; configuration parsing, group conversion and output conflict checks run in that module using only `algorithm-api`. Application registration delegates to it, while ordinary physics export and other generators reuse the conversion. A process entrypoint uses `algorithm-worker`: `./gradlew :algorithms:physics:pluginPackage` produces `algorithms/physics/build/plugin`, containing `plugin.json` and a self-contained `algorithm.jar` accepted by `plugin_install`. Its package ID is `builtin.70687973696373.v1`, with a `/pendulum` entrypoint in that namespace. `aliases: ["physics"]` preserves the saved type, algorithm revision and output IDs.
 
@@ -322,7 +320,7 @@ The change envelope contains exactly `schema`, `before`, `after`, `objects`, and
 
 `fields` names singleton or relation replacements using `ModifierModelChanges` property names. Listed fields take explicit before/after values, including null. `AlgorithmChanges` is the JVM codec helper. The host checks schema, keys, counts, resource integrity, declared write scope and old-object preconditions, followed by existing complete reference and output validation. Manifest write vocabulary retains names such as `textures` and `glue`.
 
-The physics package has passed actual worker installation, repeated evaluation, store reopening, uninstall and reinstall equivalence checks. Other languages retain the existing command protocol; the new change payload has not yet been implemented and verified in all six languages. Inputs still use existing object projection and the host retains full contribution comparison. Read-only input views, resource edits, read-set caching and geometry composition remain pending; bulk migration is not yet ready.
+The physics package has passed actual worker installation, repeated evaluation, store reopening, uninstall and reinstall equivalence checks. Other languages retain the existing command protocol; the new change payload has not yet been implemented and verified in all six languages. The host retains full contribution comparison. Read-only views, worker read tracking and generated artwork are described below.
 
 ### Captured source art (JVM API 1.4)
 
@@ -342,7 +340,7 @@ This snapshot currently covers raster observations, not separate mask resources,
 
 `reads()` returns a snapshot of the invocation's observations. The host caches instance configuration, plugin implementation identity, author context, reads and structured changes. Following upstream edits, reuse requires unchanged reads and satisfied write preconditions; changed write preconditions trigger reevaluation. Reuse still passes write-scope, override, contribution-conflict and transaction handling. Failed or cancelled candidates do not replace the successful snapshot. The physics plugin reads its referenced parameters and physics configuration rather than all geometry.
 
-This cache currently applies to in-process implementations on the same author baseline, evaluation context and plugin catalog revision. External workers retain existing conservative caching and do not transport read sets. Explicit upstream capability snapshots, parent-space coordinate services and cross-process read tracking remain pending; this is not complete framework acceptance.
+The in-process cache checks the instance, implementation, captured context and actual read values. Worker support for the same observations is described under External read tracking and reuse.
 
 ### Explicit upstream capabilities (JVM API 1.6)
 
@@ -352,7 +350,7 @@ Algorithm manifests declare capability aliases in `provides`. `requires` can ref
 
 `ModifierEvaluationInput.upstream`/`providers(capability)` participate in read tracking and cache invalidation. Source `values` schemas stay unchanged; capabilities are transported separately. External algorithms opt in with manifest `contextVersion: 2`; older manifests default to 1. Contexts without upstream data retain v1 encoding. Nonempty upstream contexts use v2, adding an `upstream` resource reference alongside `version`, `values` and `resources`, limited to 1 MiB of metadata. V2 receivers also accept v1; old packages are not forcibly sent v2 contexts.
 
-Shared GUI/MCP plugin descriptions expose `context_version` and `provides`, with corresponding strict result-schema fields. Verified cases include capability alias resolution, upstream-configuration cache invalidation, prefix application, persisted package provenance and v1/v2 context codecs. External read-set transport, parent-space coordinate services and remaining complete algorithm migrations are still pending.
+Shared GUI/MCP plugin descriptions expose `context_version` and `provides`, with corresponding strict result-schema fields. Verified cases include capability alias resolution, upstream-configuration cache invalidation, prefix application, persisted package provenance and v1/v2 context codecs. Parent-space coordinates and worker read tracking are described below. The remaining algorithm migration is tracked in the migration specification.
 
 ### Parent-space coordinate services
 
@@ -382,7 +380,7 @@ Existing mouth-outline attachment uses this boundary. API 1.9 adds `ModifierMode
 
 After negotiating `model_changes_v2`, results containing artwork add a `rasters` array to the sparse change envelope. Results without artwork remain v1. Each item has exactly `model`, `pixels` and `uv_space`. The first two are `{sha256, bytes}` binary references; UV space is `RASTER_PIXELS` or legacy `PAGE`. The RigIR binary model contains only the owner/new mesh pair in that order, and authoring metadata with a single `raster` source containing the layer plus generated paths. Other fields must have empty defaults. Pixels are separate RGBA8 bytes. Limits are 64 MiB per resource, 256 MiB total model/pixel data and 10000 items. Bad hashes, extra fields, invalid carriers and unnegotiated output fail.
 
-JVM workers encode this automatically. Other languages can implement the same protocol, but six-language artwork validation remains pending. Read-cache hits retain unpacked output and still run validation and allocation against the current candidate and captured host atlas configuration. The complete mouth-motion plugin remains pending.
+JVM workers encode this automatically. Other languages can implement the same protocol, but six-language artwork validation remains pending. Read-cache hits retain unpacked output and still run validation and allocation against the current candidate and captured host atlas configuration. The fitted mouth outline uses this contract in its standalone JVM package.
 
 
 ### Fitted mouth source inputs (migration in progress)
