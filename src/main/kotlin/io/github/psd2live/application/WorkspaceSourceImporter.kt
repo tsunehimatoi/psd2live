@@ -29,6 +29,8 @@ internal class WorkspaceSourceImporter(
     },
     private val newProjectId: () -> String = { UUID.randomUUID().toString() },
     private val initialWorkspaceIds: () -> List<String> = { emptyList() },
+    private val preparePreset: (WorkspaceDocument, WorkspaceRasterWork, WorkspaceInitialPreset) -> Pair<WorkspaceDocument, RigPreviewModel> =
+        { document, work, choices -> WorkspacePresetInitialization.prepare(document, work, choices, preferSourceBindings = true) },
 ) {
     suspend fun importPsd(path: Path, projectId: String?, state: String, discardUnsaved: Boolean = false,
                          initialConfig: PipelineConfig = PipelineConfig(),
@@ -136,8 +138,7 @@ internal class WorkspaceSourceImporter(
         var built = RigBuildProfile.stage("source import: preview build (wall time)") {
             if (choices == null) build(document) else {
                 val prepared = runInterruptible(Dispatchers.Default) {
-                    WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct.cancellable(context), choices,
-                        preferSourceBindings = true)
+                    preparePreset(document, WorkspaceRasterWork.Direct.cancellable(context), choices)
                 }
                 document = prepared.first
                 prepared.second

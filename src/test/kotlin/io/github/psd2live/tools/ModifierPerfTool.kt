@@ -18,6 +18,9 @@ class ModifierPerfTool {
         val sample = Sample.fromEnvironment()
         val report = StringBuilder()
         val baseline = setting("PSD2LIVE_BASELINE_MODIFIER", "")
+        val importVersions = versionSelection(setting("PSD2LIVE_IMPORT_MODIFIER_VERSIONS", ""))
+        if (importVersions.isNotEmpty()) report.appendLine("import locked versions: " +
+            importVersions.entries.joinToString(",") { (type, version) -> "$type@$version" })
         val recording = if (setting("PSD2LIVE_JFR", "0") == "1")
             jdk.jfr.Recording(jdk.jfr.Configuration.getConfiguration("profile")).apply { start() } else null
         RigBuildProfile.recording = true
@@ -27,10 +30,19 @@ class ModifierPerfTool {
                 val builder = WorkspacePreviewBuilder()
                 val runtime = WorkspaceRuntime<RigPreviewModel>({ builder.build(it) }, rebuildFrom = { document, previous -> builder.build(document, previous) })
                 val start = System.nanoTime()
-                WorkspaceSourceImporter(runtime, build = { builder.build(it) }).importPsd(
+                val installed = WorkspaceSourceImporter(runtime, build = { builder.build(it) }, preparePreset = { document, work, choices ->
+                    WorkspacePresetInitialization.prepare(document, work, choices, preferSourceBindings = true, requestedVersions = importVersions)
+                }).importPsd(
                     sample.path.toAbsolutePath(), null, runtime.state.value.state,
                     modifiers = WorkspaceInitialModifiers.RECOMMENDED)
                 val elapsed = (System.nanoTime() - start) / 1e6
+                if (importVersions.isNotEmpty()) {
+                    val stack = RigModifierStack.fromJson(requireNotNull(installed.capture.document.rigEdits.modifierStack))
+                    for ((type, version) in importVersions) {
+                        val instances = stack.instances.filter { it.type == type }
+                        check(instances.isNotEmpty() && instances.all { it.version == version }) { "Import did not lock $type@$version" }
+                    }
+                }
                 val stages = RigBuildProfile.snapshot()
                 // Baking is synchronous here: subtract its outer wall-time stage once, not nested solver timings.
                 val baking = stages["modifier simulation: bake"]?.first ?: 0.0
@@ -88,18 +100,14 @@ class ModifierPerfTool {
                     val captured = runtime.capture()
                     val overlay = captured.document.rigEdits
                     val stack = RigModifierStack.fromJson(requireNotNull(overlay.modifierStack))
-                    val selections = baseline.split(',')
-                    val versions = selections.associate { selection ->
-                        val (type, versionText) = selection.trim().split('@', limit = 2)
-                        val version = versionText.toInt()
+                    val versions = versionSelection(baseline).mapValues { (type, version) ->
                         require(stack.instances.any { it.type == type && it.version != version }) {
-                            "No alternate version to compare for $selection"
+                            "No alternate version to compare for $type@$version"
                         }
-                        type to (version to requireNotNull(BuiltinModifierPlugins.reference(type, version)) {
-                            "Unknown builtin algorithm $selection"
-                        })
+                        version to requireNotNull(BuiltinModifierPlugins.reference(type, version)) {
+                            "Unknown builtin algorithm $type@$version"
+                        }
                     }
-                    require(versions.size == selections.size) { "Choose only one alternate version per modifier type" }
                     val locked = stack.copy(instances = stack.instances.map { instance ->
                         versions[instance.type]?.let { (version, plugin) -> instance.copy(version = version, plugin = plugin) }
                             ?: instance
@@ -151,6 +159,17 @@ class ModifierPerfTool {
             RigBuildProfile.recording = false
             recording?.use { it.stop(); it.dump(output("modifier-perf").resolve("profile.jfr").toPath()) }
         }
+    }
+
+    private fun versionSelection(value: String): Map<String, Int> {
+        if (value.isBlank()) return emptyMap()
+        val entries = value.split(',').map { selection ->
+            val pair = selection.trim().split('@', limit = 2)
+            val version = pair.getOrNull(1)?.toIntOrNull()
+            require(pair[0].isNotBlank() && version != null && version > 0) { "Expected modifier type@version: $selection" }
+            pair[0] to version
+        }
+        return entries.toMap().also { require(it.size == entries.size) { "Choose only one version per modifier type" } }
     }
 
     private fun differingFields(expected: RigIR, actual: RigIR): String = RigIR::class.java.declaredFields

@@ -18,7 +18,8 @@ internal object WorkspacePresetInitialization {
 
     fun prepare(document: WorkspaceDocument, work: WorkspaceRasterWork,
                 choices: WorkspaceInitialPreset = WorkspaceInitialPreset(),
-                preferSourceBindings: Boolean = false): Pair<WorkspaceDocument, RigPreviewModel> {
+                preferSourceBindings: Boolean = false,
+                requestedVersions: Map<String, Int> = emptyMap()): Pair<WorkspaceDocument, RigPreviewModel> {
         val config = document.config()
         var stack = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack))
         require(stack.instances.isEmpty()) { "Initialize presets only into an empty stack" }
@@ -47,6 +48,7 @@ internal object WorkspacePresetInitialization {
             catalog?.cancel(true)
         }
         if (targets.isEmpty()) {
+            require(requestedVersions.isEmpty()) { "Cannot select preset versions without mesh targets" }
             model.runtimeBundle.materialize()
             return document to model
         }
@@ -63,6 +65,14 @@ internal object WorkspacePresetInitialization {
             put("group", "$group-standard")
             put("targets", JsonArray(targets.map { buildJsonObject { put("kind", it.kind); put("id", it.id) } }))
         }, types).first
+        val lockedVersions = requestedVersions.mapValues { (type, version) ->
+            require(stack.instances.any { it.type == type }) { "Preset has no modifier of type $type" }
+            val reference = requireNotNull(BuiltinModifierPlugins.reference(type, version)) {
+                "Unknown bundled modifier $type@$version"
+            }
+            require(ModifierPluginCatalog.available(type, version, reference)) { "Bundled modifier $type@$version is unavailable" }
+            version to reference
+        }
         val scaffold = stack.instances.singleOrNull { it.type == RigSourceModifiers.SCAFFOLD && it.version == 2 }
         val sourceVersions = if (preferSourceBindings && scaffold != null) buildMap {
             put(LegacyBodyV2Algorithm.TYPE, LegacyBodyV2Algorithm.VERSION)
@@ -93,6 +103,9 @@ internal object WorkspacePresetInitialization {
                 }
             }
             val configured = entry.copy(config = settings, presetGroup = group)
+            lockedVersions[entry.type]?.let { (version, plugin) ->
+                return@map configured.copy(version = version, plugin = plugin)
+            }
             val sourceVersion = sourceVersions[entry.type]
             if (sourceVersion != null && scaffold != null && entry.version == 1 && settings["scaffold"] == JsonPrimitive(scaffold.id) &&
                 entry.targets.toSet() == scaffold.targets.toSet()) {
