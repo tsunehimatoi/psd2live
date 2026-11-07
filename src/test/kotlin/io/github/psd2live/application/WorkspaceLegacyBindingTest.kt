@@ -3854,16 +3854,18 @@ class WorkspaceLegacyBindingTest {
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
         suspend fun prepare(versions: Map<String, Int>) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
             choices, preferSourceBindings = true, requestedVersions = versions)
-        assertContains(assertFailsWith<IllegalArgumentException> { prepare(emptyMap()) }.message.orEmpty(),
+        val historicalHeadAndEye = mapOf("face/fitted" to 1, "eye/fitted" to 2)
+        assertContains(assertFailsWith<IllegalArgumentException> { prepare(historicalHeadAndEye) }.message.orEmpty(),
             "incompatible parameter ParamBrowRY")
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 3,
             "eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3)
         assertContains(assertFailsWith<IllegalArgumentException> { prepare(versions + ("brow.lid-coupling" to 4)) }.message.orEmpty(),
             "requires ordinary fitted brow axes")
 
-        val (initialized, actual) = prepare(versions + ("brow.lid-coupling" to 5))
+        val (initialized, actual) = prepare(emptyMap())
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val instance = stack.instances.single { it.type == "brow.lid-coupling" }
+        assertEquals(5, instance.version)
         val index = stack.index(instance.id)
         val legacyBlink = stack.instances[index + 1]
         assertEquals("brow.blink", legacyBlink.type, legacyBlink.id)

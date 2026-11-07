@@ -45,7 +45,7 @@ class WorkspaceSourceImporterTest {
                 assertTrue(stack.instances.any { it.type == "face/fitted" })
                 assertTrue(stack.instances.none { it.type == "face/legacy" || it.type == "face.depth-turn" })
                 assertTrue(installed.model.rig.puppet.deformers.isNotEmpty())
-                val lids = setOf("eye.smile", "eye.wide", "eye.gaze-lid")
+                val lids = setOf("eye.smile", "eye.wide", "eye.gaze-lid", "eye.emotion")
                 val activeLids = stack.instances.filter { it.type in lids }.map { it.type }
                 val independent = mapOf("body/legacy" to 2, "face/fitted" to 3, "eye/fitted" to 5) +
                     activeLids.associateWith { 3 }

@@ -1,6 +1,9 @@
 package io.github.psd2live.application
 
+import io.github.psd2live.algorithms.binding.BrowFittedV3Binding
 import io.github.psd2live.algorithms.binding.BrowLegacyV2Algorithm
+import io.github.psd2live.algorithms.binding.BrowLidV5Algorithm
+import io.github.psd2live.algorithms.binding.EyeEmotionV3Algorithm
 import io.github.psd2live.algorithms.binding.EyeFittedV5Algorithm
 import io.github.psd2live.algorithms.binding.EyeGazeLidV3Algorithm
 import io.github.psd2live.algorithms.binding.EyeLegacySourceAlgorithm
@@ -101,9 +104,15 @@ internal object WorkspacePresetInitialization {
             if (headAndEye.isEmpty()) headAndEye else {
                 // These modules share fitted lid and head-turn inputs. Use a single compatible sequence.
                 val lidVersions = mapOf(RigModules.EYE_SMILE.id to EyeSmileV3Algorithm.VERSION,
-                    RigModules.EYE_WIDE.id to EyeWideV3Algorithm.VERSION, RigModules.EYE_GAZE_LID.id to EyeGazeLidV3Algorithm.VERSION)
+                    RigModules.EYE_WIDE.id to EyeWideV3Algorithm.VERSION, RigModules.EYE_GAZE_LID.id to EyeGazeLidV3Algorithm.VERSION,
+                    RigModules.EYE_EMOTION.id to EyeEmotionV3Algorithm.VERSION)
                 val plannedLids = lidVersions.filterKeys { type -> stack.instances.any { it.type == type } }
-                headAndEye + packages(plannedLids)
+                val lids = packages(plannedLids)
+                val sidedBrows = if (lids.size == plannedLids.size && subject.sides(SemanticTag.EYEBROW).size == 1) {
+                    packages(mapOf(RigModules.BROW_FITTED.id to BrowFittedV3Binding.VERSION,
+                        BrowLidV5Algorithm.TYPE to BrowLidV5Algorithm.VERSION))
+                } else emptyMap()
+                headAndEye + lids + sidedBrows
             }
         } else emptyMap()
         val sourceVersions = if (preferSourceBindings && scaffold != null) buildMap {
