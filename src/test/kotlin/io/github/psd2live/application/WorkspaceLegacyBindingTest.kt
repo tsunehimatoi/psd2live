@@ -4301,6 +4301,87 @@ class WorkspaceLegacyBindingTest {
         assertEquals(result, RigIrCompiler.compile(f.builder.build(f.now.document)))
     }
 
+    @Test fun armSwingV3MatchesFittedRecommendedPreset(): Unit = runBlocking {
+        compareArmSwingV3(document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true))
+    }
+
+    @Test fun armSwingV3MatchesPairedArmsAfterIndependentMouthBindings(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true,
+            pairedArms = true, chestDetail = true)
+        compareArmSwingV3(art, mapOf("mouth.outline" to 3, "mouth.vowel" to 3, "mouth.capture" to 2, "mouth.jaw" to 2))
+    }
+
+    @Test fun armSwingV3MatchesPairedArms(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true,
+            pairedArms = true, chestDetail = true)
+        compareArmSwingV3(art)
+    }
+
+    private suspend fun compareArmSwingV3(art: WorkspaceDocument, mouthVersions: Map<String, Int> = emptyMap()) {
+        val choices = WorkspaceInitialPreset(clothing = true)
+        val preset = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+        val recipe = if (mouthVersions.isEmpty()) preset.recipe else preset.recipe.copy(
+            modules = preset.recipe.modules + (RigModules.MOUTH_TONGUE.id to ModuleChoice(false)))
+        val config = preset.copy(recipe = recipe, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, _) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
+            preferSourceBindings = true)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val arms = stack.instances.single { it.type == "body.arms" }
+        val index = stack.index(arms.id)
+        assertEquals(1, arms.version)
+        assertEquals(mouthVersions.keys, stack.instances.take(index).map { it.type }.filter { it in mouthVersions }.toSet())
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(arms.type, 3))
+        val selected = arms.copy(version = 3, plugin = artifact.reference)
+        val prior = stack.copy(instances = stack.instances.map {
+            mouthVersions[it.type]?.let { version ->
+                it.copy(version = version, plugin = assertNotNull(BuiltinModifierPlugins.reference(it.type, version)))
+            } ?: it
+        })
+        fun replay(candidate: RigModifierStack) =
+            initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = candidate.toJson()))
+        val candidate = prior.copy(instances = prior.instances.map { if (it.id == arms.id) selected else it })
+        val cacheEnabled = RigStageCache.enabled
+        RigStageCache.enabled = false
+        val (expectedPreview, actual) = try {
+            val expected = WorkspacePreviewBuilder().build(replay(prior))
+            RigBuildProfile.reset()
+            RigBuildProfile.recording = true
+            expected to WorkspacePreviewBuilder().build(replay(candidate))
+        } finally {
+            RigBuildProfile.recording = false
+            RigStageCache.enabled = cacheEnabled
+        }
+        val profile = RigBuildProfile.snapshot()
+        RigBuildProfile.reset()
+        assertTrue("modifier evaluate: body.arms" in profile)
+        assertTrue(profile.keys.none { it.startsWith("modifier template consumer: ") && ": body.arms ->" in it })
+        val expected = assertNotNull(expectedPreview.modifierEvaluation).outputs
+        val evaluated = assertNotNull(actual.modifierEvaluation)
+        assertFaceEquals(expected[index - 1], evaluated.outputs[index - 1])
+        assertFaceEquals(expected[index], evaluated.outputs[index])
+        assertFaceEquals(RigIrCompiler.compile(expectedPreview, tileArt = true), RigIrCompiler.compile(actual, tileArt = true))
+
+        val directory = Files.createTempDirectory("arm-swing-v3")
+        val preferences = Preferences.userRoot().node("arm-swing-v3/" + UUID.randomUUID())
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+            val installed = store.snapshot().single()
+            assertEquals(artifact.reference, installed.reference)
+            val definition = RigArmSwingModifier.definition(RigModifierSource.of(actual), modern = true)
+            val context = assertNotNull(evaluated.readAlgorithms[selected.id]).context
+            val output = ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(),
+                evaluated.outputs[index - 1], selected, {}, store, context = context,
+                declaredParameters = definition.parameters(selected))
+            assertFaceEquals(expected[index], output)
+        } finally {
+            ModifierPluginWorkers.stop(artifact.reference)
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
     @Test fun independentArmSwingPreservesRecommendedBindingAndRunsInstalledWorker(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true,
             pairedArms = true, chestDetail = true)
