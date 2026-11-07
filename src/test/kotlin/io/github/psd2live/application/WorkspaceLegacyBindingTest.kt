@@ -5674,6 +5674,57 @@ class WorkspaceLegacyBindingTest {
         assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
     }
 
+    @Test fun fittedMouthV3ReplaysTheActiveHeadAndMouthSource() = runBlocking<Unit> {
+        val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
+        val choices = WorkspaceInitialPreset()
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, model) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
+            preferSourceBindings = true)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val legacy = stack.instances.single { it.type == "mouth/fitted" }
+        assertEquals(1, legacy.version)
+        val index = stack.index(legacy.id)
+        val evaluation = assertNotNull(model.modifierEvaluation)
+        val before = evaluation.outputs[index - 1]
+        val expected = evaluation.outputs[index]
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(legacy.type, 3))
+        val instance = legacy.copy(version = 3, plugin = artifact.reference)
+        val upstream = stack.instances.take(index).map {
+            ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+        }
+        val context = RigFittedMouthModernSource.capture(RigModifierSource.of(model), instance).withUpstream(upstream)
+        val result = io.github.psd2live.algorithms.binding.MouthFittedV3Algorithm().changes(before, instance, context) {}.apply(before) {}
+        val meshes = expected.meshes.zip(result.meshes).filter { it.first != it.second }.map { (a, b) ->
+            "${a.name}: geometry=${a.geometry == b.geometry}, offsets=${a.offsets == b.offsets}, " +
+                "shapes=${a.shapes == b.shapes}, channels=${a.channels == b.channels}, masks=${a.maskedBy == b.maskedBy}"
+        }
+        val deformers = expected.deformers.zip(result.deformers).filter { it.first != it.second }.map { it.first.name }
+        assertTrue(expected == result, "Mesh changes: $meshes. Deformer changes: $deformers")
+        val independent = stack.copy(instances = stack.instances.map { if (it.id == instance.id) instance else it })
+        val updated = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = independent.toJson()))
+        val actual = WorkspacePreviewBuilder().build(updated)
+        assertEquals(RigIrCompiler.compile(model, tileArt = true), RigIrCompiler.compile(actual, tileArt = true))
+        val directory = Files.createTempDirectory("fitted-mouth-v3-package-")
+        val preferences = Preferences.userRoot().node("fitted-mouth-v3-package/${UUID.randomUUID()}")
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            artifact.manifest.files.keys.forEach { name ->
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val entry = store.install(staging.toString())
+            assertEquals(expected, ModifierPluginWorkers.evaluate(entry, entry.manifest.algorithms.single(),
+                before, instance, {}, store, context = context))
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
     @Test fun fittedMouthHeadLatticesCanBeReplayedFromSourceMeasurements() {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
         val config = art.config().copy(featureDisplacementEnabled = true)
