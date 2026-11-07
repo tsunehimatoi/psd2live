@@ -28,6 +28,8 @@ import kotlin.math.sin
  */
 object FaceLandmarking {
 	private const val ALPHA = 96
+	private data class HairColumns(val width: Int, val height: Int, val upper: IntArray, val bottom: IntArray)
+	private val hairColumns = java.util.Collections.synchronizedMap(java.util.WeakHashMap<ByteArray, HairColumns>())
 
 	private class Pixels(val xs: FloatArray, val ys: FloatArray) {
 		val size get() = xs.size
@@ -240,7 +242,7 @@ object FaceLandmarking {
 
 		// Hair.
 		val unit = eyeGap ?: 40f
-		for ((k, fringe) in shown(SemanticTag.FRONT_HAIR, null).withIndex()) hairPoints("hair.front$k", fringe, unit, faceCenterX, ::addCanvas, tips = true, below = eyeY?.let { it - unit } ?: Float.NEGATIVE_INFINITY)
+		for ((k, fringe) in shown(SemanticTag.FRONT_HAIR, null).withIndex()) hairPoints("hair.front$k", fringe, unit, faceCenterX, ::addCanvas, below = eyeY?.let { it - unit } ?: Float.NEGATIVE_INFINITY)
 		for ((k, lock) in shown(SemanticTag.FRONT_HAIR, PartRole.SIDE).withIndex()) {
 			val p = pixels(lock); if (p.isEmpty()) continue
 			val s = "hair.side$k"
@@ -250,45 +252,67 @@ object FaceLandmarking {
 			addCanvas("$s.root", s, p.xs[top], p.ys[top]); addCanvas("$s.tip", s, p.xs[bottom], p.ys[bottom])
 			edge?.let { addCanvas("$s.faceEdge", s, p.xs[it], p.ys[it]) }
 		}
-		for ((k, back) in shown(SemanticTag.BACK_HAIR, null).withIndex()) hairPoints("hair.back$k", back, unit, faceCenterX, ::addCanvas, tips = true, below = eyeY ?: Float.NEGATIVE_INFINITY)
+		for ((k, back) in shown(SemanticTag.BACK_HAIR, null).withIndex()) hairPoints("hair.back$k", back, unit, faceCenterX, ::addCanvas, below = eyeY ?: Float.NEGATIVE_INFINITY)
 		return FaceLandmarks(out, contour, measures)
 	}
 
+	/** Column edges are raster-local and stay fixed across face, eye, brow and mouth fits. */
+	private fun columns(raster: org.umamo.format.art.LayerRaster): HairColumns {
+		val width = raster.width; val height = raster.height; val rgba = raster.rgba
+		hairColumns[rgba]?.takeIf { it.width == width && it.height == height }?.let { return it }
+		val upper = IntArray(width) { -1 }
+		val bottom = IntArray(width) { -1 }
+		var alpha = 3
+		for (y in 0 until height) {
+			if (Thread.currentThread().isInterrupted) throw InterruptedException()
+			for (x in 0 until width) {
+				if ((rgba[alpha].toInt() and 0xff) >= ALPHA) {
+					if (upper[x] < 0) upper[x] = y
+					bottom[x] = y
+				}
+				alpha += 4
+			}
+		}
+		return HairColumns(width, height, upper, bottom).also { hairColumns[rgba] = it }
+	}
+
 	/** A hair layer's points: its top in the middle, its outermost points each side, and the tips and gaps of its lower edge. */
-	private fun hairPoints(s: String, layer: ClassifiedLayer, unit: Float, faceCenterX: Float, add: (String, String, Float, Float, Boolean) -> Unit, tips: Boolean,
-	                       below: Float = Float.NEGATIVE_INFINITY) {
-		val raster = layer.source.raster
+	private fun hairPoints(s: String, layer: ClassifiedLayer, unit: Float, faceCenterX: Float, add: (String, String, Float, Float, Boolean) -> Unit,
+	                       below: Float) {
 		val left = layer.source.bounds.left; val top = layer.source.bounds.top
-		// The lowest opaque pixel of each column: the lower edge.
-		val bottom = IntArray(raster.width) { -1 }
-		val upper = IntArray(raster.width) { -1 }
-		for (x in 0 until raster.width) for (y in 0 until raster.height) if ((raster.rgba[(y * raster.width + x) * 4 + 3].toInt() and 0xff) >= ALPHA) { if (upper[x] < 0) upper[x] = y; bottom[x] = y }
-		val cols = (0 until raster.width).filter { bottom[it] >= 0 }
+		val (_, _, upper, bottom) = columns(layer.source.raster)
+		val cols = bottom.indices.filter { bottom[it] >= 0 }
 		if (cols.isEmpty()) return
 		val mid = cols.minBy { abs(left + it - faceCenterX) }
 		add("$s.top", s, left + mid + 0.5f, top + upper[mid] + 0.5f, false)
 		add("$s.outerA", s, left + cols.first() + 0.5f, top + bottom[cols.first()] + 0.5f, false)
 		add("$s.outerB", s, left + cols.last() + 0.5f, top + bottom[cols.last()] + 0.5f, false)
-		if (!tips) return
 		// Tips: the edge's lowest points that stand out by a tenth of the eyes' distance from both sides; gaps: its highest between tips.
 		val prominence = unit * 0.1f
 		val window = (unit * 0.15f).toInt().coerceAtLeast(3)
 		val found = ArrayList<Int>()
-		for (i in cols.indices) {
-			val x = cols[i]; val y = bottom[x]
+		fun highestColumn(from: Int, through: Int): Int {
+			var best = -1
+			for (column in maxOf(0, from)..minOf(bottom.lastIndex, through)) {
+				val edge = bottom[column]
+				if (edge >= 0 && (best < 0 || edge < bottom[best])) best = column
+			}
+			return best
+		}
+		for (x in cols) {
+			val y = bottom[x]
 			if (top + y < below) continue
-			val near = cols.filter { abs(it - x) <= window }
-			if (near.any { bottom[it] > y }) continue
-			val leftUp = cols.filter { it < x && it >= x - window * 4 }.minOfOrNull { bottom[it] } ?: continue
-			val rightUp = cols.filter { it > x && it <= x + window * 4 }.minOfOrNull { bottom[it] } ?: continue
-			if (y - max(leftUp, rightUp) < prominence) continue
+			if ((maxOf(0, x - window)..minOf(bottom.lastIndex, x + window)).any { bottom[it] > y }) continue
+			val leftUp = highestColumn(x - window * 4, x - 1)
+			val rightUp = highestColumn(x + 1, x + window * 4)
+			if (leftUp < 0 || rightUp < 0 || y - max(bottom[leftUp], bottom[rightUp]) < prominence) continue
 			if (found.isNotEmpty() && x - found.last() < window) continue
 			found += x
 		}
 		for ((k, x) in found.withIndex()) add("$s.tip$k", s, left + x + 0.5f, top + bottom[x] + 0.5f, false)
 		for (k in 0 until found.size - 1) {
-			val gx = cols.filter { it > found[k] && it < found[k + 1] }.minByOrNull { bottom[it] } ?: continue
-			add("$s.gap$k", s, left + gx + 0.5f, top + bottom[gx] + 0.5f, false)
+			val gx = highestColumn(found[k] + 1, found[k + 1] - 1)
+			if (gx >= 0) add("$s.gap$k", s, left + gx + 0.5f, top + bottom[gx] + 0.5f, false)
 		}
 	}
 
