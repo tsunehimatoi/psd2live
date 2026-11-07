@@ -85,16 +85,24 @@ class ModifierPerfTool {
                     } finally { RigStageCache.enabled = enabled }
                 }
                 if (round == 1 && baseline.isNotEmpty()) {
-                    val type = baseline.substringBeforeLast('@')
-                    val version = baseline.substringAfterLast('@').toInt()
                     val captured = runtime.capture()
                     val overlay = captured.document.rigEdits
                     val stack = RigModifierStack.fromJson(requireNotNull(overlay.modifierStack))
-                    require(stack.instances.any { it.type == type && it.version != version }) { "No alternate version to compare for $baseline" }
-                    val plugin = requireNotNull(BuiltinModifierPlugins.reference(type, version)) { "Unknown builtin algorithm $baseline" }
+                    val selections = baseline.split(',')
+                    val versions = selections.associate { selection ->
+                        val (type, versionText) = selection.trim().split('@', limit = 2)
+                        val version = versionText.toInt()
+                        require(stack.instances.any { it.type == type && it.version != version }) {
+                            "No alternate version to compare for $selection"
+                        }
+                        type to (version to requireNotNull(BuiltinModifierPlugins.reference(type, version)) {
+                            "Unknown builtin algorithm $selection"
+                        })
+                    }
+                    require(versions.size == selections.size) { "Choose only one alternate version per modifier type" }
                     val locked = stack.copy(instances = stack.instances.map { instance ->
-                        if (instance.type == type) instance.copy(version = version, plugin = plugin)
-                        else instance
+                        versions[instance.type]?.let { (version, plugin) -> instance.copy(version = version, plugin = plugin) }
+                            ?: instance
                     })
                     val reference = captured.document.copy(rigEdits = overlay.copy(modifierStack = locked.toJson()))
                     fun measured(label: String, document: io.github.psd2live.project.WorkspaceDocument): RigPreviewModel {
@@ -105,8 +113,10 @@ class ModifierPerfTool {
                         val stages = RigBuildProfile.snapshot()
                         report.appendLine("$label legacy templates: " +
                             stages.filterKeys { it.startsWith("modifier legacy template:") }.values.sumOf { it.second })
-                        for (stage in listOf("modifier legacy template: $type", "modifier evaluate: $type")) {
-                            stages[stage]?.let { (time, calls) -> report.appendLine("$label $stage: %.1f ms x%d".format(time, calls)) }
+                        for (type in versions.keys) {
+                            for (stage in listOf("modifier legacy template: $type", "modifier evaluate: $type")) {
+                                stages[stage]?.let { (time, calls) -> report.appendLine("$label $stage: %.1f ms x%d".format(time, calls)) }
+                            }
                         }
                         return preview
                     }
