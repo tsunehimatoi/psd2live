@@ -14,12 +14,14 @@ internal fun RigModifierSource.captureBindingTransition(
     capturedTags: Set<SemanticTag>,
     projectedTags: Set<SemanticTag> = capturedTags,
     values: JsonObject,
+    validateLayers: (Map<String, ClassifiedLayer>) -> Unit = {},
 ): ModifierAlgorithmContext {
     val (beforeConfig, before) = RigFittedMouthModuleSource.context(this, scaffold, preceding, null)
     val (afterConfig, after) = RigFittedMouthModuleSource.context(this, scaffold, preceding + instance, null)
     val beforeLayers = bindingSourceLayers(instance, before) { it.semantic.tag in capturedTags }
     val afterLayers = bindingSourceLayers(instance, after) { it.semantic.tag in capturedTags }
     require(beforeLayers.keys == afterLayers.keys) { "Source targets changed while projecting ${instance.type}" }
+    validateLayers(beforeLayers)
     val projected = beforeLayers.filterValues { it.semantic.tag in projectedTags }.keys
     require(projected.isNotEmpty()) { "${instance.type} needs source meshes in its captured frame" }
     val axes = preceding.flatMapTo(HashSet()) { RigLegacyBindings.spec(it.type).parameters }

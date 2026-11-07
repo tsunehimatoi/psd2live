@@ -3,9 +3,6 @@ package io.github.psd2live.core.modifier
 import io.github.psd2live.algorithms.binding.EyeEmotionAlgorithm
 import io.github.psd2live.algorithms.binding.EyeEmotionV3Algorithm
 import io.github.psd2live.algorithms.binding.EyeEmotionV4Algorithm
-import io.github.psd2live.core.ClassifiedLayer
-import io.github.psd2live.core.RigBuilder
-import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.format.compile.RigIrBinary
 import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.i18n.tr
@@ -48,39 +45,19 @@ internal object RigEyeEmotionModifier {
 
     private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance): ModifierAlgorithmContext {
         val scaffold = provider(instance)
-        val prefix = activeBefore(instance).filter {
-            it.config["scaffold"] == JsonPrimitive(scaffold.id) && it.targets.any(instance.targets::contains) &&
-                RigLegacyBindings.find(it.type)?.let { spec -> !spec.expressionToggles && !spec.seeThrough } == true
-        }
+        val prefix = bindingPredecessors(instance, scaffold)
         val face = prefix.single { it.type == "face/fitted" && it.version == 3 }
         val brow = prefix.single { it.type == "brow/fitted" && it.version == 4 }
         val smile = prefix.single { it.type == "eye.smile" && it.version == 4 }
         require(prefix.all { it.targets.containsAll(instance.targets) }) { "Eye emotion v4 requires a shared source stack" }
         require(prefix.any { it.id == instance.config.getValue("base").jsonPrimitive.content && it.type == "eye/fitted" && it.version == 5 })
-        val (before, old) = RigFittedMouthModuleSource.context(this, scaffold, prefix, null)
-        val (after, next) = RigFittedMouthModuleSource.context(this, scaffold, prefix + instance, null)
-        val eyeTags = setOf(SemanticTag.IRIDES, SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYE_CLOSE)
-        fun eyes(context: RigBuilder.RigContext): Map<String, ClassifiedLayer> {
-            val layers = context.analysis.layers.associateBy { it.source.id.raw }
-            return instance.targets.mapNotNull { target ->
-                val layer = layers[layersByMesh[target.id]] ?: return@mapNotNull null
-                (target.id to layer).takeIf { layer.semantic.tag in eyeTags && layer.source.id.raw in atlas.placementByLayerId }
-            }.toMap()
-        }
-        val prior = eyes(old)
-        val desired = eyes(next)
-        require(prior.isNotEmpty() && prior.keys == desired.keys)
-        val axes = prefix.flatMapTo(hashSetOf()) { RigLegacyBindings.spec(it.type).parameters }
-        return ModifierAlgorithmContext(buildJsonObject {
+        val values = buildJsonObject {
             put("face", face.id)
             put("brow", brow.id)
             put("smile", smile.id)
             put("group", tr("model.group.eyes"))
-        }, mapOf(
-            "before" to outlineShellSource(old, before, prior, axes, includeFaceLean = true),
-            "after" to outlineShellSource(next, after, desired, axes + RigLegacyBindings.spec(instance.type).parameters,
-                includeFaceLean = true),
-        ))
+        }
+        return captureBindingTransition(instance, scaffold, prefix, eyeBindingTags, values = values)
     }
 
     private fun parameterNames() = RigModules.EYE_EMOTION.defines.associate { it.id to tr(it.nameKey) }
