@@ -1276,6 +1276,39 @@ tasks.register("pluginEyeSmile") {
     }
 }
 
+val eyeSmileV3WorkerJar = registerIsolatedBindingWorker(
+    "eyeSmileV3", "eye-smile-v3", "worker-eye-smile-v3", "io.github.psd2live.algorithms.binding.EyeSmileV3Worker",
+)
+
+kotlin.target.compilations.named("eyeSmileV3") {
+    associateWith(kotlin.target.compilations.getByName("eyeSmile"))
+}
+eyeSmileV3WorkerJar.configure { from(sourceSets["eyeSmile"].output) }
+tasks.register("pluginEyeSmileV3") {
+    dependsOn(eyeSmileV3WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-eye-smile-v3")
+    val packageVersion = project.version.toString()
+    inputs.file(eyeSmileV3WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        eyeSmileV3WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6579652e736d696c65.v3"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Eye smile",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/smile","aliases":["eye.smile"],"version":3,"name":"Eye smile","category":"eye",
+               "targets":["mesh"],"requires":["rig.scaffold","eye/fitted"],"contextVersion":2,
+               "reads":["mesh","deformer","parameter","hierarchy","canvas"],"writes":["mesh","deformer","parameter","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val eyeFittedV4WorkerJar = registerIsolatedBindingWorker(
     "eyeFittedV4", "eye-fitted-v4", "worker-eye-fitted-v4", "io.github.psd2live.algorithms.binding.EyeFittedV4Worker",
 )

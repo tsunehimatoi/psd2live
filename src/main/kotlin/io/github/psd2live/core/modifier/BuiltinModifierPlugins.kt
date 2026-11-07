@@ -34,7 +34,7 @@ internal object BuiltinModifierPlugins {
         RigDepthTurnDefinition.definition(source), RigEyeWideModifier.definition(source), RigEyeWideModifier.modernDefinition(source),
         RigMouthSpringModifier.definition(source), RigMouthSpringModifier.fullDefinition(source), RigMouthCheekLidModifier.definition(source), RigMouthCheekLidModifier.fittedDefinition(source), RigMouthDepthModifier.definition(source),
         RigBrowShapeModifier.definition(source), RigBrowSpringModifier.definition(source), RigBrowSpringModifier.composedDefinition(source), RigBrowLidModifier.definition(source), RigBrowLidModifier.fittedDefinition(source),
-        RigCheekModifier.definition(source), RigBrowBlinkModifier.definition(source), RigEyeSmileModifier.definition(source),
+        RigCheekModifier.definition(source), RigBrowBlinkModifier.definition(source), RigEyeSmileModifier.definition(source), RigEyeSmileModifier.modernDefinition(source),
         RigEyeAftershockModifier.definition(source), RigArmSwingModifier.definition(source),
         RigEyeGazeLidModifier.definition(source), RigEyeEmotionModifier.definition(source), RigEyeHighlightModifier.definition(source),
         RigGloomModifier.definition(source), RigGloomModifier.carrierDefinition(source),

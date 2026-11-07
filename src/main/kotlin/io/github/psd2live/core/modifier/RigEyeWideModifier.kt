@@ -3,6 +3,7 @@ package io.github.psd2live.core.modifier
 import io.github.psd2live.algorithms.binding.EyeWideAlgorithm
 import io.github.psd2live.algorithms.binding.EyeWideV3Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
+import io.github.psd2live.core.PipelineConfig
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.RigTuning
 import io.github.psd2live.core.StandardParameters
@@ -66,29 +67,36 @@ internal object RigEyeWideModifier {
             ScaffoldBinding.deformerId(scaffold, mesh, parent)
         }
         if (!fittedHead) return captured
-        val preceding = activeBefore(instance).filter {
-            it.config["scaffold"] == JsonPrimitive(scaffold.id) && it.targets.any(instance.targets::contains)
-        }
-        val head = preceding.lastOrNull { it.type in setOf("face/fitted", "face.depth-turn") } ?: return captured
-        require(head.targets.containsAll(instance.targets)) { "Eye widening v3 requires a shared fitted head" }
-        val depth = RigModules.FACE_DEPTH_TURN
-        val body = preceding.lastOrNull { it.type == "body/legacy" }
-        val turning = native.copy(
-            recipe = recipe.copy(modules = recipe.modules + (depth.id to ModuleChoice(true, depth.version, RigLegacyBindings.values(head)))),
-            headTurnStrength = preceding.lastOrNull { it.type in setOf("face/fitted", "face/legacy") }
-                ?.let(RigLegacyBindings::strength) ?: 1f,
-            rigTuning = RigLegacyBindings.tuning(base,
-                RigLegacyBindings.tuning(head, body?.let { RigLegacyBindings.tuning(it, RigTuning()) } ?: RigTuning())),
-        )
-        val face = RigBuilder.rigContext(analysis, turning, meshCache).faceRig
-        return ModifierAlgorithmContext(JsonObject(captured.values + ("head_turn" to buildJsonObject {
-            put("provider", head.id)
-            put("shell", JsonArray(RigBuilder.headTurnMeasurements(face, turning).map(::JsonPrimitive)))
-            put("turn_name", tr("model.deformer.meshTurn", "{meshName}"))
-            put("shape_name", tr("model.deformer.meshShape", "{meshName}"))
-            put("native_ids", JsonObject(instance.targets.associate { target ->
-                target.id to JsonPrimitive(primaryByLayer.getValue(layersByMesh.getValue(target.id)))
-            }))
-        })), captured.resources)
+        return captureLidHeadSource(instance, scaffold, base, native, captured)
     }
+}
+
+internal fun RigModifierSource.captureLidHeadSource(
+    instance: RigModifierInstance, scaffold: RigModifierInstance, base: RigModifierInstance,
+    native: PipelineConfig, captured: ModifierAlgorithmContext,
+): ModifierAlgorithmContext {
+    val preceding = activeBefore(instance).filter {
+        it.config["scaffold"] == JsonPrimitive(scaffold.id) && it.targets.any(instance.targets::contains)
+    }
+    val head = preceding.lastOrNull { it.type in setOf("face/fitted", "face.depth-turn") } ?: return captured
+    require(head.targets.containsAll(instance.targets)) { "Lid binding requires a shared fitted head" }
+    val depth = RigModules.FACE_DEPTH_TURN
+    val body = preceding.lastOrNull { it.type == "body/legacy" }
+    val turning = native.copy(
+        recipe = native.recipe.copy(modules = native.recipe.modules + (depth.id to ModuleChoice(true, depth.version, RigLegacyBindings.values(head)))),
+        headTurnStrength = preceding.lastOrNull { it.type in setOf("face/fitted", "face/legacy") }
+            ?.let(RigLegacyBindings::strength) ?: 1f,
+        rigTuning = RigLegacyBindings.tuning(base,
+            RigLegacyBindings.tuning(head, body?.let { RigLegacyBindings.tuning(it, RigTuning()) } ?: RigTuning())),
+    )
+    val face = RigBuilder.rigContext(analysis, turning, meshCache).faceRig
+    return ModifierAlgorithmContext(JsonObject(captured.values + ("head_turn" to buildJsonObject {
+        put("provider", head.id)
+        put("shell", JsonArray(RigBuilder.headTurnMeasurements(face, turning).map(::JsonPrimitive)))
+        put("turn_name", tr("model.deformer.meshTurn", "{meshName}"))
+        put("shape_name", tr("model.deformer.meshShape", "{meshName}"))
+        put("native_ids", JsonObject(instance.targets.associate { target ->
+            target.id to JsonPrimitive(primaryByLayer.getValue(layersByMesh.getValue(target.id)))
+        }))
+    })), captured.resources)
 }

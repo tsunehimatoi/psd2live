@@ -1,6 +1,7 @@
 package io.github.psd2live.core.modifier
 
 import io.github.psd2live.algorithms.binding.EyeSmileAlgorithm
+import io.github.psd2live.algorithms.binding.EyeSmileV3Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.RigTuning
@@ -18,6 +19,17 @@ internal object RigEyeSmileModifier {
         ModifierOptionalUpstream, ModifierVersionSelection {
         override val optionalUpstream = EyeSmileAlgorithm.optionalUpstream
         override val canonicalOptInType = EyeSmileAlgorithm.TYPE
+    }
+
+    fun modernDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val modern = object : ReadingModifierAlgorithmPlugin by EyeSmileV3Algorithm(),
+            ModifierOptionalUpstream, ModifierVersionSelection {
+            override val optionalUpstream = EyeSmileV3Algorithm.optionalUpstream
+            override val canonicalOptInType = EyeSmileAlgorithm.TYPE
+        }
+        return definition(source).copy(version = EyeSmileV3Algorithm.VERSION, plugin = modern,
+            changeWrites = EyeSmileV3Algorithm.WRITES,
+            authorContext = { instance -> captureLidSource(requireNotNull(source), instance, parameterNames(), fittedHead = true) })
     }
 
     private fun parameterNames() = RigModules.EYE_SMILE.defines.associate { it.id to tr(it.nameKey) }
@@ -38,6 +50,7 @@ internal object RigEyeSmileModifier {
 internal fun captureLidSource(
     source: RigModifierSource, instance: RigModifierInstance, parameterNames: Map<String, String>,
     fittedEyeId: String = instance.config.getValue("base").jsonPrimitive.content,
+    fittedHead: Boolean = false,
 ): ModifierAlgorithmContext = with(source) {
     val scaffold = provider(instance)
     val base = activeBefore(instance).single { it.id == fittedEyeId && it.type == "eye/fitted" }
@@ -51,8 +64,9 @@ internal fun captureLidSource(
         featureDisplacementEnabled = options["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
         hairSimulationFront = !(options["frontHairSway"]?.jsonPrimitive?.boolean ?: true),
         hairSimulationBack = !(options["backHairSway"]?.jsonPrimitive?.boolean ?: true))
-    RigBuilder.eyeSmileSourceInputs(analysis, atlas, native, meshCache,
+    val captured = RigBuilder.eyeSmileSourceInputs(analysis, atlas, native, meshCache,
         instance.targets.associate { it.id to layersByMesh.getValue(it.id) }, parameterNames) { mesh, parent ->
         ScaffoldBinding.deformerId(scaffold, mesh, parent)
     }
+    if (fittedHead) captureLidHeadSource(instance, scaffold, base, native, captured) else captured
 }
