@@ -8,8 +8,8 @@ import io.github.psd2live.application.WorkspaceRasterWork
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.format.model.RigIR
-import io.github.psd2live.project.WorkspaceDocument
-import io.github.psd2live.project.WorkspaceSettingsCodec
+import io.github.psd2live.project.*
+import org.umamo.format.art.*
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Files
 import java.util.UUID
@@ -18,16 +18,23 @@ import kotlin.test.*
 
 /** Compares the source iris squash under refitted shared head frames. */
 class EyeSquashSourceTool {
-    @Test fun compareSharedFrameSquash(): Unit = runBlocking {
+    @Test fun compareSharedFrameSquash(): Unit = verify(withSourceNeighbors = false)
+
+    @Test fun compareSharedFrameSquashAfterSourceHighlightAndAftershock(): Unit = verify(withSourceNeighbors = true)
+
+    private fun verify(withSourceNeighbors: Boolean): Unit = runBlocking {
         requireTools()
         val config = PipelineConfig(meshSpacing = 64)
-        val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
+        val artwork = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
+        val (source, overrides) = if (withSourceNeighbors) withGlints(artwork, config) else artwork to emptyMap()
         val overlay = config.rigEdits.copy(modifierStack = RigModifierStack().toJson())
-        val document = WorkspaceDocument(source, emptyMap(), emptySet(), emptyMap(), emptyMap(), overlay,
+        val document = WorkspaceDocument(source, emptyMap(), emptySet(), overrides, emptyMap(), overlay,
             WorkspaceSettingsCodec.encode(config.copy(rigEdits = overlay)))
-        val analysis = RigGenerationSource.prepare(RigGenerationSource.analyze(source, config), config)
+        val configured = config.copy(layerOverrides = overrides)
+        val analysis = RigGenerationSource.prepare(RigGenerationSource.analyze(source, configured), configured)
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4,
-            "eye.smile" to 4, "eye.wide" to 4, "eye.gaze-lid" to 4, "eye.emotion" to 4, "eye.aftershock" to 1, "eye.squash" to 1)
+            "eye.smile" to 4, "eye.wide" to 4, "eye.gaze-lid" to 4, "eye.emotion" to 4, "eye.squash" to 1) +
+            if (withSourceNeighbors) mapOf("eye.highlight" to 4, "eye.aftershock" to 5) else mapOf("eye.aftershock" to 1)
         val (planned, reference) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
             WorkspaceInitialPreset(clothing = false), requestedVersions = versions, cliBindings = CliPresetBindings(analysis, config))
         val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
@@ -36,9 +43,12 @@ class EyeSquashSourceTool {
         val index = stack.index(squash.id)
         val expected = assertNotNull(reference.modifierEvaluation).outputs
         val oldMeshes = expected[index - 1].meshes.associateBy { it.id }
-        for (id in listOf("ArtMeshIridesL", "ArtMeshIridesR")) {
-            assertNotEquals(oldMeshes.getValue(id), expected[index].meshes.single { it.id == id })
-        }
+        val originalIrisLayers = RigGenerationSource.analyze(artwork, config).layers.filter {
+            it.semantic.tag == SemanticTag.IRIDES && it.semantic.role == null
+        }.mapTo(hashSetOf()) { it.source.id.raw }
+        val irises = expected[index].meshes.filter { reference.rig.ownLayerIdByDrawableId[it.id] in originalIrisLayers }
+        assertEquals(2, irises.size)
+        for (iris in irises) assertNotEquals(oldMeshes.getValue(iris.id), iris)
         fun candidate(version: Int): WorkspaceDocument {
             val artifact = assertNotNull(BundledAlgorithmArtifacts.find(squash.type, version))
             val modified = stack.copy(instances = stack.instances.map {
@@ -46,14 +56,26 @@ class EyeSquashSourceTool {
             })
             return planned.copy(rigEdits = planned.rigEdits.copy(modifierStack = modified.toJson()))
         }
-        val previous = assertNotNull(WorkspacePreviewBuilder().build(candidate(4)).modifierEvaluation).outputs[index]
-        val oldStage = expected[index]
-        assertNotEquals(oldStage, previous)
-        println("SQUASH v4 differing meshes: " + oldStage.meshes.zip(previous.meshes).filter { (a, b) -> a != b }.map { (a, b) ->
-            "${a.id}: geometry=${a.geometry != b.geometry}, offsets=${a.offsets != b.offsets}, shapes=${a.shapes != b.shapes}"
-        })
+        if (!withSourceNeighbors) {
+            val previous = assertNotNull(WorkspacePreviewBuilder().build(candidate(4)).modifierEvaluation).outputs[index]
+            val differences = expected[index].meshes.zip(previous.meshes).filter { (legacy, observed) -> legacy != observed }
+            assertEquals(irises.map { it.id }.toSet(), differences.map { it.first.id }.toSet())
+            for ((legacy, observed) in differences) {
+                assertNotEquals(legacy.offsets, observed.offsets)
+                assertEquals(legacy, observed.copy(offsets = legacy.offsets))
+            }
+        }
         val preview = WorkspacePreviewBuilder().build(candidate(5))
         val result = assertNotNull(preview.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, result.entries[index].status)
+        if (withSourceNeighbors) {
+            for (type in listOf("eye.highlight", "eye.aftershock")) {
+                val stage = stack.instances.indexOfFirst { it.type == type }
+                assertTrue(stage in 1 until index, "$type must precede squash")
+                assertEquals(ModifierStatus.ACTIVE, result.entries[stage].status)
+                assertNotEquals(expected[stage - 1], expected[stage], "$type must change its stage")
+            }
+        }
         fun equal(reference: RigIR, observed: RigIR, stage: String) {
             if (reference == observed) return
             val fields = RigIR::class.java.declaredFields.filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
@@ -92,4 +114,28 @@ class EyeSquashSourceTool {
             ModifierPluginStore.deleteTree(root)
         }
     }
+
+    private fun withGlints(source: SourceArt, config: PipelineConfig): Pair<SourceArt, Map<String, LayerClassificationOverride>> {
+        // DS has no separately drawn glints. Use small clipped source layers so the highlight modifier is active.
+        val irises = RigGenerationSource.analyze(source, config).layers.filter {
+            it.semantic.tag == SemanticTag.IRIDES && it.semantic.role == null && it.opaquePixels > 0
+        }.distinctBy { it.semantic.side }
+        assertEquals(2, irises.size)
+        val additions = irises.associate { iris ->
+            val layer = iris.source
+            val size = (minOf(layer.bounds.width, layer.bounds.height) / 4).coerceAtLeast(4)
+            val id = LayerId("squash-ds-glint-" + iris.semantic.side.name)
+            val raster = LayerRaster(size, size, ByteArray(size * size * 4) { -1 })
+            val bounds = LayerBounds(layer.bounds.left + layer.bounds.width / 3, layer.bounds.top + layer.bounds.height / 3, size, size)
+            layer.id to (WorkspaceSourceLayer(id, id.raw, layer.groupPath, SourceLayerKind.Raster, true, layer.order, bounds,
+                1f, true, LayerBlend.Normal, ChannelMask.ALL, raster, null, null, false) to
+                LayerClassificationOverride(LayerType.PRESET, SemanticTag.IRIDES, iris.semantic.side, role = PartRole.HIGHLIGHT))
+        }
+        val art = object : SourceArt by source {
+            override val layers = source.layers.flatMap { layer -> listOfNotNull(additions[layer.id]?.first, layer) }
+                .mapIndexed { index, layer -> WorkspaceSourceLayer.copyOf(layer, index) }
+        }
+        return art to additions.values.associate { (layer, classification) -> layer.id.raw to classification }
+    }
+
 }
