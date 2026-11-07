@@ -10,6 +10,7 @@ import io.github.psd2live.format.model.RigIR
 object FittedFaceLatticesWorker {
     @JvmStatic fun main(args: Array<String>) = AlgorithmWorker.run(mapOf(
         ("psd2live.fitted-face-lattices/styled" to 1) to StyledLatticesAlgorithm,
+        ("psd2live.fitted-face-lattices/binding" to 1) to FittedFaceBindingAlgorithm,
     ))
 }
 

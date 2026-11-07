@@ -221,11 +221,15 @@ tasks.register("pluginFittedFaceLattices") {
         fittedFaceLatticesWorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
         val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
         directory.resolve("plugin.json").writeText("""
-            {"protocol":1,"id":"psd2live.fitted-face-lattices","version":"1.0.0","name":"Fitted face lattices",
+            {"protocol":1,"id":"psd2live.fitted-face-lattices","version":"1.1.0","name":"Fitted face lattices",
              "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
              "algorithms":[{"type":"psd2live.fitted-face-lattices/styled","version":1,"name":"Fitted face lattices","category":"face",
                "contextVersion":2,"targets":["mesh"],"requires":["rig.scaffold"],"reads":["deformer"],"writes":["deformer"],
-               "composableKinds":["deformer"],"configSchema":{"type":"object","additionalProperties":false},"defaults":{}}]}
+               "composableKinds":["deformer"],"configSchema":{"type":"object","additionalProperties":false},"defaults":{}},
+              {"type":"psd2live.fitted-face-lattices/binding","version":1,"name":"Fitted face binding","category":"face",
+               "contextVersion":2,"targets":["mesh"],"requires":["rig.scaffold"],"reads":["*"],
+               "writes":["mesh","deformer","parameter","hierarchy","relations"],"composableKinds":["mesh","deformer","parameter","hierarchy","relations"],
+               "configSchema":{"type":"object","additionalProperties":false},"defaults":{}}]}
         """.trimIndent())
     }
 }
