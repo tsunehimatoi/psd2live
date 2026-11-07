@@ -3,6 +3,7 @@ package io.github.psd2live.core
 import io.github.psd2live.algorithms.binding.MouthFittedInputs
 import io.github.psd2live.algorithms.binding.MouthOutlineInputs
 import io.github.psd2live.algorithms.binding.MouthOutlineMotion
+import io.github.psd2live.algorithms.binding.ScaffoldParts
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.i18n.tr
 
@@ -14,6 +15,7 @@ internal object RigMouthOutlineSource {
         val fittedProvider: String? = null,
         val headOnMesh: Boolean = false,
         val contourOwner: Boolean = true,
+        val retainedFrame: Bounds? = null,
     )
 
     fun capture(
@@ -53,9 +55,12 @@ internal object RigMouthOutlineSource {
             val columns = traces.getOrPut(owner.layer) { MouthLipLayers.trace(layer, config, unitScale, rasterAlignment) }
             if (columns.size < 2) continue
             val framed = framedLayers.getValue(owner.layer)
-            val frame = geometry.parentAndFrame(framed, outlineConfig).second
+            val frame = owner.retainedFrame ?: geometry.parentAndFrame(framed, outlineConfig).second
             val aperture = geometry.rigLayer(framed).bounds
-            val alignment = geometry.headSpaceFor(framed, outlineConfig)
+            // A source capture can measure head alignment without evaluating the deformer stage.
+            val alignment = if (owner.retainedFrame != null) geometry.headSpace.takeIf {
+                RigBuilder.scaffoldSlot(framed, geometry.analysis.anchors) == ScaffoldParts.Slot.FACE
+            } else geometry.headSpaceFor(framed, outlineConfig)
             // The native opening uses the outline-specific edge margin and the selected mouth recipe's density.
             val topology = topologyByLayer.getOrPut(owner.layer) {
                 val neutral = RigBuilder.mouthOutlineSourceMesh(framed, alignment, outlineConfig, cache, unitScale)

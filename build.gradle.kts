@@ -117,7 +117,8 @@ dependencies {
 	implementation("org.jetbrains.compose.foundation:foundation:1.11.1")
 	implementation("org.jetbrains.compose.ui:ui:1.11.1")
 	implementation("org.jetbrains.compose.material:material:1.11.1")
-	testImplementation(project(path = ":algorithms:binding", configuration = "mouthOutlineElements"))
+	implementation(project(path = ":algorithms:binding", configuration = "mouthOutlineElements"))
+	implementation(project(path = ":algorithms:binding", configuration = "mouthOutlineV2Elements"))
 	testImplementation(kotlin("test"))
 }
 
@@ -251,6 +252,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginHairLegacy")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-hair-legacy")) {
         into("algorithm-plugins/hair-legacy")
+    }
+    dependsOn(":algorithms:binding:pluginMouthOutlineV2")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-outline-v2")) {
+        into("algorithm-plugins/mouth-outline-v2")
     }
     dependsOn(":algorithms:binding:pluginMouthFittedV2")
     dependsOn(":algorithms:binding:pluginFittedFaceV2")

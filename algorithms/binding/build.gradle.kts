@@ -856,3 +856,54 @@ tasks.register("pluginBodyLegacyV2") {
         """.trimIndent())
     }
 }
+
+val mouthOutlineV2 = sourceSets.create("mouthOutlineV2")
+kotlin.target.compilations.named("mouthOutlineV2") {
+    associateWith(kotlin.target.compilations.getByName("main"))
+    associateWith(kotlin.target.compilations.getByName("mouthOutline"))
+}
+val mouthOutlineV2ClassesJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("mouth-outline-v2")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    from(mouthOutlineV2.output)
+}
+val mouthOutlineV2Elements = configurations.create("mouthOutlineV2Elements") {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+}
+artifacts.add(mouthOutlineV2Elements.name, mouthOutlineV2ClassesJar)
+
+val mouthOutlineV2WorkerJar = tasks.register<Jar>("mouthOutlineV2WorkerJar") {
+    archiveClassifier.set("worker-mouth-outline-v2")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest { attributes["Main-Class"] = "io.github.psd2live.algorithms.binding.MouthOutlineV2Worker" }
+    from(mouthOutlineV2.output)
+    from(mouthOutlineWorkerJar.flatMap { it.archiveFile }.map { zipTree(it) }) { exclude("META-INF/MANIFEST.MF") }
+}
+
+tasks.register("pluginMouthOutlineV2") {
+    dependsOn(mouthOutlineV2WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-outline-v2")
+    inputs.file(mouthOutlineV2WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", project.version.toString())
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthOutlineV2WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682e6f75746c696e65.v2"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"${project.version}","name":"Mouth outline v2",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/outline","aliases":["mouth.outline"],"version":2,"contextVersion":2,"name":"Mouth outline v2","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","mouth/legacy"],"exclusiveFamily":"mouth.outline",
+               "reads":["*"],"writes":["mesh","part","hierarchy","textures","authoring"],
+               "composableKinds":["mesh","part","hierarchy"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}

@@ -2,6 +2,7 @@ package io.github.psd2live.application
 
 import io.github.psd2live.algorithms.binding.MouthFittedV2Algorithm
 import io.github.psd2live.algorithms.binding.FittedFaceV2Algorithm
+import io.github.psd2live.algorithms.binding.MouthOutlineV2Algorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.recipe.RigRecipe
@@ -1433,6 +1434,122 @@ class WorkspaceLegacyBindingTest {
         }
         current.edit("modifier_apply", buildJsonObject { put("id", "body") })
         assertEquals(expected, RigIrCompiler.compile(WorkspacePreviewBuilder().build(current.now.document)))
+    }
+
+    @Test fun mouthOutlineV2UsesCapturedLegacyMouthAndReplaysWithoutSwitchingTheDefault(): Unit = runBlocking {
+        suspend fun fixture(): Fixture = Fixture(document()).also { it.install(); it.group(listOf("mouth/legacy")) }
+        suspend fun add(f: Fixture, type: String) {
+            val plan = WorkspaceModifierPlan.prepare(f.now, buildJsonObject {
+                put("type", type)
+                putJsonArray("targets") { f.now.model.rig.puppet.drawables.forEach { drawable ->
+                    addJsonObject { put("kind", "mesh"); put("id", drawable.id.raw) }
+                } }
+            })
+            f.edit("modifier_add_group", buildJsonObject {
+                put("group", plan.getValue("group")); put("entries", plan.getValue("entries"))
+            })
+        }
+        val legacy = fixture()
+        add(legacy, "mouth.outline")
+        val previous = RigModifierStack.fromJson(legacy.now.document.rigEdits.modifierStack!!).instances.last()
+        assertEquals(1, previous.version)
+        val source = fixture()
+        val beforeOutline = source.now
+        add(source, MouthOutlineV2Algorithm.ENTRYPOINT)
+        val afterOutline = source.now
+        val selected = RigModifierStack.fromJson(source.now.document.rigEdits.modifierStack!!).instances.last()
+        assertEquals("mouth.outline", selected.type)
+        assertEquals(2, selected.version)
+        assertEquals(BuiltinModifierPlugins.reference("mouth.outline", 2), selected.plugin)
+        val compiled = RigIrCompiler.compile(source.now.model, tileArt = true)
+        assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(source.now.document), tileArt = true))
+
+        val mouth = source.now.model.rig.layerIdByDrawableId.entries.single { it.value == "mouth" }.key
+        fun points(model: PuppetModel, id: String, pose: Map<ParameterId, Float>): FloatArray {
+            val drawable = DrawableId(id)
+            val local = requireNotNull(org.umamo.render.eval.drawableLocalPosed(model, pose, drawable))
+            return requireNotNull(org.umamo.render.eval.drawableSpaceMapping(model, pose, drawable)).localToWorld(local)
+        }
+        val old = legacy.now.model.rig.puppet
+        val new = source.now.model.rig.puppet
+        val ribbons = (0..1).map { side -> previous.outputId("mouth-lip:$mouth:$side") to selected.outputId("mouth-lip:$mouth:$side") }
+        val pairs = listOf(mouth to mouth) + ribbons
+        for ((a, b) in pairs) {
+            val left = old.drawables.single { it.id.raw == a }
+            val right = new.drawables.single { it.id.raw == b }
+            assertContentEquals(left.mesh!!.indices, right.mesh!!.indices)
+            assertEquals(left.maskedBy, right.maskedBy)
+        }
+        assertEquals(ribbons.map { it.second }.toSet(), new.deformPaths.map { it.drawableId.raw }.toSet())
+        assertEquals(2, source.now.model.rig.modifierRasterAssets.size)
+        for ((left, right) in legacy.now.model.rig.modifierRasterAssets.zip(source.now.model.rig.modifierRasterAssets)) {
+            assertEquals(left.width, right.width)
+            assertEquals(left.height, right.height)
+            assertEquals(left.rgba, right.rgba)
+        }
+        for (form in listOf(-1f, -.5f, 0f, .5f, 1f)) for (open in listOf(0f, .25f, .5f, .75f, 1f)) {
+            val pose = mapOf(StandardParameters.MOUTH_FORM to form, StandardParameters.MOUTH_OPEN to open)
+            for ((a, b) in pairs) {
+                val left = points(old, a, pose)
+                val right = points(new, b, pose)
+                assertEquals(left.size, right.size, "$a at $pose")
+                val maximum = left.indices.maxOf { abs(left[it] - right[it]) }
+                assertTrue(maximum < .001f, "$a at $pose differs by $maximum pixels")
+            }
+        }
+
+        val evaluation = requireNotNull(source.now.model.modifierEvaluation)
+        val prefix = RigModifierStack.fromJson(source.now.document.rigEdits.modifierStack!!).instances.dropLast(1)
+        val upstream = prefix.map { ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin) }
+        val directory = Files.createTempDirectory("mouth-outline-v2-")
+        val preferences = Preferences.userRoot().node("mouth-outline-v2/${UUID.randomUUID()}")
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val artifact = assertNotNull(BundledAlgorithmArtifacts.find("mouth.outline", 2))
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            artifact.manifest.files.keys.forEach { name ->
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val entry = store.install(staging.toString())
+            val author = RigModifierSource.of(source.now.model)
+            val worker = ModifierPluginCatalog.definitions(store, BuiltinModifierPlugins.definitions(author), author::resolveRasters)
+                .single { it.type == MouthOutlineV2Algorithm.ENTRYPOINT }
+            val installed = selected.copy(type = worker.type, plugin = entry.reference)
+            val context = worker.authorContext(installed).withUpstream(upstream)
+            val before = evaluation.outputs[evaluation.outputs.lastIndex - 1]
+            val plugin = worker.plugin as ContextualModifierAlgorithmPlugin
+            assertEquals(evaluation.outputs.last(), plugin.evaluate(before, installed, context, {}))
+            assertFailsWith<IllegalArgumentException> {
+                MouthOutlineV2Algorithm().changes(before, selected, context.withUpstream(upstream.dropLast(1))) {}
+            }
+            val historyStore = WorkspaceStore(directory.resolve("project"))
+            historyStore.persistHistory(afterOutline.projectId, source.runtime.history())
+            val archive = directory.resolve("outline.psd2live")
+            val repository = ProjectRepository(writeHeadCache = false)
+            repository.save(ProjectSaveCapture(afterOutline.projectId, source.runtime.history(), JsonObject(emptyMap()), null, historyStore), archive)
+            repository.open(archive).use { opened ->
+                val restored = opened.history.head().snapshot
+                assertEquals(selected, RigModifierStack.fromJson(restored.rigEdits.modifierStack!!).instances.last())
+                assertEquals(compiled, RigIrCompiler.compile(source.builder.build(restored), tileArt = true))
+            }
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+        val undone = source.runtime.checkout(afterOutline.projectId, source.now.state, beforeOutline.historyHead)
+        assertEquals(RigIrCompiler.compile(beforeOutline.model), RigIrCompiler.compile(undone.model))
+        val redone = source.runtime.checkout(afterOutline.projectId, undone.state, afterOutline.historyHead)
+        assertEquals(compiled, RigIrCompiler.compile(redone.model, tileArt = true))
+        source.edit("modifier_apply", buildJsonObject { put("id", selected.id) })
+        val rebuilt = RigIrCompiler.compile(source.builder.build(source.now.document), tileArt = true)
+        assertEquals(compiled, rebuilt)
+        val files = mutableMapOf<String, ByteArray>()
+        io.github.psd2live.format.compile.Compiler.export(io.github.psd2live.targets.cubism.Cmo3Target(), rebuilt,
+            io.github.psd2live.format.compile.ExportOptions("outline")) { path, bytes -> files[path] = bytes }
+        val imported = Cmo3ModelImport.read(files.getValue("outline.cmo3")).puppet
+        assertTrue(ribbons.all { (_, id) -> imported.drawables.any { it.id.raw == id && it.mesh != null } })
     }
 
     @Test fun depthTurnMatchesNativeAcrossHeadAndBodyPoses(): Unit = runBlocking<Unit> {
