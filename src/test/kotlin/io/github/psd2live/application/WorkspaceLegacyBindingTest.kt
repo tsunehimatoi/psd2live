@@ -1323,47 +1323,54 @@ class WorkspaceLegacyBindingTest {
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val vowel = stack.instances.single { it.type == "mouth.vowel" }
         val outline = stack.instances.single { it.type == "mouth.outline" }
+        val mouth = stack.instances.single { it.type == "mouth/fitted" }
         val index = stack.index(vowel.id)
         assertTrue(stack.index(outline.id) < index)
-        fun locked(outlineVersion: Int, vowelVersion: Int): RigModifierStack = stack.copy(instances = stack.instances.map {
+        fun locked(outlineVersion: Int, vowelVersion: Int, mouthVersion: Int = mouth.version): RigModifierStack = stack.copy(instances = stack.instances.map {
             val version = when (it.id) {
                 outline.id -> outlineVersion
                 vowel.id -> vowelVersion
+                mouth.id -> mouthVersion
                 else -> return@map it
             }
-            it.copy(version = version, plugin = assertNotNull(BundledAlgorithmArtifacts.find(it.type, version)).reference)
+            if (version == it.version) it else it.copy(version = version, plugin = assertNotNull(BundledAlgorithmArtifacts.find(it.type, version)).reference)
         })
         fun replay(candidate: RigModifierStack) = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = candidate.toJson()))
         assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(replay(locked(3, 2))) }
-        val replay = WorkspacePreviewBuilder().build(replay(locked(3, 3)))
+        assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(replay(locked(3, 3, 3))) }
         val output = assertNotNull(model.modifierEvaluation).outputs[index]
-        val evaluated = assertNotNull(replay.modifierEvaluation)
-        assertEquals(output, evaluated.outputs[index])
-        assertEquals(RigIrCompiler.compile(model, tileArt = true), RigIrCompiler.compile(replay, tileArt = true))
+        for ((mouthVersion, vowelVersion) in listOf(mouth.version to 3, 3 to 4)) {
+            val replay = WorkspacePreviewBuilder().build(replay(locked(3, vowelVersion, mouthVersion)))
+            val evaluated = assertNotNull(replay.modifierEvaluation)
+            assertEquals(output, evaluated.outputs[index])
+            assertEquals(RigIrCompiler.compile(model, tileArt = true), RigIrCompiler.compile(replay, tileArt = true))
 
-        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(vowel.type, 3))
-        val directory = Files.createTempDirectory("mouth-vowel-v3-package-")
-        val preferences = Preferences.userRoot().node("mouth-vowel-v3-package/" + UUID.randomUUID())
-        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
-        try {
-            val staging = Files.createDirectory(directory.resolve("package"))
-            Files.write(staging.resolve("plugin.json"), artifact.bytes)
-            for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            val artifact = assertNotNull(BundledAlgorithmArtifacts.find(vowel.type, vowelVersion))
+            val directory = Files.createTempDirectory("mouth-vowel-v$vowelVersion-package-")
+            val preferences = Preferences.userRoot().node("mouth-vowel-v$vowelVersion-package/" + UUID.randomUUID())
+            val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+            try {
+                val staging = Files.createDirectory(directory.resolve("package"))
+                Files.write(staging.resolve("plugin.json"), artifact.bytes)
+                for (name in artifact.manifest.files.keys) {
+                    assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                }
+                val installed = store.install(staging.toString())
+                val entry = evaluated.entries[index].instance.copy(type = installed.manifest.algorithms.single().type)
+                val owner = RigModifierSource.of(replay)
+                val definition = if (vowelVersion == 3) RigMouthVowelModifier.outlineDefinition(owner)
+                    else RigMouthVowelModifier.fittedDefinition(owner)
+                val adapter = ModifierPluginCatalog.definitions(store, captured = listOf(definition)).single {
+                    it.type == entry.type && it.version == entry.version
+                }
+                val context = assertNotNull(evaluated.readAlgorithms[entry.id]).context
+                assertEquals(output, (adapter.plugin as ContextualModifierAlgorithmPlugin).evaluate(
+                    evaluated.outputs[index - 1], entry, context) {})
+            } finally {
+                store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+                preferences.removeNode()
+                ModifierPluginStore.deleteTree(directory)
             }
-            val installed = store.install(staging.toString())
-            val entry = evaluated.entries[index].instance.copy(type = installed.manifest.algorithms.single().type)
-            val definition = RigMouthVowelModifier.outlineDefinition(RigModifierSource.of(replay))
-            val adapter = ModifierPluginCatalog.definitions(store, captured = listOf(definition)).single {
-                it.type == entry.type && it.version == entry.version
-            }
-            val context = assertNotNull(evaluated.readAlgorithms[entry.id]).context
-            assertEquals(output, (adapter.plugin as ContextualModifierAlgorithmPlugin).evaluate(
-                evaluated.outputs[index - 1], entry, context) {})
-        } finally {
-            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
-            preferences.removeNode()
-            ModifierPluginStore.deleteTree(directory)
         }
     }
 
