@@ -1,9 +1,11 @@
 package io.github.psd2live.core.modifier
 
+import io.github.psd2live.algorithms.binding.SeeThroughAlgorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.RigModule
 import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.core.recipe.RecipeKnob
+import io.github.psd2live.format.model.RigIR
 import kotlinx.serialization.json.*
 import org.umamo.runtime.model.ParameterId
 
@@ -109,6 +111,23 @@ internal object RigLegacyBindings {
         )
     }
 
+    private val seeThrough = object : ContextualModifierAlgorithmPlugin {
+        private val algorithm = SeeThroughAlgorithm()
+
+        override fun evaluate(input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext,
+                              checkpoint: () -> Unit): RigIR {
+            val evaluated = algorithm.evaluate(input, instance, context, checkpoint)
+            if (evaluated === input || instance.outputAliases.isEmpty()) return evaluated
+            // Native output aliases represent the old generated copies, which are selected through their original.
+            val native = instance.outputAliases.mapNotNull { (local, id) ->
+                id.takeIf { local.startsWith("see-through:") && id == local.removePrefix("see-through:") + SeeThroughLayers.SUFFIX }
+            }.toSet()
+            return if (native.isEmpty()) evaluated else evaluated.copy(meshes = evaluated.meshes.map { mesh ->
+                if (mesh.id in native && mesh.textureSource != null) mesh.copy(selectable = false) else mesh
+            })
+        }
+    }
+
     fun definition(spec: Spec, source: RigModifierSource?): RigModifierDefinition =
         RigModifierDefinition(spec.type, spec.version,
         requires = spec.requires, provides = if (spec.type == FITTED_FACE) setOf("face/legacy") else emptySet(), exclusiveFamily = if (spec.isBase) "base:${spec.area}" else if (spec.chainKinds.isNotEmpty()) "chain:${spec.type}" else if (spec.expressionToggles || spec.mouthOutline) spec.type else null,
@@ -133,7 +152,7 @@ internal object RigLegacyBindings {
         changeWrites = if (spec.skinClip) setOf("mesh") else null,
         plugin = when {
             spec.expressionToggles -> io.github.psd2live.algorithms.binding.ExpressionAlgorithm()
-            spec.seeThrough -> io.github.psd2live.algorithms.binding.SeeThroughAlgorithm()
+            spec.seeThrough -> seeThrough
             spec.skinClip -> io.github.psd2live.algorithms.binding.SkinClipAlgorithm()
             else -> ModifierAlgorithmPlugin { rig, instance, checkpoint ->
                 val bindings = RigSourceBinding.apply(rig, instance, requireNotNull(source), checkpoint)
