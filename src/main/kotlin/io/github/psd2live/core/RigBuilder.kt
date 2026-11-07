@@ -3278,8 +3278,15 @@ object RigBuilder {
 	private fun headTurnOf(analysis: PipelineAnalysis, faceRig: NinePoseFaceRig, config: PipelineConfig): io.github.psd2live.core.fit.HeadTurn? {
 		val m = io.github.psd2live.core.recipe.RigModules
 		if (!m.builds(m.FACE_DEPTH_TURN, config, io.github.psd2live.core.recipe.RecipeSubject.of(analysis))) return null
-		return io.github.psd2live.core.fit.HeadTurn(faceRig.centerX, faceRig.centerY, faceRig.radiusX, faceRig.radiusY,
-			config.recipe.value(m.FACE_DEPTH_TURN.id, "turn") / 100f * config.headTurnStrength, config.recipe.value(m.FACE_DEPTH_TURN.id, "depth") / 100f, faceRig.chinY)
+		val shell = headTurnMeasurements(faceRig, config)
+		return io.github.psd2live.core.fit.HeadTurn(shell[0], shell[1], shell[2], shell[3], shell[4], shell[5], shell[6])
+	}
+
+	internal fun headTurnMeasurements(faceRig: NinePoseFaceRig, config: PipelineConfig): List<Float> {
+		val depth = io.github.psd2live.core.recipe.RigModules.FACE_DEPTH_TURN.id
+		return listOf(faceRig.centerX, faceRig.centerY, faceRig.radiusX, faceRig.radiusY,
+			config.recipe.value(depth, "turn") / 100f * config.headTurnStrength,
+			config.recipe.value(depth, "depth") / 100f, faceRig.chinY)
 	}
 
 	/**
