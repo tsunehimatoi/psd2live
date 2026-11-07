@@ -115,6 +115,9 @@ object MotionPresets {
 	fun loops(name: String): Boolean = name.equals("Idle", ignoreCase = true) ||
 		SkeletonMotions.presets.any { it.loop && it.name.equals(name, ignoreCase = true) }
 
+	internal fun exportGroup(name: String): String = if (loops(name)) "Idle" else name
+	internal fun exportFileStem(name: String): String = name.replaceFirstChar(Char::lowercase)
+
 	/**
 	 * The tracks [name] plays as [settings] tune it, the same the export writes. [exclude] keeps
 	 * physics-driven parameters out of a loop.

@@ -172,10 +172,11 @@ internal object RigIrCompiler {
 		fun authored(group: String, file: String, clip: MotionClip) = Clip(clip.id, clip.name, group, file, clip.duration, clip.fps, clip.loop,
 			clip.fadeIn.takeUnless { clip.runtimeDefaultFades }, clip.fadeOut.takeUnless { clip.runtimeDefaultFades },
 			clip.curves.map(MotionGenerator::curve), clip.events.map { ClipEvent(it.time, it.value) })
-		fun builtin(group: String, name: String, exclude: Set<String> = emptySet()) {
+		fun builtin(name: String, exclude: Set<String> = emptySet()) {
 			val settings = MotionPresetSettings.of(config, name)
 			if (settings.deleted) return
-			val file = name.replaceFirstChar(Char::lowercase)
+			val group = MotionPresets.exportGroup(name)
+			val file = MotionPresets.exportFileStem(name)
 			val override = MotionClips.overrideOf(clips, name)
 			if (override != null) return add(authored(group, file, override))
 			// Generated tracks name the standard parameters by their standard IDs.
@@ -186,18 +187,18 @@ internal object RigIrCompiler {
 		}
 		if (config.motionBasic) {
 			// Parameters the exported physics drives stay out of the idle.
-			if (config.motionIdle) builtin("Idle", "Idle", physicsDriven)
-			if (config.motionBlink) builtin("Blink", "Blink")
-			if (config.motionNod) builtin("Nod", "Nod")
-			if (config.motionShake) builtin("Shake", "Shake")
+			if (config.motionIdle) builtin("Idle", physicsDriven)
+			if (config.motionBlink) builtin("Blink")
+			if (config.motionNod) builtin("Nod")
+			if (config.motionShake) builtin("Shake")
 			// Speech, for hosts and players without lip sync; only the `motion/natural` way makes it.
-			if (MotionPresetSettings.natural(config)) builtin("Talk", "Talk")
+			if (MotionPresetSettings.natural(config)) builtin("Talk")
 		}
 		if (config.motionSkeleton) {
 			for (preset in SkeletonMotions.presets) {
 				if (config.rigEdits.motionPresets[preset.name]?.disabled == true) continue
 				// A looping preset is another idle, played from the idle group beside the plain one.
-				builtin(if (preset.loop) "Idle" else preset.name, preset.name)
+				builtin(preset.name)
 			}
 		}
 		// The user's own motions: a loop joins the idles, a one-shot is its own group under its name.

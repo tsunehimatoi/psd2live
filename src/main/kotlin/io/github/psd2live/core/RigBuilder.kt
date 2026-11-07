@@ -23,6 +23,7 @@ import io.github.psd2live.algorithms.binding.ScaffoldHead
 import io.github.psd2live.algorithms.binding.ScaffoldMesh
 import io.github.psd2live.algorithms.binding.NeckInputs
 import io.github.psd2live.algorithms.binding.ScaffoldMeshContext
+import io.github.psd2live.algorithms.binding.MouthOutlineOwner
 import io.github.psd2live.algorithms.binding.ScaffoldParts
 import io.github.psd2live.algorithms.binding.ScaffoldPairs
 
@@ -125,6 +126,36 @@ object StandardParameters {
 			Parameter(HAIR_FRONT, tr("model.parameter.hairFront"), -1f, 1f, 0f),
 			Parameter(HAIR_BACK, tr("model.parameter.hairBack"), -1f, 1f, 0f),
 		)
+
+	internal fun tree(custom: List<ParameterId> = emptyList(), modules: List<ParameterId> = emptyList()): List<ParameterNode> {
+		val moduleGroups = io.github.psd2live.core.recipe.RigModules.modules.flatMap { it.defines }.associate { ParameterId(it.id) to it.group }
+		fun group(id: String, name: String, parameters: List<ParameterId>) = ParameterNode.Group(
+			ParameterGroupId(id), name, true, (parameters + modules.filter { moduleGroups[it] == id }).map { ParameterNode.Param(it) },
+		)
+		val base = listOf(
+			group("ParamGroupFace", tr("model.group.face"), listOf(ANGLE_X, ANGLE_Y, ANGLE_Z)),
+			group("ParamGroupEyes", tr("model.group.eyes"), listOf(EYE_L_OPEN, EYE_R_OPEN, EYE_BALL_X, EYE_BALL_Y, EYE_BALL_FORM)),
+			group("ParamGroupBrows", tr("model.group.brows"), listOf(BROW_L_Y, BROW_R_Y)),
+			group("ParamGroupMouth", tr("model.group.mouth"), listOf(MOUTH_FORM, MOUTH_OPEN)),
+			group("ParamGroupBody", tr("model.group.body"), listOf(BODY_X, BODY_Y, BODY_Z, BODY_LEAN, PROPORTION, BREATH)),
+			group("ParamGroupPhysics", tr("model.group.physics"), listOf(HAIR_FRONT, HAIR_BACK) +
+				modules.filter { (it.raw.startsWith("ParamHair") || it.raw.startsWith("ParamCloth") || it.raw.startsWith("ParamPart")) &&
+					it != HAIR_FRONT && it != HAIR_BACK }),
+		)
+		return if (custom.isNotEmpty()) {
+			base + group("ParamGroupCustom", tr("model.group.custom"), custom)
+		} else {
+			base
+		}
+	}
+
+	internal fun links(ids: Set<ParameterId>): List<ParameterLink> = listOf(
+		ParameterLink(ANGLE_X, ANGLE_Y),
+		ParameterLink(BODY_X, BODY_Y),
+		ParameterLink(EYE_BALL_X, EYE_BALL_Y),
+		ParameterLink(io.github.psd2live.core.fit.EyeModules.EYE_BALL_L_X, io.github.psd2live.core.fit.EyeModules.EYE_BALL_L_Y),
+		ParameterLink(io.github.psd2live.core.fit.EyeModules.EYE_BALL_R_X, io.github.psd2live.core.fit.EyeModules.EYE_BALL_R_Y),
+	).filter { it.horizontal in ids && it.vertical in ids }
 }
 
 data class BuiltRig(
@@ -1929,7 +1960,7 @@ object RigBuilder {
 		for (part in maskedParts) partSlots[part.id] = scaffoldSlot(classifiedByDrawable.getValue(part.id), analysis.anchors).id
 		val standardIds = (StandardParameters.all + moduleParams).map { it.id }.toSet()
 		val uniqueCustomParams = expressions.parameters.filter { it.id !in standardIds }
-		val parameterTree = parameterTree(uniqueCustomParams, moduleParams)
+		val parameterTree = StandardParameters.tree(uniqueCustomParams.map { it.id }, moduleParams.map { it.id })
 		// Geometry is generated against the art alone: tiles without placements, offsets for uvs.
 		val (unboundAtlas, artSources) = UvBinding.unboundAtlas(inputAnalysis,
 			inputAnalysis.layers.map { it.source.id.raw }.filter { it in atlas.placementByLayerId })
@@ -1940,13 +1971,7 @@ object RigBuilder {
 			drawables = maskedDrawables,
 			rootChildren = organization.rootChildren,
 			rootPartId = null,
-			parameterLinks = listOf(
-				ParameterLink(StandardParameters.ANGLE_X, StandardParameters.ANGLE_Y),
-				ParameterLink(StandardParameters.BODY_X, StandardParameters.BODY_Y),
-				ParameterLink(StandardParameters.EYE_BALL_X, StandardParameters.EYE_BALL_Y),
-				ParameterLink(io.github.psd2live.core.fit.EyeModules.EYE_BALL_L_X, io.github.psd2live.core.fit.EyeModules.EYE_BALL_L_Y),
-				ParameterLink(io.github.psd2live.core.fit.EyeModules.EYE_BALL_R_X, io.github.psd2live.core.fit.EyeModules.EYE_BALL_R_Y),
-			).filter { it.horizontal in standardIds && it.vertical in standardIds },
+			parameterLinks = StandardParameters.links(standardIds),
 			parameterTree = parameterTree,
 			canvasWidth = analysis.source.widthPx.toFloat(),
 			canvasHeight = analysis.source.heightPx.toFloat(),
@@ -2314,12 +2339,6 @@ object RigBuilder {
 			.mapNotNullTo(HashSet()) { it["id"]?.jsonPrimitive?.contentOrNull } +
 			RigMeshSeed.layers(config.rigEdits).values.filter { it.fixedTopology }.map { it.drawableId.raw }
 
-	/**
-	 * The id of a deform path the builder generates on [drawable]: derived from the mesh and the path's role,
-	 * so every build of the same rig names it the same and a content hash of the rig is stable.
-	 */
-	internal fun generatedPathId(drawable: DrawableId, role: String): String =
-		UUID.nameUUIDFromBytes("psd2live:generated-path:${drawable.raw}:$role".encodeToByteArray()).toString()
 
 	/** A mesh a paint commit replaces, with the atlas slice its texture coordinates were sampled from. */
 	internal class ReplacedMesh internal constructor(
@@ -2674,7 +2693,7 @@ object RigBuilder {
 		}
 		val mouthAperture = mouthApertureFor(rigLayer)
 		val mouthPaths = if (outlineMouth) {
-			io.github.psd2live.algorithms.binding.MouthOutlineOwner.paths(DrawableId(layer.source.id.raw), meshData.mesh)
+			MouthOutlineOwner.paths(DrawableId(layer.source.id.raw), meshData.mesh)
 		} else emptyList()
 		val geometryGrid = if (config.meshOnly) {
 			zeroMeshGrid(mesh.positions.size)
@@ -3563,7 +3582,7 @@ object RigBuilder {
 		}
 		val parameters = standardParameters(context, config) + moduleParameters(context, config, emptyList())
 		val model = material.copy(parameters = parameters, deformers = context.deformers, drawables = drawables,
-			parameterTree = parameterTree(), parameterLinks = emptyList())
+			parameterTree = StandardParameters.tree(), parameterLinks = emptyList())
 		val projected = CubismBlendShapes.lawful(withoutLegacyHairSway(model, config))
 		return BindingProjection.retain(projected, kept, mapOf(StandardParameters.MOUTH_OPEN to 1f))
 	}
@@ -4217,7 +4236,7 @@ object RigBuilder {
                                  space: HeadCoordinateSpace?): MeshData {
         val contour = io.github.psd2live.algorithms.binding.MouthContour.ownerContour(data.rigPositions, data.mesh.indices) ?: return data
         val source = layer.source
-        val mesh = io.github.psd2live.algorithms.binding.MouthOutlineOwner.mesh(contour,
+        val mesh = MouthOutlineOwner.mesh(contour,
             io.github.psd2live.core.modifier.ModifierSourceBounds(frame.left, frame.top, frame.right, frame.bottom),
             source.bounds.left.toFloat(), source.bounds.top.toFloat(),
             max(1, source.raster.width).toFloat(), max(1, source.raster.height).toFloat()) { x, y ->
@@ -4324,7 +4343,7 @@ object RigBuilder {
             }
             if (points.size >= 2) {
                 DeformPath(
-                    id = generatedPathId(lipDrawable.id, "lip"),
+                    id = MouthOutlineOwner.pathId(lipDrawable.id, "lip"),
                     drawableId = lipDrawable.id,
                     points = points,
                     width = DeformPath.DEFAULT_WIDTH,
@@ -4452,28 +4471,6 @@ object RigBuilder {
 			val name = analysis.layers.firstOrNull { it.source.id.raw == chain.layerId }?.source?.name ?: chain.layerId
 			chain.parameters.map { p -> Parameter(p, tr("model.parameter.hairChain", name, p.raw.removePrefix(chain.kind.prefix)), -1f, 1f, 0f) }
 		}
-
-	private fun parameterTree(customParameters: List<Parameter> = emptyList(), moduleParameters: List<Parameter> = emptyList()): List<ParameterNode> {
-		val moduleGroups = io.github.psd2live.core.recipe.RigModules.modules.flatMap { it.defines }.associate { ParameterId(it.id) to it.group }
-		fun group(id: String, name: String, parameters: List<ParameterId>) = ParameterNode.Group(
-			ParameterGroupId(id), name, true, (parameters + moduleParameters.map { it.id }.filter { moduleGroups[it] == id }).map { ParameterNode.Param(it) },
-		)
-		val base = listOf(
-			group("ParamGroupFace", tr("model.group.face"), listOf(StandardParameters.ANGLE_X, StandardParameters.ANGLE_Y, StandardParameters.ANGLE_Z)),
-			group("ParamGroupEyes", tr("model.group.eyes"), listOf(StandardParameters.EYE_L_OPEN, StandardParameters.EYE_R_OPEN, StandardParameters.EYE_BALL_X, StandardParameters.EYE_BALL_Y, StandardParameters.EYE_BALL_FORM)),
-			group("ParamGroupBrows", tr("model.group.brows"), listOf(StandardParameters.BROW_L_Y, StandardParameters.BROW_R_Y)),
-			group("ParamGroupMouth", tr("model.group.mouth"), listOf(StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN)),
-			group("ParamGroupBody", tr("model.group.body"), listOf(StandardParameters.BODY_X, StandardParameters.BODY_Y, StandardParameters.BODY_Z, StandardParameters.BODY_LEAN, StandardParameters.PROPORTION, StandardParameters.BREATH)),
-			group("ParamGroupPhysics", tr("model.group.physics"), listOf(StandardParameters.HAIR_FRONT, StandardParameters.HAIR_BACK) +
-				moduleParameters.map { it.id }.filter { (it.raw.startsWith("ParamHair") || it.raw.startsWith("ParamCloth") || it.raw.startsWith("ParamPart")) &&
-					it != StandardParameters.HAIR_FRONT && it != StandardParameters.HAIR_BACK }),
-		)
-		return if (customParameters.isNotEmpty()) {
-			base + group("ParamGroupCustom", tr("model.group.custom"), customParameters.map { it.id })
-		} else {
-			base
-		}
-	}
 
 	private fun ninePoseAxes(): List<KeyformAxis> = listOf(
 		axis(StandardParameters.ANGLE_X, *NinePoseFaceRig.angleXKeys),
