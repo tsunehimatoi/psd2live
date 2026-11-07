@@ -7004,6 +7004,84 @@ class WorkspaceLegacyBindingTest {
         assertEquals(edited, RigIrCompiler.compile(WorkspacePreviewBuilder().build(direct.now.document)))
     }
 
+    @Test fun ribbonsV4MatchesRichOpenMouthWithSkirt(): Unit = runBlocking {
+        compareRibbonsV4(closedMouth = false, skirt = true)
+    }
+
+    @Test fun ribbonsV4MatchesScopedEarPendantWithoutSkirt(): Unit = runBlocking {
+        compareRibbonsV4(closedMouth = true, skirt = false)
+    }
+
+    private suspend fun compareRibbonsV4(closedMouth: Boolean, skirt: Boolean) {
+        val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true,
+            pairedBrows = true, bilateralEyes = true, chestDetail = true, closedMouth = closedMouth, ribbonDetails = true)
+        val removed = setOf("arm", "animal-ear", "tail", "wing") +
+            if (skirt) emptySet() else setOf("skirt", "head-ribbon", "ribbon", "pendant")
+        val raster = object : SourceArt by art.source {
+            override val layers = art.source.layers.filterNot { it.id.raw in removed }
+        }
+        val choices = WorkspaceInitialPreset(clothing = true)
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+        val source = art.copy(source = raster, settings = WorkspaceSettingsCodec.encode(config))
+        val (initialized, prepared) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        val fresh = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val stack = fresh.copy(instances = fresh.instances.map { entry ->
+            if (entry.type != "outfit.ribbons" || entry.version == 1) entry
+            else entry.copy(version = 1, plugin = assertNotNull(BuiltinModifierPlugins.reference(entry.type, 1)))
+        })
+        fun documentFor(replay: RigModifierStack) = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = replay.toJson()))
+        val baseline = if (fresh == stack) prepared else WorkspacePreviewBuilder().build(documentFor(stack))
+        fun version(type: String) = stack.instances.singleOrNull { it.type == type }?.version
+        assertEquals(3, version("face/fitted"))
+        assertEquals(5, version("eye/fitted"))
+        assertEquals(3, version("brow/fitted"))
+        assertEquals(if (closedMouth) 4 else 3, version("mouth/fitted"))
+        assertEquals(if (closedMouth) 5 else 7, version("mouth.outline"))
+        assertEquals(if (closedMouth) 4 else 5, version("mouth.tongue"))
+        assertEquals(if (closedMouth) 7 else 8, version("mouth.spring"))
+        assertEquals(if (skirt) 2 else null, version("outfit.skirt"))
+        val locked = stack.instances.single { it.type == "outfit.ribbons" }
+        val index = stack.index(locked.id)
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 4))
+        val instance = locked.copy(version = 4, plugin = artifact.reference)
+        val candidate = stack.copy(instances = stack.instances.map { if (it.id == locked.id) instance else it })
+        val expected = assertNotNull(baseline.modifierEvaluation)
+        val before = expected.outputs[index - 1]
+        val after = expected.outputs[index]
+        val changed = after.meshes.filter { mesh -> before.meshes.single { it.id == mesh.id } != mesh }.map { it.name }.toSet()
+        assertEquals(if (skirt) setOf("head-ribbon", "ear-pendant", "ribbon", "pendant") else setOf("ear-pendant"), changed)
+        assertEquals(if (skirt) 8 else 2, RigModifierPhysics.entries(locked, after).size)
+        if (skirt) assertTrue(stack.instances.any { it.type == "simulation" && it.inputFingerprint != null })
+        val updated = documentFor(candidate)
+        val wasEnabled = RigStageCache.enabled
+        RigStageCache.enabled = false
+        val prefix = candidate.copy(instances = candidate.instances.take(index + 1))
+        val current = try { WorkspacePreviewBuilder().build(documentFor(prefix)) } finally { RigStageCache.enabled = wasEnabled }
+        val actual = assertNotNull(current.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, actual.entries[index].status)
+        assertFaceEquals(after, actual.outputs[index])
+        assertEquals(candidate, WorkspaceModifierSimulation.prepare(updated, candidate, WorkspaceRasterWork.Direct, allowRebake = false))
+        val complete = WorkspacePreviewBuilder().build(updated)
+        assertTrue(expected.outputs == assertNotNull(complete.modifierEvaluation).outputs)
+        assertTrue(RigIrCompiler.compile(baseline, tileArt = true) == RigIrCompiler.compile(complete, tileArt = true))
+        val directory = Files.createTempDirectory("ribbons-v4")
+        val preferences = Preferences.userRoot().node("ribbons-v4/" + UUID.randomUUID())
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+            val installed = store.snapshot().single()
+            val context = assertNotNull(actual.readAlgorithms[locked.id]).context
+            assertTrue(context.upstream.any { it.capability == "face/legacy" && it.type == "face/fitted" && it.version == 3 })
+            assertEquals(skirt, context.upstream.any { it.type == "outfit.skirt" && it.version == 2 })
+            assertTrue(after == ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(), before,
+                instance, {}, store, context = context))
+        } finally {
+            ModifierPluginWorkers.stop(artifact.reference)
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
     @Test fun ribbonsV3MatchesFreshModernWithClothingSimulation(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true,
             pairedBrows = true, bilateralEyes = true, chestDetail = true, closedMouth = true, ribbonDetails = true)
