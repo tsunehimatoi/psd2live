@@ -127,10 +127,12 @@ object StandardParameters {
 			Parameter(HAIR_BACK, tr("model.parameter.hairBack"), -1f, 1f, 0f),
 		)
 
-	internal fun tree(custom: List<ParameterId> = emptyList(), modules: List<ParameterId> = emptyList()): List<ParameterNode> {
+	internal fun tree(custom: List<ParameterId> = emptyList(), modules: List<ParameterId> = emptyList(),
+	                  available: Set<ParameterId>? = null): List<ParameterNode> {
 		val moduleGroups = io.github.psd2live.core.recipe.RigModules.modules.flatMap { it.defines }.associate { ParameterId(it.id) to it.group }
 		fun group(id: String, name: String, parameters: List<ParameterId>) = ParameterNode.Group(
-			ParameterGroupId(id), name, true, (parameters + modules.filter { moduleGroups[it] == id }).map { ParameterNode.Param(it) },
+			ParameterGroupId(id), name, true, (parameters + modules.filter { moduleGroups[it] == id })
+				.filter { available == null || it in available }.map { ParameterNode.Param(it) },
 		)
 		val base = listOf(
 			group("ParamGroupFace", tr("model.group.face"), listOf(ANGLE_X, ANGLE_Y, ANGLE_Z)),
@@ -1725,7 +1727,7 @@ object RigBuilder {
 				meshConfig = meshConfig,
 				meshCache = meshCache,
 			)
-			builtDeformPaths.addAll(parts.mouthPaths)
+			builtDeformPaths.addAll(parts.mouthPaths.filter { it.drawableId == id })
 			val override = config.layerOverrides[layer.source.id.raw]
 			val classification = override?.type ?: layer.semantic.type
 			val channelGrids = if (materialsOnly || config.meshOnly && classification == LayerType.PRESET) ChannelGrids.Empty

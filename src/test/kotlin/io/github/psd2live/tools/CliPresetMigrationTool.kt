@@ -118,7 +118,7 @@ class CliPresetMigrationTool {
         val physicsOrder = PhysicsCatalog.groups(preview.analysis, config, parameters.keys.mapTo(HashSet()) { it.raw })
             .map { it.id }
         val ordered = puppet.copy(parameters = (preset + custom).mapNotNull(parameters::get),
-            parameterTree = StandardParameters.tree(custom, modules), parameterLinks = StandardParameters.links(preset.toSet()))
+            parameterTree = StandardParameters.tree(custom, modules, parameters.keys), parameterLinks = StandardParameters.links(preset.toSet()))
         return preview.copy(rig = rig.copy(puppet = ordered, modifierOutput = output.copy(
             physics = output.physics.copy(groups = PhysicsCatalog.ordered(output.physics.groups, physicsOrder) { it.id }))))
     }
