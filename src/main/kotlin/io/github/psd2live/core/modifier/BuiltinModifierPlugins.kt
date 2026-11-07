@@ -26,7 +26,7 @@ internal object BuiltinModifierPlugins {
         RigFittedMouthDefinition.definition(source), RigFittedMouthDefinition.modernDefinition(source), RigMouthVowelModifier.definition(source), RigMouthVowelModifier.outlineDefinition(source), RigMouthVowelModifier.fittedDefinition(source), RigMouthCaptureModifier.definition(source), RigMouthCaptureModifier.fittedDefinition(source), RigMouthJawModifier.definition(source), RigMouthJawModifier.fittedDefinition(source), RigMouthJawModifier.tongueDefinition(source), RigMouthTongueModifier.definition(source), RigMouthTongueModifier.fittedDefinition(source), RigFittedFaceDefinition.definition(source),
         RigLegacyFaceDefinition.definition(source),
         RigFittedFaceDefinition.bodyDefinition(source),
-        RigEyeSquashModifier.definition(source), RigEyeSquashModifier.definition(source, modern = true), RigLegacyBodyDefinition.definition(source),
+        RigEyeSquashModifier.definition(source), RigEyeSquashModifier.definition(source, modern = true), RigEyeSquashModifier.highlightDefinition(source), RigLegacyBodyDefinition.definition(source),
         RigMouthOutlineDefinition.definition(source), RigFittedMouthOutlineDefinition.definition(source), RigBrowFittedModifier.definition(source), RigBrowFittedModifier.modernDefinition(source),
         RigLegacyEyeDefinition.definition(source), RigLegacyBrowDefinition.definition(source),
         RigDepthTurnDefinition.definition(source), RigEyeWideModifier.definition(source), RigEyeWideModifier.modernDefinition(source),

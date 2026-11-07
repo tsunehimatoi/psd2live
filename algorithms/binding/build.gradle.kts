@@ -902,6 +902,14 @@ kotlin.target.compilations.named("eyeSquashV3") {
 }
 eyeSquashV3WorkerJar.configure { from(sourceSets["eyeSquash"].output) }
 
+val eyeSquashV4WorkerJar = registerIsolatedBindingWorker(
+    "eyeSquashV4", "eye-squash-v4", "worker-eye-squash-v4", "io.github.psd2live.algorithms.binding.EyeSquashV4Worker",
+)
+kotlin.target.compilations.named("eyeSquashV4") {
+    associateWith(kotlin.target.compilations.getByName("eyeSquash"))
+}
+eyeSquashV4WorkerJar.configure { from(sourceSets["eyeSquash"].output) }
+
 val browShapeWorkerJar = registerIsolatedBindingWorker(
     "browShape", "brow-shape", "worker-brow-shape", "io.github.psd2live.algorithms.binding.BrowShapeWorker",
 )
@@ -1083,6 +1091,31 @@ tasks.register("pluginEyeSquashV3") {
             {"protocol":1,"id":"$id","version":"$packageVersion","name":"Iris squash",
              "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
              "algorithms":[{"type":"$id/squash","aliases":["eye.squash"],"version":3,"name":"Iris squash","category":"eye",
+               "targets":["mesh"],"requires":["rig.scaffold","eye/fitted"],"contextVersion":2,
+               "reads":["mesh","deformer","parameter","canvas"],"writes":["mesh","deformer"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
+tasks.register("pluginEyeSquashV4") {
+    dependsOn(eyeSquashV4WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-eye-squash-v4")
+    val packageVersion = project.version.toString()
+    inputs.file(eyeSquashV4WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        eyeSquashV4WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6579652e737175617368.v4"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Iris squash",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/squash","aliases":["eye.squash"],"version":4,"name":"Iris squash","category":"eye",
                "targets":["mesh"],"requires":["rig.scaffold","eye/fitted"],"contextVersion":2,
                "reads":["mesh","deformer","parameter","canvas"],"writes":["mesh","deformer"],
                "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],

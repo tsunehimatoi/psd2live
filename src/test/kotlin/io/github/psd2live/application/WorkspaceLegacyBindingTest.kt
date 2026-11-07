@@ -3980,9 +3980,18 @@ class WorkspaceLegacyBindingTest {
 
 
     @Test fun eyeSquashV3MatchesRecommendedFittedHeadAndItsInstalledWorker(): Unit = runBlocking {
+        compareRecommendedEyeSquash(withHighlight = false)
+    }
+
+    @Test fun eyeSquashV4MatchesFittedHeadWithHighlightsAndItsInstalledWorker(): Unit = runBlocking {
+        compareRecommendedEyeSquash(withHighlight = true)
+    }
+
+    private suspend fun compareRecommendedEyeSquash(withHighlight: Boolean) {
         val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true)
         val preset = WorkspacePresetBaseline.configure(art.config(), "modern")
-        val recipe = preset.recipe.copy(modules = preset.recipe.modules + (RigModules.EYE_HIGHLIGHT.id to ModuleChoice(false)))
+        val recipe = if (withHighlight) preset.recipe else
+            preset.recipe.copy(modules = preset.recipe.modules + (RigModules.EYE_HIGHLIGHT.id to ModuleChoice(false)))
         val config = preset.copy(recipe = recipe, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
         val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
@@ -3990,13 +3999,15 @@ class WorkspaceLegacyBindingTest {
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val squash = stack.instances.single { it.type == "eye.squash" }
         val index = stack.index(squash.id)
-        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(squash.type, 3))
-        val independent = squash.copy(version = 3, plugin = artifact.reference)
+        val version = if (withHighlight) 4 else 3
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(squash.type, version))
+        val independent = squash.copy(version = version, plugin = artifact.reference)
         val expected = assertNotNull(baseline.modifierEvaluation).outputs
         assertEquals(1, squash.version)
         val candidate = stack.copy(instances = stack.instances.map {
             when (it.type) {
                 "eye.squash" -> independent
+                "eye.highlight" -> it.copy(version = 3, plugin = assertNotNull(BuiltinModifierPlugins.reference(it.type, 3)))
                 "eye.emotion" -> it.copy(version = 3, plugin = assertNotNull(BuiltinModifierPlugins.reference(it.type, 3)))
                 "eye.gaze-lid" -> it.copy(version = 3, plugin = assertNotNull(BuiltinModifierPlugins.reference(it.type, 3)))
                 "eye.smile" -> it.copy(version = 3, plugin = assertNotNull(BuiltinModifierPlugins.reference(it.type, 3)))
@@ -4034,6 +4045,14 @@ class WorkspaceLegacyBindingTest {
             head.any { it.parameter in headAxes } && mesh != after.getValue(mesh.id) &&
                 mesh.id in squash.targets.map { it.id }
         }, "The fixture must exercise squash over an existing head turn")
+        if (withHighlight) {
+            val id = actual.rig.ownLayerIdByDrawableId.entries.single { it.value == "highlight" }.key
+            val highlight = before.meshes.single { it.id == id }
+            assertNotEquals(highlight, after.getValue(id))
+            assertEquals(highlight.parent, after.getValue(id).parent)
+            val warp = before.deformers.single { it.id == highlight.parent } as io.github.psd2live.format.model.Deformer.Warp
+            assertTrue(warp.lattice?.axes.orEmpty().any { it.parameter in headAxes })
+        }
         val compiled = RigIrCompiler.compile(actual, tileArt = true)
         assertFaceEquals(RigIrCompiler.compile(baseline, tileArt = true), compiled)
 
@@ -4044,7 +4063,9 @@ class WorkspaceLegacyBindingTest {
             BundledAlgorithmArtifacts.retain(store, listOf(artifact))
             val installed = store.snapshot().single()
             assertEquals(artifact.reference, installed.reference)
-            val definition = RigEyeSquashModifier.definition(RigModifierSource.of(actual), modern = true)
+            val source = RigModifierSource.of(actual)
+            val definition = if (withHighlight) RigEyeSquashModifier.highlightDefinition(source)
+                else RigEyeSquashModifier.definition(source, modern = true)
             val context = assertNotNull(actual.modifierEvaluation?.readAlgorithms?.get(independent.id)).context
             assertFaceEquals(expected[index], ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(),
                 outputs[index - 1], independent, {}, store, context = context,

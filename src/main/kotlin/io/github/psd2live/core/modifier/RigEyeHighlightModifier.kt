@@ -43,6 +43,9 @@ internal object RigEyeHighlightModifier {
             authorContext = { requireNotNull(source).capture(it, modern) },
         )
 
+    fun inputs(source: RigModifierSource, instance: RigModifierInstance): Map<String, EyeHighlightInput> =
+        EyeHighlightInput.decode(source.capture(instance, modern = false))
+
     private fun RigModifierSource.capture(instance: RigModifierInstance, modern: Boolean): ModifierAlgorithmContext {
         val scaffold = provider(instance)
         val baseId = instance.config.getValue("base").jsonPrimitive.content
