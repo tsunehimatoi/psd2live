@@ -2766,37 +2766,50 @@ class WorkspaceLegacyBindingTest {
         val expected = outputs[index]
         assertTrue(expected.deformers.size > input.deformers.size)
         assertTrue(expected.deformers.take(input.deformers.size) != input.deformers)
-        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 3))
-        val instance = locked.copy(version = 3, plugin = artifact.reference)
-        val independent = stack.copy(instances = stack.instances.map { if (it.id == locked.id) instance else it })
-        val updated = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = independent.toJson()))
-        val actual = WorkspacePreviewBuilder().build(updated)
-        assertEquals(expected, assertNotNull(actual.modifierEvaluation).outputs[index])
-        assertEquals(model.rig.modifierOutput, actual.rig.modifierOutput)
-        assertEquals(RigIrCompiler.compile(model), RigIrCompiler.compile(actual))
+        for (version in listOf(3, 4)) {
+            val versions = if (version == 3) mapOf(locked.type to version) else
+                mapOf("mouth/fitted" to 3, "mouth.outline" to 3, "mouth.vowel" to 4, "mouth.capture" to 3, locked.type to version)
+            val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, version))
+            val instance = locked.copy(version = version, plugin = artifact.reference)
+            val independent = stack.copy(instances = stack.instances.map { current ->
+                val selection = versions[current.type] ?: return@map current
+                if (current.id == locked.id) instance
+                else current.copy(version = selection, plugin = assertNotNull(BundledAlgorithmArtifacts.find(current.type, selection)).reference)
+            })
+            val updated = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = independent.toJson()))
+            val actual = WorkspacePreviewBuilder().build(updated)
+            val actualOutputs = assertNotNull(actual.modifierEvaluation).outputs
+            stack.instances.forEachIndexed { stage, current ->
+                if (current.type in versions) assertEquals(outputs[stage], actualOutputs[stage], current.type)
+            }
+            assertEquals(model.rig.modifierOutput, actual.rig.modifierOutput)
+            assertEquals(RigIrCompiler.compile(model), RigIrCompiler.compile(actual))
 
-        val directory = Files.createTempDirectory("mouth-cheek-lid-v3-package-")
-        val preferences = Preferences.userRoot().node("mouth-cheek-lid-v3-package/" + UUID.randomUUID())
-        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
-        try {
-            val staging = Files.createDirectory(directory.resolve("package"))
-            Files.write(staging.resolve("plugin.json"), artifact.bytes)
-            for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            val directory = Files.createTempDirectory("mouth-cheek-lid-v$version-package-")
+            val preferences = Preferences.userRoot().node("mouth-cheek-lid-v$version-package/" + UUID.randomUUID())
+            val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+            try {
+                val staging = Files.createDirectory(directory.resolve("package"))
+                Files.write(staging.resolve("plugin.json"), artifact.bytes)
+                for (name in artifact.manifest.files.keys) {
+                    assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                }
+                val owner = RigModifierSource.of(actual)
+                val definition = if (version == 3) RigMouthCheekLidModifier.fittedDefinition(owner) else RigMouthCheekLidModifier.fittedMouthDefinition(owner)
+                val upstream = independent.instances.take(index).filter { it.type in definition.requires + definition.optionalUpstream }.map {
+                    ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+                }
+                val context = definition.authorContext(instance).withUpstream(upstream)
+                if (version == 4) assertEquals(3, context.upstream.single { it.type == "mouth/fitted" }.version)
+                val installed = store.install(staging.toString())
+                assertEquals(artifact.reference, installed.reference)
+                assertEquals(expected, ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(), actualOutputs[index - 1],
+                    instance, {}, store, context = context))
+            } finally {
+                store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+                preferences.removeNode()
+                ModifierPluginStore.deleteTree(directory)
             }
-            val definition = RigMouthCheekLidModifier.fittedDefinition(RigModifierSource.of(actual))
-            val upstream = stack.instances.take(index).filter { it.type in definition.requires + definition.optionalUpstream }.map {
-                ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
-            }
-            val context = definition.authorContext(instance).withUpstream(upstream)
-            val installed = store.install(staging.toString())
-            assertEquals(artifact.reference, installed.reference)
-            assertEquals(expected, ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(), input,
-                instance, {}, store, context = context))
-        } finally {
-            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
-            preferences.removeNode()
-            ModifierPluginStore.deleteTree(directory)
         }
     }
 
