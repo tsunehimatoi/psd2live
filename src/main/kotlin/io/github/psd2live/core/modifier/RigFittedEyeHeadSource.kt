@@ -16,16 +16,23 @@ import kotlinx.serialization.json.*
 
 /** Source observations for the head before and after its fitted-eye landmarks are available. */
 internal object RigFittedEyeHeadSource {
-    fun capture(owner: RigModifierSource, instance: RigModifierInstance): ModifierAlgorithmContext? {
+    fun capture(owner: RigModifierSource, instance: RigModifierInstance, modern: Boolean = false): ModifierAlgorithmContext? {
         val scaffold = owner.provider(instance)
         val prefix = owner.activeBefore(instance).filter { it.config["scaffold"] == JsonPrimitive(scaffold.id) &&
             it.targets.any(instance.targets::contains) }
         val head = prefix.singleOrNull { it.type == "face/fitted" } ?: return null
         val body = prefix.singleOrNull { it.type == "body/legacy" }
         require(instance.targets.isNotEmpty() && instance.targets.toSet() == scaffold.targets.toSet())
-        require(scaffold.version == 2 && prefix.all { (it == body || it == head) && it.version == 1 } &&
-            prefix.all { it.targets.toSet() == scaffold.targets.toSet() }) {
-            "Fitted eye v4 requires a shared v2 scaffold with the compatible fitted face and body"
+        if (modern) {
+            require(scaffold.version == 2 && head.version in setOf(1, 3) && body != null && body.version in 1..2 &&
+                prefix == listOf(body, head) && prefix.all { it.targets.toSet() == scaffold.targets.toSet() }) {
+                "Fitted eye v5 requires the complete shared v2 scaffold, legacy body, and fitted face"
+            }
+        } else {
+            require(scaffold.version == 2 && prefix.all { (it == body || it == head) && it.version == 1 } &&
+                prefix.all { it.targets.toSet() == scaffold.targets.toSet() }) {
+                "Fitted eye v4 requires a shared v2 scaffold with the compatible fitted face and body"
+            }
         }
         val ordinary = owner.scaffoldContext(scaffold)
         val canonicalTargets = ordinary.values.getValue("canonical_targets").jsonObject

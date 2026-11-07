@@ -114,7 +114,9 @@ internal object WorkspaceModifierPlan {
                 return cap
             }
             val storedType = registry.storedType(wanted)
-            val version = requireNotNull(registry.defaultDefinition(wanted)) { "Unknown modifier algorithm: $wanted" }.version
+            val definition = requireNotNull(registry.defaultDefinition(wanted)) { "Unknown modifier algorithm: $wanted" }
+            val version = definition.version
+            val packaged = ModifierPluginCatalog.algorithm(wanted, version)
             RigDepthTurnDefinition.requireCompatible(storedType, version, targets, available.asSequence())
             val spec = RigLegacyBindings.find(storedType)
             val preset = request["preset"]?.jsonPrimitive?.content
@@ -167,12 +169,14 @@ internal object WorkspaceModifierPlan {
                 }
                 motionConfiguration(model, preset, parameters)
             } else if (wanted in nativeTypes) request["config"]?.jsonObject ?: nativeConfiguration(model, wanted, targets, preset)
-            else if (storedType == wanted && ModifierPluginCatalog.algorithm(wanted) != null) {
-                val algorithm = ModifierPluginCatalog.algorithm(wanted)!!.second
+            else if (storedType == wanted && packaged != null) {
+                val algorithm = packaged.second
                 algorithm.requires.forEach { ensure(it) }
                 request["config"]?.jsonObject ?: algorithm.defaults
             } else if (spec == null) JsonObject(emptyMap()) else {
                 val structure = scaffold ?: requireNotNull(ensure(RigSourceModifiers.SCAFFOLD).id)
+                // The selected version may require additional preceding capabilities without changing the legacy config shape.
+                for (required in definition.requires - spec.requires) ensure(required, scaffold = structure, equivalent = !depthTurn)
                 val base = spec.module?.base?.let { ensure(it, scaffold = structure) }
                 val related = spec.related.associateWith { ensure(it, scaffold = structure, equivalent = !depthTurn) }
                 buildJsonObject {
@@ -181,7 +185,7 @@ internal object WorkspaceModifierPlan {
                     if (related.isNotEmpty()) put("dependencies", JsonObject(related.mapValues { JsonPrimitive(requireNotNull(it.value.id)) }))
                 }
             }
-            candidate = candidate.add(storedType, version, targets, configuration, group, plugin = ModifierPluginCatalog.algorithm(wanted, version)?.first?.reference)
+            candidate = candidate.add(storedType, version, targets, configuration, group, plugin = packaged?.first?.reference)
             val instance = candidate.instances.last()
             val cap = instance.capability()
             available += cap

@@ -4889,6 +4889,73 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun fittedEyeV5MatchesCompleteRecommendedPresetAndItsInstalledWorker(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, outfitDetails = true)
+        val config = WorkspacePresetBaseline.configure(art.config(), "modern")
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct,
+            WorkspaceInitialPreset(clothing = true), preferSourceBindings = true)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val face = stack.instances.single { it.type == "face/fitted" }
+        val body = stack.instances.single { it.type == "body/legacy" }
+        val eye = stack.instances.single { it.type == "eye/fitted" }
+        assertEquals(1, face.version)
+        assertEquals(2, body.version)
+        assertEquals(2, eye.version)
+        val index = stack.index(eye.id)
+        val expected = assertNotNull(baseline.modifierEvaluation).outputs
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(eye.type, 5))
+        val independent = eye.copy(version = 5, plugin = artifact.reference)
+
+        val directory = Files.createTempDirectory("fitted-eye-v5-")
+        val preferences = Preferences.userRoot().node("fitted-eye-v5/" + UUID.randomUUID())
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            for (name in artifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val installed = store.install(staging.toString())
+            assertEquals(artifact.reference, installed.reference)
+            for (faceVersion in listOf(1, 3)) {
+                val candidate = stack.copy(instances = stack.instances.map {
+                    when (it.id) {
+                        eye.id -> independent
+                        face.id -> if (faceVersion == 1) face else face.copy(version = faceVersion,
+                            plugin = assertNotNull(BuiltinModifierPlugins.reference(face.type, faceVersion)))
+                        else -> it
+                    }
+                })
+                fun candidateDocument(value: RigModifierStack) =
+                    initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = value.toJson()))
+                val prefix = candidate.copy(instances = candidate.instances.take(index + 1))
+                val partial = WorkspacePreviewBuilder().build(candidateDocument(prefix))
+                val outputs = assertNotNull(partial.modifierEvaluation).outputs
+                assertFaceEquals(expected[index - 1], outputs[index - 1])
+                assertFaceEquals(expected[index], outputs[index])
+                val actual = WorkspacePreviewBuilder().build(candidateDocument(candidate))
+                assertFaceEquals(RigIrCompiler.compile(baseline), RigIrCompiler.compile(actual))
+
+                val definition = RigFittedEyeDefinition.modernDefinition(RigModifierSource.of(actual))
+                val upstream = candidate.instances.take(index).filter {
+                    it.type in definition.requires
+                }.map {
+                    ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+                }
+                val context = definition.authorContext(independent).withUpstream(upstream)
+                assertFaceEquals(expected[index], ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(),
+                    outputs[index - 1], independent, {}, store, context = context,
+                    declaredParameters = definition.parameters(independent)))
+            }
+        } finally {
+            ModifierPluginWorkers.stop(artifact.reference)
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
     @Test fun independentLegacyFaceKeepsHeadMotionWithOrWithoutBody(): Unit = runBlocking {
         for (bodyVersion in listOf(null, 1, 2)) {
             val previous = legacyFaceFixture(null, bodyVersion)
@@ -5179,6 +5246,29 @@ class WorkspaceLegacyBindingTest {
             io.github.psd2live.format.compile.ExportOptions("outline")) { path, bytes -> files[path] = bytes }
         val imported = Cmo3ModelImport.read(files.getValue("outline.cmo3")).puppet
         assertTrue(ribbons.all { (_, id) -> imported.drawables.any { it.id.raw == id && it.mesh != null } })
+    }
+
+    @Test fun fittedEyeV5PlanAddsItsActualBodyAndFaceProviders(): Unit = runBlocking {
+        val f = Fixture(document(eyeDetails = true, pairedBrows = true, bilateralEyes = true))
+        f.install()
+        val before = f.now
+        val entrypoint = assertNotNull(BundledAlgorithmArtifacts.find("eye/fitted", 5)).manifest.algorithms.single().type
+        val plan = WorkspaceModifierPlan.prepare(before, buildJsonObject {
+            put("type", entrypoint)
+            put("targets", f.addition("eye/fitted", "eye").getValue("targets"))
+        })
+        val entries = plan.getValue("entries").jsonArray.map { it.jsonObject }
+        assertEquals(listOf("rig.scaffold", "body/legacy", "face/fitted", "eye/fitted"),
+            entries.map { it.getValue("type").jsonPrimitive.content })
+        assertEquals(5, entries.last().getValue("version").jsonPrimitive.int)
+        assertEquals(before.historyHead, f.now.historyHead)
+        f.edit("modifier_add_group", buildJsonObject {
+            put("group", plan.getValue("group")); put("entries", plan.getValue("entries"))
+        })
+        val stack = RigModifierStack.fromJson(requireNotNull(f.now.document.rigEdits.modifierStack))
+        assertEquals(BuiltinModifierPlugins.reference("eye/fitted", 5), stack.instances.last().plugin)
+        assertEquals("active", assertNotNull(f.now.model.rig.modifierReport).getValue("entries").jsonArray.last()
+            .jsonObject.getValue("status").jsonPrimitive.content)
     }
 
     @Test fun depthTurnPlanAddsTheLegacyFaceAndRejectsFittedFace(): Unit = runBlocking {

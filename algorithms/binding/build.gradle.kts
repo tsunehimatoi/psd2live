@@ -1276,6 +1276,43 @@ tasks.register("pluginEyeFittedV4") {
     }
 }
 
+val eyeFittedV5WorkerJar = registerIsolatedBindingWorker(
+    "eyeFittedV5", "eye-fitted-v5", "worker-eye-fitted-v5", "io.github.psd2live.algorithms.binding.EyeFittedV5Worker",
+)
+kotlin.target.compilations.named("eyeFittedV5") {
+    associateWith(kotlin.target.compilations.getByName("eyeFitted"))
+    associateWith(kotlin.target.compilations.getByName("eyeFittedV4"))
+}
+eyeFittedV5WorkerJar.configure {
+    from(eyeFitted.output)
+    from(sourceSets.getByName("eyeFittedV4").output)
+}
+
+tasks.register("pluginEyeFittedV5") {
+    dependsOn(eyeFittedV5WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-eye-fitted-v5")
+    val packageVersion = project.version.toString()
+    inputs.file(eyeFittedV5WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        eyeFittedV5WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6579652f666974746564.v5"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Fitted eyes with head turn",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/fitted","aliases":["eye/fitted"],"version":5,"name":"Fitted eyes with head turn","category":"eye",
+               "targets":["mesh"],"requires":["rig.scaffold","body/legacy","face/fitted"],"contextVersion":2,
+               "exclusiveFamily":"base:eye","reads":["*"],"writes":["mesh","deformer","parameter","relations","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val mouthSpringWorkerJar = registerIsolatedBindingWorker(
     "mouthSpring", "mouth-spring", "worker-mouth-spring", "io.github.psd2live.algorithms.binding.MouthSpringWorker",
 )
