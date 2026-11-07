@@ -1,6 +1,7 @@
 package io.github.psd2live.core.modifier
 
 import io.github.psd2live.algorithms.binding.BrowBlinkAlgorithm
+import io.github.psd2live.algorithms.binding.BrowBlinkV3Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.RigTuning
@@ -19,6 +20,17 @@ internal object RigBrowBlinkModifier {
         override val canonicalOptInType = BrowBlinkAlgorithm.TYPE
     }
 
+    private val fittedAlgorithm = object : ReadingModifierAlgorithmPlugin by BrowBlinkV3Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = BrowBlinkV3Algorithm.optionalUpstream
+        override val canonicalOptInType = BrowBlinkV3Algorithm.TYPE
+    }
+
+    fun fittedDefinition(source: RigModifierSource?): RigModifierDefinition = definition(source).copy(
+        version = BrowBlinkV3Algorithm.VERSION,
+        plugin = fittedAlgorithm,
+    )
+
     fun definition(source: RigModifierSource?): RigModifierDefinition =
         RigLegacyBindings.definition(RigLegacyBindings.spec(BrowBlinkAlgorithm.TYPE), source).copy(
             version = BrowBlinkAlgorithm.VERSION,
@@ -33,7 +45,7 @@ internal object RigBrowBlinkModifier {
 
     private fun RigModifierSource.capture(instance: RigModifierInstance): ModifierAlgorithmContext {
         val scaffold = provider(instance)
-        require(scaffold.version == 2) { "Brow blink v2 requires a shared v2 scaffold" }
+        require(scaffold.version == 2) { "Brow blink v${instance.version} requires a shared v2 scaffold" }
         val upstream = activeBefore(instance).filter { previous ->
             previous.config["scaffold"] == JsonPrimitive(scaffold.id) && previous.targets.any(instance.targets::contains)
         }
@@ -58,7 +70,7 @@ internal object RigBrowBlinkModifier {
             ScaffoldBinding.deformerId(scaffold, mesh, parent)
         }
         require(eye == null || measurements.targets.keys.all { ModifierTarget("mesh", it) in eye.targets }) {
-            "Brow blink v2 requires the same fitted eye provider for all fitted brow targets"
+            "Brow blink v${instance.version} requires the same fitted eye provider for all fitted brow targets"
         }
         val layers = analysis.layers.associateBy { it.source.id.raw }
         val names = JsonObject(measurements.targets.keys.associateWith { id ->

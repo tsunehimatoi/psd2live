@@ -930,6 +930,41 @@ tasks.register("pluginBrowBlink") {
     }
 }
 
+val browBlinkV3WorkerJar = registerIsolatedBindingWorker(
+    "browBlinkV3", "brow-blink-v3", "worker-brow-blink-v3", "io.github.psd2live.algorithms.binding.BrowBlinkV3Worker",
+)
+kotlin.target.compilations.named("browBlinkV3") {
+    associateWith(kotlin.target.compilations.getByName("browShape"))
+}
+browBlinkV3WorkerJar.configure {
+    from(sourceSets["browShape"].output) { include("**/BrowShapeInputs*.class") }
+}
+
+tasks.register("pluginBrowBlinkV3") {
+    dependsOn(browBlinkV3WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-brow-blink-v3")
+    val packageVersion = project.version.toString()
+    inputs.file(browBlinkV3WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        browBlinkV3WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.62726f772e626c696e6b.v3"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Brow blink",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/blink","aliases":["brow.blink"],"version":3,"name":"Brow blink","category":"brow",
+               "targets":["mesh"],"requires":["rig.scaffold","brow/fitted"],"contextVersion":2,
+               "reads":["mesh","parameter","deformer"],"writes":["mesh","deformer"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 tasks.register("pluginEyeSquash") {
     dependsOn(eyeSquashWorkerJar)
     val output = layout.buildDirectory.dir("plugin-eye-squash")
