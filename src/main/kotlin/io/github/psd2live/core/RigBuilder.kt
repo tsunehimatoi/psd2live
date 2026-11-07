@@ -1560,9 +1560,14 @@ object RigBuilder {
 			classifiedByDrawable[id] = layer
 			pageByDrawable[id.raw] = placement.page
 			sourceBoundsByDrawable[id.raw] = parts.neutralBounds
-			for (lip in lipsStage(drawable, layer, parts, parentFrame, atlas, generatedLips, config, meshConfig, stages,
-				context.fittedMouth(config)?.takeIf { it.covers(layer) }?.rig, context.headTurn(config).takeUnless {
-					context.faceTurn(config) != null && drawable.parentDeformerId.let { p -> p == faceWarpId || p in context.underFace } })) {
+			val lips = if (config.mouthOutlineEnabled && !config.meshOnly && parts.mouthAperture != null && generatedLips.isNotEmpty()) {
+				val mouthRig = context.fittedMouth(config)?.takeIf { it.covers(layer) }?.rig
+				val turn = context.headTurn(config).takeUnless {
+					context.faceTurn(config) != null && drawable.parentDeformerId.let { p -> p == faceWarpId || p in context.underFace }
+				}
+				lipsStage(drawable, layer, parts, parentFrame, atlas, generatedLips, config, meshConfig, stages, mouthRig, turn)
+			} else emptyList()
+			for (lip in lips) {
 				drawables += lip.drawable
 				lip.path?.let { builtDeformPaths += it }
 				classifiedByDrawable[lip.drawable.id] = lip.layer
