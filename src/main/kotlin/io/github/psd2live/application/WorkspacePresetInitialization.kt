@@ -2,7 +2,10 @@ package io.github.psd2live.application
 
 import io.github.psd2live.algorithms.binding.BrowLegacyV2Algorithm
 import io.github.psd2live.algorithms.binding.EyeFittedV5Algorithm
+import io.github.psd2live.algorithms.binding.EyeGazeLidV3Algorithm
 import io.github.psd2live.algorithms.binding.EyeLegacySourceAlgorithm
+import io.github.psd2live.algorithms.binding.EyeSmileV3Algorithm
+import io.github.psd2live.algorithms.binding.EyeWideV3Algorithm
 import io.github.psd2live.algorithms.binding.FittedFaceV3Algorithm
 import io.github.psd2live.algorithms.binding.LegacyBodyV2Algorithm
 import io.github.psd2live.algorithms.binding.LegacyFaceV2Algorithm
@@ -83,17 +86,25 @@ internal object WorkspacePresetInitialization {
         val scaffold = stack.instances.singleOrNull { it.type == RigSourceModifiers.SCAFFOLD && it.version == 2 }
         val fittedSources = if (preferSourceBindings && scaffold != null && config.recipe == RigRecipe.Modern && fittedFace &&
             !config.featureDisplacementEnabled && config.rigTuning == RigTuning() && requestedVersions.isEmpty() && freshSource(config)) {
-            val versions = mapOf(RigLegacyBindings.FITTED_FACE to FittedFaceV3Algorithm.VERSION,
-                RigModules.EYE_FITTED.id to EyeFittedV5Algorithm.VERSION)
-            val packages = versions.mapNotNull { (type, version) ->
-                val entry = stack.instances.singleOrNull { it.type == type } ?: return@mapNotNull null
-                if (entry.config["scaffold"] != JsonPrimitive(scaffold.id) || entry.targets.toSet() != scaffold.targets.toSet()) return@mapNotNull null
-                val reference = BuiltinModifierPlugins.reference(type, version) ?: return@mapNotNull null
-                if (!ModifierPluginCatalog.available(type, version, reference)) return@mapNotNull null
-                type to (version to reference)
+            fun packages(versions: Map<String, Int>): Map<String, Pair<Int, ModifierPluginReference>> {
+                val selected = versions.mapNotNull { (type, version) ->
+                    val entry = stack.instances.singleOrNull { it.type == type } ?: return@mapNotNull null
+                    if (entry.config["scaffold"] != JsonPrimitive(scaffold.id) || entry.targets.toSet() != scaffold.targets.toSet()) return@mapNotNull null
+                    val reference = BuiltinModifierPlugins.reference(type, version) ?: return@mapNotNull null
+                    if (!ModifierPluginCatalog.available(type, version, reference)) return@mapNotNull null
+                    type to (version to reference)
+                }
+                return if (selected.size == versions.size) selected.toMap() else emptyMap()
             }
-            // Face and eye versions are one compatible source profile.
-            if (packages.size == versions.size) packages.toMap() else emptyMap()
+            val headAndEye = packages(mapOf(RigLegacyBindings.FITTED_FACE to FittedFaceV3Algorithm.VERSION,
+                RigModules.EYE_FITTED.id to EyeFittedV5Algorithm.VERSION))
+            if (headAndEye.isEmpty()) headAndEye else {
+                // These modules share fitted lid and head-turn inputs. Use a single compatible sequence.
+                val lidVersions = mapOf(RigModules.EYE_SMILE.id to EyeSmileV3Algorithm.VERSION,
+                    RigModules.EYE_WIDE.id to EyeWideV3Algorithm.VERSION, RigModules.EYE_GAZE_LID.id to EyeGazeLidV3Algorithm.VERSION)
+                val plannedLids = lidVersions.filterKeys { type -> stack.instances.any { it.type == type } }
+                headAndEye + packages(plannedLids)
+            }
         } else emptyMap()
         val sourceVersions = if (preferSourceBindings && scaffold != null) buildMap {
             put(LegacyBodyV2Algorithm.TYPE, LegacyBodyV2Algorithm.VERSION)
