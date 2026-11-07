@@ -114,7 +114,10 @@ class ModifierPerfTool {
                         report.appendLine("$label legacy templates: " +
                             stages.filterKeys { it.startsWith("modifier legacy template:") }.values.sumOf { it.second })
                         for (type in versions.keys) {
-                            for (stage in listOf("modifier legacy template: $type", "modifier evaluate: $type")) {
+                            val consumers = stages.keys.filter {
+                                it.startsWith("modifier template consumer: ") && it.substringAfterLast(" -> ") == type
+                            }
+                            for (stage in listOf("modifier legacy template: $type", "modifier evaluate: $type") + consumers) {
                                 stages[stage]?.let { (time, calls) -> report.appendLine("$label $stage: %.1f ms x%d".format(time, calls)) }
                             }
                         }
