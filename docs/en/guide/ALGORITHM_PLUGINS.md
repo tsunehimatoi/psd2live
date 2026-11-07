@@ -38,6 +38,8 @@ Gaze-following lids v2 adds shared and per-eye gaze from the source eyelids. It 
 
 Eye emotion v2 adds fitted anger, sadness and squint shapes. It requires a shared v2 scaffold and compatible fitted eyes. Use v1 when gaze or brow-lid or cheek-lid coupling already precedes it, or with edited or lowered eyelid geometry.
 
+Eye highlight v2 computes parallax and fade from source measurements and the fitted eye and head bindings. Use v1 when the highlight has been reparented or needs a new head-turn deformer.
+
 Mouth vowels v2 adds the five standard vowel parameters and their fitted shapes. It requires a shared source scaffold and a compatible fitted mouth. Use v1 with a separate closed-mouth drawing, preceding mouth modules or edited mouth topology or frames.
 
 Mouth capture v2 adds mouth-tracking keyforms using the original mesh and a compatible fitted mouth. It can follow an outline or vowel modifier. Use v1 for separate closed-mouth drawings, edited or lowered meshes, or other preceding mouth modules.

@@ -1537,3 +1537,32 @@ tasks.register("pluginMouthCapture") {
         """.trimIndent())
     }
 }
+
+val eyeHighlightWorkerJar = registerIsolatedBindingWorker(
+    "eyeHighlight", "eye-highlight", "worker-eye-highlight", "io.github.psd2live.algorithms.binding.EyeHighlightWorker",
+)
+
+tasks.register("pluginEyeHighlight") {
+    dependsOn(eyeHighlightWorkerJar)
+    val output = layout.buildDirectory.dir("plugin-eye-highlight")
+    val packageVersion = project.version.toString()
+    inputs.file(eyeHighlightWorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        eyeHighlightWorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6579652e686967686c69676874.v2"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Highlight parallax",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/highlight","aliases":["eye.highlight"],"version":2,"name":"Highlight parallax","category":"eye",
+               "targets":["mesh"],"requires":["rig.scaffold","eye/fitted","face/legacy"],"contextVersion":2,
+               "reads":["mesh","parameter","hierarchy","canvas","deformer"],"writes":["mesh"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}

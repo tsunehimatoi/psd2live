@@ -8,6 +8,7 @@ import io.github.psd2live.algorithms.binding.DepthTurnV2Algorithm
 import io.github.psd2live.algorithms.binding.EyeSmileAlgorithm
 import io.github.psd2live.algorithms.binding.EyeAftershockAlgorithm
 import io.github.psd2live.algorithms.binding.EyeEmotionAlgorithm
+import io.github.psd2live.algorithms.binding.EyeHighlightAlgorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV2Algorithm
 import io.github.psd2live.algorithms.binding.LegacyFaceV2Algorithm
 import io.github.psd2live.core.*
@@ -2268,6 +2269,117 @@ class WorkspaceLegacyBindingTest {
         f.edit("modifier_apply", buildJsonObject { put("id", "squash") })
         assertEquals(actual, RigIrCompiler.compile(f.now.model))
         assertEquals(actual, RigIrCompiler.compile(WorkspacePreviewBuilder().build(f.now.document)))
+    }
+
+    @Test fun independentEyeHighlightMatchesLockedVersionAndInstalledWorker(): Unit = runBlocking {
+        val f = Fixture(document(eyeDetails = true, bilateralEyes = true))
+        f.install()
+        f.group(listOf("body/legacy", "face/legacy", "eye/fitted"))
+        val dependency = buildJsonObject { put("scaffold", "structure"); put("base", "eye") }
+        for (type in listOf("eye.wide", "eye.lid-fade")) {
+            f.edit("modifier_add", f.addition(type, type, config = dependency))
+        }
+        val config = JsonObject(dependency + mapOf(
+            "values" to buildJsonObject { put("parallax", 148f) },
+            "dependencies" to buildJsonObject { put("face/legacy", "face") },
+        ))
+        val addition = f.addition("eye.highlight", "highlight", config = config)
+        val prefix = f.now
+        val previous = assertNotNull(prefix.model.rig.modifierOutput)
+        f.edit("modifier_add", addition)
+        val expected = assertNotNull(f.now.model.rig.modifierOutput)
+        assertEquals(1, RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.last().version)
+        f.runtime.checkout(f.now.projectId, f.now.state, prefix.historyHead)
+        f.edit("modifier_add", JsonObject(addition + ("version" to JsonPrimitive(2))))
+        val current = f.now.model
+        val actual = assertNotNull(current.rig.modifierOutput)
+        assertEquals(expected.parameters, actual.parameters)
+        assertEquals(expected.parameterTree, actual.parameterTree)
+        for ((old, new) in expected.meshes.zip(actual.meshes)) assertEquals(old, new, old.id)
+        assertEquals(expected, actual)
+
+        val stack = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
+        val instance = stack.instances.last()
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find("eye.highlight", 2))
+        assertEquals(artifact.reference, instance.plugin)
+        val directory = Files.createTempDirectory("eye-highlight-package-")
+        val preferences = Preferences.userRoot().node("eye-highlight-package/" + UUID.randomUUID())
+        val store = ModifierPluginStore(directory.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(directory.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            for (name in artifact.manifest.files.keys) {
+                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val providers = stack.instances.dropLast(1).map { provider ->
+                ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
+                    provider.id, provider.config, provider.outputAliases, provider.plugin)
+            }
+            val definition = RigEyeHighlightModifier.definition(RigModifierSource.of(current))
+            val context = definition.authorContext(instance).withUpstream(providers)
+            val id = mesh(f, "highlight").id.raw
+            val original = previous.meshes.single { it.id == id }
+            val authored = original.copy(opacity = .65f)
+            val withAuthoredOpacity = previous.copy(meshes = previous.meshes.map { if (it.id == id) authored else it })
+            val residual = EyeHighlightAlgorithm().changes(withAuthoredOpacity, instance, context) {}.meshes.updated.single()
+            assertEquals(authored, residual.before)
+            val fade = residual.after.channels.getValue(Channel.OPACITY)
+            assertEquals(.65f, (fade.cells.last().form as ChannelValue.Scalar).value, .00001f)
+            assertEquals(actual.meshes.single { it.id == id }.offsets, residual.after.offsets)
+
+            repeat(2) {
+                val installed = store.install(staging.toString())
+                assertEquals(artifact.reference, installed.reference)
+                val algorithm = installed.manifest.algorithms.single()
+                val external = instance.copy(type = algorithm.type)
+                val adapter = ModifierPluginCatalog.definitions(store, captured = listOf(definition)).single {
+                    it.type == external.type && it.version == external.version
+                }
+                val workerContext = adapter.authorContext(external).withUpstream(providers.filter {
+                    it.capability in adapter.requires + adapter.optionalUpstream
+                })
+                assertEquals(actual, (adapter.plugin as ContextualModifierAlgorithmPlugin).evaluate(previous, external, workerContext) {})
+                ModifierPluginWorkers.stop(installed.reference)
+                store.uninstall(installed.reference)
+            }
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(directory)
+        }
+        val second = f.addition("eye.highlight", "highlight-again", config = config)
+        f.edit("modifier_add", JsonObject(second + ("version" to JsonPrimitive(2))))
+        assertEquals(actual, f.now.model.rig.modifierOutput)
+        val compiled = RigIrCompiler.compile(current)
+        f.edit("modifier_apply", buildJsonObject { put("id", "highlight") })
+        assertEquals(compiled, RigIrCompiler.compile(f.now.model))
+        assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(f.now.document)))
+    }
+
+    @Test fun independentEyeHighlightUsesFittedHeadTurnAndKeepsPriorHighlightFade(): Unit = runBlocking {
+        val f = Fixture(document(eyeDetails = true, bilateralEyes = true)); f.install()
+        f.group(listOf("body/legacy", "face/fitted"))
+        f.edit("modifier_add", JsonObject(f.addition("eye/fitted", "eye") + ("version" to JsonPrimitive(4))))
+        val config = buildJsonObject {
+            put("scaffold", "structure"); put("base", "eye")
+            putJsonObject("dependencies") { put("face/legacy", "face") }
+        }
+        fun addition(id: String, parallax: Float, version: Int) = JsonObject(f.addition("eye.highlight", id,
+            config = JsonObject(config + ("values" to buildJsonObject { put("parallax", parallax) }))) +
+            ("version" to JsonPrimitive(version)))
+        val before = f.now
+        f.edit("modifier_add", addition("highlight", 70f, 1))
+        f.edit("modifier_add", addition("second", 153f, 1))
+        val expected = f.now.model
+        f.runtime.checkout(f.now.projectId, f.now.state, before.historyHead)
+        f.edit("modifier_add", addition("highlight", 70f, 2))
+        f.edit("modifier_apply", buildJsonObject { put("id", "highlight") })
+        f.edit("modifier_add", addition("second", 153f, 2))
+        compare(expected, f.now.model, listOf(
+            emptyMap(),
+            mapOf(StandardParameters.EYE_L_OPEN to .4f, StandardParameters.ANGLE_X to -26f, StandardParameters.ANGLE_Y to 16f),
+            mapOf(StandardParameters.EYE_L_OPEN to .7f, StandardParameters.ANGLE_X to 29f, StandardParameters.ANGLE_Y to -23f),
+        ))
     }
 
     @Test fun widenedLidsFadingLinesAndHighlightsComposeWithHeadTurnsAndApplyAsOrdinaryContent(): Unit = runBlocking {
