@@ -160,6 +160,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "browLidV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLidV4Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLidV5Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "browLidV6Elements"))
 	implementation(platform("io.ktor:ktor-bom:3.5.1"))
 	// Engine ported from Umamo (format, runtime, interop, render, edit); it brings its own libraries.
 	implementation(project(":umamo"))
@@ -529,6 +530,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginBrowLidV5")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-lid-v5")) {
         into("algorithm-plugins/brow-lid-v5")
+    }
+    dependsOn(":algorithms:binding:pluginBrowLidV6")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-lid-v6")) {
+        into("algorithm-plugins/brow-lid-v6")
     }
     dependsOn(":algorithms:binding:pluginBrowLid")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-lid")) {
