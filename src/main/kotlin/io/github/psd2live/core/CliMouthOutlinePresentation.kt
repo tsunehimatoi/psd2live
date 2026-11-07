@@ -2,6 +2,8 @@ package io.github.psd2live.core
 
 import io.github.psd2live.core.modifier.RigModifierStack
 import org.umamo.runtime.model.DrawableId
+import org.umamo.runtime.model.OrgChild
+import org.umamo.runtime.model.withDerivedRenderRoot
 
 /** Final source pose forms for generated ribbons in a fresh raw-PSD CLI export. */
 internal object CliMouthOutlinePresentation {
@@ -61,5 +63,35 @@ internal object CliMouthOutlinePresentation {
         }) { "CLI lip forms require mesh-local lowering" }
         val adjusted = model.copy(drawables = model.drawables.map { output[it.id] ?: it })
         return preview.copy(rig = preview.rig.copy(puppet = adjusted))
+    }
+
+    fun orderMeshes(preview: RigPreviewModel, measured: PipelineAnalysis): RigPreviewModel {
+        val rig = preview.rig
+        val meshByLayer = rig.ownLayerIdByDrawableId.entries.groupBy({ it.value }, { DrawableId(it.key) })
+        val lips = measured.layers.mapNotNull { it.source as? MouthLipLayer }.sortedBy { it.side }
+        val pairs = lips.mapNotNull { lip ->
+            val owner = meshByLayer[lip.ownerId]?.singleOrNull() ?: return@mapNotNull null
+            val mesh = meshByLayer[lip.id.raw]?.singleOrNull() ?: return@mapNotNull null
+            owner to mesh
+        }
+        if (pairs.isEmpty()) return preview
+        val lipByOwner = pairs.groupBy({ it.first }, { it.second })
+        val ownerByLip = pairs.associate { (owner, lip) -> lip to owner }
+        fun <T> order(items: List<T>, id: (T) -> DrawableId?): List<T> {
+            val byId = items.mapNotNull { item -> id(item)?.let { it to item } }.toMap()
+            return buildList {
+                for (item in items) {
+                    val mesh = id(item)
+                    if (ownerByLip[mesh] in byId) continue
+                    add(item)
+                    lipByOwner[mesh].orEmpty().mapNotNullTo(this, byId::get)
+                }
+            }
+        }
+        fun children(items: List<OrgChild>) = order(items) { (it as? OrgChild.Drawable)?.id }
+        val puppet = rig.puppet
+        return preview.copy(rig = rig.copy(puppet = puppet.copy(drawables = order(puppet.drawables) { it.id },
+            parts = puppet.parts.map { it.copy(children = children(it.children)) },
+            rootChildren = children(puppet.rootChildren)).withDerivedRenderRoot()))
     }
 }

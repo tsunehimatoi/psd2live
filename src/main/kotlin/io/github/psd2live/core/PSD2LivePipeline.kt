@@ -51,7 +51,7 @@ class PSD2LivePipeline {
 	fun inspect(psd: Path, config: PipelineConfig = PipelineConfig()): PipelineAnalysis =
 		RigGenerationSource.analyze(readPsd(psd), config)
 
-	private fun readPsd(psd: Path): SourceArt {
+	internal fun readPsd(psd: Path): SourceArt {
 		require(Files.isRegularFile(psd)) { tr("error.psdMissing", psd) }
 		val bytes = Files.readAllBytes(psd)
 		require(PsdReader.matches(bytes)) { tr("error.invalidPsd", psd) }

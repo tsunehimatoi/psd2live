@@ -3,6 +3,7 @@ package io.github.psd2live.core
 import io.github.psd2live.core.modifier.RigModifierStack
 import io.github.psd2live.core.recipe.RigModules
 import org.umamo.runtime.model.Deformer
+import org.umamo.runtime.model.DeformerId
 import org.umamo.runtime.model.DrawableMesh
 
 /** Restores direct source-coordinate sampling for hair in a fresh raw-PSD CLI export. */
@@ -52,14 +53,23 @@ internal object CliHairChainsPresentation {
             }
             actual.copy(mesh = DrawableMesh(mesh.positions, observed.uvs, observed.indices), geometryGrid = native.geometryGrid)
         }
-        // Keep unrelated records in place and put the selected chains in their source order.
-        val sourceOrder = nativeCarriers.values.iterator()
-        val carriers = model.deformers.map { slot ->
-            if (slot.id !in nativeCarriers) return@map slot
-            val native = sourceOrder.next()
-            val actual = deformers.getValue(native.id) as Deformer.Warp
-            actual.copy(geometryGrid = native.geometryGrid, blendShapes = native.blendShapes)
+        // Blend-shape lowering appends mesh carriers in drawable order, parent before child.
+        val sourceOrder = source.deformers.mapTo(LinkedHashSet()) { it.id }
+        for (mesh in drawables) {
+            val carriers = ArrayList<DeformerId>()
+            var parent = mesh.parentDeformerId
+            while (parent != null && parent !in sourceOrder) {
+                val carrier = deformers[parent] ?: break
+                carriers.add(parent)
+                parent = carrier.parent
+            }
+            sourceOrder.addAll(carriers.asReversed())
         }
+        val order = sourceOrder.withIndex().associate { (index, id) -> id to index }
+        val carriers = model.deformers.map { actual ->
+            val native = nativeCarriers[actual.id] ?: return@map actual
+            (actual as Deformer.Warp).copy(geometryGrid = native.geometryGrid, blendShapes = native.blendShapes)
+        }.sortedBy { order[it.id] ?: Int.MAX_VALUE }
         return preview.copy(rig = preview.rig.copy(puppet = model.copy(drawables = drawables, deformers = carriers)))
     }
 }

@@ -17,9 +17,7 @@ import io.github.psd2live.project.WorkspaceDocument
 import io.github.psd2live.project.WorkspaceSettingsCodec
 import kotlinx.coroutines.runBlocking
 import org.umamo.runtime.model.DrawableId
-import org.umamo.runtime.model.OrgChild
 import org.umamo.runtime.model.ParameterId
-import org.umamo.runtime.model.withDerivedRenderRoot
 import kotlin.test.Test
 
 /** Compare a raw PSD export with a stack that uses names derived from the same source. */
@@ -31,8 +29,8 @@ class CliPresetMigrationTool {
             generatePhysics = setting("PSD2LIVE_CLI_PHYSICS", "1") == "1",
             exportMotions = setting("PSD2LIVE_CLI_MOTIONS", "1") == "1")
         val pipeline = PSD2LivePipeline().apply { deferRuntimeBundles = true }
-        val native = pipeline.buildPreview(sample.path, config)
-        val source = native.analysis.source
+        val source = pipeline.readPsd(sample.path)
+        val native = pipeline.buildPreview(source, config)
         val overlay = config.rigEdits.copy(modifierStack = RigModifierStack().toJson())
         val document = WorkspaceDocument(source, emptyMap(), emptySet(), emptyMap(), emptyMap(), overlay,
             WorkspaceSettingsCodec.encode(config.copy(rigEdits = overlay)))
@@ -95,8 +93,9 @@ class CliPresetMigrationTool {
                 compare("shared atlas", expected, RigIrCompiler.compile(packed, tileArt = true))
                 val moduleIds = RigModules.parameters(config, RecipeSubject.of(measured)).map { ParameterId(it.id) } +
                     chains.flatMap { it.native.parameters }
-                val ordered = orderExportMetadata(orderLipMeshes(packed, measured), moduleIds, config)
-                val presented = CliMouthOutlinePresentation.apply(ordered, config)
+                val ordered = orderExportMetadata(CliMouthOutlinePresentation.orderMeshes(packed, measured), moduleIds, config)
+                val ribbons = CliMouthOutlinePresentation.apply(ordered, config)
+                val presented = CliHairChainsPresentation.apply(ribbons, config)
                 compare("shared export layout", expected, RigIrCompiler.compile(presented, tileArt = true))
             } else appendLine("Shared atlas comparison unavailable: a mesh has no matching source tile.")
         })
@@ -113,36 +112,6 @@ class CliPresetMigrationTool {
         })
     }
 
-    private fun orderLipMeshes(preview: RigPreviewModel, measured: PipelineAnalysis): RigPreviewModel {
-        val rig = preview.rig
-        val meshByLayer = rig.ownLayerIdByDrawableId.entries.groupBy({ it.value }, { DrawableId(it.key) })
-        val lips = measured.layers.mapNotNull { it.source as? MouthLipLayer }.sortedBy { it.side }
-        val pairs = lips.mapNotNull { lip ->
-            val owner = meshByLayer[lip.ownerId]?.singleOrNull() ?: return@mapNotNull null
-            val mesh = meshByLayer[lip.id.raw]?.singleOrNull() ?: return@mapNotNull null
-            owner to mesh
-        }
-        if (pairs.isEmpty()) return preview
-        val lipByOwner = pairs.groupBy({ it.first }, { it.second })
-        val ownerByLip = pairs.associate { (owner, lip) -> lip to owner }
-        fun <T> order(items: List<T>, id: (T) -> DrawableId?): List<T> {
-            val byId = items.mapNotNull { item -> id(item)?.let { it to item } }.toMap()
-            return buildList {
-                for (item in items) {
-                    val mesh = id(item)
-                    if (ownerByLip[mesh] in byId) continue
-                    add(item)
-                    lipByOwner[mesh].orEmpty().mapNotNullTo(this, byId::get)
-                }
-            }
-        }
-        fun children(items: List<OrgChild>) = order(items) { (it as? OrgChild.Drawable)?.id }
-        val puppet = rig.puppet
-        return preview.copy(rig = rig.copy(puppet = puppet.copy(drawables = order(puppet.drawables) { it.id },
-            parts = puppet.parts.map { it.copy(children = children(it.children)) },
-            rootChildren = children(puppet.rootChildren)).withDerivedRenderRoot()))
-    }
-
     private fun orderExportMetadata(preview: RigPreviewModel, moduleIds: List<ParameterId>, config: PipelineConfig): RigPreviewModel {
         val rig = preview.rig
         val puppet = rig.puppet
@@ -155,7 +124,10 @@ class CliPresetMigrationTool {
         // Compare the historical evaluation order. The generated values remain the plugin outputs.
         val physicsOrder = PhysicsCatalog.groups(preview.analysis, config, parameters.keys.mapTo(HashSet()) { it.raw })
             .map { it.id }
-        val ordered = puppet.copy(parameters = (preset + custom).mapNotNull(parameters::get),
+        val drawables = puppet.drawables.map { mesh ->
+            if (mesh.textureSourceId?.let(SeeThroughLayers::copyId) == mesh.id) mesh.copy(isSelectable = false) else mesh
+        }
+        val ordered = puppet.copy(parameters = (preset + custom).mapNotNull(parameters::get), drawables = drawables,
             parameterTree = StandardParameters.tree(custom, modules, parameters.keys), parameterLinks = StandardParameters.links(preset.toSet()))
         return preview.copy(rig = rig.copy(puppet = ordered, modifierOutput = output.copy(
             physics = output.physics.copy(groups = PhysicsCatalog.ordered(output.physics.groups, physicsOrder) { it.id }))))
@@ -206,6 +178,12 @@ class CliPresetMigrationTool {
         records("parameters", expected.parameters, actual.parameters) { it.id }
         records("meshes", expected.meshes, actual.meshes) { it.id }
         records("deformers", expected.deformers, actual.deformers) { it.id }
+        val referenceDeformers = expected.deformers.map { it.id }
+        val observedDeformers = actual.deformers.map { it.id }
+        if (referenceDeformers.toSet() == observedDeformers.toSet() && referenceDeformers != observedDeformers) {
+            appendLine("  deformer order differences = " + referenceDeformers.zip(observedDeformers)
+                .mapIndexedNotNull { index, (before, after) -> if (before == after) null else "$index: $before -> $after" })
+        }
         records("parts", expected.parts, actual.parts) { it.id }
         records("physics", expected.physics.groups, actual.physics.groups) { it.id }
         records("motions", expected.clips, actual.clips) { it.id }
