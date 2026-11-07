@@ -4,7 +4,8 @@ import io.github.psd2live.application.*
 import io.github.psd2live.core.*
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
-import kotlin.test.assertEquals
+import kotlin.test.fail
+import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.project.config
 import io.github.psd2live.core.modifier.*
 import kotlinx.serialization.json.*
@@ -69,7 +70,21 @@ class ModifierPerfTool {
                     try {
                         RigStageCache.enabled = false
                         val cold = PSD2LivePipeline().buildPreview(capture.document.source, capture.document.config())
-                        assertEquals(RigIrCompiler.compile(capture.model, tileArt = true), RigIrCompiler.compile(cold, tileArt = true))
+                        val expected = RigIrCompiler.compile(capture.model, tileArt = true)
+                        val replayed = RigIrCompiler.compile(cold, tileArt = true)
+                        if (expected != replayed) {
+                            val fields = RigIR::class.java.declaredFields.filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
+                                .filter { field -> field.isAccessible = true; field.get(expected) != field.get(replayed) }
+                                .joinToString { it.name }
+                            val warmSteps = capture.model.modifierEvaluation?.outputs.orEmpty()
+                            val coldSteps = cold.modifierEvaluation?.outputs.orEmpty()
+                            val first = warmSteps.zip(coldSteps).indexOfFirst { (warm, rebuilt) -> warm != rebuilt }
+                            val modifier = cold.modifierEvaluation?.entries?.getOrNull(first)?.instance?.type
+                            val detail = "Uncached replay differs in $fields" + (modifier?.let { ". First differing step $it" } ?: "")
+                            report.appendLine(detail)
+                            output("modifier-perf").resolve("report.txt").writeText(report.toString())
+                            fail(detail)
+                        }
                         report.appendLine("uncached replay: identical complete IR")
                         output("modifier-perf").resolve("report.txt").writeText(report.toString())
                     } finally { RigStageCache.enabled = enabled }
