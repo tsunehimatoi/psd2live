@@ -64,12 +64,19 @@ internal class RigModifierRegistry(definitions: List<RigModifierDefinition>) {
     }
 
     fun definition(instance: RigModifierInstance): RigModifierDefinition = requireNotNull(
-        (if (BuiltinModifierPlugins.matches(instance)) entries[Triple(instance.type, instance.version, null)] else null)
-            ?: entries[Triple(instance.type, instance.version, instance.plugin)]) {
+        definition(instance.type, instance.version, instance.plugin)) {
         "Unsupported modifier algorithm: ${instance.type}@${instance.version}"
-    }.also { require(it.pluginReference == instance.plugin || it.pluginReference == null && BuiltinModifierPlugins.matches(instance)) { "Missing pinned plugin for ${instance.type}: ${instance.plugin}" } }
+    }
 
-    fun provides(actual: String, required: String): Boolean = actual == required || entries.values.any { it.type == actual && required in it.provides }
+    private fun definition(type: String, version: Int, plugin: ModifierPluginReference?): RigModifierDefinition? =
+        (if (plugin != null && plugin == BuiltinModifierPlugins.reference(type, version)) entries[Triple(type, version, null)] else null)
+            ?: entries[Triple(type, version, plugin)]
+
+    fun provides(instance: RigModifierInstance, required: String): Boolean = instance.type == required ||
+        required in definition(instance.type, instance.version, instance.plugin)?.provides.orEmpty()
+
+    fun provides(capability: ModifierCapability, required: String): Boolean = capability.type == required ||
+        required in (capability.provides ?: definition(capability.type, capability.version, capability.plugin)?.provides.orEmpty())
 
     val definitions: List<RigModifierDefinition> get() = entries.values.toList()
 }
@@ -170,8 +177,7 @@ internal class RigModifierEvaluator(
                     entry.contributions.filter { it.change != ModifierChange.REUSED }.forEach {
                         writers[it.kind to it.id] = instance.id to definition
                     }
-                    available += ModifierCapability(instance.type, instance.version, instance.targets, instance.id,
-                        definition.appliedConfig(instance), instance.outputAliases, instance.plugin)
+                    available += instance.capability(definition.appliedConfig(instance), definition.provides)
                 }
                 continue
             }
@@ -182,7 +188,7 @@ internal class RigModifierEvaluator(
             }
             val missing = definition.requires.filterTo(linkedSetOf()) { type ->
                 val provider = definition.providers(instance)[type]
-                instance.targets.any { target -> available.none { registry.provides(it.type, type) && target in it.targets && (provider == null || it.id == provider) } }
+                instance.targets.any { target -> available.none { registry.provides(it, type) && target in it.targets && (provider == null || it.id == provider) } }
             }
             for ((parameter, provider) in instance.parameterProviders) {
                 if (available.none { it.id == provider } || current.parameters.none { it.id == parameter }) {
@@ -218,7 +224,7 @@ internal class RigModifierEvaluator(
             val authorContext = if (definition.upstreamInputs || definition.plugin is ReadingModifierAlgorithmPlugin) {
                 val providers = definition.providers(instance)
                 val capabilities = (definition.requires + definition.optionalUpstream).sorted().flatMap { required ->
-                    available.filter { registry.provides(it.type, required) &&
+                    available.filter { registry.provides(it, required) &&
                         it.targets.any { target -> target in instance.targets } &&
                         (providers[required] == null || it.id == providers[required]) }.map {
                         ModifierUpstreamCapability(required, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
@@ -294,7 +300,7 @@ internal class RigModifierEvaluator(
             }
             entries += ModifierEvaluation(instance, ModifierStatus.ACTIVE, contributions = contributions,
                 ownedKeyforms = ownedKeyforms(before, generated), overrideIssues = overridden.issues)
-            available += ModifierCapability(instance.type, instance.version, instance.targets, instance.id, definition.appliedConfig(instance), instance.outputAliases, instance.plugin)
+            available += instance.capability(definition.appliedConfig(instance), definition.provides)
             outputs += current
         }
         checkpoint()
@@ -329,9 +335,9 @@ internal class RigModifierEvaluator(
             }
             for (type in definition.requires) for (target in instance.targets) {
                 val provider = definition.providers(instance)[type]
-                val earlier = stack.appliedCapabilities.any { registry.provides(it.type, type) && target in it.targets && (provider == null || it.id == provider) } ||
-                    stack.instances.take(index).any { it.enabled && registry.provides(it.type, type) && target in it.targets && (provider == null || it.id == provider) }
-                val later = stack.instances.drop(index + 1).any { it.enabled && registry.provides(it.type, type) && target in it.targets && (provider == null || it.id == provider) }
+                val earlier = stack.appliedCapabilities.any { registry.provides(it, type) && target in it.targets && (provider == null || it.id == provider) } ||
+                    stack.instances.take(index).any { it.enabled && registry.provides(it, type) && target in it.targets && (provider == null || it.id == provider) }
+                val later = stack.instances.drop(index + 1).any { it.enabled && registry.provides(it, type) && target in it.targets && (provider == null || it.id == provider) }
                 require(earlier || !later) { "${instance.id} must follow ${provider ?: type} ($type) on ${target.id}" }
             }
         }
@@ -353,8 +359,8 @@ internal class RigModifierEvaluator(
         }
         val consumed = stack.instances.take(end).mapTo(HashSet()) { it.id }
         val capabilities = prefix.entries.filter { it.status == ModifierStatus.ACTIVE }.map {
-            ModifierCapability(it.instance.type, it.instance.version, it.instance.targets, it.instance.id,
-                registry.definition(it.instance).appliedConfig(it.instance), it.instance.outputAliases, it.instance.plugin)
+            val definition = registry.definition(it.instance)
+            it.instance.capability(definition.appliedConfig(it.instance), definition.provides)
         }
         val baked = prefix.entries.filter { it.status == ModifierStatus.ACTIVE }.mapTo(HashSet()) { it.instance.id }
         val remaining = stack.copy(instances = stack.instances.drop(end), overrides = stack.overrides - baked,

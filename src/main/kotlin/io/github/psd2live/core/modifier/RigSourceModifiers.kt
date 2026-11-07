@@ -549,11 +549,11 @@ internal class RigModifierSource(
             val spec = RigLegacyBindings.find(previous.type)
             val providers = if (spec == null) emptyMap() else RigLegacyBindings.providers(previous)
             val missing = spec?.requires.orEmpty().any { type -> previous.targets.any { target ->
-                available.none { RigModifierAlgorithms.registry.provides(it.type, type) && target in it.targets && (providers[type] == null || it.id == providers[type]) }
+                available.none { RigModifierAlgorithms.registry.provides(it, type) && target in it.targets && (providers[type] == null || it.id == providers[type]) }
             } }
             if (missing) continue
             active += previous
-            available += ModifierCapability(previous.type, previous.version, previous.targets, previous.id, previous.config)
+            available += previous.capability()
         }
         active
     }

@@ -20,20 +20,19 @@ internal object ModifierAddCatalog {
         val covered = (existing.filter { it.type == type }.flatMap { it.targets } +
             applied.filter { it.type == type }.flatMap { it.targets }).toSet()
         if ((source || definition.exclusiveFamily != null) && targets.all(covered::contains)) return ModifierAddAvailability(true, count)
-        val activeEntries = existing.filter { it.enabled }.map { it.type to it.targets } + applied.map { it.type to it.targets }
-        val active = activeEntries.map { it.first }
+        val active = existing.filter { it.enabled }.map { it.capability() } + applied
         fun conflicts(wanted: String, target: ModifierTarget, visited: MutableSet<String>): Boolean {
             if (!visited.add(wanted)) return false
-            val providers = activeEntries.filter { target in it.second }.map { it.first }
+            val providers = active.filter { target in it.targets }
             if (providers.any { registry.provides(it, wanted) }) return false
             val requirement = registry.definitions.filter { it.type == wanted }.maxByOrNull { it.version } ?: return false
             if (requirement.exclusiveFamily != null && providers.any { present ->
-                    registry.definitions.any { it.type == present && it.exclusiveFamily == requirement.exclusiveFamily }
+                    registry.definitions.any { it.type == present.type && it.exclusiveFamily == requirement.exclusiveFamily }
                 }) return true
             return requirement.requires.any { conflicts(it, target, visited) }
         }
         val familyConflict = definition.exclusiveFamily != null && active.any { present ->
-            present != type && registry.definitions.any { it.type == present && it.exclusiveFamily == definition.exclusiveFamily }
+            present.type != type && registry.definitions.any { it.type == present.type && it.exclusiveFamily == definition.exclusiveFamily }
         }
         return ModifierAddAvailability(familyConflict || targets.any { target ->
             definition.requires.any { conflicts(it, target, HashSet()) }

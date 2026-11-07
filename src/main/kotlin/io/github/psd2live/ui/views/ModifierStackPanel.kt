@@ -135,12 +135,10 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
 @Composable
 private fun ModifierDependencies(instance: RigModifierInstance, stack: RigModifierStack, enabled: Boolean, vm: PSD2LiveViewModel) {
     val spec = RigLegacyBindings.find(instance.type) ?: return
-    val capabilities = stack.appliedCapabilities + stack.instances.take(stack.index(instance.id)).map {
-        ModifierCapability(it.type, it.version, it.targets, it.id, it.config)
-    }
+    val capabilities = stack.appliedCapabilities + stack.instances.take(stack.index(instance.id)).map { it.capability() }
     val providers = RigLegacyBindings.providers(instance)
     for ((type, selected) in providers) {
-        val candidates = capabilities.filter { cap -> RigModifierAlgorithms.registry.provides(cap.type, type) && cap.id != null && instance.targets.all { it in cap.targets } &&
+        val candidates = capabilities.filter { cap -> RigModifierAlgorithms.registry.provides(cap, type) && cap.id != null && instance.targets.all { it in cap.targets } &&
             (type == RigSourceModifiers.SCAFFOLD || cap.config["scaffold"] == instance.config["scaffold"]) }
         val ids = (listOf(selected) + candidates.mapNotNull { it.id }).distinct()
           Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.Gap)) {

@@ -86,7 +86,7 @@ internal object WorkspaceModifierPlan {
             it.jsonObject.getValue("status").jsonPrimitive.content == "active"
         }.mapTo(HashSet()) { it.jsonObject.getValue("id").jsonPrimitive.content }
         val available = stack.appliedCapabilities.toMutableList()
-        available += stack.instances.filter { it.id in active }.map { ModifierCapability(it.type, it.version, it.targets, it.id, it.config) }
+        available += stack.instances.filter { it.id in active }.map { it.capability() }
         var candidate = stack
         val entries = ArrayList<JsonObject>()
         val planned = LinkedHashMap<String, JsonObject>()
@@ -101,7 +101,7 @@ internal object WorkspaceModifierPlan {
                 }
             val wanted = if (wantsModernFace && requestedType == "face/legacy")
                 RigLegacyBindings.FITTED_FACE else requestedType
-            if (reuse) available.firstOrNull { cap -> (cap.type == wanted || equivalent && RigModifierAlgorithms.registry.provides(cap.type, wanted)) && cap.id != null && targets.all { it in cap.targets } &&
+            if (reuse) available.firstOrNull { cap -> (cap.type == wanted || equivalent && RigModifierAlgorithms.registry.provides(cap, wanted)) && cap.id != null && targets.all { it in cap.targets } &&
                 (scaffold == null || cap.config["scaffold"]?.jsonPrimitive?.content == scaffold) }?.let { cap ->
                 planned.putIfAbsent(cap.id!!, describe(cap, if (stack.instances.any { it.id == cap.id }) "reused" else if (cap.id in stack.retiredIds) "applied" else "added"))
                 return cap
@@ -174,7 +174,7 @@ internal object WorkspaceModifierPlan {
             val version = RigModifierAlgorithms.registry.definitions.filter { it.type == wanted }.maxOf { it.version }
             candidate = candidate.add(wanted, version, targets, configuration, group, plugin = ModifierPluginCatalog.algorithm(wanted, version)?.first?.reference)
             val instance = candidate.instances.last()
-            val cap = ModifierCapability(wanted, version, targets, instance.id, configuration)
+            val cap = instance.capability()
             available += cap
             entries += buildJsonObject {
                 instance.plugin?.let { put("plugin", Json.encodeToJsonElement(ModifierPluginReference.serializer(), it)) }

@@ -170,6 +170,30 @@ class RigModifierStackTest {
         assertEquals(ModifierStatus.MISSING_DEPENDENCY, engine.evaluate(authored, wrongTarget).entries.last().status)
     }
 
+    @Test fun capabilitiesBelongToTheSelectedVersionAndSurviveApplication() {
+        val capability = transform("feature", { it })
+        val provider = add.copy(version = 2, provides = setOf("feature"))
+        val consumer = transform("consumer", { it * 2 }, setOf("feature"))
+        val engine = RigModifierEvaluator(RigModifierRegistry(listOf(add, provider, capability, consumer)))
+        val original = RigModifierStack(listOf(entry("provider", "add"), entry("consumer", "consumer")))
+        val missing = engine.evaluate(authored, original)
+        assertEquals(ModifierStatus.MISSING_DEPENDENCY, missing.entries.last().status)
+        assertEquals(ModifierStatus.MISSING_DEPENDENCY, engine.evaluate(authored, original.move("consumer", 0)).entries.first().status)
+
+        val supported = original.copy(instances = listOf(original.instances.first().copy(version = 2), original.instances.last()))
+        val expected = engine.evaluate(authored, supported)
+        assertEquals(1020, expected.rig.parts.first().drawOrder)
+        assertFailsWith<IllegalArgumentException> { engine.evaluate(authored, supported.move("consumer", 0)) }
+        val applied = engine.applyThrough(authored, supported, "provider")
+        val restored = RigModifierStack.fromJson(applied.stack.toJson())
+        assertEquals(setOf("feature"), restored.appliedCapabilities.single().provides)
+        val withoutProvider = RigModifierEvaluator(RigModifierRegistry(listOf(add, capability, consumer)))
+        assertEquals(expected.rig, withoutProvider.evaluate(applied.authored, restored).rig)
+
+        val historical = applied.stack.copy(appliedCapabilities = applied.stack.appliedCapabilities.map { it.copy(provides = null) })
+        assertEquals(expected.rig, engine.evaluate(applied.authored, RigModifierStack.fromJson(historical.toJson())).rig)
+    }
+
     @Test fun registryRejectsCyclesUnknownDependenciesAndDuplicateVersions() {
         assertFailsWith<IllegalArgumentException> { RigModifierRegistry(listOf(add, add)) }
         assertFailsWith<IllegalArgumentException> { RigModifierRegistry(listOf(transform("a", { it }, setOf("unknown")))) }
