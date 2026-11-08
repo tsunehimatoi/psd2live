@@ -17,9 +17,11 @@ internal object CliPresetPresentation {
         val rig = requireNotNull(RigLayerDeletion.rebind(preview.rig, preview.analysis, preview.atlas, exportArt, atlas)) {
             "Raw PSD export cannot bind every generated mesh to its source tile"
         }
-        val packed = restoreGeneratedFrameIds(preview.copy(analysis = exportArt, rig = rig, atlas = atlas))
+        val rebound = preview.copy(analysis = exportArt, rig = rig, atlas = atlas)
+        val packed = restoreGeneratedFrameIds(CliFaceSourcePresentation.bindUvs(preview, rebound, config))
         val ordered = orderExportMetadata(CliMouthOutlinePresentation.orderMeshes(packed, source.geometry), moduleIds, config)
-        return CliHairChainsPresentation.apply(CliMouthOutlinePresentation.apply(ordered, config), config)
+        val mouth = CliMouthOutlinePresentation.apply(ordered, config)
+        return CliHairChainsPresentation.apply(CliFaceSourcePresentation.restoreBrowForms(preview, mouth, config), config)
     }
 
     private fun restoreGeneratedFrameIds(preview: RigPreviewModel): RigPreviewModel {
