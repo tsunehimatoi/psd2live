@@ -7,6 +7,7 @@ import io.github.psd2live.algorithms.binding.MouthDepthV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV8Algorithm
+import io.github.psd2live.algorithms.binding.MouthDepthV9Algorithm
 import io.github.psd2live.algorithms.binding.MouthRig.Follow
 import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.RigModules
@@ -51,13 +52,16 @@ internal object RigMouthDepthModifier {
     fun closedShellDefinition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthDepthV5Algorithm.VERSION, closedShellAlgorithm)
 
-    fun sharedFrameDefinition(source: RigModifierSource?, withSharedTongue: Boolean = false, layered: Boolean = false): RigModifierDefinition {
+    fun sharedFrameDefinition(source: RigModifierSource?, withSharedTongue: Boolean = false,
+                              layered: Boolean = false, withTeethOnly: Boolean = false): RigModifierDefinition {
         val algorithm = when {
+            layered && withTeethOnly -> MouthDepthV9Algorithm
             layered -> MouthDepthV8Algorithm
             withSharedTongue -> MouthDepthV7Algorithm
             else -> MouthDepthV6Algorithm
         }
         val version = when {
+            layered && withTeethOnly -> MouthDepthV9Algorithm.VERSION
             layered -> MouthDepthV8Algorithm.VERSION
             withSharedTongue -> MouthDepthV7Algorithm.VERSION
             else -> MouthDepthV6Algorithm.VERSION
@@ -70,6 +74,7 @@ internal object RigMouthDepthModifier {
         }
         return fittedDefinition(source).copy(version = version, plugin = projected,
             changeWrites = when (version) {
+                MouthDepthV9Algorithm.VERSION -> MouthDepthV9Algorithm.WRITES
                 MouthDepthV8Algorithm.VERSION -> MouthDepthV8Algorithm.WRITES
                 MouthDepthV7Algorithm.VERSION -> MouthDepthV7Algorithm.WRITES
                 else -> MouthDepthV6Algorithm.WRITES
@@ -92,7 +97,8 @@ internal object RigMouthDepthModifier {
         val interior = setOf(SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE, SemanticTag.MOUTH_OPEN)
         val projected = if (layered) interior + SemanticTag.MOUTH else interior
         return captureBindingTransition(instance, scaffold, prefix, CharacterAnalyzer.MOUTH_TAGS + SemanticTag.FACE + SemanticTag.NOSE,
-            projectedTags = projected, includeMouthShading = true, includeLayeredTongueKeys = layered, values = buildJsonObject {
+            projectedTags = projected, includeMouthShading = true,
+            includeLayeredTongueKeys = instance.version == MouthDepthV8Algorithm.VERSION, values = buildJsonObject {
                 putJsonObject("providers") {
                     providers.forEach { type -> put(type, prefix.single { it.type == type }.id) }
                 }
