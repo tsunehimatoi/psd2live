@@ -351,582 +351,315 @@ tasks.register<Test>("testFittedFaceLatticesPackage") {
 
 // Keep Cubism out of classpath resources unless explicitly opted in.
 tasks.processResources {
-    dependsOn(":algorithms:binding:pluginMouthLegacy")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-legacy")) {
-        into("algorithm-plugins/mouth-legacy")
-    }
-    for (revision in 1..2) {
-        dependsOn(":algorithms:binding:pluginScaffold$revision")
-        from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-scaffold-$revision")) {
-            into("algorithm-plugins/scaffold-$revision")
+    val bundledAlgorithms = mutableListOf<String>()
+    fun bundledAlgorithm(name: String, module: String = ":algorithms:binding", directory: String = "plugin-$name") {
+        bundledAlgorithms += name
+        from(project(module).layout.buildDirectory.dir(directory)) {
+            into("algorithm-plugins/$name")
         }
     }
+
+    dependsOn(":algorithms:binding:pluginMouthLegacy")
+    bundledAlgorithm("mouth-legacy")
+    for (revision in 1..2) {
+        dependsOn(":algorithms:binding:pluginScaffold$revision")
+        bundledAlgorithm("scaffold-$revision")
+    }
     dependsOn(":algorithms:binding:pluginBust")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-bust")) {
-        into("algorithm-plugins/body-bust")
-    }
+    bundledAlgorithm("body-bust", directory = "plugin-bust")
     dependsOn(":algorithms:binding:pluginBustV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-bust-v3")) {
-        into("algorithm-plugins/body-bust-v3")
-    }
+    bundledAlgorithm("body-bust-v3", directory = "plugin-bust-v3")
     dependsOn(":algorithms:binding:pluginSkirt")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-outfit-skirt")) {
-        into("algorithm-plugins/outfit-skirt")
-    }
+    bundledAlgorithm("outfit-skirt")
     dependsOn(":algorithms:binding:pluginRibbons", ":algorithms:binding:pluginRibbonsV3", ":algorithms:binding:pluginRibbonsV4", ":algorithms:binding:pluginRibbonsV5")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-outfit-ribbons")) {
-        into("algorithm-plugins/outfit-ribbons")
-    }
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-outfit-ribbons-v3")) {
-        into("algorithm-plugins/outfit-ribbons-v3")
-    }
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-outfit-ribbons-v4")) {
-        into("algorithm-plugins/outfit-ribbons-v4")
-    }
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-outfit-ribbons-v5")) {
-        into("algorithm-plugins/outfit-ribbons-v5")
-    }
+    bundledAlgorithm("outfit-ribbons")
+    bundledAlgorithm("outfit-ribbons-v3")
+    bundledAlgorithm("outfit-ribbons-v4")
+    bundledAlgorithm("outfit-ribbons-v5")
     dependsOn(":algorithms:binding:pluginCreature", ":algorithms:binding:pluginCreatureV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-outfit-creature")) {
-        into("algorithm-plugins/outfit-creature")
-    }
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-outfit-creature-v3")) {
-        into("algorithm-plugins/outfit-creature-v3")
-    }
+    bundledAlgorithm("outfit-creature")
+    bundledAlgorithm("outfit-creature-v3")
     dependsOn(":algorithms:binding:pluginHairChains")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-hair-chains")) {
-        into("algorithm-plugins/hair-chains")
-    }
+    bundledAlgorithm("hair-chains")
     dependsOn(":algorithms:binding:pluginFaceNeckV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-face-neck-v3")) {
-        into("algorithm-plugins/face-neck-v3")
-    }
+    bundledAlgorithm("face-neck-v3")
     dependsOn(":algorithms:binding:pluginFaceNeck")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-face-neck")) {
-        into("algorithm-plugins/face-neck")
-    }
+    bundledAlgorithm("face-neck")
     dependsOn(":algorithms:binding:pluginHairLegacy")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-hair-legacy")) {
-        into("algorithm-plugins/hair-legacy")
-    }
+    bundledAlgorithm("hair-legacy")
     dependsOn(":algorithms:binding:pluginMouthOutlineV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-outline-v3")) {
-        into("algorithm-plugins/mouth-outline-v3")
-    }
+    bundledAlgorithm("mouth-outline-v3")
     dependsOn(":algorithms:binding:pluginMouthOutlineV5")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-outline-v5")) {
-        into("algorithm-plugins/mouth-outline-v5")
-    }
+    bundledAlgorithm("mouth-outline-v5")
     dependsOn(":algorithms:binding:pluginMouthOutlineV6")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-outline-v6")) {
-        into("algorithm-plugins/mouth-outline-v6")
-    }
+    bundledAlgorithm("mouth-outline-v6")
     dependsOn(":algorithms:binding:pluginMouthOutlineV8")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-outline-v8")) {
-        into("algorithm-plugins/mouth-outline-v8")
-    }
+    bundledAlgorithm("mouth-outline-v8")
     dependsOn(":algorithms:binding:pluginMouthOutlineV7")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-outline-v7")) {
-        into("algorithm-plugins/mouth-outline-v7")
-    }
+    bundledAlgorithm("mouth-outline-v7")
     dependsOn(":algorithms:binding:pluginMouthOutlineV2")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-outline-v2")) {
-        into("algorithm-plugins/mouth-outline-v2")
-    }
+    bundledAlgorithm("mouth-outline-v2")
     dependsOn(":algorithms:binding:pluginMouthOutlineV4")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-outline-v4")) {
-        into("algorithm-plugins/mouth-outline-v4")
-    }
+    bundledAlgorithm("mouth-outline-v4")
     dependsOn(":algorithms:binding:pluginMouthVowelV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-vowel-v3")) {
-        into("algorithm-plugins/mouth-vowel-v3")
-    }
+    bundledAlgorithm("mouth-vowel-v3")
     dependsOn(":algorithms:binding:pluginMouthVowelV4")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-vowel-v4")) {
-        into("algorithm-plugins/mouth-vowel-v4")
-    }
+    bundledAlgorithm("mouth-vowel-v4")
     dependsOn(":algorithms:binding:pluginMouthVowelV5")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-vowel-v5")) {
-        into("algorithm-plugins/mouth-vowel-v5")
-    }
+    bundledAlgorithm("mouth-vowel-v5")
     dependsOn(":algorithms:binding:pluginMouthVowelV6")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-vowel-v6")) {
-        into("algorithm-plugins/mouth-vowel-v6")
-    }
+    bundledAlgorithm("mouth-vowel-v6")
     dependsOn(":algorithms:binding:pluginMouthVowelV7")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-vowel-v7")) {
-        into("algorithm-plugins/mouth-vowel-v7")
-    }
+    bundledAlgorithm("mouth-vowel-v7")
     dependsOn(":algorithms:binding:pluginMouthVowel")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-vowel")) {
-        into("algorithm-plugins/mouth-vowel")
-    }
+    bundledAlgorithm("mouth-vowel")
     dependsOn(":algorithms:binding:pluginMouthCapture")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-capture")) {
-        into("algorithm-plugins/mouth-capture")
-    }
+    bundledAlgorithm("mouth-capture")
     dependsOn(":algorithms:binding:pluginMouthCaptureV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-capture-v3")) {
-        into("algorithm-plugins/mouth-capture-v3")
-    }
+    bundledAlgorithm("mouth-capture-v3")
     dependsOn(":algorithms:binding:pluginMouthCaptureV4")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-capture-v4")) {
-        into("algorithm-plugins/mouth-capture-v4")
-    }
+    bundledAlgorithm("mouth-capture-v4")
     dependsOn(":algorithms:binding:pluginMouthCaptureV5")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-capture-v5")) {
-        into("algorithm-plugins/mouth-capture-v5")
-    }
+    bundledAlgorithm("mouth-capture-v5")
     dependsOn(":algorithms:binding:pluginMouthCaptureV6")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-capture-v6")) {
-        into("algorithm-plugins/mouth-capture-v6")
-    }
+    bundledAlgorithm("mouth-capture-v6")
     dependsOn(":algorithms:binding:pluginMouthJawV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-jaw-v3")) {
-        into("algorithm-plugins/mouth-jaw-v3")
-    }
+    bundledAlgorithm("mouth-jaw-v3")
     dependsOn(":algorithms:binding:pluginMouthJawV4")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-jaw-v4")) {
-        into("algorithm-plugins/mouth-jaw-v4")
-    }
+    bundledAlgorithm("mouth-jaw-v4")
     dependsOn(":algorithms:binding:pluginMouthJawV5")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-jaw-v5")) {
-        into("algorithm-plugins/mouth-jaw-v5")
-    }
+    bundledAlgorithm("mouth-jaw-v5")
     dependsOn(":algorithms:binding:pluginMouthJawV6")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-jaw-v6")) {
-        into("algorithm-plugins/mouth-jaw-v6")
-    }
+    bundledAlgorithm("mouth-jaw-v6")
     dependsOn(":algorithms:binding:pluginMouthJawV8")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-jaw-v8")) {
-        into("algorithm-plugins/mouth-jaw-v8")
-    }
+    bundledAlgorithm("mouth-jaw-v8")
     dependsOn(":algorithms:binding:pluginMouthJawV9")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-jaw-v9")) {
-        into("algorithm-plugins/mouth-jaw-v9")
-    }
+    bundledAlgorithm("mouth-jaw-v9")
     dependsOn(":algorithms:binding:pluginMouthJawV7")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-jaw-v7")) {
-        into("algorithm-plugins/mouth-jaw-v7")
-    }
+    bundledAlgorithm("mouth-jaw-v7")
     dependsOn(":algorithms:binding:pluginMouthJaw")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-jaw")) {
-        into("algorithm-plugins/mouth-jaw")
-    }
+    bundledAlgorithm("mouth-jaw")
 
     dependsOn(":algorithms:binding:pluginCheekV2", ":algorithms:binding:pluginCheekV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-cheek-v2")) {
-        into("algorithm-plugins/cheek-v2")
-    }
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-cheek-v3")) {
-        into("algorithm-plugins/cheek-v3")
-    }
+    bundledAlgorithm("cheek-v2")
+    bundledAlgorithm("cheek-v3")
     dependsOn(":algorithms:binding:pluginGloomV2")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-gloom-v2")) {
-        into("algorithm-plugins/gloom-v2")
-    }
+    bundledAlgorithm("gloom-v2")
     dependsOn(":algorithms:binding:pluginGloomV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-gloom-v3")) {
-        into("algorithm-plugins/gloom-v3")
-    }
+    bundledAlgorithm("gloom-v3")
     dependsOn(":algorithms:binding:pluginMouthTongue")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-tongue")) {
-        into("algorithm-plugins/mouth-tongue")
-    }
+    bundledAlgorithm("mouth-tongue")
     dependsOn(":algorithms:binding:pluginMouthTongueV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-tongue-v3")) {
-        into("algorithm-plugins/mouth-tongue-v3")
-    }
+    bundledAlgorithm("mouth-tongue-v3")
     dependsOn(":algorithms:binding:pluginMouthTongueV4")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-tongue-v4")) {
-        into("algorithm-plugins/mouth-tongue-v4")
-    }
+    bundledAlgorithm("mouth-tongue-v4")
     dependsOn(":algorithms:binding:pluginMouthTongueV6")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-tongue-v6")) {
-        into("algorithm-plugins/mouth-tongue-v6")
-    }
+    bundledAlgorithm("mouth-tongue-v6")
     dependsOn(":algorithms:binding:pluginMouthTongueV5")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-tongue-v5")) {
-        into("algorithm-plugins/mouth-tongue-v5")
-    }
+    bundledAlgorithm("mouth-tongue-v5")
     dependsOn(":algorithms:binding:pluginMouthDepth")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-depth")) {
-        into("algorithm-plugins/mouth-depth")
-    }
+    bundledAlgorithm("mouth-depth")
     dependsOn(":algorithms:binding:pluginMouthDepthV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-depth-v3")) {
-        into("algorithm-plugins/mouth-depth-v3")
-    }
+    bundledAlgorithm("mouth-depth-v3")
     dependsOn(":algorithms:binding:pluginMouthDepthV4")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-depth-v4")) {
-        into("algorithm-plugins/mouth-depth-v4")
-    }
+    bundledAlgorithm("mouth-depth-v4")
     dependsOn(":algorithms:binding:pluginMouthDepthV6")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-depth-v6")) {
-        into("algorithm-plugins/mouth-depth-v6")
-    }
+    bundledAlgorithm("mouth-depth-v6")
     dependsOn(":algorithms:binding:pluginMouthDepthV5")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-depth-v5")) {
-        into("algorithm-plugins/mouth-depth-v5")
-    }
+    bundledAlgorithm("mouth-depth-v5")
     dependsOn(":algorithms:binding:pluginMouthFittedV3")
     dependsOn(":algorithms:binding:pluginMouthFittedV2")
     dependsOn(":algorithms:binding:pluginBrowFittedV2")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-fitted-v2")) {
-        into("algorithm-plugins/brow-fitted-v2")
-    }
+    bundledAlgorithm("brow-fitted-v2")
     dependsOn(":algorithms:binding:pluginBrowFittedV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-fitted-v3")) {
-        into("algorithm-plugins/brow-fitted-v3")
-    }
+    bundledAlgorithm("brow-fitted-v3")
     dependsOn(":algorithms:binding:pluginBrowFittedV4")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-fitted-v4")) {
-        into("algorithm-plugins/brow-fitted-v4")
-    }
+    bundledAlgorithm("brow-fitted-v4")
     dependsOn(":algorithms:binding:pluginArmSwingV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-arm-swing-v3")) {
-        into("algorithm-plugins/body-arms-v3")
-    }
+    bundledAlgorithm("body-arms-v3", directory = "plugin-arm-swing-v3")
     dependsOn(":algorithms:binding:pluginArmSwingV4")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-arm-swing-v4")) {
-        into("algorithm-plugins/body-arms-v4")
-    }
+    bundledAlgorithm("body-arms-v4", directory = "plugin-arm-swing-v4")
     dependsOn(":algorithms:binding:pluginArmSwing")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-arm-swing")) {
-        into("algorithm-plugins/body-arms")
-    }
+    bundledAlgorithm("body-arms", directory = "plugin-arm-swing")
     dependsOn(":algorithms:binding:pluginBrowBlink")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-blink")) {
-        into("algorithm-plugins/brow-blink")
-    }
+    bundledAlgorithm("brow-blink")
     dependsOn(":algorithms:binding:pluginBrowBlinkV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-blink-v3")) {
-        into("algorithm-plugins/brow-blink-v3")
-    }
+    bundledAlgorithm("brow-blink-v3")
     dependsOn(":algorithms:binding:pluginBrowBlinkV4")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-blink-v4")) {
-        into("algorithm-plugins/brow-blink-v4")
-    }
+    bundledAlgorithm("brow-blink-v4")
     dependsOn(":algorithms:binding:pluginBrowBlinkV5")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-blink-v5")) {
-        into("algorithm-plugins/brow-blink-v5")
-    }
+    bundledAlgorithm("brow-blink-v5")
     dependsOn(":algorithms:binding:pluginBrowLidV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-lid-v3")) {
-        into("algorithm-plugins/brow-lid-v3")
-    }
+    bundledAlgorithm("brow-lid-v3")
     dependsOn(":algorithms:binding:pluginBrowLidV4")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-lid-v4")) {
-        into("algorithm-plugins/brow-lid-v4")
-    }
+    bundledAlgorithm("brow-lid-v4")
     dependsOn(":algorithms:binding:pluginBrowLidV5")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-lid-v5")) {
-        into("algorithm-plugins/brow-lid-v5")
-    }
+    bundledAlgorithm("brow-lid-v5")
     dependsOn(":algorithms:binding:pluginBrowLidV6")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-lid-v6")) {
-        into("algorithm-plugins/brow-lid-v6")
-    }
+    bundledAlgorithm("brow-lid-v6")
     dependsOn(":algorithms:binding:pluginBrowLidV7")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-lid-v7")) {
-        into("algorithm-plugins/brow-lid-v7")
-    }
+    bundledAlgorithm("brow-lid-v7")
     dependsOn(":algorithms:binding:pluginBrowLid")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-lid")) {
-        into("algorithm-plugins/brow-lid")
-    }
+    bundledAlgorithm("brow-lid")
     dependsOn(":algorithms:binding:pluginBrowShape")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-shape")) {
-        into("algorithm-plugins/brow-shape")
-    }
+    bundledAlgorithm("brow-shape")
     dependsOn(":algorithms:binding:pluginBrowShapeV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-shape-v3")) {
-        into("algorithm-plugins/brow-shape-v3")
-    }
+    bundledAlgorithm("brow-shape-v3")
     dependsOn(":algorithms:binding:pluginBrowShapeV5")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-shape-v5")) {
-        into("algorithm-plugins/brow-shape-v5")
-    }
+    bundledAlgorithm("brow-shape-v5")
     dependsOn(":algorithms:binding:pluginBrowShapeV4")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-shape-v4")) {
-        into("algorithm-plugins/brow-shape-v4")
-    }
+    bundledAlgorithm("brow-shape-v4")
     dependsOn(":algorithms:binding:pluginFittedFaceV2")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-fitted-face-v2")) {
-        into("algorithm-plugins/fitted-face-v2")
-    }
+    bundledAlgorithm("fitted-face-v2")
     dependsOn(":algorithms:binding:pluginFittedFaceV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-fitted-face-v3")) {
-        into("algorithm-plugins/fitted-face-v3")
-    }
+    bundledAlgorithm("fitted-face-v3")
     dependsOn(":algorithms:binding:pluginDepthTurnV2")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-depth-turn-v2")) {
-        into("algorithm-plugins/depth-turn-v2")
-    }
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-fitted-v2")) {
-        into("algorithm-plugins/mouth-fitted-v2")
-    }
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-fitted-v3")) {
-        into("algorithm-plugins/mouth-fitted-v3")
-    }
+    bundledAlgorithm("depth-turn-v2")
+    bundledAlgorithm("mouth-fitted-v2")
+    bundledAlgorithm("mouth-fitted-v3")
     dependsOn(":algorithms:binding:pluginMouthFittedV4")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-fitted-v4")) {
-        into("algorithm-plugins/mouth-fitted-v4")
-    }
+    bundledAlgorithm("mouth-fitted-v4")
     dependsOn(":algorithms:binding:pluginMouthFittedV5")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-fitted-v5")) {
-        into("algorithm-plugins/mouth-fitted-v5")
-    }
+    bundledAlgorithm("mouth-fitted-v5")
     dependsOn(":algorithms:binding:pluginMouthFittedV6")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-fitted-v6")) {
-        into("algorithm-plugins/mouth-fitted-v6")
-    }
+    bundledAlgorithm("mouth-fitted-v6")
     dependsOn(":algorithms:binding:pluginEyeLidFade")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-lid-fade")) {
-        into("algorithm-plugins/eye-lid-fade")
-    }
+    bundledAlgorithm("eye-lid-fade")
     dependsOn(":algorithms:binding:pluginEyeLidFadeV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-lid-fade-v3")) {
-        into("algorithm-plugins/eye-lid-fade-v3")
-    }
+    bundledAlgorithm("eye-lid-fade-v3")
     dependsOn(":algorithms:binding:pluginEyeSmileV4")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-smile-v4")) {
-        into("algorithm-plugins/eye-smile-v4")
-    }
+    bundledAlgorithm("eye-smile-v4")
     dependsOn(":algorithms:binding:pluginEyeSmileV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-smile-v3")) {
-        into("algorithm-plugins/eye-smile-v3")
-    }
+    bundledAlgorithm("eye-smile-v3")
     dependsOn(":algorithms:binding:pluginEyeSmile")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-smile")) {
-        into("algorithm-plugins/eye-smile")
-    }
+    bundledAlgorithm("eye-smile")
     dependsOn(":algorithms:binding:pluginEyeAftershock")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-aftershock")) {
-        into("algorithm-plugins/eye-aftershock")
-    }
+    bundledAlgorithm("eye-aftershock")
     dependsOn(":algorithms:binding:pluginEyeAftershockV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-aftershock-v3")) {
-        into("algorithm-plugins/eye-aftershock-v3")
-    }
+    bundledAlgorithm("eye-aftershock-v3")
     dependsOn(":algorithms:binding:pluginEyeAftershockV5")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-aftershock-v5")) {
-        into("algorithm-plugins/eye-aftershock-v5")
-    }
+    bundledAlgorithm("eye-aftershock-v5")
     dependsOn(":algorithms:binding:pluginEyeAftershockV4")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-aftershock-v4")) {
-        into("algorithm-plugins/eye-aftershock-v4")
-    }
+    bundledAlgorithm("eye-aftershock-v4")
     dependsOn(":algorithms:binding:pluginEyeGazeLidV4")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-gaze-lid-v4")) {
-        into("algorithm-plugins/eye-gaze-lid-v4")
-    }
+    bundledAlgorithm("eye-gaze-lid-v4")
     dependsOn(":algorithms:binding:pluginEyeGazeLidV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-gaze-lid-v3")) {
-        into("algorithm-plugins/eye-gaze-lid-v3")
-    }
+    bundledAlgorithm("eye-gaze-lid-v3")
     dependsOn(":algorithms:binding:pluginEyeGazeLid")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-gaze-lid")) {
-        into("algorithm-plugins/eye-gaze-lid")
-    }
+    bundledAlgorithm("eye-gaze-lid")
     dependsOn(":algorithms:binding:pluginEyeEmotionV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-emotion-v3")) {
-        into("algorithm-plugins/eye-emotion-v3")
-    }
+    bundledAlgorithm("eye-emotion-v3")
     dependsOn(":algorithms:binding:pluginEyeEmotionV4")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-emotion-v4")) {
-        into("algorithm-plugins/eye-emotion-v4")
-    }
+    bundledAlgorithm("eye-emotion-v4")
     dependsOn(":algorithms:binding:pluginEyeEmotion")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-emotion")) {
-        into("algorithm-plugins/eye-emotion")
-    }
+    bundledAlgorithm("eye-emotion")
     dependsOn(":algorithms:binding:pluginEyeHighlightV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-highlight-v3")) {
-        into("algorithm-plugins/eye-highlight-v3")
-    }
+    bundledAlgorithm("eye-highlight-v3")
     dependsOn(":algorithms:binding:pluginEyeHighlightV4")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-highlight-v4")) {
-        into("algorithm-plugins/eye-highlight-v4")
-    }
+    bundledAlgorithm("eye-highlight-v4")
     dependsOn(":algorithms:binding:pluginEyeHighlight")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-highlight")) {
-        into("algorithm-plugins/eye-highlight")
-    }
+    bundledAlgorithm("eye-highlight")
     dependsOn(":algorithms:binding:pluginMouthCheekLid")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-cheek-lid")) {
-        into("algorithm-plugins/mouth-cheek-lid")
-    }
+    bundledAlgorithm("mouth-cheek-lid")
     dependsOn(":algorithms:binding:pluginMouthCheekLidV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-cheek-lid-v3")) {
-        into("algorithm-plugins/mouth-cheek-lid-v3")
-    }
+    bundledAlgorithm("mouth-cheek-lid-v3")
     dependsOn(":algorithms:binding:pluginMouthCheekLidV4")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-cheek-lid-v4")) {
-        into("algorithm-plugins/mouth-cheek-lid-v4")
-    }
+    bundledAlgorithm("mouth-cheek-lid-v4")
     dependsOn(":algorithms:binding:pluginMouthCheekLidV5")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-cheek-lid-v5")) {
-        into("algorithm-plugins/mouth-cheek-lid-v5")
-    }
+    bundledAlgorithm("mouth-cheek-lid-v5")
     dependsOn(":algorithms:binding:pluginMouthCheekLidV6")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-cheek-lid-v6")) {
-        into("algorithm-plugins/mouth-cheek-lid-v6")
-    }
+    bundledAlgorithm("mouth-cheek-lid-v6")
     dependsOn(":algorithms:binding:pluginMouthCheekLidV7")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-cheek-lid-v7")) {
-        into("algorithm-plugins/mouth-cheek-lid-v7")
-    }
+    bundledAlgorithm("mouth-cheek-lid-v7")
     dependsOn(":algorithms:binding:pluginMouthCheekLidV8")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-cheek-lid-v8")) {
-        into("algorithm-plugins/mouth-cheek-lid-v8")
-    }
+    bundledAlgorithm("mouth-cheek-lid-v8")
     dependsOn(":algorithms:binding:pluginEyeSquashV4")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-squash-v4")) {
-        into("algorithm-plugins/eye-squash-v4")
-    }
+    bundledAlgorithm("eye-squash-v4")
     dependsOn(":algorithms:binding:pluginEyeSquashV5")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-squash-v5")) {
-        into("algorithm-plugins/eye-squash-v5")
-    }
+    bundledAlgorithm("eye-squash-v5")
     dependsOn(":algorithms:binding:pluginEyeSquashV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-squash-v3")) {
-        into("algorithm-plugins/eye-squash-v3")
-    }
+    bundledAlgorithm("eye-squash-v3")
     dependsOn(":algorithms:binding:pluginEyeSquash")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-squash")) {
-        into("algorithm-plugins/eye-squash")
-    }
+    bundledAlgorithm("eye-squash")
     dependsOn(":algorithms:binding:pluginFaceLegacyV2")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-face-legacy-v2")) {
-        into("algorithm-plugins/face-legacy-v2")
-    }
+    bundledAlgorithm("face-legacy-v2")
     dependsOn(":algorithms:binding:pluginBrowLegacyV2")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-legacy-v2")) {
-        into("algorithm-plugins/brow-legacy-v2")
-    }
+    bundledAlgorithm("brow-legacy-v2")
     dependsOn(":algorithms:binding:pluginEyeWide")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-wide")) {
-        into("algorithm-plugins/eye-wide")
-    }
+    bundledAlgorithm("eye-wide")
     dependsOn(":algorithms:binding:pluginEyeWideV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-wide-v3")) {
-        into("algorithm-plugins/eye-wide-v3")
-    }
+    bundledAlgorithm("eye-wide-v3")
 
     dependsOn(":algorithms:binding:pluginEyeWideV4")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-wide-v4")) {
-        into("algorithm-plugins/eye-wide-v4")
-    }
+    bundledAlgorithm("eye-wide-v4")
     dependsOn(":algorithms:binding:pluginBrowSpring")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-spring")) {
-        into("algorithm-plugins/brow-spring")
-    }
+    bundledAlgorithm("brow-spring")
 
     dependsOn(":algorithms:binding:pluginBrowSpringV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-spring-v3")) {
-        into("algorithm-plugins/brow-spring-v3")
-    }
+    bundledAlgorithm("brow-spring-v3")
     dependsOn(":algorithms:binding:pluginBrowSpringV4")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-spring-v4")) {
-        into("algorithm-plugins/brow-spring-v4")
-    }
+    bundledAlgorithm("brow-spring-v4")
     dependsOn(":algorithms:binding:pluginBrowSpringV5")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-spring-v5")) {
-        into("algorithm-plugins/brow-spring-v5")
-    }
+    bundledAlgorithm("brow-spring-v5")
     dependsOn(":algorithms:binding:pluginBrowSpringV6")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-spring-v6")) {
-        into("algorithm-plugins/brow-spring-v6")
-    }
+    bundledAlgorithm("brow-spring-v6")
     dependsOn(":algorithms:binding:pluginMouthSpring")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-spring")) {
-        into("algorithm-plugins/mouth-spring")
-    }
+    bundledAlgorithm("mouth-spring")
     dependsOn(":algorithms:binding:pluginMouthSpringV3")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-spring-v3")) {
-        into("algorithm-plugins/mouth-spring-v3")
-    }
+    bundledAlgorithm("mouth-spring-v3")
     dependsOn(":algorithms:binding:pluginMouthSpringV4")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-spring-v4")) {
-        into("algorithm-plugins/mouth-spring-v4")
-    }
+    bundledAlgorithm("mouth-spring-v4")
     dependsOn(":algorithms:binding:pluginMouthSpringV5")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-spring-v5")) {
-        into("algorithm-plugins/mouth-spring-v5")
-    }
+    bundledAlgorithm("mouth-spring-v5")
 
     dependsOn(":algorithms:binding:pluginMouthSpringV6")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-spring-v6")) {
-        into("algorithm-plugins/mouth-spring-v6")
-    }
+    bundledAlgorithm("mouth-spring-v6")
     dependsOn(":algorithms:binding:pluginMouthSpringV7")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-spring-v7")) {
-        into("algorithm-plugins/mouth-spring-v7")
-    }
+    bundledAlgorithm("mouth-spring-v7")
     dependsOn(":algorithms:binding:pluginMouthSpringV9")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-spring-v9")) {
-        into("algorithm-plugins/mouth-spring-v9")
-    }
+    bundledAlgorithm("mouth-spring-v9")
     dependsOn(":algorithms:binding:pluginMouthSpringV8")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-spring-v8")) {
-        into("algorithm-plugins/mouth-spring-v8")
-    }
+    bundledAlgorithm("mouth-spring-v8")
     dependsOn(":algorithms:binding:pluginBodyLegacyV2")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-body-legacy-v2")) {
-        into("algorithm-plugins/body-legacy-v2")
-    }
+    bundledAlgorithm("body-legacy-v2")
     dependsOn(":algorithms:binding:pluginEyeLegacy")
     dependsOn(":algorithms:binding:pluginEyeFitted")
     dependsOn(":algorithms:binding:pluginEyeFittedV4")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-fitted-v4")) {
-        into("algorithm-plugins/eye-fitted-v4")
-    }
+    bundledAlgorithm("eye-fitted-v4")
 
     dependsOn(":algorithms:binding:pluginEyeFittedV5")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-fitted-v5")) {
-        into("algorithm-plugins/eye-fitted-v5")
-    }
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-legacy")) {
-        into("algorithm-plugins/eye-legacy")
-    }
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-fitted")) {
-        into("algorithm-plugins/eye-fitted")
-    }
+    bundledAlgorithm("eye-fitted-v5")
+    bundledAlgorithm("eye-legacy")
+    bundledAlgorithm("eye-fitted")
     dependsOn(":algorithms:binding:pluginSkinClip")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-skin")) {
-        into("algorithm-plugins/skin-clip")
-    }
+    bundledAlgorithm("skin-clip", directory = "plugin-skin")
     for (area in listOf("eye", "brow")) {
         dependsOn(":algorithms:binding:plugin" + area.replaceFirstChar { it.uppercase() } + "SeeThrough")
-        from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-$area")) {
-            into("algorithm-plugins/see-through-$area")
-        }
+        bundledAlgorithm("see-through-$area", directory = "plugin-$area")
     }
     dependsOn(":algorithms:binding:pluginPackage")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin")) {
-        into("algorithm-plugins/binding")
-    }
+    bundledAlgorithm("binding", directory = "plugin")
     dependsOn(":algorithms:binding:pluginExpressionV2")
-    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-expression-v2")) {
-        into("algorithm-plugins/expression-v2")
-    }
+    bundledAlgorithm("expression-v2")
     dependsOn(":algorithms:physics:pluginPackage")
-    from(project(":algorithms:physics").layout.buildDirectory.dir("plugin")) {
-        into("algorithm-plugins/physics")
-    }
+    bundledAlgorithm("physics", module = ":algorithms:physics", directory = "plugin")
     dependsOn(":algorithms:motion:pluginPackage")
-    from(project(":algorithms:motion").layout.buildDirectory.dir("plugin")) {
-        into("algorithm-plugins/motion")
-    }
+    bundledAlgorithm("motion", module = ":algorithms:motion", directory = "plugin")
     dependsOn(":algorithms:swing:pluginPackage")
-    from(project(":algorithms:swing").layout.buildDirectory.dir("plugin")) {
-        into("algorithm-plugins/swing")
-    }
+    bundledAlgorithm("swing", module = ":algorithms:swing", directory = "plugin")
     dependsOn(":algorithms:simulation:pluginPackage")
-    from(project(":algorithms:simulation").layout.buildDirectory.dir("plugin")) {
-        into("algorithm-plugins/simulation")
+    bundledAlgorithm("simulation", module = ":algorithms:simulation", directory = "plugin")
+    val packageNames = bundledAlgorithms.sorted()
+    require(packageNames.distinct() == packageNames) { "Duplicate bundled algorithm directory" }
+    inputs.property("bundledAlgorithmPackages", packageNames)
+    doLast {
+        val bundle = destinationDir.resolve("algorithm-plugins")
+        for (name in packageNames) {
+            check(bundle.resolve("$name/plugin.json").isFile) { "Missing bundled algorithm manifest: $name" }
+        }
+        bundle.resolve("index.txt").writeText(packageNames.joinToString("\n", postfix = "\n"), Charsets.UTF_8)
     }
+
 	if (!includeCubism) {
 		exclude("cubism/**")
 	}
