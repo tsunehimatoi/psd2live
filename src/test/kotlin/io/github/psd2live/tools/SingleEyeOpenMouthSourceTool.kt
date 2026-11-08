@@ -21,6 +21,26 @@ import java.util.prefs.Preferences
 import kotlin.test.*
 
 class SingleEyeOpenMouthSourceTool {
+    @Test fun compareEyeAftershock(): Unit = runBlocking {
+        val chain = mapOf("eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3, "eye.emotion" to 3,
+            "mouth.vowel" to 9, "mouth.capture" to 8, "mouth.jaw" to 11, "mouth.cheek-lid" to 11, "mouth.spring" to 12)
+        val controls = RigModules.EYE_AFTERSHOCK.defines.mapTo(HashSet()) { it.id }
+        val bounce = "ParamEyeLBounce"
+        compareShapeModule("eye.aftershock", 4, chain, controls, setOf(bounce), RigEyeAftershockModifier::fittedHeadDefinition) { before, after ->
+            val id = "ArtMeshEyelashL"
+            assertNotEquals(before.meshes.single { it.id == id }, after.meshes.single { it.id == id })
+            val added = after.physics.groups - before.physics.groups.toSet()
+            val group = added.single { it.outputs.any { output -> output.parameter == bounce } }
+            val input = group.inputs.single()
+            assertEquals("ParamEyeLOpen", input.parameter)
+            assertEquals(100f, input.weight)
+            val output = group.outputs.single()
+            assertEquals(bounce, output.parameter)
+            assertTrue(output.scale > 0f && output.weight > 0f)
+            assertEquals(2, group.segments.size)
+        }
+    }
+
     @Test fun compareEyeEmotion(): Unit = runBlocking {
         val chain = mapOf("eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3, "mouth.vowel" to 9,
             "mouth.capture" to 8, "mouth.jaw" to 11, "mouth.cheek-lid" to 11, "mouth.spring" to 12)
