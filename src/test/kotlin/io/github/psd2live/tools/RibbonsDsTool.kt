@@ -37,24 +37,8 @@ class RibbonsDsTool {
             layer.source.id.raw to LayerClassificationOverride(semantic.type, semantic.tag, semantic.side,
                 semantic.parameter, semantic.switchId, PartRole.PLAIN)
         }
-        fun layer(id: String, x: Int, y: Int, width: Int, height: Int) =
-            WorkspaceSourceLayer(LayerId(id), id, "", SourceLayerKind.Raster, true, 0,
-                LayerBounds(x, y, width, height), 1f, false, LayerBlend.Normal, ChannelMask.ALL,
-                LayerRaster(width, height, ByteArray(width * height * 4) { -1 }), null, null, false)
-        val ribbon = layer("ds-cloth-ribbon", 565, 455, 16, 63)
-        val pendant = layer("ds-head-pendant", 674, 212, 13, 31)
-        val source = object : SourceArt by artwork {
-            override val layers = (listOf(ribbon, pendant) + artwork.layers)
-                .mapIndexed { index, layer -> WorkspaceSourceLayer.copyOf(layer, index) }
-        }
-        val overrides = mapOf(ribbon.id.raw to LayerClassificationOverride(LayerType.PRESET, SemanticTag.TOPWEAR, Side.NONE, role = PartRole.RIBBON),
-            pendant.id.raw to LayerClassificationOverride(LayerType.PRESET, SemanticTag.HEADWEAR, Side.NONE, role = PartRole.PENDANT)) + skirtOverrides
-        val document = if (layered) {
-            val lips = layeredMouthDocument(source, config.copy(rigEdits = overlay))
-            lips.copy(layerOverrides = lips.layerOverrides + overrides)
-        } else WorkspaceDocument(source, emptyMap(), emptySet(), overrides, emptyMap(), overlay, settings)
-        val layeredPrefix = if (layered) mapOf("mouth/fitted" to 8, "mouth.outline" to 11, "mouth.vowel" to 8,
-            "mouth.capture" to 7, "mouth.jaw" to 10, "mouth.cheek-lid" to 10, "mouth.spring" to 11) else emptyMap()
+        val document = ribbonDsDocument(artwork, config.copy(rigEdits = overlay), layered, skirtOverrides)
+        val layeredPrefix = if (layered) layeredRibbonMouthVersions else emptyMap()
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4,
             "mouth/fitted" to 6, "mouth.outline" to 8, "mouth.vowel" to 7, "mouth.capture" to 6,
             "mouth.jaw" to 8, "mouth.cheek-lid" to 8, "mouth.spring" to 9,
@@ -163,4 +147,29 @@ class RibbonsDsTool {
             ModifierPluginStore.deleteTree(directory)
         }
     }
+}
+
+internal val layeredRibbonMouthVersions = mapOf("mouth/fitted" to 8, "mouth.outline" to 11, "mouth.vowel" to 8,
+    "mouth.capture" to 7, "mouth.jaw" to 10, "mouth.cheek-lid" to 10, "mouth.spring" to 11)
+
+internal fun ribbonDsDocument(
+    artwork: SourceArt, config: PipelineConfig, layered: Boolean,
+    extraOverrides: Map<String, LayerClassificationOverride> = emptyMap(),
+): WorkspaceDocument {
+    fun layer(id: String, x: Int, y: Int, width: Int, height: Int) =
+        WorkspaceSourceLayer(LayerId(id), id, "", SourceLayerKind.Raster, true, 0,
+            LayerBounds(x, y, width, height), 1f, false, LayerBlend.Normal, ChannelMask.ALL,
+            LayerRaster(width, height, ByteArray(width * height * 4) { -1 }), null, null, false)
+    val ribbon = layer("ds-cloth-ribbon", 565, 455, 16, 63)
+    val pendant = layer("ds-head-pendant", 674, 212, 13, 31)
+    val source = object : SourceArt by artwork {
+        override val layers = (listOf(ribbon, pendant) + artwork.layers)
+            .mapIndexed { index, layer -> WorkspaceSourceLayer.copyOf(layer, index) }
+    }
+    val overrides = mapOf(ribbon.id.raw to LayerClassificationOverride(LayerType.PRESET, SemanticTag.TOPWEAR, Side.NONE, role = PartRole.RIBBON),
+        pendant.id.raw to LayerClassificationOverride(LayerType.PRESET, SemanticTag.HEADWEAR, Side.NONE, role = PartRole.PENDANT)) + extraOverrides
+    return if (layered) {
+        val lips = layeredMouthDocument(source, config)
+        lips.copy(layerOverrides = lips.layerOverrides + overrides)
+    } else WorkspaceDocument(source, emptyMap(), emptySet(), overrides, emptyMap(), config.rigEdits, WorkspaceSettingsCodec.encode(config))
 }
