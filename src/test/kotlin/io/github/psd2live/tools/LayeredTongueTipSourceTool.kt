@@ -1,6 +1,7 @@
 package io.github.psd2live.tools
 
 import io.github.psd2live.algorithms.binding.MouthTongueV9Algorithm
+import io.github.psd2live.application.CliPresetBindings
 import io.github.psd2live.application.WorkspaceInitialPreset
 import io.github.psd2live.application.WorkspacePresetInitialization
 import io.github.psd2live.application.WorkspacePreviewBuilder
@@ -281,6 +282,10 @@ class LayeredTongueTipSourceTool {
         val legacy = PSD2LivePipeline().apply { deferRuntimeBundles = true }.buildPreview(document.source,
             config.copy(rigEdits = RigEditOverlay.Empty, layerOverrides = document.layerOverrides))
         val nativeTip = RigIrCompiler.compile(legacy, tileArt = true).meshes.single { it.id == "${owner.id}_Out" }
+        val raw = config.copy(layerOverrides = document.layerOverrides)
+        val rawAnalysis = RigGenerationSource.prepare(RigGenerationSource.analyze(document.source, raw), raw)
+        val named = CliPresetBindings(rawAnalysis, raw).bindings(preview, upgraded).instances.single { it.id == selected.id }
+        assertEquals(nativeTip.id, named.outputId(MouthTongueV9Algorithm.tipOutput(owner.id)))
         assertEquals(nativeTip.geometry?.indices, tip.geometry?.indices)
         assertEquals(nativeTip.offsets, tip.offsets)
         val nativeDriver = nativeTip.shapes.single { it.parameter == driven.parameter }

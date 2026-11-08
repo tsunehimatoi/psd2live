@@ -2,6 +2,7 @@ package io.github.psd2live.application
 
 import io.github.psd2live.algorithms.binding.MouthOutlineOwner
 import io.github.psd2live.algorithms.binding.MouthOutlineV7Algorithm
+import io.github.psd2live.algorithms.binding.MouthTongueV9Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldParts
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.RigLegacyBindings
@@ -31,6 +32,10 @@ internal class CliPresetBindings(private val source: RigGenerationSource.Analyse
             .associate { "shared/deformer:${it.id.raw}" to it.id.raw }
         val parts = ScaffoldParts.build(emptyList()) { it }.parts.associate { "shared/part:${it.id.raw}" to it.id.raw }
         val lips = source.geometry.layers.mapNotNull { it.source as? MouthLipLayer }.groupBy { it.ownerId }
+        val tongueLayers by lazy {
+            source.geometry.layers.filter { it.semantic.tag == SemanticTag.TONGUE && it.opaquePixels > 0 }
+                .mapTo(hashSetOf()) { it.source.id.raw }
+        }
         val layerByMesh = model.baseRig.ownLayerIdByDrawableId
         val available = StandardParameters.all.mapTo(HashSet()) { it.id.raw } + chains.flatMap { it.parameters.keys }
         val rules = PhysicsGenerator.moduleRules(available)
@@ -49,6 +54,11 @@ internal class CliPresetBindings(private val source: RigGenerationSource.Analyse
                         put("mouth-lip:$slot", mesh)
                         put("mouth-art:$slot", lip.id.raw)
                         put("mouth-path:$slot:$path", path)
+                    }
+                }
+                if (instance.type == RigModules.MOUTH_TONGUE.id && instance.version == MouthTongueV9Algorithm.VERSION) {
+                    for (target in instance.targets.filter { layerByMesh[it.id] in tongueLayers }) {
+                        put(MouthTongueV9Algorithm.tipOutput(target.id), "${target.id}_Out")
                     }
                 }
                 if (spec?.seeThrough == true) for (target in instance.targets) {
