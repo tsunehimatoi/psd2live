@@ -55,6 +55,7 @@ import io.github.psd2live.algorithms.binding.MouthCheekLidV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV8Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV9Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV10Algorithm
+import io.github.psd2live.algorithms.binding.MouthCheekLidV11Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV5Algorithm
@@ -73,6 +74,7 @@ import io.github.psd2live.algorithms.binding.MouthJawV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV8Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV9Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV10Algorithm
+import io.github.psd2live.algorithms.binding.MouthJawV11Algorithm
 import io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV5Algorithm
@@ -88,6 +90,7 @@ import io.github.psd2live.algorithms.binding.MouthSpringV8Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV9Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV10Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV11Algorithm
+import io.github.psd2live.algorithms.binding.MouthSpringV12Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV6Algorithm
@@ -305,8 +308,14 @@ internal object WorkspacePresetInitialization {
                             put(RigModules.MOUTH_OUTLINE.id, MouthOutlineV10Algorithm.VERSION)
                             if (RigModules.MOUTH_VOWEL.id !in plannedTypes) return@buildMap
                             put(RigModules.MOUTH_VOWEL.id, MouthVowelV9Algorithm.VERSION)
-                            if (RigModules.MOUTH_CAPTURE.id in plannedTypes)
-                                put(RigModules.MOUTH_CAPTURE.id, MouthCaptureV8Algorithm.VERSION)
+                            if (RigModules.MOUTH_CAPTURE.id !in plannedTypes) return@buildMap
+                            put(RigModules.MOUTH_CAPTURE.id, MouthCaptureV8Algorithm.VERSION)
+                            if (RigModules.MOUTH_JAW.id !in plannedTypes || RigModules.MOUTH_TONGUE.id in plannedTypes) return@buildMap
+                            put(RigModules.MOUTH_JAW.id, MouthJawV11Algorithm.VERSION)
+                            if (RigModules.MOUTH_CHEEK_LID.id !in plannedTypes) return@buildMap
+                            put(RigModules.MOUTH_CHEEK_LID.id, MouthCheekLidV11Algorithm.VERSION)
+                            if (RigModules.MOUTH_SPRING.id in plannedTypes && RigModules.MOUTH_DEPTH.id !in plannedTypes)
+                                put(RigModules.MOUTH_SPRING.id, MouthSpringV12Algorithm.VERSION)
                         })
                     } else emptyMap()
                 }

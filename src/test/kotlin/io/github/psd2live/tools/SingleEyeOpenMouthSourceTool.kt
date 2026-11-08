@@ -170,6 +170,9 @@ class SingleEyeOpenMouthSourceTool {
         assertEquals(10, stack.instances.single { it.type == "mouth.outline" }.version)
         assertEquals(9, stack.instances.single { it.type == "mouth.vowel" }.version)
         assertEquals(8, stack.instances.single { it.type == "mouth.capture" }.version)
+        assertEquals(11, stack.instances.single { it.type == "mouth.jaw" }.version)
+        assertEquals(11, stack.instances.single { it.type == "mouth.cheek-lid" }.version)
+        assertEquals(12, stack.instances.single { it.type == "mouth.spring" }.version)
         fun differences(a: Any, b: Any): List<String> = a.javaClass.declaredFields
             .filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
             .filter { it.isAccessible = true; it.get(a) != it.get(b) }.map { it.name }
