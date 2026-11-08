@@ -37,6 +37,8 @@ internal object WorkspaceMouthProfiles {
 
     fun plain(source: Source): Map<String, Int> = profiles.getValue(source).let { (it.speech + it.plain).toMap() }
 
+    fun depth(source: Source): Map<String, Int> = profiles.getValue(source).let { (it.speech + it.depth).toMap() }
+
     fun preset(source: Source, planned: Collection<String>): Map<String, Int> {
         val profile = profiles.getValue(source)
         val motion = when {

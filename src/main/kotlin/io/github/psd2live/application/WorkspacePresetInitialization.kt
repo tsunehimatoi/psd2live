@@ -362,10 +362,13 @@ internal object WorkspacePresetInitialization {
         if (fittedSources.isNotEmpty()) {
             val fittedBody = mapOf(RigSourceModifiers.SCAFFOLD to 2, LegacyBodyV2Algorithm.TYPE to LegacyBodyV2Algorithm.VERSION,
                 RigLegacyBindings.FITTED_FACE to FittedFaceV3Algorithm.VERSION)
-            val layeredAttachments = mapOf(
+            val layeredFace = mapOf(
                 RigModules.EYE_FITTED.id to EyeFittedV5Algorithm.VERSION,
                 RigModules.BROW_FITTED.id to BrowFittedV4Binding.VERSION,
-            ) + WorkspaceMouthProfiles.plain(WorkspaceMouthProfiles.Source.LAYERED)
+            )
+            val layeredAttachments = layeredFace + WorkspaceMouthProfiles.plain(WorkspaceMouthProfiles.Source.LAYERED)
+            val layeredDepth = layeredFace + WorkspaceMouthProfiles.depth(WorkspaceMouthProfiles.Source.LAYERED)
+            val layeredDepthBarriers = setOf(RigModules.MOUTH_TONGUE.id, RigModules.OUTFIT_SKIRT.id, RigModules.OUTFIT_RIBBONS.id)
             val skirtBinding = RigModules.OUTFIT_SKIRT.id to SkirtAlgorithm.VERSION
             fun selectAttachment(entry: RigModifierInstance, upstream: List<RigModifierInstance>): RigModifierInstance {
                 val (version, profile) = when {
@@ -394,9 +397,12 @@ internal object WorkspacePresetInitialization {
                         val kinds = model.analysis.layers.filter { it.opaquePixels > 0 }.mapNotNull { HairKind.partOf(it) }.toSet()
                         when {
                             mouth == MouthFittedV8Algorithm.VERSION && kinds.isNotEmpty() -> {
-                                val version = if (HairKind.EAR in kinds) CreatureV6Algorithm.VERSION else CreatureAlgorithm.VERSION
+                                val hasEars = HairKind.EAR in kinds
+                                val depthWithoutAttachments = !hasEars && upstream.any { it.type == RigModules.MOUTH_DEPTH.id } &&
+                                    upstream.none { it.type in layeredDepthBarriers }
+                                val version = if (hasEars) CreatureV6Algorithm.VERSION else CreatureAlgorithm.VERSION
                                 version to buildMap {
-                                    putAll(layeredAttachments)
+                                    putAll(if (depthWithoutAttachments) layeredDepth else layeredAttachments)
                                     if (upstream.any { it.type == RigModules.OUTFIT_SKIRT.id })
                                         put(skirtBinding.first, skirtBinding.second)
                                     if (upstream.any { it.type == RigModules.OUTFIT_RIBBONS.id })
