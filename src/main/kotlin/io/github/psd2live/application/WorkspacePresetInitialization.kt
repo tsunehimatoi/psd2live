@@ -24,6 +24,7 @@ import io.github.psd2live.algorithms.binding.CreatureResidualAlgorithm
 import io.github.psd2live.algorithms.binding.CreatureV4Algorithm
 import io.github.psd2live.algorithms.binding.CreatureV5Algorithm
 import io.github.psd2live.algorithms.binding.CreatureV6Algorithm
+import io.github.psd2live.algorithms.binding.CreatureV7Algorithm
 import io.github.psd2live.algorithms.binding.EyeAftershockV4Algorithm
 import io.github.psd2live.algorithms.binding.EyeAftershockV5Algorithm
 import io.github.psd2live.algorithms.binding.EyeEmotionV3Algorithm
@@ -398,9 +399,13 @@ internal object WorkspacePresetInitialization {
                         when {
                             mouth == MouthFittedV8Algorithm.VERSION && kinds.isNotEmpty() -> {
                                 val hasEars = HairKind.EAR in kinds
-                                val depthWithoutAttachments = !hasEars && upstream.any { it.type == RigModules.MOUTH_DEPTH.id } &&
+                                val depthWithoutAttachments = upstream.any { it.type == RigModules.MOUTH_DEPTH.id } &&
                                     upstream.none { it.type in layeredDepthBarriers }
-                                val version = if (hasEars) CreatureV6Algorithm.VERSION else CreatureAlgorithm.VERSION
+                                val version = when {
+                                    !hasEars -> CreatureAlgorithm.VERSION
+                                    depthWithoutAttachments -> CreatureV7Algorithm.VERSION
+                                    else -> CreatureV6Algorithm.VERSION
+                                }
                                 version to buildMap {
                                     putAll(if (depthWithoutAttachments) layeredDepth else layeredAttachments)
                                     if (upstream.any { it.type == RigModules.OUTFIT_SKIRT.id })
