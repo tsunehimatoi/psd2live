@@ -3,6 +3,7 @@ package io.github.psd2live.tools
 import io.github.psd2live.application.*
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
+import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.project.WorkspaceDocument
 import io.github.psd2live.project.WorkspaceSettingsCodec
@@ -17,7 +18,7 @@ import kotlin.test.*
 
 class LayeredMouthOutlineSourceTool {
     private enum class Upgrade(val type: String, val version: Int) {
-        OUTLINE("mouth.outline", 9), FITTED("mouth/fitted", 8), VOWEL("mouth.vowel", 8),
+        OUTLINE("mouth.outline", 9), FITTED("mouth/fitted", 8), VOWEL("mouth.vowel", 8), CAPTURE("mouth.capture", 7),
     }
 
     @Test fun compareLayeredOutlineWithLegacyFittedMouth(): Unit = runBlocking { compareLayered(Upgrade.OUTLINE) }
@@ -26,16 +27,19 @@ class LayeredMouthOutlineSourceTool {
 
     @Test fun compareLayeredVowelsWithSharedFittedMouth(): Unit = runBlocking { compareLayered(Upgrade.VOWEL) }
 
+    @Test fun compareLayeredCaptureWithSharedVowels(): Unit = runBlocking { compareLayered(Upgrade.CAPTURE) }
+
     private suspend fun compareLayered(upgrade: Upgrade) {
         requireTools()
         val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
         val config = PipelineConfig(meshSpacing = 40, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val document = layeredDocument(source, config)
-        val fittedVersion = if (upgrade == Upgrade.VOWEL) 8 else 1
+        val fittedVersion = if (upgrade == Upgrade.VOWEL || upgrade == Upgrade.CAPTURE) 8 else 1
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4, "mouth/fitted" to fittedVersion,
             "eye.smile" to 4, "eye.wide" to 4, "eye.gaze-lid" to 4, "eye.emotion" to 4, "eye.aftershock" to 5,
             "eye.squash" to 5, "brow.shape" to 5, "brow.lid-coupling" to 7, "brow.blink" to 5, "brow.spring" to 6,
-            "mouth.outline" to 1, "mouth.vowel" to 1, "mouth.capture" to 1, "mouth.jaw" to 1,
+            "mouth.outline" to 1, "mouth.vowel" to (if (upgrade == Upgrade.CAPTURE) 8 else 1),
+            "mouth.capture" to 1, "mouth.jaw" to 1,
             "mouth.cheek-lid" to 1, "mouth.spring" to 1)
         val (planned, reference) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
             WorkspaceInitialPreset(clothing = false), requestedVersions = versions)
@@ -87,6 +91,23 @@ class LayeredMouthOutlineSourceTool {
                 })
             }
         }
+        if (upgrade == Upgrade.CAPTURE) {
+            val rejected = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(candidate(6)) }
+            assertContains(rejected.message.orEmpty(), "requires its fitted mouth v6")
+            val previous = referenceStages[stage - 1]
+            val desired = referenceStages[stage]
+            val controls = RigModules.MOUTH_CAPTURE.defines.map { it.id }.toSet()
+            assertEquals(controls, desired.parameters.map { it.id }.toSet() - previous.parameters.map { it.id }.toSet())
+            for (meshId in authored) {
+                assertTrue(previous.meshes.single { it.id == meshId }.shapes.none { it.parameter in controls })
+                val shapes = desired.meshes.single { it.id == meshId }.shapes
+                for (parameter in listOf("ParamMouthX", "ParamMouthPuckerWiden", "ParamMouthFunnel")) {
+                    val binding = shapes.single { it.parameter == parameter }
+                    assertTrue(binding.shapes.filterNotNull().any { shape -> shape.deltas.shared().any { it != 0f } },
+                        "$meshId $parameter")
+                }
+            }
+        }
         RigBuildProfile.reset()
         val recording = RigBuildProfile.recording
         val preview = try {
@@ -132,6 +153,7 @@ class LayeredMouthOutlineSourceTool {
                 Upgrade.OUTLINE -> RigFittedMouthOutlineDefinition.sharedFrameDefinition(sourceInputs, layered = true)
                 Upgrade.FITTED -> RigFittedMouthDefinition.sharedFrameDefinition(sourceInputs, layered = true)
                 Upgrade.VOWEL -> RigMouthVowelModifier.sharedFrameDefinition(sourceInputs, layered = true)
+                Upgrade.CAPTURE -> RigMouthCaptureModifier.sharedFrameDefinition(sourceInputs, layered = true)
             }
             val context = definition.authorContext(instance).withUpstream(actual.entries.take(stage)
                 .filter { it.status == ModifierStatus.ACTIVE && it.instance.type in definition.requires + definition.optionalUpstream }
@@ -143,6 +165,7 @@ class LayeredMouthOutlineSourceTool {
                 Upgrade.OUTLINE -> listOf("mouth/fitted")
                 Upgrade.FITTED -> listOf("face/fitted", "eye/fitted", "brow/fitted")
                 Upgrade.VOWEL -> listOf("mouth/fitted", "mouth.outline")
+                Upgrade.CAPTURE -> listOf("mouth/fitted", "mouth.outline", "mouth.vowel")
             }
             for (type in providerTypes) {
                 val provider = context.upstream.single { it.type == type }
