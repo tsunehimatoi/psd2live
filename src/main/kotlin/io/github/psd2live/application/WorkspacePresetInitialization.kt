@@ -303,8 +303,17 @@ internal object WorkspacePresetInitialization {
                     } }.orEmpty()
                     val outlineSupported = RigModules.MOUTH_OUTLINE.id !in plannedTypes || supportsClassicOutline(model.analysis, config)
                     if (mouth != null && outlineSupported && RigFittedMouthDefinition.supportsFallbackFrames(source, scaffold, prefix, mouth)) {
-                        packages(headVersions + buildMap {
-                            put(RigModules.BROW_FITTED.id, BrowFittedV3Binding.VERSION)
+                        val supportedEyes = setOf(RigModules.EYE_SMILE.id, RigModules.EYE_WIDE.id, RigModules.EYE_GAZE_LID.id,
+                            RigModules.EYE_EMOTION.id, RigModules.EYE_AFTERSHOCK.id, RigModules.EYE_SQUASH.id)
+                        val eyes = plannedLids.filterKeys { it in supportedEyes }
+                        val brows = mapOf(
+                            RigModules.BROW_FITTED.id to BrowFittedV3Binding.VERSION,
+                            RigModules.BROW_SHAPE.id to BrowShapeV4Algorithm.VERSION,
+                            RigModules.BROW_LID.id to BrowLidV6Algorithm.VERSION,
+                            RigModules.BROW_BLINK.id to BrowBlinkV4Algorithm.VERSION,
+                            RigModules.BROW_SPRING.id to BrowSpringV5Algorithm.VERSION,
+                        ).filterKeys { it in plannedTypes }
+                        packages(headVersions + eyes + brows + buildMap {
                             put(RigModules.MOUTH_FITTED.id, MouthFittedV7Algorithm.VERSION)
                             if (RigModules.MOUTH_OUTLINE.id !in plannedTypes) return@buildMap
                             put(RigModules.MOUTH_OUTLINE.id, MouthOutlineV10Algorithm.VERSION)

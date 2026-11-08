@@ -208,21 +208,33 @@ class SingleEyeOpenMouthSourceTool {
         val config = PipelineConfig()
         val source = singleEyeArtwork(pipeline.readPsd(sample.path), config)
         val expected = RigIrCompiler.compile(pipeline.buildPreview(source, config), tileArt = true)
-        val preview = pipeline.buildSourceExport(source, config)
+        RigBuildProfile.reset()
+        val recording = RigBuildProfile.recording
+        val preview = try {
+            RigBuildProfile.recording = true
+            pipeline.buildSourceExport(source, config)
+        } finally {
+            RigBuildProfile.recording = recording
+        }
         val actual = RigIrCompiler.compile(preview, tileArt = true)
         val stack = RigModifierStack.fromJson(assertNotNull(preview.config.rigEdits.modifierStack))
-        assertEquals(7, stack.instances.single { it.type == "mouth/fitted" }.version)
-        assertEquals(10, stack.instances.single { it.type == "mouth.outline" }.version)
-        assertEquals(9, stack.instances.single { it.type == "mouth.vowel" }.version)
-        assertEquals(8, stack.instances.single { it.type == "mouth.capture" }.version)
-        assertEquals(11, stack.instances.single { it.type == "mouth.jaw" }.version)
-        assertEquals(11, stack.instances.single { it.type == "mouth.cheek-lid" }.version)
-        assertEquals(12, stack.instances.single { it.type == "mouth.spring" }.version)
+        val versions = mapOf(
+            "eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3, "eye.emotion" to 3,
+            "eye.aftershock" to 4, "eye.squash" to 4,
+            "brow.shape" to 4, "brow.lid-coupling" to 6, "brow.blink" to 4, "brow.spring" to 5,
+            "mouth/fitted" to 7, "mouth.outline" to 10, "mouth.vowel" to 9, "mouth.capture" to 8,
+            "mouth.jaw" to 11, "mouth.cheek-lid" to 11, "mouth.spring" to 12,
+        )
+        assertEquals(versions, stack.instances.filter { it.type in versions }.associate { it.type to it.version })
+        val templateConsumers = legacyTemplateConsumers()
+        val selectedLegacy = templateConsumers.intersect(versions.keys)
+        assertTrue(selectedLegacy.isEmpty(), "Unexpected legacy template consumers: $selectedLegacy")
         fun differences(a: Any, b: Any): List<String> = a.javaClass.declaredFields
             .filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
             .filter { it.isAccessible = true; it.get(a) != it.get(b) }.map { it.name }
         val report = buildString {
             appendLine("IR: ${differences(expected, actual)}")
+            appendLine("Legacy template consumers: ${templateConsumers.sorted()}")
             val meshes = expected.meshes.associateBy { it.id }
             for (mesh in actual.meshes) meshes[mesh.id]?.takeIf { it != mesh }?.let { old ->
                 appendLine("${mesh.id}: ${differences(old, mesh)}; geometry: ${old.geometry?.let { a -> mesh.geometry?.let { b -> differences(a, b) } }}; parents: ${old.parent} -> ${mesh.parent}")
