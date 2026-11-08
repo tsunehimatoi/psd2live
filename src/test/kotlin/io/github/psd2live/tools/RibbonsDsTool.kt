@@ -36,11 +36,7 @@ class RibbonsDsTool {
         assertTrue(originalStack.instances.none { it.type == "outfit.ribbons" })
         val skirtLayers = originalModel.analysis.layers.filter { it.opaquePixels > 0 && it.semantic.role == PartRole.SKIRT }
         assertTrue(skirtLayers.isNotEmpty())
-        val skirtOverrides = if (includeSkirt) emptyMap() else skirtLayers.associate { layer ->
-            val semantic = layer.semantic
-            layer.source.id.raw to LayerClassificationOverride(semantic.type, semantic.tag, semantic.side,
-                semantic.parameter, semantic.switchId, PartRole.PLAIN)
-        }
+        val skirtOverrides = if (includeSkirt) emptyMap() else plainSkirtOverrides(skirtLayers)
         val document = ribbonDsDocument(artwork, config.copy(rigEdits = overlay), layered, skirtOverrides)
         val layeredPrefix = if (layered) layeredRibbonMouthVersions else emptyMap()
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4,
@@ -161,6 +157,12 @@ class RibbonsDsTool {
             ModifierPluginStore.deleteTree(directory)
         }
     }
+}
+
+internal fun plainSkirtOverrides(skirts: List<ClassifiedLayer>): Map<String, LayerClassificationOverride> = skirts.associate { layer ->
+    val semantic = layer.semantic
+    layer.source.id.raw to LayerClassificationOverride(semantic.type, semantic.tag, semantic.side,
+        semantic.parameter, semantic.switchId, PartRole.PLAIN)
 }
 
 internal val layeredRibbonMouthVersions = mapOf("mouth/fitted" to 8, "mouth.outline" to 11, "mouth.vowel" to 8,

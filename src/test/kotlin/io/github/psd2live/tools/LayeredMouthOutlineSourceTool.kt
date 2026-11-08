@@ -36,9 +36,19 @@ class LayeredMouthOutlineSourceTool {
 
     @Test fun compareLayeredJawWithSharedCapture(): Unit = runBlocking { compareLayered(Upgrade.JAW) }
 
-    @Test fun recommendedLayeredMouthUsesSharedSources(): Unit = runBlocking { compareRecommendedLayered(withTongue = false) }
+    private enum class Interior { NONE, TONGUE, TEETH, OPENING }
 
-    @Test fun recommendedLayeredTongueUsesSharedSources(): Unit = runBlocking { compareRecommendedLayered(withTongue = true) }
+    @Test fun recommendedLayeredMouthUsesSharedSources(): Unit = runBlocking { compareRecommendedLayered() }
+
+    @Test fun recommendedLayeredTongueUsesSharedSources(): Unit = runBlocking { compareRecommendedLayered(Interior.TONGUE) }
+
+    @Test fun recommendedLayeredTeethUseSharedSources(): Unit = runBlocking { compareRecommendedLayered(Interior.TEETH) }
+
+    @Test fun recommendedLayeredOpeningUsesSharedSources(): Unit = runBlocking { compareRecommendedLayered(Interior.OPENING) }
+
+    @Test fun recommendedLayeredRibbonsWithoutSkirtUseSharedSources(): Unit = runBlocking {
+        compareRecommendedLayered(includeSkirt = false)
+    }
 
     @Test fun appendLayeredCaptureUsesStandalonePlugin(): Unit = runBlocking {
         requireTools()
@@ -78,16 +88,28 @@ class LayeredMouthOutlineSourceTool {
         assertTrue(expected == evaluated.outputs.last(), "Independent capture differs from v1 with the same instance ID")
     }
 
-    private suspend fun compareRecommendedLayered(withTongue: Boolean) {
+    private suspend fun compareRecommendedLayered(interior: Interior = Interior.NONE, includeSkirt: Boolean = true) {
         requireTools()
         val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
         val config = PipelineConfig(meshSpacing = 40, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
-        val document = if (withTongue) layeredMouthDocument(source, config, withTongue = true)
-        else ribbonDsDocument(source, config, layered = true)
-        val versions = if (withTongue) mapOf(
-            "mouth/fitted" to 8, "mouth.outline" to 11, "mouth.vowel" to 8, "mouth.capture" to 7,
-            "mouth.tongue" to 7, "mouth.jaw" to 12, "mouth.cheek-lid" to 12, "mouth.interior-depth" to 8, "mouth.spring" to 13,
-        ) else layeredRibbonMouthVersions + mapOf("body.bust" to 3, "body.arms" to 3, "outfit.ribbons" to 6, "outfit.creature" to 2)
+        val skirtOverrides = if (includeSkirt) emptyMap() else {
+            val skirts = RigGenerationSource.analyze(source, config).layers.filter { it.opaquePixels > 0 && it.semantic.role == PartRole.SKIRT }
+            assertTrue(skirts.isNotEmpty())
+            plainSkirtOverrides(skirts)
+        }
+        val document = when (interior) {
+            Interior.NONE -> ribbonDsDocument(source, config, layered = true, extraOverrides = skirtOverrides)
+            Interior.TONGUE -> layeredMouthDocument(source, config, withTongue = true)
+            Interior.TEETH -> layeredMouthDocument(source, config, withTeeth = true)
+            Interior.OPENING -> layeredMouthDocument(source, config, openingOnly = true)
+        }
+        val extraVersions = when (interior) {
+            Interior.NONE -> mapOf("body.bust" to 3, "body.arms" to 3, "outfit.ribbons" to 6, "outfit.creature" to 2)
+            Interior.TONGUE -> mapOf("mouth.tongue" to 7, "mouth.jaw" to 12, "mouth.cheek-lid" to 12,
+                "mouth.interior-depth" to 8, "mouth.spring" to 13)
+            Interior.TEETH, Interior.OPENING -> mapOf("mouth.interior-depth" to 9, "mouth.spring" to 14)
+        }
+        val versions = layeredRibbonMouthVersions + extraVersions
         RigBuildProfile.reset()
         val recording = RigBuildProfile.recording
         val (planned, recommended) = try {
@@ -103,6 +125,7 @@ class LayeredMouthOutlineSourceTool {
         assertTrue(templateConsumers.isEmpty(), "Unexpected legacy template consumers: $templateConsumers")
         assertTrue(selected.all { it.status == ModifierStatus.ACTIVE })
         val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
+        if (!includeSkirt) assertTrue(stack.instances.none { it.type == "outfit.skirt" })
         val legacy = stack.copy(instances = stack.instances.map { entry ->
             if (entry.type in versions) entry.copy(version = 1, plugin = BuiltinModifierPlugins.reference(entry.type, 1))
             else entry
@@ -114,7 +137,7 @@ class LayeredMouthOutlineSourceTool {
         }
         assertEquals(RigIrCompiler.compile(historical, tileArt = true), RigIrCompiler.compile(recommended, tileArt = true))
 
-        if (withTongue) return
+        if (interior != Interior.NONE || !includeSkirt) return
         val outline = selected.single { it.instance.type == "mouth.outline" }.instance
         val index = stack.index(outline.id)
         val definition = RigFittedMouthOutlineDefinition.layeredSourceDefinition(RigModifierSource.of(recommended))

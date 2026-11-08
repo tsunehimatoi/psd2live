@@ -63,6 +63,7 @@ import io.github.psd2live.algorithms.binding.MouthDepthV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV8Algorithm
+import io.github.psd2live.algorithms.binding.MouthDepthV9Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV5Algorithm
@@ -95,6 +96,7 @@ import io.github.psd2live.algorithms.binding.MouthSpringV10Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV11Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV12Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV13Algorithm
+import io.github.psd2live.algorithms.binding.MouthSpringV14Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV6Algorithm
@@ -411,16 +413,16 @@ internal object WorkspacePresetInitialization {
                 RigModules.MOUTH_JAW.id to MouthJawV10Algorithm.VERSION,
                 RigModules.MOUTH_CHEEK_LID.id to MouthCheekLidV10Algorithm.VERSION,
                 RigModules.MOUTH_SPRING.id to MouthSpringV11Algorithm.VERSION,
-                RigModules.OUTFIT_SKIRT.id to SkirtAlgorithm.VERSION,
             )
+            val skirtBinding = RigModules.OUTFIT_SKIRT.id to SkirtAlgorithm.VERSION
             fun selectAttachment(entry: RigModifierInstance, upstream: List<RigModifierInstance>): RigModifierInstance {
                 val (version, profile) = when {
                     entry.type == RigModules.OUTFIT_RIBBONS.id && entry.version == 1 -> {
                         val mouth = upstream.singleOrNull { it.type == RigModules.MOUTH_FITTED.id }?.version
                         val skirt = upstream.singleOrNull { it.type == RigModules.OUTFIT_SKIRT.id }?.version
                         when {
-                            mouth == MouthFittedV8Algorithm.VERSION && skirt == SkirtAlgorithm.VERSION ->
-                                RibbonsV6Algorithm.VERSION to layeredAttachments
+                            mouth == MouthFittedV8Algorithm.VERSION && (skirt == null || skirt == SkirtAlgorithm.VERSION) ->
+                                RibbonsV6Algorithm.VERSION to if (skirt == null) layeredAttachments else layeredAttachments + skirtBinding
                             mouth == MouthFittedV6Algorithm.VERSION && (skirt == null || skirt == SkirtAlgorithm.VERSION) ->
                                 RibbonsV5Algorithm.VERSION to buildMap {
                                     put(RigModules.EYE_FITTED.id, EyeFittedV5Algorithm.VERSION)
@@ -442,6 +444,8 @@ internal object WorkspacePresetInitialization {
                             mouth == MouthFittedV8Algorithm.VERSION && kinds == setOf(HairKind.ANIMAL_TAIL) ->
                                 CreatureAlgorithm.VERSION to buildMap {
                                     putAll(layeredAttachments)
+                                    if (upstream.any { it.type == RigModules.OUTFIT_SKIRT.id })
+                                        put(skirtBinding.first, skirtBinding.second)
                                     if (upstream.any { it.type == RigModules.OUTFIT_RIBBONS.id })
                                         put(RigModules.OUTFIT_RIBBONS.id, RibbonsV6Algorithm.VERSION)
                                 }
@@ -614,9 +618,14 @@ internal object WorkspacePresetInitialization {
                 if (RigModules.MOUTH_CHEEK_LID.id !in types) return@buildMap
                 put(RigModules.MOUTH_CHEEK_LID.id, if (tongue) MouthCheekLidV12Algorithm.VERSION else MouthCheekLidV10Algorithm.VERSION)
                 val depth = RigModules.MOUTH_DEPTH.id in types
-                if (tongue && depth) put(RigModules.MOUTH_DEPTH.id, MouthDepthV8Algorithm.VERSION)
-                if (RigModules.MOUTH_SPRING.id in types && tongue == depth)
-                    put(RigModules.MOUTH_SPRING.id, if (tongue) MouthSpringV13Algorithm.VERSION else MouthSpringV11Algorithm.VERSION)
+                if (depth) put(RigModules.MOUTH_DEPTH.id, if (tongue) MouthDepthV8Algorithm.VERSION else MouthDepthV9Algorithm.VERSION)
+                val spring = when {
+                    tongue && depth -> MouthSpringV13Algorithm.VERSION
+                    depth -> MouthSpringV14Algorithm.VERSION
+                    !tongue -> MouthSpringV11Algorithm.VERSION
+                    else -> null
+                }
+                if (spring != null && RigModules.MOUTH_SPRING.id in types) put(RigModules.MOUTH_SPRING.id, spring)
             }
         }
         if (config.mouthOutlineEnabled && !supportsClassicOutline(analysis, config)) return emptyMap()
