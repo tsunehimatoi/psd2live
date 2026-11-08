@@ -21,6 +21,17 @@ import java.util.prefs.Preferences
 import kotlin.test.*
 
 class SingleEyeOpenMouthSourceTool {
+    @Test fun compareGazeLid(): Unit = runBlocking {
+        val speech = mapOf("mouth.vowel" to 9, "mouth.capture" to 8, "mouth.jaw" to 11, "mouth.cheek-lid" to 11)
+        val controls = RigModules.EYE_GAZE_LID.defines.mapTo(HashSet()) { it.id }
+        compareShapeModule("eye.gaze-lid", 3, speech, controls, emptySet(),
+            { source -> RigEyeGazeLidModifier.definition(source, modern = true) }) { before, after ->
+            val id = "ArtMeshEyelashL"
+            assertNotEquals(before.meshes.single { it.id == id }, after.meshes.single { it.id == id })
+            assertNotEquals(before.parameterLinks, after.parameterLinks)
+        }
+    }
+
     @Test fun compareVowel(): Unit = runBlocking {
         val vowels = setOf("ParamA", "ParamI", "ParamU", "ParamE", "ParamO")
         compareShapeModule("mouth.vowel", 9, emptyMap(), vowels, vowels, RigMouthVowelModifier::fallbackFrameDefinition)
@@ -135,7 +146,7 @@ class SingleEyeOpenMouthSourceTool {
 
         val instance = actual.entries[stage].instance
         val definition = sourceDefinition(RigModifierSource.of(candidate))
-        val context = definition.authorContext(instance).withUpstream(actual.entries.take(stage)
+        val context = actual.readAlgorithms[instance.id]?.context ?: definition.authorContext(instance).withUpstream(actual.entries.take(stage)
             .filter { it.status == ModifierStatus.ACTIVE && it.instance.type in definition.requires + definition.optionalUpstream }
             .map { entry -> entry.instance.let {
                 ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
