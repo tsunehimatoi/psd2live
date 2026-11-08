@@ -8,6 +8,9 @@ import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.recipe.RecipeSubject
 import io.github.psd2live.core.recipe.RigModules
+import io.github.psd2live.format.model.Deformer
+import io.github.psd2live.format.model.KeyGrid
+import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.project.WorkspaceDocument
 import io.github.psd2live.project.WorkspaceSettingsCodec
 import kotlinx.coroutines.runBlocking
@@ -35,9 +38,41 @@ class SingleEyeOpenMouthSourceTool {
             emptySet(), setOf("ParamMouthOpenY"), RigMouthJawModifier::fallbackFrameDefinition)
     }
 
+    @Test fun compareCheekLid(): Unit = runBlocking {
+        compareShapeModule("mouth.cheek-lid", 11, mapOf("mouth.vowel" to 9, "mouth.capture" to 8, "mouth.jaw" to 11),
+            emptySet(), emptySet(), RigMouthCheekLidModifier::fallbackFrameDefinition, ::verifyCheekLidContribution)
+    }
+
+    private fun verifyCheekLidContribution(before: RigIR, after: RigIR) {
+        val original = before.meshes.associateBy { it.id }
+        val changed = after.meshes.filter { it != original[it.id] }
+        assertEquals(setOf("ArtMeshEyelashL", "ArtMeshEyewhiteL"), changed.mapTo(HashSet()) { it.id })
+        val frames = after.deformers.associateBy { it.id }
+        val oldFrames = before.deformers.associateBy { it.id }
+        val mouth = "ParamMouthForm"
+        fun <F> varies(grid: KeyGrid<F>?): Boolean {
+            val axis = grid?.axes?.indexOfFirst { it.parameter == mouth } ?: return false
+            if (axis < 0) return false
+            return grid.cells.groupBy { cell -> cell.coordinate.toArray().filterIndexed { index, _ -> index != axis } }
+                .values.any { cells -> cells.map { it.form }.distinct().size > 1 }
+        }
+        for (mesh in changed) {
+            val previous = original.getValue(mesh.id)
+            val local = mesh.offsets != previous.offsets && varies(mesh.offsets) ||
+                mesh.shapes.any { it.parameter == mouth && it !in previous.shapes &&
+                    it.shapes.any { shape -> shape?.deltas?.toArray()?.any { delta -> delta != 0f } == true } }
+            val inherited = generateSequence(mesh.parent) { frames[it]?.parent }.any { id ->
+                val warp = frames[id] as? Deformer.Warp
+                warp != null && warp != oldFrames[id] && varies(warp.lattice)
+            }
+            assertTrue(local || inherited, "${mesh.id} must move with $mouth")
+        }
+    }
+
     private suspend fun compareShapeModule(type: String, version: Int, predecessors: Map<String, Int>,
                                            controls: Set<String>, moving: Set<String>,
-                                           sourceDefinition: (RigModifierSource) -> RigModifierDefinition) {
+                                           sourceDefinition: (RigModifierSource) -> RigModifierDefinition,
+                                           verifyContribution: (RigIR, RigIR) -> Unit = { _, _ -> }) {
         requireTools()
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 3,
             "mouth/fitted" to 7, "mouth.outline" to 10, type to 1) + predecessors
@@ -51,6 +86,7 @@ class SingleEyeOpenMouthSourceTool {
         assertEquals(ModifierStatus.ACTIVE, expected.entries[stage].status)
         val before = expected.outputs[stage - 1]
         val after = expected.outputs[stage]
+        verifyContribution(before, after)
         assertEquals(controls, after.parameters.mapTo(HashSet()) { it.id } - before.parameters.map { it.id }.toSet())
         val oldMeshes = before.meshes.associateBy { it.id }
         val moved = buildSet {

@@ -9,6 +9,7 @@ import io.github.psd2live.algorithms.binding.MouthCheekLidV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV8Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV9Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV10Algorithm
+import io.github.psd2live.algorithms.binding.MouthCheekLidV11Algorithm
 import io.github.psd2live.core.CharacterAnalyzer
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.SemanticTag
@@ -100,24 +101,29 @@ internal object RigMouthCheekLidModifier {
             })
     }
 
-    fun sharedFrameDefinition(source: RigModifierSource?, withTongue: Boolean = false, layered: Boolean = false): RigModifierDefinition {
-        val algorithm = when {
-            layered -> MouthCheekLidV10Algorithm
-            withTongue -> MouthCheekLidV9Algorithm
-            else -> MouthCheekLidV8Algorithm
-        }
-        val version = when {
-            layered -> MouthCheekLidV10Algorithm.VERSION
-            withTongue -> MouthCheekLidV9Algorithm.VERSION
-            else -> MouthCheekLidV8Algorithm.VERSION
-        }
+    fun sharedFrameDefinition(source: RigModifierSource?, withTongue: Boolean = false,
+                              layered: Boolean = false): RigModifierDefinition = when {
+        layered -> sourceFrameDefinition(source, MouthCheekLidV10Algorithm.VERSION, MouthCheekLidV10Algorithm)
+        withTongue -> sourceFrameDefinition(source, MouthCheekLidV9Algorithm.VERSION, MouthCheekLidV9Algorithm, withTongue = true)
+        else -> sourceFrameDefinition(source, MouthCheekLidV8Algorithm.VERSION, MouthCheekLidV8Algorithm)
+    }
+
+    fun fallbackFrameDefinition(source: RigModifierSource?): RigModifierDefinition =
+        sourceFrameDefinition(source, MouthCheekLidV11Algorithm.VERSION, MouthCheekLidV11Algorithm)
+
+    private fun sourceFrameDefinition(source: RigModifierSource?, version: Int, algorithm: ChangingModifierAlgorithmPlugin,
+                                      withTongue: Boolean = false): RigModifierDefinition {
         val projected = object : ChangingModifierAlgorithmPlugin by algorithm, ModifierOptionalUpstream, ModifierVersionSelection {
             override val optionalUpstream = RigLegacyBindings.specs.filter { !it.expressionToggles && !it.seeThrough }
                 .mapTo(linkedSetOf()) { it.type } - setOf(MouthCheekLidV8Algorithm.TYPE, "mouth/fitted", "eye/fitted")
             override val canonicalOptInType = MouthCheekLidV8Algorithm.TYPE
         }
         return definition(source).copy(version = version, plugin = projected,
-            changeWrites = if (layered) MouthCheekLidV10Algorithm.WRITES else MouthCheekLidV8Algorithm.WRITES,
+            changeWrites = when (version) {
+                MouthCheekLidV10Algorithm.VERSION -> MouthCheekLidV10Algorithm.WRITES
+                MouthCheekLidV11Algorithm.VERSION -> MouthCheekLidV11Algorithm.WRITES
+                else -> MouthCheekLidV8Algorithm.WRITES
+            },
             authorContext = { requireNotNull(source).captureSharedFrames(it, withTongue) })
     }
 
