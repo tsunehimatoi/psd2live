@@ -1,5 +1,6 @@
 package io.github.psd2live.application
 
+import io.github.psd2live.algorithms.binding.ModelIdRemap
 import io.github.psd2live.algorithms.binding.BrowLegacyV2Algorithm
 import io.github.psd2live.algorithms.binding.BrowSpringAlgorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV2Algorithm
@@ -2872,7 +2873,7 @@ class WorkspaceLegacyBindingTest {
             val uv = RasterMeshJournal.TextureCoordinates(model, mesh).toCanvas(geometry.uvs)
             return DrawableMesh(uv, uv, geometry.indices)
         }
-        var referenceRig = RigIdRemap(parameters = aliases.mapKeys { ParameterId(it.key) }.mapValues { ParameterId(it.value) }).model(native.rig.puppet)
+        var referenceRig = ModelIdRemap(parameters = aliases.mapKeys { ParameterId(it.key) }.mapValues { ParameterId(it.value) }).model(native.rig.puppet)
         for (mesh in actual.rig.puppet.drawables) {
             if (targets != null && mesh.id !in targets) continue
             val original = native.rig.puppet.drawables.single { it.id == mesh.id }
@@ -10108,7 +10109,7 @@ class WorkspaceLegacyBindingTest {
         assertTrue(aliases.isNotEmpty())
         assertEquals(original.rig.seeThroughCopies.keys, aliases.values.map { it.raw }.toSet())
         assertTrue(aliases.keys.all { f.now.model.rig.pageByDrawableId[it.raw] != null })
-        val aliased = RigIdRemap(drawables = aliases).model(f.now.model.rig.puppet)
+        val aliased = ModelIdRemap(drawables = aliases).model(f.now.model.rig.puppet)
         assertEquals(original.rig.puppet.drawables.associate { it.id to (it.maskedBy to it.invertMask) },
             aliased.drawables.associate { it.id to (it.maskedBy to it.invertMask) })
         compare(original, f.now.model.copy(rig = f.now.model.rig.copy(puppet = aliased)), listOf(emptyMap(),

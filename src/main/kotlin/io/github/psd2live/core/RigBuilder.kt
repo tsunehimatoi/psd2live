@@ -1,5 +1,6 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.algorithms.binding.MouthStrokeMesh
 import io.github.psd2live.algorithms.binding.BodyStance
 import io.github.psd2live.algorithms.binding.BindingProjection
 import io.github.psd2live.algorithms.binding.BrowSpringInputs

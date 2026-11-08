@@ -1,5 +1,6 @@
 package io.github.psd2live.tools
 
+import io.github.psd2live.algorithms.binding.ModelIdRemap
 import io.github.psd2live.application.*
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
@@ -110,7 +111,7 @@ class ModifierChainModulesTool {
             val points = RasterMeshJournal.TextureCoordinates(puppet, drawable).toCanvas(mesh.uvs)
             return DrawableMesh(points, points, mesh.indices)
         }
-        var migrated = RigIdRemap(parameters = aliases.mapKeys { ParameterId(it.key) }.mapValues { ParameterId(it.value) }).model(original.rig.puppet)
+        var migrated = ModelIdRemap(parameters = aliases.mapKeys { ParameterId(it.key) }.mapValues { ParameterId(it.value) }).model(original.rig.puppet)
         for (mesh in stacked.rig.puppet.drawables) {
             val old = original.rig.puppet.drawables.single { it.id == mesh.id }
             val target = canvas(stacked.rig.puppet, mesh)

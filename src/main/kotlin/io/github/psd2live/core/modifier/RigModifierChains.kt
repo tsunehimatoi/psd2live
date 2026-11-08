@@ -1,6 +1,6 @@
 package io.github.psd2live.core.modifier
 
-import io.github.psd2live.core.RigIdRemap
+import io.github.psd2live.algorithms.binding.ModelIdRemap
 import io.github.psd2live.core.fit.HairChain
 import io.github.psd2live.core.fit.HairKind
 import org.umamo.runtime.model.*
@@ -25,7 +25,7 @@ internal object RigModifierChains {
     data class Owned(val binding: Binding, val owner: String, val aliases: Map<String, String>)
     data class Projection(val model: PuppetModel, val chains: List<Owned>)
 
-    fun normalize(model: PuppetModel, chains: List<Binding>) = RigIdRemap(
+    fun normalize(model: PuppetModel, chains: List<Binding>) = ModelIdRemap(
         deformers = chains.associate { DeformerId(it.native.warpId) to it.warp },
         parameters = chains.flatMap { it.parameters.entries }.associate { ParameterId(it.key) to it.value },
     ).model(model)
@@ -52,7 +52,7 @@ internal object RigModifierChains {
         return cache.getOrPut(owners) {
             val all = chains.flatMapTo(HashSet()) { it.parameters.values }
             val kept = model.parameters.filter { it.id !in all || it.id in mappings }.mapTo(HashSet()) { it.id }
-            Projection(RigIdRemap(parameters = mappings).model(restrict(model, kept)), owners)
+            Projection(ModelIdRemap(parameters = mappings).model(restrict(model, kept)), owners)
         }
     }
 }

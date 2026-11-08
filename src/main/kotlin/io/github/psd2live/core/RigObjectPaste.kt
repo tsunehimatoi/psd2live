@@ -1,5 +1,6 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.algorithms.binding.ModelIdRemap
 import kotlinx.serialization.json.*
 import org.umamo.runtime.model.*
 
@@ -196,7 +197,7 @@ internal object RigObjectPaste {
 		}
 		fun of(kind: String) = copies.filter { namespace(it.kind) == kind }.associate { it.id to it.newId }
 		// References between copies point at the copies; parameters are new axes, so keyforms keep the originals'.
-		val remap = RigIdRemap(
+		val remap = ModelIdRemap(
 			drawables = of("mesh").entries.associate { DrawableId(it.key) to DrawableId(it.value) },
 			deformers = of("deformer").entries.associate { DeformerId(it.key) to DeformerId(it.value) },
 			parts = of("part").entries.associate { PartId(it.key) to PartId(it.value) },

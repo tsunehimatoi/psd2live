@@ -1,11 +1,12 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.algorithms.binding.ModelIdRemap
 import kotlinx.serialization.json.*
 import org.umamo.runtime.model.*
 
 /**
  * Cubism's ID conversion as a journal entry: objects take new IDs where the entry replays, and every reference the rig
- * holds follows ([RigIdRemap]). Entries before it keep the IDs they were recorded with and replay before it; entries
+ * holds follows ([ModelIdRemap]). Entries before it keep the IDs they were recorded with and replay before it; entries
  * after it use the new ones. What replays after the journal - generated overrides and deferred panel edits - is
  * [forwarded] through the conversions recorded after it, and generators that name standard parameters by their
  * standard IDs (physics presets, motion presets, expressions) read [Renames.parameters] to find them again.
@@ -74,9 +75,9 @@ internal object RigIdConversion {
 		return null
 	}
 
-	fun remap(renames: List<Rename>): RigIdRemap {
+	fun remap(renames: List<Rename>): ModelIdRemap {
 		fun of(namespace: String) = renames.filter { it.namespace == namespace }.associate { it.from to it.to }
-		return RigIdRemap(
+		return ModelIdRemap(
 			parameters = of("parameter").entries.associate { ParameterId(it.key) to ParameterId(it.value) },
 			groups = of("param_group").entries.associate { ParameterGroupId(it.key) to ParameterGroupId(it.value) },
 			drawables = of("mesh").entries.associate { DrawableId(it.key) to DrawableId(it.value) },
@@ -85,7 +86,7 @@ internal object RigIdConversion {
 		)
 	}
 
-	fun remap(renames: Renames): RigIdRemap = RigIdRemap(
+	fun remap(renames: Renames): ModelIdRemap = ModelIdRemap(
 		parameters = renames.of("parameter").entries.associate { ParameterId(it.key) to ParameterId(it.value) },
 		groups = renames.of("param_group").entries.associate { ParameterGroupId(it.key) to ParameterGroupId(it.value) },
 		drawables = renames.of("mesh").entries.associate { DrawableId(it.key) to DrawableId(it.value) },

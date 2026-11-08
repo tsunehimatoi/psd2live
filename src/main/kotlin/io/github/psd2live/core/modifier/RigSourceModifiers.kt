@@ -1,5 +1,6 @@
 package io.github.psd2live.core.modifier
 
+import io.github.psd2live.algorithms.binding.ModelIdRemap
 import io.github.psd2live.algorithms.binding.ExpressionChannels
 import io.github.psd2live.algorithms.binding.MouthFittedInputs
 import io.github.psd2live.algorithms.binding.MouthLegacyInputs
@@ -259,7 +260,7 @@ internal class RigModifierSource(
         ModifierAlgorithmResource(io.github.psd2live.format.compile.RigIrBinary.encode(PuppetIr.toIr(
             RigBuilder.closedMouthShellProjection(context, config, atlas, meshCache, materialBase, layers, parameters,
                 includeFaceLean, chains, includeMouthShading, includeLayeredTongueKeys)
-                .let { projection -> if (parameterAliases.isEmpty()) projection else RigIdRemap(parameters = parameterAliases).model(projection) }
+                .let { projection -> if (parameterAliases.isEmpty()) projection else ModelIdRemap(parameters = parameterAliases).model(projection) }
                 .let { projection -> projection.copy(drawables = projection.drawables.filter { it.id.raw in projectedMeshes }) })))
     private val staticModels = java.util.IdentityHashMap<PuppetModel, PuppetModel>()
     fun static(model: PuppetModel) = staticModels.getOrPut(model) { restricted(model, emptySet()) }
@@ -674,7 +675,7 @@ internal class RigModifierSource(
         val canonical = primaryByLayer.getValue(layersByMesh.getValue(target.id))
         if (canonical == target.id) return model
         return projections.getOrPut(model) { HashMap() }.getOrPut(target.id) {
-            RigIdRemap(drawables = mapOf(DrawableId(canonical) to DrawableId(target.id))).model(model)
+            ModelIdRemap(drawables = mapOf(DrawableId(canonical) to DrawableId(target.id))).model(model)
         }
     }
 

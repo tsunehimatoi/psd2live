@@ -1,5 +1,6 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.algorithms.binding.ModelIdRemap
 import io.github.psd2live.algorithms.binding.MouthTongueV7Algorithm
 import io.github.psd2live.core.modifier.BuiltinModifierPlugins
 import io.github.psd2live.core.modifier.ModifierStatus
@@ -54,7 +55,7 @@ internal object CliPresetPresentation {
         require(model.deformers.map { aliases[it.id] ?: it.id }.distinct().size == model.deformers.size) {
             "Raw PSD export frame IDs conflict"
         }
-        return preview.copy(rig = rig.copy(puppet = RigIdRemap(deformers = aliases).model(model)))
+        return preview.copy(rig = rig.copy(puppet = ModelIdRemap(deformers = aliases).model(model)))
     }
 
     private fun orderExportMetadata(preview: RigPreviewModel, moduleIds: List<ParameterId>, config: PipelineConfig): RigPreviewModel {
