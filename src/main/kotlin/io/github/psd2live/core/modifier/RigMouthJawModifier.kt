@@ -10,6 +10,7 @@ import io.github.psd2live.algorithms.binding.MouthJawV8Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV9Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV10Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV11Algorithm
+import io.github.psd2live.algorithms.binding.MouthJawV12Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldMesh
 import io.github.psd2live.algorithms.binding.ScaffoldMeshContext
 import io.github.psd2live.core.*
@@ -74,11 +75,13 @@ internal object RigMouthJawModifier {
         FITTED(MouthJawV8Algorithm.VERSION, 6, MouthJawV8Algorithm),
         TONGUE(MouthJawV9Algorithm.VERSION, 6, MouthJawV9Algorithm),
         LAYERED(MouthJawV10Algorithm.VERSION, 8, MouthJawV10Algorithm),
+        LAYERED_TONGUE(MouthJawV12Algorithm.VERSION, 8, MouthJawV12Algorithm),
         FALLBACK(MouthJawV11Algorithm.VERSION, 7, MouthJawV11Algorithm),
     }
 
     fun sharedFrameDefinition(source: RigModifierSource?, withTongue: Boolean = false,
                               layered: Boolean = false): RigModifierDefinition = frameDefinition(source, when {
+        layered && withTongue -> FrameMode.LAYERED_TONGUE
         layered -> FrameMode.LAYERED
         withTongue -> FrameMode.TONGUE
         else -> FrameMode.FITTED
@@ -106,7 +109,8 @@ internal object RigMouthJawModifier {
             it.type == "mouth/fitted" && it.version == mode.fitted }) {
             "Mouth jaw v$version requires a shared fitted mouth v${mode.fitted}"
         }
-        val withTongue = mode == FrameMode.TONGUE
+        val withTongue = mode == FrameMode.TONGUE || mode == FrameMode.LAYERED_TONGUE
+        val layered = mode == FrameMode.LAYERED || mode == FrameMode.LAYERED_TONGUE
         val baseProviders = setOf("mouth.outline", "mouth.vowel", "mouth.capture")
         val providers = if (withTongue) baseProviders + "mouth.tongue" else baseProviders
         require(prefix.none { it.type.startsWith("mouth.") && it.type !in providers }) {
@@ -116,7 +120,8 @@ internal object RigMouthJawModifier {
         val face = setOf(SemanticTag.FACE, SemanticTag.NOSE, SemanticTag.FACE_DETAIL)
         val captured = face + CharacterAnalyzer.MOUTH_TAGS
         return captureBindingTransition(instance, scaffold, prefix, captured,
-            projectedTags = if (mode == FrameMode.LAYERED) captured else face, values = buildJsonObject {
+            projectedTags = if (layered) captured else face, includeLayeredTongueKeys = mode == FrameMode.LAYERED_TONGUE,
+            values = buildJsonObject {
                 putJsonObject("providers") {
                     providers.forEach { type -> put(type, prefix.single { it.type == type }.id) }
                 }

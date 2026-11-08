@@ -20,7 +20,7 @@ class LayeredMouthOutlineSourceTool {
     private enum class Upgrade(val type: String, val version: Int) {
         OUTLINE("mouth.outline", 9), FITTED("mouth/fitted", 8), VOWEL("mouth.vowel", 8),
         CAPTURE("mouth.capture", 7), JAW("mouth.jaw", 10), CHEEK_LID("mouth.cheek-lid", 10), SPRING("mouth.spring", 11),
-        TONGUE("mouth.tongue", 7),
+        TONGUE("mouth.tongue", 7), TONGUE_JAW("mouth.jaw", 12),
     }
 
     @Test fun compareLayeredOutlineWithLegacyFittedMouth(): Unit = runBlocking { compareLayered(Upgrade.OUTLINE) }
@@ -106,11 +106,14 @@ class LayeredMouthOutlineSourceTool {
 
     @Test fun compareLayeredTongueWithSharedCapture(): Unit = runBlocking { compareLayered(Upgrade.TONGUE) }
 
+    @Test fun compareLayeredJawWithSharedTongue(): Unit = runBlocking { compareLayered(Upgrade.TONGUE_JAW) }
+
     private suspend fun compareLayered(upgrade: Upgrade) {
         requireTools()
         val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
         val config = PipelineConfig(meshSpacing = 40, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
-        val document = layeredMouthDocument(source, config, withTongue = upgrade == Upgrade.TONGUE)
+        val withTongue = upgrade >= Upgrade.TONGUE
+        val document = layeredMouthDocument(source, config, withTongue = withTongue)
         val fittedVersion = if (upgrade in setOf(Upgrade.OUTLINE, Upgrade.FITTED)) 1 else 8
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4, "mouth/fitted" to fittedVersion,
             "eye.smile" to 4, "eye.wide" to 4, "eye.gaze-lid" to 4, "eye.emotion" to 4, "eye.aftershock" to 5,
@@ -119,7 +122,8 @@ class LayeredMouthOutlineSourceTool {
             "mouth.capture" to (if (upgrade >= Upgrade.JAW) 7 else 1),
             "mouth.jaw" to (if (upgrade in setOf(Upgrade.CHEEK_LID, Upgrade.SPRING)) 10 else 1),
             "mouth.cheek-lid" to (if (upgrade == Upgrade.SPRING) 10 else 1), "mouth.spring" to 1) +
-            if (upgrade == Upgrade.TONGUE) mapOf("mouth.tongue" to 1, "mouth.interior-depth" to 1) else emptyMap()
+            if (withTongue) mapOf("mouth.tongue" to (if (upgrade == Upgrade.TONGUE) 1 else 7), "mouth.interior-depth" to 1)
+            else emptyMap()
         val (planned, reference) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
             WorkspaceInitialPreset(clothing = false), requestedVersions = versions)
         val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
@@ -140,7 +144,7 @@ class LayeredMouthOutlineSourceTool {
         assertEquals(beforeOutline.textures, afterOutline.textures)
         val beforeMeshes = beforeOutline.meshes.associateBy { it.id }
         val beforeNodes = beforeOutline.deformers.associateBy { it.id }
-        if (upgrade != Upgrade.TONGUE) assertEquals(19, afterOutline.meshes.count { it != beforeMeshes[it.id] })
+        if (!withTongue) assertEquals(19, afterOutline.meshes.count { it != beforeMeshes[it.id] })
         assertEquals(18, afterOutline.deformers.count { it != beforeNodes[it.id] })
         val fittedBefore = referenceStages[fittedIndex - 1].meshes.associateBy { it.id }
         val authored = reference.rig.layerIdByDrawableId.filterValues { it.startsWith("test-lip-line-") }.keys
@@ -250,6 +254,23 @@ class LayeredMouthOutlineSourceTool {
             val shape = after.shapes.single { it.parameter == "ParamTongueOut" }
             assertTrue(shape.shapes.filterNotNull().any { form -> form.deltas.shared().any { it != 0f } })
         }
+        if (upgrade == Upgrade.TONGUE_JAW) {
+            val rejected = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(candidate(10)) }
+            assertContains(rejected.message.orEmpty(), "requires the shared open-mouth outline, vowel and capture chain")
+            val previous = referenceStages[stage - 1]
+            val desired = referenceStages[stage]
+            val priorById = previous.meshes.associateBy { it.id }
+            val changed = desired.meshes.filter { it != priorById[it.id] }.map { it.id }.toSet()
+            assertTrue(changed.containsAll(setOf("ArtMeshFace", "ArtMeshNose")), changed.toString())
+            val tongue = previous.meshes.single { reference.rig.layerIdByDrawableId[it.id] == "test-layered-tongue" }
+            val shape = tongue.shapes.single { it.parameter == "ParamTongueOut" }
+            assertTrue(shape.shapes.filterNotNull().any { form -> form.deltas.shared().any { it != 0f } })
+            assertEquals(tongue, desired.meshes.single { it.id == tongue.id })
+            val control = previous.parameters.single { it.id == "ParamTongueOut" }
+            assertEquals(listOf(0f, 0.12f, 1f), control.keys?.shared()?.toList())
+            assertEquals(previous.parameters, desired.parameters)
+            assertEquals(previous.deformers, desired.deformers)
+        }
         RigBuildProfile.reset()
         val recording = RigBuildProfile.recording
         val preview = try {
@@ -300,6 +321,7 @@ class LayeredMouthOutlineSourceTool {
                 Upgrade.CHEEK_LID -> RigMouthCheekLidModifier.sharedFrameDefinition(sourceInputs, layered = true)
                 Upgrade.SPRING -> RigMouthSpringModifier.sharedFrameDefinition(sourceInputs, layered = true)
                 Upgrade.TONGUE -> RigMouthTongueModifier.sharedFrameDefinition(sourceInputs, layered = true)
+                Upgrade.TONGUE_JAW -> RigMouthJawModifier.sharedFrameDefinition(sourceInputs, withTongue = true, layered = true)
             }
             val context = definition.authorContext(instance).withUpstream(actual.entries.take(stage)
                 .filter { it.status == ModifierStatus.ACTIVE && it.instance.type in definition.requires + definition.optionalUpstream }
@@ -316,6 +338,7 @@ class LayeredMouthOutlineSourceTool {
                 Upgrade.CHEEK_LID -> listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture", "mouth.jaw")
                 Upgrade.SPRING -> listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture", "mouth.jaw", "mouth.cheek-lid")
                 Upgrade.TONGUE -> listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture")
+                Upgrade.TONGUE_JAW -> listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture", "mouth.tongue")
             }
             for (type in providerTypes) {
                 val provider = context.upstream.single { it.type == type }
