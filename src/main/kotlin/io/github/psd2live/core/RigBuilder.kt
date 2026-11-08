@@ -3697,6 +3697,20 @@ object RigBuilder {
 		return native.copy(blendShapes = neutralized(parts.blendShapes, native))
 	}
 
+    internal fun tongueTipTopology(layer: ClassifiedLayer, context: RigContext, config: PipelineConfig,
+                                   atlas: PackedAtlas, cache: PreviewMeshCache, material: Drawable): Pair<Drawable, Bounds> {
+        val (parent, frame) = context.parentAndFrame(layer, config)
+        val source = buildGridMesh(layer, frame, context.headSpaceFor(layer, config), config, cache,
+            MeshResolution.unitScale(config, context.analysis.source))
+        val positions = if (parent == null) source.rigPositions else source.mesh.positions
+        val placement = atlas.placementByLayerId.getValue(layer.source.id.raw)
+        val texture = LayerTexture.packed(layer, placement, atlas)
+        return material.copy(name = layer.source.name, parentDeformerId = parent,
+            mesh = DrawableMesh(positions, texture.bind(source.mesh.uvs), source.mesh.indices),
+            geometryGrid = null, blendShapes = emptyList(), channelGrids = ChannelGrids.Empty,
+            texturePage = placement.page) to frame
+    }
+
     /** Source meshes and frames needed by clothing attachment residuals. */
     internal fun attachmentBindingSource(analysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig,
                                      cache: PreviewMeshCache, ids: Map<String, DrawableId>): Pair<PuppetModel, List<io.github.psd2live.core.fit.HairChain>> {

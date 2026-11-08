@@ -8,6 +8,7 @@ import io.github.psd2live.algorithms.binding.MouthTongueV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV8Algorithm
+import io.github.psd2live.algorithms.binding.MouthTongueV9Algorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.i18n.tr
@@ -55,8 +56,9 @@ internal object RigMouthTongueModifier {
         sharedFrameDefinition(source, singleEye = true)
 
     fun sharedFrameDefinition(source: RigModifierSource?, layered: Boolean = false,
-                              singleEye: Boolean = false): RigModifierDefinition {
+                              singleEye: Boolean = false, withTip: Boolean = false): RigModifierDefinition {
         val (algorithm, version) = when {
+            withTip -> MouthTongueV9Algorithm() to MouthTongueV9Algorithm.VERSION
             singleEye -> MouthTongueV8Algorithm() to MouthTongueV8Algorithm.VERSION
             layered -> MouthTongueV7Algorithm() to MouthTongueV7Algorithm.VERSION
             else -> MouthTongueV6Algorithm() to MouthTongueV6Algorithm.VERSION
@@ -68,7 +70,7 @@ internal object RigMouthTongueModifier {
                 .mapTo(linkedSetOf()) { it.type } - setOf(MouthTongueAlgorithm.TYPE, "mouth/fitted", "mouth.capture")
         }
         val contexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
-        fun capture(instance: RigModifierInstance) = contexts.getOrPut(instance) { requireNotNull(source).captureSharedFrames(instance, layered, singleEye) }
+        fun capture(instance: RigModifierInstance) = contexts.getOrPut(instance) { requireNotNull(source).captureSharedFrames(instance, layered, singleEye, withTip) }
         return definition(source).copy(version = version, plugin = projected,
             parameters = { instance -> RigIrBinary.decode(capture(instance).resources.getValue("after").read())
                 .parameters.filter { it.id == MouthRig.TONGUE_OUT.raw } },
@@ -76,7 +78,7 @@ internal object RigMouthTongueModifier {
             authorContext = ::capture)
     }
 
-    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance, layered: Boolean, singleEye: Boolean): ModifierAlgorithmContext {
+    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance, layered: Boolean, singleEye: Boolean, withTip: Boolean): ModifierAlgorithmContext {
         val scaffold = provider(instance)
         val prefix = bindingPredecessors(instance, scaffold)
         val fittedVersion = when { singleEye -> 7; layered -> 8; else -> 6 }
@@ -91,12 +93,16 @@ internal object RigMouthTongueModifier {
             layer.source.id.raw == layersByMesh[target.id] && layer.semantic.tag == SemanticTag.TONGUE && layer.opaquePixels > 0
         } }) { "Mouth tongue v${instance.version} requires source tongue artwork" }
         val tags = if (layered || singleEye) CharacterAnalyzer.MOUTH_TAGS + SemanticTag.FACE else CharacterAnalyzer.MOUTH_TAGS
-        return captureBindingTransition(instance, scaffold, prefix, tags, includeLayeredTongueKeys = layered, values = buildJsonObject {
+        val transition = captureBindingTransition(instance, scaffold, prefix, tags, includeLayeredTongueKeys = layered, values = buildJsonObject {
             put("group", tr("model.group.mouth"))
             putJsonObject("providers") {
                 supportedMouth.forEach { type -> put(type, prefix.single { it.type == type }.id) }
             }
         })
+        if (!withTip) return transition
+        val (native, measured) = RigFittedMouthModuleSource.context(this, scaffold, prefix + instance, null)
+        val inputs = tongueTipSource(measured, native, bindingSourceLayers(instance, measured))
+        return ModifierAlgorithmContext(JsonObject(transition.values + inputs.values), transition.resources + inputs.resources)
     }
 
     private fun definition(source: RigModifierSource?, version: Int, algorithm: ReadingModifierAlgorithmPlugin): RigModifierDefinition {

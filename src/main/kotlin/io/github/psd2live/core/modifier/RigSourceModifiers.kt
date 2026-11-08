@@ -262,6 +262,30 @@ internal class RigModifierSource(
                 includeFaceLean, chains, includeMouthShading, includeLayeredTongueKeys)
                 .let { projection -> if (parameterAliases.isEmpty()) projection else ModelIdRemap(parameters = parameterAliases).model(projection) }
                 .let { projection -> projection.copy(drawables = projection.drawables.filter { it.id.raw in projectedMeshes }) })))
+    fun tongueTipSource(context: RigBuilder.RigContext, config: PipelineConfig, layers: Map<String, ClassifiedLayer>): ModifierAlgorithmContext {
+        val fitted = requireNotNull(context.fittedMouth(config))
+        val measurements = requireNotNull(fitted.source).encode()
+        val materials = materialBase.drawables.associateBy { it.id.raw }
+        val lower = layers.filterValues { it.semantic.role in setOf(PartRole.LOWER_LIP, PartRole.LOWER_LINE) }
+        val lowerOrder = requireNotNull(lower.keys.maxOfOrNull { materials.getValue(it).drawOrder })
+        val frames = linkedMapOf<String, JsonArray>()
+        val meshes = layers.filterValues { it.semantic.tag == SemanticTag.TONGUE && fitted.covers(it) }.map { (id, layer) ->
+            val (drawable, frame) = RigBuilder.tongueTipTopology(layer, context, config, atlas, meshCache, materials.getValue(id))
+            frames[id] = JsonArray(listOf(frame.left, frame.top, frame.right, frame.bottom, layer.source.opacity).map(::JsonPrimitive))
+            PuppetIr.meshToIr(drawable)
+        }
+        require(meshes.isNotEmpty()) { "Layered tongue requires source artwork for an unmasked tip" }
+        val topology = io.github.psd2live.format.model.RigIR(
+            io.github.psd2live.format.model.Canvas(materialBase.canvasWidth, materialBase.canvasHeight), emptyList(), meshes = meshes)
+        return ModifierAlgorithmContext(buildJsonObject {
+            put("tip_measurements", measurements.values)
+            put("tip_frames", JsonObject(frames))
+            put("tip_lower_order", lowerOrder)
+            put("tip_chin", fitted.chin)
+        }, measurements.resources + ("tongue_tips" to ModifierAlgorithmResource(
+            io.github.psd2live.format.compile.RigIrBinary.encode(topology))))
+    }
+
     private val staticModels = java.util.IdentityHashMap<PuppetModel, PuppetModel>()
     fun static(model: PuppetModel) = staticModels.getOrPut(model) { restricted(model, emptySet()) }
 
