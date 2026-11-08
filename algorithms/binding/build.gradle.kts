@@ -4127,6 +4127,33 @@ tasks.register("pluginMouthVowelV7") {
     }
 }
 
+val mouthVowelV8WorkerJar = registerIsolatedBindingWorker(
+    "mouthVowelV8", "mouth-vowel-v8", "worker-mouth-vowel-v8", "io.github.psd2live.algorithms.binding.MouthVowelV8Worker",
+)
+tasks.register("pluginMouthVowelV8") {
+    dependsOn(mouthVowelV8WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-vowel-v8")
+    inputs.file(mouthVowelV8WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", project.version.toString())
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthVowelV8WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682e766f77656c.v8"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"${project.version}","name":"Layered mouth vowels",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/vowel","aliases":["mouth.vowel"],"version":8,"name":"Layered mouth vowels","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","mouth/fitted"],"contextVersion":2,
+               "reads":["*"],"writes":["mesh","parameter","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val mouthCaptureV3WorkerJar = registerIsolatedBindingWorker(
     "mouthCaptureV3", "mouth-capture-v3", "worker-mouth-capture-v3", "io.github.psd2live.algorithms.binding.MouthCaptureV3Worker",
 )
