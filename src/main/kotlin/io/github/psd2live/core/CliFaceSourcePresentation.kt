@@ -7,6 +7,7 @@ import io.github.psd2live.core.modifier.RigModifierSource
 import io.github.psd2live.format.compile.RigIrBinary
 import io.github.psd2live.targets.cubism.PuppetIr
 import org.umamo.runtime.model.DrawableMesh
+import org.umamo.runtime.model.MeshForm
 
 /** Binds unchanged source face topology directly to the RAW export atlas. */
 internal object CliFaceSourcePresentation {
@@ -89,7 +90,14 @@ internal object CliFaceSourcePresentation {
         val shown = preview.copy(config = config, rig = preview.rig.copy(seeThroughCopies = copies))
         val refreshed = SeeThroughLayers.refresh(corrected, shown).drawables.associateBy { it.id }
         return preview.copy(rig = preview.rig.copy(puppet = corrected.copy(drawables = drawables.map { drawable ->
-            if (drawable.id.raw in copies) refreshed[drawable.id] ?: drawable else drawable
+            if (drawable.id.raw !in copies) return@map drawable
+            val copy = refreshed[drawable.id] ?: return@map drawable
+            // Placement already came from the full preset. Refresh only the forms that follow the source.
+            drawable.copy(mesh = copy.mesh, geometryGrid = copy.geometryGrid, blendShapes = copy.blendShapes.map { binding ->
+                binding.copy(forms = binding.forms.map { form ->
+                    form?.let { MeshForm(it.positionDeltas, drawable.drawOrder, it.opacity, it.multiplyColor, it.screenColor) }
+                })
+            })
         })))
     }
 }
