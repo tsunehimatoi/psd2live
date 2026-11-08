@@ -23,7 +23,7 @@ class LayeredMouthOutlineSourceTool {
         OUTLINE("mouth.outline", 9), FITTED("mouth/fitted", 8), VOWEL("mouth.vowel", 8),
         CAPTURE("mouth.capture", 7), JAW("mouth.jaw", 10), CHEEK_LID("mouth.cheek-lid", 10), SPRING("mouth.spring", 11),
         TONGUE("mouth.tongue", 7), TONGUE_JAW("mouth.jaw", 12), TONGUE_CHEEK_LID("mouth.cheek-lid", 12), TONGUE_DEPTH("mouth.interior-depth", 8), TONGUE_SPRING("mouth.spring", 13),
-        TEETH_DEPTH("mouth.interior-depth", 9), TEETH_SPRING("mouth.spring", 14),
+        TEETH_DEPTH("mouth.interior-depth", 9), TEETH_SPRING("mouth.spring", 14), OPENING_DEPTH("mouth.interior-depth", 9),
     }
 
     @Test fun compareLayeredOutlineWithLegacyFittedMouth(): Unit = runBlocking { compareLayered(Upgrade.OUTLINE) }
@@ -160,13 +160,16 @@ class LayeredMouthOutlineSourceTool {
 
     @Test fun compareLayeredSpringWithSharedTeethDepth(): Unit = runBlocking { compareLayered(Upgrade.TEETH_SPRING) }
 
+    @Test fun compareLayeredDepthWithOnlyOpening(): Unit = runBlocking { compareLayered(Upgrade.OPENING_DEPTH) }
+
     private suspend fun compareLayered(upgrade: Upgrade) {
         requireTools()
         val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
         val config = PipelineConfig(meshSpacing = 40, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
-        val withTeeth = upgrade >= Upgrade.TEETH_DEPTH
-        val withTongue = upgrade >= Upgrade.TONGUE && !withTeeth
-        val document = layeredMouthDocument(source, config, withTongue, withTeeth)
+        val openingOnly = upgrade == Upgrade.OPENING_DEPTH
+        val withTeeth = upgrade in setOf(Upgrade.TEETH_DEPTH, Upgrade.TEETH_SPRING)
+        val withTongue = upgrade >= Upgrade.TONGUE && !withTeeth && !openingOnly
+        val document = layeredMouthDocument(source, config, withTongue, withTeeth, openingOnly)
         val fittedVersion = if (upgrade in setOf(Upgrade.OUTLINE, Upgrade.FITTED)) 1 else 8
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4, "mouth/fitted" to fittedVersion,
             "eye.smile" to 4, "eye.wide" to 4, "eye.gaze-lid" to 4, "eye.emotion" to 4, "eye.aftershock" to 5,
@@ -174,18 +177,19 @@ class LayeredMouthOutlineSourceTool {
             "mouth.outline" to 1, "mouth.vowel" to (if (upgrade >= Upgrade.CAPTURE) 8 else 1),
             "mouth.capture" to (if (upgrade >= Upgrade.JAW) 7 else 1),
             "mouth.jaw" to when (upgrade) {
-                Upgrade.CHEEK_LID, Upgrade.SPRING, Upgrade.TEETH_DEPTH, Upgrade.TEETH_SPRING -> 10
+                Upgrade.CHEEK_LID, Upgrade.SPRING, Upgrade.TEETH_DEPTH, Upgrade.TEETH_SPRING, Upgrade.OPENING_DEPTH -> 10
                 Upgrade.TONGUE_CHEEK_LID, Upgrade.TONGUE_DEPTH, Upgrade.TONGUE_SPRING -> 12
                 else -> 1
             },
             "mouth.cheek-lid" to when (upgrade) {
-                Upgrade.SPRING, Upgrade.TEETH_DEPTH, Upgrade.TEETH_SPRING -> 10
+                Upgrade.SPRING, Upgrade.TEETH_DEPTH, Upgrade.TEETH_SPRING, Upgrade.OPENING_DEPTH -> 10
                 Upgrade.TONGUE_DEPTH, Upgrade.TONGUE_SPRING -> 12
                 else -> 1
             }, "mouth.spring" to 1) +
             if (withTongue) mapOf("mouth.tongue" to (if (upgrade == Upgrade.TONGUE) 1 else 7),
                 "mouth.interior-depth" to (if (upgrade == Upgrade.TONGUE_SPRING) 8 else 1))
-            else if (withTeeth) mapOf("mouth.interior-depth" to (if (upgrade == Upgrade.TEETH_SPRING) 9 else 1)) else emptyMap()
+            else if (withTeeth || openingOnly) mapOf("mouth.interior-depth" to (if (upgrade == Upgrade.TEETH_SPRING) 9 else 1))
+            else emptyMap()
         val (planned, reference) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
             WorkspaceInitialPreset(clothing = false), requestedVersions = versions)
         val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
@@ -206,8 +210,8 @@ class LayeredMouthOutlineSourceTool {
         assertEquals(beforeOutline.textures, afterOutline.textures)
         val beforeMeshes = beforeOutline.meshes.associateBy { it.id }
         val beforeNodes = beforeOutline.deformers.associateBy { it.id }
-        if (!withTongue && !withTeeth) assertEquals(19, afterOutline.meshes.count { it != beforeMeshes[it.id] })
-        assertEquals(18, afterOutline.deformers.count { it != beforeNodes[it.id] })
+        if (!withTongue && !withTeeth && !openingOnly) assertEquals(19, afterOutline.meshes.count { it != beforeMeshes[it.id] })
+        if (!openingOnly) assertEquals(18, afterOutline.deformers.count { it != beforeNodes[it.id] })
         val fittedBefore = referenceStages[fittedIndex - 1].meshes.associateBy { it.id }
         val authored = reference.rig.layerIdByDrawableId.filterValues { it.startsWith("test-lip-line-") }.keys
         assertEquals(2, authored.size)
@@ -415,6 +419,29 @@ class LayeredMouthOutlineSourceTool {
             assertTrue(desired.parameters.none { it.id == "ParamTongueOut" })
             assertEquals(previous.parameters, desired.parameters)
         }
+        if (openingOnly) {
+            assertTrue(stack.instances.none { it.type == "mouth.tongue" })
+            assertTrue(reference.analysis.layers.none {
+                it.opaquePixels > 0 && it.semantic.tag in setOf(SemanticTag.TONGUE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B)
+            })
+            val layer = reference.analysis.layers.single { it.semantic.tag == SemanticTag.MOUTH_OPEN && it.opaquePixels > 0 }
+            assertTrue(fit.covers(layer) && !layer.source.clipped)
+            assertEquals(io.github.psd2live.algorithms.binding.MouthRig.Follow.OPENING, fit.follow(layer))
+            val previous = referenceStages[stage - 1]
+            val desired = referenceStages[stage]
+            val before = previous.meshes.single { reference.rig.layerIdByDrawableId[it.id] == layer.source.id.raw }
+            val after = desired.meshes.single { it.id == before.id }
+            val priorById = previous.meshes.associateBy { it.id }
+            assertEquals(setOf(before.id), desired.meshes.filter { it != priorById[it.id] }.map { it.id }.toSet())
+            assertEquals(before.maskedBy, after.maskedBy)
+            assertEquals(before.geometry, after.geometry)
+            assertEquals(before.offsets, after.offsets)
+            val shading = after.channels.getValue(Channel.MULTIPLY_COLOR)
+            assertNotEquals(before.channels[Channel.MULTIPLY_COLOR], shading)
+            assertTrue(shading.cells.map { it.form }.distinct().size > 1)
+            assertTrue(desired.parameters.none { it.id == "ParamTongueOut" })
+            assertEquals(previous.parameters, desired.parameters)
+        }
         RigBuildProfile.reset()
         val recording = RigBuildProfile.recording
         val preview = try {
@@ -468,7 +495,8 @@ class LayeredMouthOutlineSourceTool {
                 Upgrade.TONGUE_JAW -> RigMouthJawModifier.sharedFrameDefinition(sourceInputs, withTongue = true, layered = true)
                 Upgrade.TONGUE_CHEEK_LID -> RigMouthCheekLidModifier.sharedFrameDefinition(sourceInputs, withTongue = true, layered = true)
                 Upgrade.TONGUE_DEPTH -> RigMouthDepthModifier.sharedFrameDefinition(sourceInputs, layered = true)
-                Upgrade.TEETH_DEPTH -> RigMouthDepthModifier.sharedFrameDefinition(sourceInputs, layered = true, withTeethOnly = true)
+                Upgrade.TEETH_DEPTH, Upgrade.OPENING_DEPTH ->
+                    RigMouthDepthModifier.sharedFrameDefinition(sourceInputs, layered = true, withTeethOnly = true)
                 Upgrade.TEETH_SPRING -> RigMouthSpringModifier.sharedFrameDefinition(sourceInputs, layered = true, withTeethOnly = true)
                 Upgrade.TONGUE_SPRING -> RigMouthSpringModifier.sharedFrameDefinition(sourceInputs, withSharedTongue = true, layered = true)
             }
@@ -490,7 +518,8 @@ class LayeredMouthOutlineSourceTool {
                 Upgrade.TONGUE_JAW -> listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture", "mouth.tongue")
                 Upgrade.TONGUE_CHEEK_LID -> listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture", "mouth.tongue", "mouth.jaw")
                 Upgrade.TONGUE_DEPTH -> listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture", "mouth.tongue", "mouth.jaw", "mouth.cheek-lid")
-                Upgrade.TEETH_DEPTH -> listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture", "mouth.jaw", "mouth.cheek-lid")
+                Upgrade.TEETH_DEPTH, Upgrade.OPENING_DEPTH ->
+                    listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture", "mouth.jaw", "mouth.cheek-lid")
                 Upgrade.TEETH_SPRING -> listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture",
                     "mouth.jaw", "mouth.cheek-lid", "mouth.interior-depth")
                 Upgrade.TONGUE_SPRING -> listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture",
@@ -514,7 +543,8 @@ class LayeredMouthOutlineSourceTool {
     }
 }
 
-internal fun layeredMouthDocument(source: SourceArt, config: PipelineConfig, withTongue: Boolean = false, withTeeth: Boolean = false): WorkspaceDocument {
+internal fun layeredMouthDocument(source: SourceArt, config: PipelineConfig, withTongue: Boolean = false,
+                            withTeeth: Boolean = false, openingOnly: Boolean = false): WorkspaceDocument {
     val owner = RigGenerationSource.analyze(source, config).layers
         .filter { it.semantic.tag == SemanticTag.MOUTH && it.semantic.role == null && !it.source.clipped }
         .maxBy { it.opaquePixels }
@@ -558,7 +588,10 @@ internal fun layeredMouthDocument(source: SourceArt, config: PipelineConfig, wit
             if (layer.id == owner.source.id) additions.map { it.first } + layer else listOf(layer)
         }.mapIndexed { index, layer -> WorkspaceSourceLayer.copyOf(layer, index) }
     }
-    return WorkspaceDocument(artwork, emptyMap(), emptySet(), additions.associate { (layer, classification) ->
-        layer.id.raw to classification
-    }, emptyMap(), config.rigEdits, WorkspaceSettingsCodec.encode(config))
+    val overrides = additions.associate { (layer, classification) -> layer.id.raw to classification }.toMutableMap()
+    if (openingOnly) {
+        overrides[owner.source.id.raw] = LayerClassificationOverride(tag = SemanticTag.MOUTH_OPEN, side = owner.semantic.side)
+    }
+    return WorkspaceDocument(artwork, emptyMap(), emptySet(), overrides, emptyMap(), config.rigEdits,
+        WorkspaceSettingsCodec.encode(config))
 }
