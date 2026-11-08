@@ -315,7 +315,7 @@ internal object WorkspacePresetInitialization {
                             RigModules.BROW_BLINK.id to BrowBlinkV4Algorithm.VERSION,
                             RigModules.BROW_SPRING.id to BrowSpringV5Algorithm.VERSION,
                         ).filterKeys { it in plannedTypes }
-                        packages(headVersions + eyes + brows + buildMap {
+                        val face = packages(headVersions + eyes + brows + buildMap {
                             put(RigModules.MOUTH_FITTED.id, MouthFittedV7Algorithm.VERSION)
                             if (RigModules.MOUTH_OUTLINE.id !in plannedTypes) return@buildMap
                             put(RigModules.MOUTH_OUTLINE.id, MouthOutlineV10Algorithm.VERSION)
@@ -330,6 +330,13 @@ internal object WorkspacePresetInitialization {
                             if (RigModules.MOUTH_SPRING.id in plannedTypes && RigModules.MOUTH_DEPTH.id !in plannedTypes)
                                 put(RigModules.MOUTH_SPRING.id, MouthSpringV12Algorithm.VERSION)
                         })
+                        if (face.isEmpty()) face else {
+                            val arms = sourceArmVersion(model.analysis, allowSingle = false)
+                                ?.let { packages(mapOf(RigModules.BODY_ARMS.id to it)) }.orEmpty()
+                            val moods = if (RigCheekModifier.sourceMoodParametersAvailable(source, scaffold))
+                                packages(moodVersions) else emptyMap()
+                            face + arms + moods
+                        }
                     } else emptyMap()
                 }
             } else {

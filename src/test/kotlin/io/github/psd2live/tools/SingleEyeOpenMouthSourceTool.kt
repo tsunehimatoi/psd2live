@@ -362,11 +362,11 @@ class SingleEyeOpenMouthSourceTool {
             "brow.shape" to 4, "brow.lid-coupling" to 6, "brow.blink" to 4, "brow.spring" to 5,
             "mouth/fitted" to 7, "mouth.outline" to 10, "mouth.vowel" to 9, "mouth.capture" to 8,
             "mouth.jaw" to 11, "mouth.cheek-lid" to 11, "mouth.spring" to 12,
+            "body.arms" to 3, "expression.cheek" to 3, "expression.gloom" to 3,
         )
         assertEquals(versions, stack.instances.filter { it.type in versions }.associate { it.type to it.version })
         val templateConsumers = legacyTemplateConsumers()
-        val selectedLegacy = templateConsumers.intersect(versions.keys)
-        assertTrue(selectedLegacy.isEmpty(), "Unexpected legacy template consumers: $selectedLegacy")
+        assertTrue(templateConsumers.isEmpty(), "Unexpected legacy template consumers: $templateConsumers")
         fun differences(a: Any, b: Any): List<String> = a.javaClass.declaredFields
             .filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
             .filter { it.isAccessible = true; it.get(a) != it.get(b) }.map { it.name }
