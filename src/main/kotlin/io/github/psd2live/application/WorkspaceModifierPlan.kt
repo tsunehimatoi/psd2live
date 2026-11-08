@@ -5,6 +5,7 @@ import io.github.psd2live.algorithms.binding.DepthTurnV2Algorithm
 import io.github.psd2live.algorithms.binding.EyeLegacySourceAlgorithm
 import io.github.psd2live.algorithms.binding.LegacyBodyV2Algorithm
 import io.github.psd2live.algorithms.binding.LegacyFaceV2Algorithm
+import io.github.psd2live.algorithms.binding.RibbonsAlgorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.sim.*
@@ -211,10 +212,11 @@ internal object WorkspaceModifierPlan {
                                targets: List<ModifierTarget>, configuration: JsonObject,
                                available: List<ModifierCapability>? = null): Int? {
         val legacyVersion = legacySourceBases[type]
-        val mouthSpec = if (type in WorkspaceMouthProfiles.selectableAdditions) RigLegacyBindings.find(type) else null
-        if (legacyVersion == null && mouthSpec == null) return null
-        val keys = if (mouthSpec == null) setOf("scaffold") else
-            setOf("scaffold", "base") + if (mouthSpec.related.isEmpty()) emptySet() else setOf("dependencies")
+        val spec = if (type in WorkspaceMouthProfiles.selectableAdditions || type == RibbonsAlgorithm.TYPE) RigLegacyBindings.find(type) else null
+        if (legacyVersion == null && spec == null) return null
+        val keys = setOf("scaffold") + listOfNotNull(
+            "base".takeIf { spec?.module?.base != null },
+            "dependencies".takeIf { spec?.related?.isNotEmpty() == true })
         if (configuration.keys != keys || !WorkspacePresetInitialization.freshSource(model.config) ||
             stack.appliedCapabilities.isNotEmpty() || stack.overrides.values.any { it.isNotEmpty() }) return null
         val scoped = (available ?: activeCapabilities(model, stack)).filter { entry -> entry.targets.any(targets::contains) }
@@ -228,13 +230,32 @@ internal object WorkspaceModifierPlan {
                     it.targets.toSet() != targets.toSet() || it.config["scaffold"] != configuration["scaffold"]) }) return null
             legacyVersion
         } else {
-            val spec = requireNotNull(mouthSpec)
+            val sourceSpec = requireNotNull(spec)
             val subject = io.github.psd2live.core.recipe.RecipeSubject.of(model.analysis)
-            if (spec.module?.applies?.invoke(subject) != true) return null
-            mouthSourceVersion(spec, targets, configuration, scoped) ?: return null
+            if (sourceSpec.module?.applies?.invoke(subject) != true) return null
+            val sourceVersion = if (type == RibbonsAlgorithm.TYPE) bodyRibbonSourceVersion(model, sourceSpec, targets, configuration, scoped)
+            else mouthSourceVersion(sourceSpec, targets, configuration, scoped)
+            sourceVersion ?: return null
         }
         val reference = BuiltinModifierPlugins.reference(type, version) ?: return null
         return version.takeIf { ModifierPluginCatalog.available(type, it, reference) }
+    }
+
+    private fun bodyRibbonSourceVersion(model: RigPreviewModel, spec: RigLegacyBindings.Spec, targets: List<ModifierTarget>,
+                                        configuration: JsonObject, scoped: List<ModifierCapability>): Int? {
+        val required = WorkspacePresetInitialization.bodyRibbonSourceProfile(model.analysis) ?: return null
+        val prefix = scoped.filter { it.type == RigSourceModifiers.SCAFFOLD || it.config["scaffold"] == configuration["scaffold"] }
+        if (prefix.any { it.type in setOf("outfit.skirt", "mouth.interior-depth", "mouth.tongue") }) return null
+        if (!required.all { (type, version) ->
+                prefix.any { it.type == type && it.version == version && it.targets.containsAll(targets) &&
+                    it.plugin == BuiltinModifierPlugins.reference(type, version) }
+            }) return null
+        val dependencies = configuration.getValue("dependencies").jsonObject
+        val registry = RigModifierAlgorithms.registry
+        if (dependencies.keys != spec.related || dependencies.any { (type, id) ->
+                prefix.none { JsonPrimitive(it.id) == id && registry.provides(it, type) }
+            }) return null
+        return RibbonsAlgorithm.VERSION
     }
 
     private fun mouthSourceVersion(spec: RigLegacyBindings.Spec, targets: List<ModifierTarget>, configuration: JsonObject,

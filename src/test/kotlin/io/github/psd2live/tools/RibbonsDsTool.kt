@@ -7,6 +7,9 @@ import io.github.psd2live.format.model.Deformer
 import io.github.psd2live.project.*
 import org.umamo.format.art.*
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.nio.file.Files
 import java.util.UUID
 import java.util.prefs.Preferences
@@ -85,6 +88,19 @@ class RibbonsDsTool {
             })
             val legacy = WorkspacePreviewBuilder().build(recommended.copy(rigEdits = recommended.rigEdits.copy(modifierStack = pinned.toJson())))
             assertEquals(RigIrCompiler.compile(legacy, tileArt = true), RigIrCompiler.compile(preview, tileArt = true))
+
+            val prefix = recommendedStack.copy(instances = recommendedStack.instances.take(recommendedStack.index(selected.instance.id)))
+            val (inserted, _) = WorkspaceModifierPlan.plan(preview, prefix, buildJsonObject {
+                put("type", entry.type)
+                put("targets", JsonArray(selected.instance.targets.map { target ->
+                    buildJsonObject { put("kind", target.kind); put("id", target.id) }
+                }))
+            })
+            val added = inserted.instances.last()
+            assertEquals(selected.instance.plugin, added.plugin)
+            assertEquals(2, added.version)
+            val rebuilt = WorkspacePreviewBuilder().build(recommended.copy(rigEdits = recommended.rigEdits.copy(modifierStack = inserted.toJson())))
+            assertEquals(ModifierStatus.ACTIVE, assertNotNull(rebuilt.modifierEvaluation).entries.last().status)
         }
         if (layered) {
             val fit = assertNotNull(RigBuilder.rigContext(historical.analysis, config).fittedMouth(config))

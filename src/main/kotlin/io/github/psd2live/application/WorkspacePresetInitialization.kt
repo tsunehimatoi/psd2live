@@ -98,6 +98,21 @@ import java.util.concurrent.FutureTask
 
 /** A preset is a recipe for explicit instances, never a second model-generation pipeline. */
 internal object WorkspacePresetInitialization {
+    private val fittedBody = mapOf(RigSourceModifiers.SCAFFOLD to 2, LegacyBodyV2Algorithm.TYPE to LegacyBodyV2Algorithm.VERSION,
+        RigLegacyBindings.FITTED_FACE to FittedFaceV3Algorithm.VERSION)
+    private val layeredFace = mapOf(RigModules.EYE_FITTED.id to EyeFittedV5Algorithm.VERSION,
+        RigModules.BROW_FITTED.id to BrowFittedV4Binding.VERSION)
+    private val layeredAttachments = layeredFace + WorkspaceMouthProfiles.plain(WorkspaceMouthProfiles.Source.LAYERED)
+
+    internal fun bodyRibbonSourceProfile(analysis: PipelineAnalysis): Map<String, Int>? {
+        val visible = analysis.layers.filter { it.opaquePixels > 0 }
+        if (visible.any { HairKind.partOf(it) == HairKind.EAR }) return null
+        val kinds = setOf(HairKind.RIBBON, HairKind.PENDANT)
+        val ribbons = visible.filter { HairKind.clothOf(it) in kinds }
+        if (ribbons.isEmpty() || ribbons.any { it.semantic.tag != SemanticTag.TOPWEAR || it.semantic.role != PartRole.RIBBON }) return null
+        return fittedBody + layeredAttachments
+    }
+
     fun create(document: WorkspaceDocument, work: WorkspaceRasterWork,
                choices: WorkspaceInitialPreset = WorkspaceInitialPreset()): WorkspaceDocument =
         prepare(document, work, choices).first
@@ -362,31 +377,20 @@ internal object WorkspacePresetInitialization {
             } else entry
         })
         if (fittedSources.isNotEmpty()) {
-            val fittedBody = mapOf(RigSourceModifiers.SCAFFOLD to 2, LegacyBodyV2Algorithm.TYPE to LegacyBodyV2Algorithm.VERSION,
-                RigLegacyBindings.FITTED_FACE to FittedFaceV3Algorithm.VERSION)
-            val layeredFace = mapOf(
-                RigModules.EYE_FITTED.id to EyeFittedV5Algorithm.VERSION,
-                RigModules.BROW_FITTED.id to BrowFittedV4Binding.VERSION,
-            )
-            val layeredAttachments = layeredFace + WorkspaceMouthProfiles.plain(WorkspaceMouthProfiles.Source.LAYERED)
             val layeredDepth = layeredFace + WorkspaceMouthProfiles.depth(WorkspaceMouthProfiles.Source.LAYERED)
             val layeredDepthBarriers = setOf(RigModules.MOUTH_TONGUE.id, RigModules.OUTFIT_SKIRT.id, RigModules.OUTFIT_RIBBONS.id)
             val skirtBinding = RigModules.OUTFIT_SKIRT.id to SkirtAlgorithm.VERSION
             val visibleLayers = model.analysis.layers.filter { it.opaquePixels > 0 }
             val creatureKinds by lazy { visibleLayers.mapNotNull { HairKind.partOf(it) }.toSet() }
-            val bodyRibbonsOnly by lazy {
-                val kinds = setOf(HairKind.RIBBON, HairKind.PENDANT)
-                val ribbons = visibleLayers.filter { HairKind.clothOf(it) in kinds }
-                ribbons.isNotEmpty() && ribbons.all { it.semantic.tag == SemanticTag.TOPWEAR && it.semantic.role == PartRole.RIBBON }
-            }
+            val bodyRibbonProfile by lazy { bodyRibbonSourceProfile(model.analysis) }
             fun selectAttachment(entry: RigModifierInstance, upstream: List<RigModifierInstance>): RigModifierInstance {
                 val (version, profile) = when {
                     entry.type == RigModules.OUTFIT_RIBBONS.id && entry.version == 1 -> {
                         val mouth = upstream.singleOrNull { it.type == RigModules.MOUTH_FITTED.id }?.version
                         val skirt = upstream.singleOrNull { it.type == RigModules.OUTFIT_SKIRT.id }?.version
                         when {
-                            mouth == MouthFittedV8Algorithm.VERSION && skirt == null && HairKind.EAR !in creatureKinds && bodyRibbonsOnly ->
-                                RibbonsAlgorithm.VERSION to layeredAttachments
+                            mouth == MouthFittedV8Algorithm.VERSION && skirt == null && bodyRibbonProfile != null ->
+                                RibbonsAlgorithm.VERSION to requireNotNull(bodyRibbonProfile)
                             mouth == MouthFittedV8Algorithm.VERSION && (skirt == null || skirt == SkirtAlgorithm.VERSION) ->
                                 RibbonsV6Algorithm.VERSION to if (skirt == null) layeredAttachments else layeredAttachments + skirtBinding
                             mouth == MouthFittedV6Algorithm.VERSION && (skirt == null || skirt == SkirtAlgorithm.VERSION) ->
