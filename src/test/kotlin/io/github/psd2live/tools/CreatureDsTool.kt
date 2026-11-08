@@ -125,6 +125,14 @@ class CreatureDsTool {
         }
         assertEquals(RigIrCompiler.compile(historical, tileArt = true), RigIrCompiler.compile(model, tileArt = true))
 
+        if (version == 4 && !includeTail) {
+            val (_, recommended) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct)
+            val selected = assertNotNull(recommended.modifierEvaluation).entries.single { it.instance.type == entry.type }
+            assertEquals(version, selected.instance.version)
+            assertEquals(ModifierStatus.ACTIVE, selected.status)
+            assertEquals(RigIrCompiler.compile(model, tileArt = true), RigIrCompiler.compile(recommended, tileArt = true))
+        }
+
         val artifact = assertNotNull(BundledAlgorithmArtifacts.find(entry.type, version))
         val directory = Files.createTempDirectory("creature-ds-")
         val preferences = Preferences.userRoot().node("creature-ds/" + UUID.randomUUID())

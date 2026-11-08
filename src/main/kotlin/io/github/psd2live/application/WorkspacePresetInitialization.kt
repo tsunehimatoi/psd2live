@@ -21,6 +21,7 @@ import io.github.psd2live.algorithms.binding.BustBindingV3Algorithm
 import io.github.psd2live.algorithms.binding.CheekCarrierAlgorithm
 import io.github.psd2live.algorithms.binding.CreatureAlgorithm
 import io.github.psd2live.algorithms.binding.CreatureResidualAlgorithm
+import io.github.psd2live.algorithms.binding.CreatureV4Algorithm
 import io.github.psd2live.algorithms.binding.EyeAftershockV4Algorithm
 import io.github.psd2live.algorithms.binding.EyeAftershockV5Algorithm
 import io.github.psd2live.algorithms.binding.EyeEmotionV3Algorithm
@@ -250,14 +251,8 @@ internal object WorkspacePresetInitialization {
                         val mouth = packages(sourceMouthVersions(model.analysis, config, types, sharedBrow = true))
                         val arms = if (RigModules.MOUTH_FITTED.id in mouth) sourceArmVersion(model.analysis, closedMouth = false)
                             ?.let { packages(mapOf(RigModules.BODY_ARMS.id to it)) }.orEmpty() else emptyMap()
-                        val attachments = buildMap {
-                            if (RigModules.FACE_NECK.id in plannedTypes) put(RigModules.FACE_NECK.id, NeckV3Algorithm.VERSION)
-                            if (RigModules.OUTFIT_CREATURE.id in plannedTypes) {
-                                val kinds = model.analysis.layers.filter { it.opaquePixels > 0 }.mapNotNull { HairKind.partOf(it) }.toSet()
-                                if (kinds == setOf(HairKind.ANIMAL_TAIL)) put(RigModules.OUTFIT_CREATURE.id, CreatureAlgorithm.VERSION)
-                            }
-                        }
-                        frameBindings + mouth + moods + arms + packages(attachments)
+                        val neck = packages(mapOf(RigModules.FACE_NECK.id to NeckV3Algorithm.VERSION).filterKeys { it in plannedTypes })
+                        frameBindings + mouth + moods + arms + neck
                     }
                 } else emptyMap()
             } else if (singleEyeClosedMouth) {
@@ -354,8 +349,17 @@ internal object WorkspacePresetInitialization {
                             else -> RibbonsResidualAlgorithm.VERSION to RibbonsResidualAlgorithm.PROFILE
                         }
                     }
-                    entry.type == RigModules.OUTFIT_CREATURE.id && entry.version == 1 ->
-                        CreatureResidualAlgorithm.VERSION to CreatureResidualAlgorithm.PROFILE
+                    entry.type == RigModules.OUTFIT_CREATURE.id && entry.version == 1 -> {
+                        val mouth = upstream.singleOrNull { it.type == RigModules.MOUTH_FITTED.id }?.version
+                        val kinds = model.analysis.layers.filter { it.opaquePixels > 0 }.mapNotNull { HairKind.partOf(it) }.toSet()
+                        when {
+                            mouth != MouthFittedV6Algorithm.VERSION -> CreatureResidualAlgorithm.VERSION to CreatureResidualAlgorithm.PROFILE
+                            HairKind.EAR in kinds -> CreatureV4Algorithm.VERSION to CreatureV4Algorithm.PROFILE
+                            HairKind.WING in kinds -> CreatureAlgorithm.VERSION to mapOf(RigModules.OUTFIT_SKIRT.id to SkirtAlgorithm.VERSION)
+                            HairKind.ANIMAL_TAIL in kinds -> CreatureAlgorithm.VERSION to emptyMap()
+                            else -> return@mapIndexed entry
+                        }
+                    }
                     entry.type == RigModules.BODY_BUST.id && entry.version == 2 && completeEyePair -> {
                         val mouth = upstream.singleOrNull { it.type == RigModules.MOUTH_FITTED.id }?.version ?: return@mapIndexed entry
                         if (mouth !in setOf(MouthFittedV3Algorithm.VERSION, MouthFittedV4Algorithm.VERSION, MouthFittedV6Algorithm.VERSION))
