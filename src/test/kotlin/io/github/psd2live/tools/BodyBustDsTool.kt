@@ -100,4 +100,81 @@ class BodyBustDsTool {
             }
         }
     }
+
+    @Test fun compareLayeredMouthBust(): Unit = runBlocking {
+        requireTools()
+        val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
+        val config = PipelineConfig(meshSpacing = 40, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val document = layeredMouthDocument(source, config)
+        val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4, "mouth/fitted" to 8,
+            "eye.smile" to 4, "eye.wide" to 4, "eye.gaze-lid" to 4, "eye.emotion" to 4, "eye.aftershock" to 5,
+            "eye.squash" to 5, "brow.shape" to 5, "brow.lid-coupling" to 7, "brow.blink" to 5, "brow.spring" to 6,
+            "mouth.outline" to 11, "mouth.vowel" to 8, "mouth.capture" to 7, "mouth.jaw" to 1,
+            "mouth.cheek-lid" to 1, "mouth.spring" to 1, "body.bust" to 1)
+        val (planned, historical) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
+            WorkspaceInitialPreset(clothing = false), requestedVersions = versions)
+        val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
+        val evaluation = assertNotNull(historical.modifierEvaluation)
+        for ((type, version) in versions) {
+            val provider = evaluation.entries.single { it.instance.type == type }
+            assertEquals(version, provider.instance.version, type)
+            assertEquals(ModifierStatus.ACTIVE, provider.status, type)
+        }
+        val fit = assertNotNull(RigBuilder.rigContext(historical.analysis, config).fittedMouth(config))
+        assertTrue(fit.layered && fit.rig?.fit?.layered != null)
+        val entry = stack.instances.single { it.type == "body.bust" }
+        val index = stack.index(entry.id)
+        for (type in listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture")) {
+            val upstream = stack.instances.single { it.type == type }
+            assertTrue(stack.index(upstream.id) < index)
+            assertEquals(assertNotNull(BundledAlgorithmArtifacts.find(type, upstream.version)).reference, upstream.plugin)
+        }
+        assertTrue(entry.outputAliases.isEmpty())
+        val before = evaluation.outputs[index - 1]
+        val after = evaluation.outputs[index]
+        val prior = before.meshes.associateBy { it.id }
+        val changed = after.meshes.filter { it != prior[it.id] }
+        val axes = setOf("ParamBustY", "ParamBustX")
+        assertTrue(changed.any { mesh ->
+            mesh.visible && mesh.opacity > 0f && mesh.shapes.any { binding ->
+                binding.parameter in axes && binding.shapes.filterNotNull().any { shape ->
+                    shape.deltas.shared().any { it != 0f }
+                }
+            }
+        })
+        val physics = after.physics.groups.filterNot { it in before.physics.groups }
+        assertEquals(axes, physics.flatMap { group -> group.outputs.map { it.parameter } }.toSet())
+        assertEquals(listOf("ArtMeshTopwear"), changed.map { it.id })
+
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(entry.type, 3))
+        val selected = entry.copy(version = 3, plugin = artifact.reference)
+        val next = stack.copy(instances = stack.instances.map { if (it.id == entry.id) selected else it })
+        val candidate = planned.copy(rigEdits = planned.rigEdits.copy(modifierStack = next.toJson()))
+        val model = WorkspacePreviewBuilder().build(candidate)
+        val actual = assertNotNull(model.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, actual.entries[index].status)
+        for (stage in stack.instances.indices) {
+            assertTrue(evaluation.outputs[stage] == actual.outputs[stage], stack.instances[stage].type)
+        }
+        assertTrue(RigIrCompiler.compile(historical, tileArt = true) == RigIrCompiler.compile(model, tileArt = true),
+            "v3 final IR differs")
+
+        val capture = assertNotNull(actual.readAlgorithms[entry.id]).context
+        assertTrue(capture.resources.keys.containsAll(setOf("bustBefore", "bustAfter")))
+        val root = Files.createTempDirectory("bust-layered-ds-")
+        val preferences = Preferences.userRoot().node("bust-layered-ds/" + UUID.randomUUID())
+        val store = ModifierPluginStore(root.resolve("installed"), preferences)
+        try {
+            BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+            val worker = store.snapshot().single()
+            val definition = RigBustModifier.fittedDefinition(RigModifierSource.of(model))
+            assertTrue(after == ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(), before,
+                selected, {}, store, context = capture, declaredParameters = definition.parameters(selected)),
+                "installed JVM IR differs")
+        } finally {
+            ModifierPluginWorkers.stop(artifact.reference)
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(root)
+        }
+    }
 }

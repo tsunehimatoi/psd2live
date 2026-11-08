@@ -36,7 +36,7 @@ class LayeredMouthOutlineSourceTool {
         requireTools()
         val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
         val config = PipelineConfig(meshSpacing = 40, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
-        val document = layeredDocument(source, config)
+        val document = layeredMouthDocument(source, config)
         val versions = mapOf("mouth/fitted" to 8, "mouth.outline" to 11, "mouth.vowel" to 8, "mouth.capture" to 7, "mouth.jaw" to 10)
         RigBuildProfile.reset()
         val recording = RigBuildProfile.recording
@@ -96,7 +96,7 @@ class LayeredMouthOutlineSourceTool {
         requireTools()
         val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
         val config = PipelineConfig(meshSpacing = 40, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
-        val document = layeredDocument(source, config)
+        val document = layeredMouthDocument(source, config)
         val fittedVersion = if (upgrade in setOf(Upgrade.VOWEL, Upgrade.CAPTURE, Upgrade.JAW, Upgrade.CHEEK_LID)) 8 else 1
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4, "mouth/fitted" to fittedVersion,
             "eye.smile" to 4, "eye.wide" to 4, "eye.gaze-lid" to 4, "eye.emotion" to 4, "eye.aftershock" to 5,
@@ -273,39 +273,39 @@ class LayeredMouthOutlineSourceTool {
             ModifierPluginStore.deleteTree(root)
         }
     }
+}
 
-    private fun layeredDocument(source: SourceArt, config: PipelineConfig): WorkspaceDocument {
-        val owner = RigGenerationSource.analyze(source, config).layers
-            .filter { it.semantic.tag == SemanticTag.MOUTH && it.semantic.role == null && !it.source.clipped }
-            .maxBy { it.opaquePixels }
-        val bounds = owner.source.bounds
-        val width = bounds.width
-        val height = bounds.height
-        val lines = listOf(PartRole.UPPER_LINE, PartRole.LOWER_LINE).mapIndexed { side, role ->
-            val id = LayerId("test-lip-line-" + side)
-            val pixels = ByteArray(width * height * 4)
-            for (x in 0 until width) {
-                val u = 2f * (x + 0.5f) / width - 1f
-                val curve = sqrt(1f - u * u)
-                val center = height * (0.5f + (if (side == 0) -0.32f else 0.32f) * curve)
-                val y0 = (center.toInt() - 1).coerceAtLeast(0)
-                for (y in y0..(y0 + 2).coerceAtMost(height - 1)) {
-                    val i = (y * width + x) * 4
-                    pixels[i] = 100; pixels[i + 1] = 60; pixels[i + 2] = 40; pixels[i + 3] = -1
-                }
+internal fun layeredMouthDocument(source: SourceArt, config: PipelineConfig): WorkspaceDocument {
+    val owner = RigGenerationSource.analyze(source, config).layers
+        .filter { it.semantic.tag == SemanticTag.MOUTH && it.semantic.role == null && !it.source.clipped }
+        .maxBy { it.opaquePixels }
+    val bounds = owner.source.bounds
+    val width = bounds.width
+    val height = bounds.height
+    val lines = listOf(PartRole.UPPER_LINE, PartRole.LOWER_LINE).mapIndexed { side, role ->
+        val id = LayerId("test-lip-line-" + side)
+        val pixels = ByteArray(width * height * 4)
+        for (x in 0 until width) {
+            val u = 2f * (x + 0.5f) / width - 1f
+            val curve = sqrt(1f - u * u)
+            val center = height * (0.5f + (if (side == 0) -0.32f else 0.32f) * curve)
+            val y0 = (center.toInt() - 1).coerceAtLeast(0)
+            for (y in y0..(y0 + 2).coerceAtMost(height - 1)) {
+                val i = (y * width + x) * 4
+                pixels[i] = 100; pixels[i + 1] = 60; pixels[i + 2] = 40; pixels[i + 3] = -1
             }
-            WorkspaceSourceLayer(id, role.word + (owner.semantic.variant?.let { " $it" } ?: ""), owner.source.groupPath,
-                SourceLayerKind.Raster, true, owner.source.order, bounds, 1f, false, LayerBlend.Normal, ChannelMask.ALL,
-                LayerRaster(width, height, pixels), null, null, false) to
-                LayerClassificationOverride(tag = SemanticTag.MOUTH, side = owner.semantic.side, role = role)
         }
-        val artwork = object : SourceArt by source {
-            override val layers = source.layers.flatMap { layer ->
-                if (layer.id == owner.source.id) lines.map { it.first } + layer else listOf(layer)
-            }.mapIndexed { index, layer -> WorkspaceSourceLayer.copyOf(layer, index) }
-        }
-        return WorkspaceDocument(artwork, emptyMap(), emptySet(), lines.associate { (layer, classification) ->
-            layer.id.raw to classification
-        }, emptyMap(), config.rigEdits, WorkspaceSettingsCodec.encode(config))
+        WorkspaceSourceLayer(id, role.word + (owner.semantic.variant?.let { " $it" } ?: ""), owner.source.groupPath,
+            SourceLayerKind.Raster, true, owner.source.order, bounds, 1f, false, LayerBlend.Normal, ChannelMask.ALL,
+            LayerRaster(width, height, pixels), null, null, false) to
+            LayerClassificationOverride(tag = SemanticTag.MOUTH, side = owner.semantic.side, role = role)
     }
+    val artwork = object : SourceArt by source {
+        override val layers = source.layers.flatMap { layer ->
+            if (layer.id == owner.source.id) lines.map { it.first } + layer else listOf(layer)
+        }.mapIndexed { index, layer -> WorkspaceSourceLayer.copyOf(layer, index) }
+    }
+    return WorkspaceDocument(artwork, emptyMap(), emptySet(), lines.associate { (layer, classification) ->
+        layer.id.raw to classification
+    }, emptyMap(), config.rigEdits, WorkspaceSettingsCodec.encode(config))
 }
