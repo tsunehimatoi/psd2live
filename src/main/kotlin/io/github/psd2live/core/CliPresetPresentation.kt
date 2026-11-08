@@ -55,11 +55,13 @@ internal object CliPresetPresentation {
         val custom = parameters.keys.filterNot { it in preset }
         val output = requireNotNull(rig.modifierOutput)
         // Keep the exported physics order without replacing values returned by the plugins.
-        val physicsOrder = PhysicsCatalog.groups(preview.analysis, config, parameters.keys.mapTo(HashSet()) { it.raw })
+        val available = parameters.keys.mapTo(HashSet()) { it.raw }
+        val physicsOrder = PhysicsCatalog.groups(preview.analysis, config, available)
             .map { it.id }
         val ordered = puppet.copy(parameters = (preset + custom).mapNotNull(parameters::get),
             parameterTree = StandardParameters.tree(custom, modules, parameters.keys), parameterLinks = StandardParameters.links(preset.toSet()))
         return preview.copy(rig = rig.copy(puppet = ordered, modifierOutput = output.copy(
+            parameterRoles = RigIrCompiler.orderedParameterRoles(output.parameterRoles + RigIrCompiler.generatedParameterRoles(available, config)),
             physics = output.physics.copy(groups = PhysicsCatalog.ordered(output.physics.groups, physicsOrder) { it.id }))))
     }
 }

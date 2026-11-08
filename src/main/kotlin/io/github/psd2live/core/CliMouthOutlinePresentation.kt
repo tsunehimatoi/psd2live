@@ -1,5 +1,6 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.algorithms.binding.MouthOutlineV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV8Algorithm
 import io.github.psd2live.core.modifier.RigModifierStack
@@ -15,12 +16,14 @@ internal object CliMouthOutlinePresentation {
      * historical draw order and the forms sampled from the final source recipe.
      */
     fun apply(preview: RigPreviewModel, sourceConfig: PipelineConfig): RigPreviewModel {
+        if (sourceConfig.meshOnly || !sourceConfig.mouthOutlineEnabled) return preview
+        val modern = sourceConfig.recipe.modern
+        val versions = if (modern) setOf(MouthOutlineV7Algorithm.VERSION, MouthOutlineV8Algorithm.VERSION)
+            else setOf(MouthOutlineV4Algorithm.VERSION)
         val serialized = preview.config.rigEdits.modifierStack ?: return preview
         val outline = RigModifierStack.fromJson(serialized).instances.singleOrNull {
-            it.enabled && it.type == "mouth.outline" &&
-                it.version in setOf(MouthOutlineV7Algorithm.VERSION, MouthOutlineV8Algorithm.VERSION)
+            it.enabled && it.type == "mouth.outline" && it.version in versions
         } ?: return preview
-        if (!sourceConfig.recipe.modern || sourceConfig.meshOnly || !sourceConfig.mouthOutlineEnabled) return preview
 
         val source = preview.analysis.source
         val measured = RigGenerationSource.prepare(RigGenerationSource.analyze(source, sourceConfig), sourceConfig).geometry
@@ -39,6 +42,15 @@ internal object CliMouthOutlinePresentation {
                     val id = DrawableId(outline.outputId("mouth-lip:${target.id}:$side"))
                     val actual = byId[id] ?: continue
                     val lip = lips[MouthLipLayer.idFor(layer.source.id.raw, side)] ?: continue
+                    val front = model.drawables.filter { it.id == owner.id || owner.id in it.maskedBy }
+                        .maxOf { it.drawOrder }
+                    val order = (sourceConfig.drawOrderOverrides[lip.source.id.raw]
+                        ?: sourceConfig.drawOrderOverrides[id.raw]
+                        ?: front + (step / 2).coerceAtLeast(1)).coerceIn(0f, 1000f)
+                    if (!modern) {
+                        put(id, actual.copy(drawOrder = order))
+                        continue
+                    }
                     val native = RigBuilder.sourceOutlineRibbon(owner, layer, lip, side, context, sourceConfig,
                         preview.atlas, cache) ?: continue
                     val observed = requireNotNull(actual.mesh)
@@ -46,18 +58,14 @@ internal object CliMouthOutlinePresentation {
                     require(observed.positions.contentEquals(sourceMesh.positions) && observed.indices.contentEquals(sourceMesh.indices)) {
                         "CLI lip forms require source topology for ${id.raw}"
                     }
-                    val front = model.drawables.filter { it.id == owner.id || owner.id in it.maskedBy }
-                        .maxOf { it.drawOrder }
-                    val order = sourceConfig.drawOrderOverrides[lip.source.id.raw]
-                        ?: sourceConfig.drawOrderOverrides["${owner.id.raw}_lip_$side"]
-                        ?: front + (step / 2).coerceAtLeast(1)
-                    put(id, actual.copy(drawOrder = order.coerceIn(0f, 1000f), geometryGrid = native.geometryGrid,
+                    put(id, actual.copy(drawOrder = order, geometryGrid = native.geometryGrid,
                         blendShapes = native.blendShapes))
                 }
             }
         }
         if (projected.isEmpty()) return preview
         val sourceForms = model.copy(drawables = model.drawables.map { projected[it.id] ?: it })
+        if (!modern) return preview.copy(rig = preview.rig.copy(puppet = sourceForms))
         val lowered = CubismBlendShapes.lawful(sourceForms)
         val output = lowered.drawables.filter { it.id in projected }.associateBy { it.id }
         require(lowered.parameters == model.parameters && output.values.all { mesh ->

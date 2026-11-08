@@ -53,7 +53,7 @@ internal object RigIrCompiler {
         val exported = rig.copy(puppet = puppet)
         val ids = parameterIds(exported)
         val physics = Physics(physicsGroups.map(Physics3Json::group), config.rigEdits.physicsFps.toFloat())
-        val roles = parameterRoles(ids, config.rigEdits.idRenames.parameters, config.motionBasic && config.motionBlink && !config.meshOnly)
+        val roles = generatedParameterRoles(ids, config)
         val generated = PuppetIr.toIr(puppet, physics = physics, clips = clips(exported, config, physicsGroups, ids), parameterRoles = roles)
             .copy(restPose = legacyMouthRest(config))
         return assemble(analysis, atlas, exported, config, generated, config.meshOnly, tileArt, simulations)
@@ -96,6 +96,9 @@ internal object RigIrCompiler {
         val mouth = StandardParameters.MOUTH_OPEN.raw
         return mapOf((config.rigEdits.idRenames.parameters[mouth] ?: mouth) to 1f)
     }
+
+    internal fun generatedParameterRoles(available: Set<String>, config: PipelineConfig): List<ParameterRole> =
+        parameterRoles(available, config.rigEdits.idRenames.parameters, config.motionBasic && config.motionBlink && !config.meshOnly)
 
     private fun parameterRoles(available: Set<String>, renames: Map<String, String>, blink: Boolean): List<ParameterRole> = buildList {
         // An ID conversion changes the ID the role refers to, not the role.
