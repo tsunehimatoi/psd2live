@@ -30,6 +30,11 @@ class SingleEyeOpenMouthSourceTool {
             RigMouthCaptureModifier::fallbackFrameDefinition)
     }
 
+    @Test fun compareJaw(): Unit = runBlocking {
+        compareShapeModule("mouth.jaw", 11, mapOf("mouth.vowel" to 9, "mouth.capture" to 8),
+            emptySet(), setOf("ParamMouthOpenY"), RigMouthJawModifier::fallbackFrameDefinition)
+    }
+
     private suspend fun compareShapeModule(type: String, version: Int, predecessors: Map<String, Int>,
                                            controls: Set<String>, moving: Set<String>,
                                            sourceDefinition: (RigModifierSource) -> RigModifierDefinition) {
@@ -44,11 +49,22 @@ class SingleEyeOpenMouthSourceTool {
         val stage = stack.index(module.id)
         val expected = assertNotNull(baseline.modifierEvaluation)
         assertEquals(ModifierStatus.ACTIVE, expected.entries[stage].status)
-        assertTrue(expected.outputs[stage - 1].parameters.none { it.id in controls })
-        assertEquals(controls, expected.outputs[stage].parameters.filter { it.id in controls }.mapTo(HashSet()) { it.id })
-        val moved = expected.outputs[stage].meshes.flatMap { it.shapes }.filter { binding ->
-            binding.parameter in controls && binding.shapes.any { form -> form?.deltas?.toArray()?.any { it != 0f } == true }
-        }.mapTo(HashSet()) { it.parameter }
+        val before = expected.outputs[stage - 1]
+        val after = expected.outputs[stage]
+        assertEquals(controls, after.parameters.mapTo(HashSet()) { it.id } - before.parameters.map { it.id }.toSet())
+        val oldMeshes = before.meshes.associateBy { it.id }
+        val moved = buildSet {
+            for (mesh in after.meshes) {
+                val old = oldMeshes[mesh.id]
+                for (binding in mesh.shapes - old?.shapes.orEmpty().toSet()) {
+                    if (binding.shapes.any { form -> form?.deltas?.toArray()?.any { it != 0f } == true }) add(binding.parameter)
+                }
+                val offsets = mesh.offsets ?: continue
+                if (offsets != old?.offsets && offsets.cells.any { it.form.deltas.toArray().any { delta -> delta != 0f } }) {
+                    addAll(offsets.axes.map { it.parameter })
+                }
+            }
+        }
         assertTrue(moved.containsAll(moving), "$type must contribute nonzero source geometry for ${moving - moved}")
         val artifact = assertNotNull(BundledAlgorithmArtifacts.find(type, version))
         val selected = module.copy(version = version, plugin = artifact.reference)
