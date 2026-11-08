@@ -28,6 +28,7 @@ internal object BuiltinModifierPlugins {
         RigRibbonsModifier.residualDefinition(source),
         RigRibbonsModifier.modernDefinition(source),
         RigRibbonsModifier.sharedFrameDefinition(source),
+        RigRibbonsModifier.layeredMouthDefinition(source),
         RigCreatureModifier.definition(source),
         RigCreatureModifier.residualDefinition(source),
         RigCreatureModifier.sharedFrameDefinition(source),
