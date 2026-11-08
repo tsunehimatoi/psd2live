@@ -103,7 +103,9 @@ internal object WorkspacePresetInitialization {
                 requestedVersions: Map<String, Int> = emptyMap(),
                 cliBindings: CliPresetBindings? = null,
                 restoreSourceRotations: Boolean = false): Pair<WorkspaceDocument, RigPreviewModel> {
-        val config = document.config()
+        val rawConfig = cliBindings?.config?.takeIf { restoreSourceRotations }
+        fun configOf(candidate: WorkspaceDocument) = rawConfig?.copy(rigEdits = candidate.rigEdits) ?: candidate.config()
+        val config = configOf(document)
         var stack = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack))
         require(stack.instances.isEmpty()) { "Initialize presets only into an empty stack" }
         val pipeline = PSD2LivePipeline().apply {
@@ -114,7 +116,7 @@ internal object WorkspacePresetInitialization {
         fun build(stage: String): RigPreviewModel = RigBuildProfile.stage("source preset: $stage") {
             work.checkpoint()
             val candidate = current()
-            pipeline.buildPreview(candidate.source, candidate.config(), ProgressListener { _, _ -> work.checkpoint() })
+            pipeline.buildPreview(candidate.source, configOf(candidate), ProgressListener { _, _ -> work.checkpoint() })
         }
         // Planning needs the package graph, but making the ordinary source meshes only needs the empty stack.
         val catalog = FutureTask { RigModifierAlgorithms.registry }.also {
@@ -135,7 +137,7 @@ internal object WorkspacePresetInitialization {
         }
         if (targets.isEmpty()) {
             require(requestedVersions.isEmpty()) { "Cannot select preset versions without mesh targets" }
-            model.runtimeBundle.materialize()
+            if (rawConfig == null) model.runtimeBundle.materialize()
             return document to model
         }
         val subject = RecipeSubject.of(model.analysis)
@@ -432,7 +434,11 @@ internal object WorkspacePresetInitialization {
         stack = RigBuildProfile.stage("source preset: simulation preparation") {
             WorkspaceModifierSimulation.prepare(current(), stack, work, pipeline = pipeline)
         }
-        return current() to build("final preview").also { work.checkpoint(); it.runtimeBundle.materialize(); work.checkpoint() }
+        return current() to build("final preview").also {
+            work.checkpoint()
+            if (rawConfig == null) it.runtimeBundle.materialize()
+            work.checkpoint()
+        }
     }
 
     fun freshSource(config: PipelineConfig): Boolean =

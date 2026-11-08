@@ -9,11 +9,14 @@ import io.github.psd2live.core.modifier.RigModifierChains
 import io.github.psd2live.core.modifier.RigModifierStack
 import io.github.psd2live.core.recipe.RecipeSubject
 import io.github.psd2live.core.recipe.RigModules
+import io.github.psd2live.i18n.tr
+import io.github.psd2live.project.WorkspaceDocument
+import org.umamo.format.art.SourceArt
 import org.umamo.runtime.model.DrawableId
 import org.umamo.runtime.model.ParameterId
 
 /** Raw PSD export keeps its public IDs when a preset is evaluated as explicit modifiers. */
-internal class CliPresetBindings(private val source: RigGenerationSource.Analyses, private val config: PipelineConfig) {
+internal class CliPresetBindings(private val source: RigGenerationSource.Analyses, val config: PipelineConfig) {
     private val context by lazy { RigBuilder.rigContext(source.geometry, config) }
     private val chains by lazy {
         RigBuilder.hairChains(context.analysis, context.faceRig, config).map(RigModifierChains::Binding)
@@ -78,4 +81,23 @@ internal class CliPresetBindings(private val source: RigGenerationSource.Analyse
 
     fun motion(clip: MotionClip): MotionClip = clip.copy(fileStem = MotionPresets.exportFileStem(clip.name),
         exportGroup = MotionPresets.exportGroup(clip.name), runtimeDefaultFades = true)
+
+    companion object {
+        fun build(pipeline: PSD2LivePipeline, artwork: SourceArt, config: PipelineConfig,
+                  progress: ProgressListener): RigPreviewModel {
+            progress.update(tr("progress.classify"), 0.0)
+            val analyses = RigGenerationSource.prepare(RigGenerationSource.analyze(artwork, config), config)
+            val bindings = CliPresetBindings(analyses, config)
+            val overlay = config.rigEdits.copy(modifierStack = RigModifierStack().toJson())
+            val document = WorkspaceDocument(artwork, config.layerVisibility, config.deletedLayerIds,
+                config.layerOverrides, config.parentOverrides, overlay, meshOverrides = config.meshOverrides,
+                textureOverrides = config.textureOverrides)
+            progress.update(tr("progress.keyforms"), .2)
+            val (_, evaluated) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
+                WorkspaceInitialPreset(clothing = false), cliBindings = bindings, restoreSourceRotations = true)
+            progress.update(tr("progress.atlas"), .9)
+            val preview = CliPresetPresentation.apply(evaluated, analyses, bindings.moduleParameters, config)
+            return preview.copy(runtimeBundle = pipeline.previewBundle(preview.analysis, preview.atlas, preview.rig, preview.config))
+        }
+    }
 }

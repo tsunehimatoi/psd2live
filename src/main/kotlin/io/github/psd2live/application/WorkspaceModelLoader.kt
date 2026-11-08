@@ -11,7 +11,7 @@ internal object WorkspaceModelLoader {
         path.fileName.toString().endsWith(".psd2live", true) -> ProjectRepository().open(path).use { opened ->
             WorkspacePreviewBuilder().build(opened.history.head().snapshot)
         }
-        path.fileName.toString().endsWith(".psd", true) -> PSD2LivePipeline().buildPreview(path)
+        path.fileName.toString().endsWith(".psd", true) -> PSD2LivePipeline().let { it.buildSourceExport(it.readPsd(path)) }
         else -> throw IllegalArgumentException("Export input must be a .psd2live project or a .psd file: $path")
     }
 }

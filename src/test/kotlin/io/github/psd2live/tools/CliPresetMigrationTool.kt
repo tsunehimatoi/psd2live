@@ -3,6 +3,7 @@ package io.github.psd2live.tools
 import io.github.psd2live.application.CliPresetBindings
 import io.github.psd2live.application.WorkspaceDocumentOperation
 import io.github.psd2live.application.WorkspaceInitialPreset
+import io.github.psd2live.application.WorkspaceModelLoader
 import io.github.psd2live.application.WorkspaceModifierConversion
 import io.github.psd2live.application.WorkspaceModifierConversionMismatch
 import io.github.psd2live.application.WorkspaceModifierEdits
@@ -171,52 +172,63 @@ class CliPresetMigrationTool {
     private fun compareRawPreset(meshOnly: Boolean, generateDeformers: Boolean) {
         requireTools()
         val sample = Sample.fromEnvironment()
-        val config = PipelineConfig(meshSpacing = 64,
+        val targetLoader = setting("PSD2LIVE_CLI_TARGET_LOADER", "0") == "1"
+        val verify = setting("PSD2LIVE_CLI_VERIFY", "0") == "1"
+        val config = PipelineConfig(meshSpacing = if (targetLoader) PipelineConfig().meshSpacing else 64,
             meshOnly = meshOnly, generateDeformers = generateDeformers,
             generatePhysics = setting("PSD2LIVE_CLI_PHYSICS", "1") == "1",
             exportMotions = setting("PSD2LIVE_CLI_MOTIONS", "1") == "1")
+        require(!targetLoader || verify && config == PipelineConfig()) { "The target loader uses the default settings" }
         val pipeline = PSD2LivePipeline().apply { deferRuntimeBundles = true }
         val source = pipeline.readPsd(sample.path)
-        val native = pipeline.buildPreview(source, config)
+        val expected = RigIrCompiler.compile(pipeline.buildPreview(source, config), tileArt = true)
+        val directory = output("cli-preset-migration")
+        val name = when {
+            targetLoader -> "report-target-loader.txt"
+            meshOnly -> "report-mesh-only.txt"
+            !generateDeformers -> "report-no-deformers.txt"
+            else -> "report.txt"
+        }
+        val comparison = directory.resolve(name)
+        if (verify) {
+            val readback = directory.resolve(name.removeSuffix(".txt") + "-readback").toPath()
+            val exported = if (targetLoader) {
+                val loaded = runBlocking { WorkspaceModelLoader.load(sample.path) }
+                pipeline.export(loaded, sample.path.fileName.toString(), readback)
+            } else pipeline.run(sample.path, readback, config)
+            val preview = exported.previewModel
+            val result = RigIrCompiler.compile(preview, tileArt = true)
+            comparison.writeText(buildString { compare("production export layout", expected, result) })
+            assertTrue(expected == result, "See the field comparison in $comparison")
+            if (generateDeformers) {
+                val stack = RigModifierStack.fromJson(assertNotNull(preview.config.rigEdits.modifierStack))
+                assertEquals(meshOnly, stack.instances.isEmpty())
+            }
+            val report = exported.exportedFiles.single { it.path.fileName.toString().endsWith(".psd2live.json") }
+            val physics = Json.parseToJsonElement(report.path.readText()).jsonObject.getValue("physics").jsonObject
+            assertEquals(result.physics.groups.map { it.id }, physics.getValue("groups").jsonArray.map { it.jsonPrimitive.content })
+            return
+        }
         val overlay = config.rigEdits.copy(modifierStack = RigModifierStack().toJson())
         val document = WorkspaceDocument(source, emptyMap(), emptySet(), emptyMap(), emptyMap(), overlay,
             WorkspaceSettingsCodec.encode(config.copy(rigEdits = overlay)))
         val sourceAnalyses = RigGenerationSource.prepare(RigGenerationSource.analyze(source, config), config)
         val bindings = CliPresetBindings(sourceAnalyses, config)
-        val candidate = if (config.meshOnly) pipeline.buildRawMeshExport(source, config) else
-            WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
+        val candidate = when {
+            meshOnly -> pipeline.buildRawMeshExport(source, config)
+            !generateDeformers -> pipeline.buildRawWithoutDeformers(source, config, ProgressListener { _, _ -> })
+            else -> WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
                 WorkspaceInitialPreset(clothing = false), cliBindings = bindings, restoreSourceRotations = true).second
-        val expected = RigIrCompiler.compile(native, tileArt = true)
+        }
         val after = RigIrCompiler.compile(candidate, tileArt = true)
-        val presented = if (config.meshOnly) candidate else
+        val presented = if (meshOnly || !generateDeformers) candidate else
             CliPresetPresentation.apply(candidate, sourceAnalyses, bindings.moduleParameters, config)
         val result = RigIrCompiler.compile(presented, tileArt = true)
-        val directory = output("cli-preset-migration")
-        val name = when {
-            config.meshOnly -> "report-mesh-only.txt"
-            !config.generateDeformers -> "report-no-deformers.txt"
-            else -> "report.txt"
-        }
-        val comparison = directory.resolve(name)
         comparison.writeText(buildString {
             appendLine("Names follow the source measurement. The native build is used only as the comparison baseline.")
             compare("historical names", expected, after)
             compare("shared export layout", expected, result)
         })
-        if (setting("PSD2LIVE_CLI_VERIFY", "0") == "1") {
-            assertEquals(expected, result, "See the field comparison in $comparison")
-            val readback = directory.resolve(if (config.meshOnly) "mesh-only-readback" else "readback").toPath()
-            val exported = if (config.meshOnly) {
-                pipeline.run(sample.path, readback, config).also { output ->
-                    val stack = RigModifierStack.fromJson(assertNotNull(output.previewModel.config.rigEdits.modifierStack))
-                    assertTrue(stack.instances.isEmpty())
-                    assertEquals(expected, RigIrCompiler.compile(output.previewModel, tileArt = true))
-                }
-            } else pipeline.export(presented, sample.path.fileName.toString(), readback)
-            val report = exported.exportedFiles.single { it.path.fileName.toString().endsWith(".psd2live.json") }
-            val physics = Json.parseToJsonElement(report.path.readText()).jsonObject.getValue("physics").jsonObject
-            assertEquals(result.physics.groups.map { it.id }, physics.getValue("groups").jsonArray.map { it.jsonPrimitive.content })
-        }
     }
 
     @Test fun compareFittedBrowSharedFrames() = runBlocking {

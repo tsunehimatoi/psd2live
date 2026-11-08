@@ -1,6 +1,7 @@
 package io.github.psd2live.core
 
 import io.github.psd2live.AppVersion
+import io.github.psd2live.application.CliPresetBindings
 import io.github.psd2live.i18n.tr
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
@@ -710,13 +711,15 @@ class PSD2LivePipeline {
 
 	private fun exportSource(source: SourceArt, name: String, directory: Path, config: PipelineConfig,
 	                         progress: ProgressListener): PipelineResult {
-		val buildProgress = building(progress)
-		val model = when {
-			config.meshOnly && standaloneSource(config) -> buildRawMeshExport(source, config, buildProgress)
-			!config.generateDeformers && standaloneSource(config) -> buildRawWithoutDeformers(source, config, buildProgress)
-			else -> buildPreview(source, config, buildProgress)
-		}
-		return export(model, name, directory, progress)
+		return export(buildSourceExport(source, config, building(progress)), name, directory, progress)
+	}
+
+	internal fun buildSourceExport(source: SourceArt, config: PipelineConfig = PipelineConfig(),
+	                               progress: ProgressListener = ProgressListener { _, _ -> }): RigPreviewModel = when {
+		!standaloneSource(config) -> buildPreview(source, config, progress)
+		config.meshOnly -> buildRawMeshExport(source, config, progress)
+		!config.generateDeformers -> buildRawWithoutDeformers(source, config, progress)
+		else -> CliPresetBindings.build(this, source, config, progress)
 	}
 
 	/** The build's own progress, in the part of an export before the model is written. */
