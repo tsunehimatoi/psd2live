@@ -24,6 +24,7 @@ class LayeredMouthOutlineSourceTool {
         CAPTURE("mouth.capture", 7), JAW("mouth.jaw", 10), CHEEK_LID("mouth.cheek-lid", 10), SPRING("mouth.spring", 11),
         TONGUE("mouth.tongue", 7), TONGUE_JAW("mouth.jaw", 12), TONGUE_CHEEK_LID("mouth.cheek-lid", 12), TONGUE_DEPTH("mouth.interior-depth", 8), TONGUE_SPRING("mouth.spring", 13),
         TEETH_DEPTH("mouth.interior-depth", 9), TEETH_SPRING("mouth.spring", 14), OPENING_DEPTH("mouth.interior-depth", 9),
+        OPENING_SPRING("mouth.spring", 14),
     }
 
     @Test fun compareLayeredOutlineWithLegacyFittedMouth(): Unit = runBlocking { compareLayered(Upgrade.OUTLINE) }
@@ -185,11 +186,13 @@ class LayeredMouthOutlineSourceTool {
 
     @Test fun compareLayeredDepthWithOnlyOpening(): Unit = runBlocking { compareLayered(Upgrade.OPENING_DEPTH) }
 
+    @Test fun compareLayeredSpringWithOnlyOpening(): Unit = runBlocking { compareLayered(Upgrade.OPENING_SPRING) }
+
     private suspend fun compareLayered(upgrade: Upgrade) {
         requireTools()
         val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
         val config = PipelineConfig(meshSpacing = 40, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
-        val openingOnly = upgrade == Upgrade.OPENING_DEPTH
+        val openingOnly = upgrade in setOf(Upgrade.OPENING_DEPTH, Upgrade.OPENING_SPRING)
         val withTeeth = upgrade in setOf(Upgrade.TEETH_DEPTH, Upgrade.TEETH_SPRING)
         val withTongue = upgrade >= Upgrade.TONGUE && !withTeeth && !openingOnly
         val document = layeredMouthDocument(source, config, withTongue, withTeeth, openingOnly)
@@ -200,18 +203,21 @@ class LayeredMouthOutlineSourceTool {
             "mouth.outline" to 1, "mouth.vowel" to (if (upgrade >= Upgrade.CAPTURE) 8 else 1),
             "mouth.capture" to (if (upgrade >= Upgrade.JAW) 7 else 1),
             "mouth.jaw" to when (upgrade) {
-                Upgrade.CHEEK_LID, Upgrade.SPRING, Upgrade.TEETH_DEPTH, Upgrade.TEETH_SPRING, Upgrade.OPENING_DEPTH -> 10
+                Upgrade.CHEEK_LID, Upgrade.SPRING, Upgrade.TEETH_DEPTH, Upgrade.TEETH_SPRING,
+                Upgrade.OPENING_DEPTH, Upgrade.OPENING_SPRING -> 10
                 Upgrade.TONGUE_CHEEK_LID, Upgrade.TONGUE_DEPTH, Upgrade.TONGUE_SPRING -> 12
                 else -> 1
             },
             "mouth.cheek-lid" to when (upgrade) {
-                Upgrade.SPRING, Upgrade.TEETH_DEPTH, Upgrade.TEETH_SPRING, Upgrade.OPENING_DEPTH -> 10
+                Upgrade.SPRING, Upgrade.TEETH_DEPTH, Upgrade.TEETH_SPRING, Upgrade.OPENING_DEPTH, Upgrade.OPENING_SPRING -> 10
                 Upgrade.TONGUE_DEPTH, Upgrade.TONGUE_SPRING -> 12
                 else -> 1
             }, "mouth.spring" to 1) +
             if (withTongue) mapOf("mouth.tongue" to (if (upgrade == Upgrade.TONGUE) 1 else 7),
                 "mouth.interior-depth" to (if (upgrade == Upgrade.TONGUE_SPRING) 8 else 1))
-            else if (withTeeth || openingOnly) mapOf("mouth.interior-depth" to (if (upgrade == Upgrade.TEETH_SPRING) 9 else 1))
+            else if (withTeeth || openingOnly) {
+                mapOf("mouth.interior-depth" to (if (upgrade in setOf(Upgrade.TEETH_SPRING, Upgrade.OPENING_SPRING)) 9 else 1))
+            }
             else emptyMap()
         val (planned, reference) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
             WorkspaceInitialPreset(clothing = false), requestedVersions = versions)
@@ -302,10 +308,10 @@ class LayeredMouthOutlineSourceTool {
                 desired.meshes.filter { it != priorById[it.id] }.map { it.id }.toSet())
             assertEquals(previous.parameters, desired.parameters)
         }
-        if (upgrade in setOf(Upgrade.SPRING, Upgrade.TONGUE_SPRING, Upgrade.TEETH_SPRING)) {
-            val legacyVersion = if (withTongue || withTeeth) 11 else 9
+        if (upgrade in setOf(Upgrade.SPRING, Upgrade.TONGUE_SPRING, Upgrade.TEETH_SPRING, Upgrade.OPENING_SPRING)) {
+            val legacyVersion = if (upgrade == Upgrade.SPRING) 9 else 11
             val rejected = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(candidate(legacyVersion)) }
-            if (withTongue || withTeeth) assertContains(rejected.message.orEmpty(), "requires the shared open-mouth source chain")
+            if (legacyVersion == 11) assertContains(rejected.message.orEmpty(), "requires the shared open-mouth source chain")
             else {
                 assertTrue(stack.instances.none { it.type in setOf("mouth.tongue", "mouth.interior-depth") })
                 assertContains(rejected.message.orEmpty(), "requires a shared fitted mouth v6")
@@ -340,6 +346,18 @@ class LayeredMouthOutlineSourceTool {
                 assertEquals(tooth, desired.meshes.single { it.id == tooth.id })
                 val opening = previous.meshes.single { it.id == tooth.maskedBy.single() }
                 assertEquals(opening, desired.meshes.single { it.id == opening.id })
+            }
+            if (openingOnly) {
+                assertTrue(stack.instances.none { it.type == "mouth.tongue" })
+                assertTrue(desired.parameters.none { it.id == "ParamTongueOut" })
+                val layer = reference.analysis.layers.single { it.semantic.tag == SemanticTag.MOUTH_OPEN && it.opaquePixels > 0 }
+                assertTrue(fit.covers(layer) && !layer.source.clipped)
+                val opening = previous.meshes.single { reference.rig.layerIdByDrawableId[it.id] == layer.source.id.raw }
+                assertNotNull(opening.channels[Channel.MULTIPLY_COLOR])
+                assertTrue(opening.maskedBy.isEmpty())
+                assertEquals(opening, desired.meshes.single { it.id == opening.id })
+                assertEquals(previous.meshes.filter { opening.id in it.maskedBy }.map { it.id },
+                    desired.meshes.filter { opening.id in it.maskedBy }.map { it.id })
             }
         }
         if (upgrade == Upgrade.TONGUE) {
@@ -442,7 +460,7 @@ class LayeredMouthOutlineSourceTool {
             assertTrue(desired.parameters.none { it.id == "ParamTongueOut" })
             assertEquals(previous.parameters, desired.parameters)
         }
-        if (openingOnly) {
+        if (upgrade == Upgrade.OPENING_DEPTH) {
             assertTrue(stack.instances.none { it.type == "mouth.tongue" })
             assertTrue(reference.analysis.layers.none {
                 it.opaquePixels > 0 && it.semantic.tag in setOf(SemanticTag.TONGUE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B)
@@ -520,7 +538,8 @@ class LayeredMouthOutlineSourceTool {
                 Upgrade.TONGUE_DEPTH -> RigMouthDepthModifier.sharedFrameDefinition(sourceInputs, layered = true)
                 Upgrade.TEETH_DEPTH, Upgrade.OPENING_DEPTH ->
                     RigMouthDepthModifier.sharedFrameDefinition(sourceInputs, layered = true, withTeethOnly = true)
-                Upgrade.TEETH_SPRING -> RigMouthSpringModifier.sharedFrameDefinition(sourceInputs, layered = true, withTeethOnly = true)
+                Upgrade.TEETH_SPRING, Upgrade.OPENING_SPRING ->
+                    RigMouthSpringModifier.sharedFrameDefinition(sourceInputs, layered = true, withTeethOnly = true)
                 Upgrade.TONGUE_SPRING -> RigMouthSpringModifier.sharedFrameDefinition(sourceInputs, withSharedTongue = true, layered = true)
             }
             val context = definition.authorContext(instance).withUpstream(actual.entries.take(stage)
@@ -543,7 +562,7 @@ class LayeredMouthOutlineSourceTool {
                 Upgrade.TONGUE_DEPTH -> listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture", "mouth.tongue", "mouth.jaw", "mouth.cheek-lid")
                 Upgrade.TEETH_DEPTH, Upgrade.OPENING_DEPTH ->
                     listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture", "mouth.jaw", "mouth.cheek-lid")
-                Upgrade.TEETH_SPRING -> listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture",
+                Upgrade.TEETH_SPRING, Upgrade.OPENING_SPRING -> listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture",
                     "mouth.jaw", "mouth.cheek-lid", "mouth.interior-depth")
                 Upgrade.TONGUE_SPRING -> listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture",
                     "mouth.tongue", "mouth.jaw", "mouth.cheek-lid", "mouth.interior-depth")
