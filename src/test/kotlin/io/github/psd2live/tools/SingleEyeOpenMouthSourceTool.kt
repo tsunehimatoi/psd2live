@@ -43,6 +43,21 @@ class SingleEyeOpenMouthSourceTool {
             emptySet(), emptySet(), RigMouthCheekLidModifier::fallbackFrameDefinition, ::verifyCheekLidContribution)
     }
 
+    @Test fun compareSpring(): Unit = runBlocking {
+        val preceding = mapOf("mouth.vowel" to 9, "mouth.capture" to 8, "mouth.jaw" to 11, "mouth.cheek-lid" to 11)
+        val control = setOf("ParamMouthSpring")
+        compareShapeModule("mouth.spring", 12, preceding, control, control, RigMouthSpringModifier::fallbackFrameDefinition) { before, after ->
+            assertTrue(before.meshes.none { it.id.startsWith("ArtMeshTooth") || it.id.startsWith("ArtMeshTongue") })
+            assertTrue(before.physics.groups.none { group -> group.outputs.any { it.parameter in control } })
+            val group = (after.physics.groups - before.physics.groups.toSet()).single()
+            assertEquals(mapOf("ParamMouthOpenY" to 80f, "ParamMouthForm" to 20f), group.inputs.associate { it.parameter to it.weight })
+            val output = group.outputs.single()
+            assertEquals(control.single(), output.parameter)
+            assertTrue(output.scale > 0f && output.weight > 0f)
+            assertEquals(2, group.segments.size)
+        }
+    }
+
     private fun verifyCheekLidContribution(before: RigIR, after: RigIR) {
         val original = before.meshes.associateBy { it.id }
         val changed = after.meshes.filter { it != original[it.id] }

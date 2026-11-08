@@ -10,6 +10,7 @@ import io.github.psd2live.algorithms.binding.MouthSpringV8Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV9Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV10Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV11Algorithm
+import io.github.psd2live.algorithms.binding.MouthSpringV12Algorithm
 import io.github.psd2live.core.CharacterAnalyzer
 import io.github.psd2live.core.PartRole
 import io.github.psd2live.core.PhysicsGenerator
@@ -117,17 +118,18 @@ internal object RigMouthSpringModifier {
             authorContext = ::capture)
     }
 
-    fun sharedFrameDefinition(source: RigModifierSource?, withSharedTongue: Boolean = false, layered: Boolean = false): RigModifierDefinition {
-        val algorithm = when {
-            layered -> MouthSpringV11Algorithm()
-            withSharedTongue -> MouthSpringV10Algorithm()
-            else -> MouthSpringV9Algorithm()
-        }
-        val version = when {
-            layered -> MouthSpringV11Algorithm.VERSION
-            withSharedTongue -> MouthSpringV10Algorithm.VERSION
-            else -> MouthSpringV9Algorithm.VERSION
-        }
+    fun sharedFrameDefinition(source: RigModifierSource?, withSharedTongue: Boolean = false,
+                              layered: Boolean = false): RigModifierDefinition = when {
+        layered -> sourceFrameDefinition(source, MouthSpringV11Algorithm.VERSION, MouthSpringV11Algorithm())
+        withSharedTongue -> sourceFrameDefinition(source, MouthSpringV10Algorithm.VERSION, MouthSpringV10Algorithm())
+        else -> sourceFrameDefinition(source, MouthSpringV9Algorithm.VERSION, MouthSpringV9Algorithm())
+    }
+
+    fun fallbackFrameDefinition(source: RigModifierSource?): RigModifierDefinition =
+        sourceFrameDefinition(source, MouthSpringV12Algorithm.VERSION, MouthSpringV12Algorithm())
+
+    private fun sourceFrameDefinition(source: RigModifierSource?, version: Int,
+                                      algorithm: ChangingModifierAlgorithmPlugin): RigModifierDefinition {
         val projected = object : ChangingModifierAlgorithmPlugin by algorithm,
             ModifierOptionalUpstream, ModifierVersionSelection {
             override val canonicalOptInType = MouthSpringAlgorithm.TYPE
@@ -146,7 +148,11 @@ internal object RigMouthSpringModifier {
     private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance): ModifierAlgorithmContext {
         val scaffold = provider(instance)
         val prefix = bindingPredecessors(instance, scaffold)
-        val fittedVersion = if (instance.version == MouthSpringV11Algorithm.VERSION) 8 else 6
+        val fittedVersion = when (instance.version) {
+            MouthSpringV11Algorithm.VERSION -> 8
+            MouthSpringV12Algorithm.VERSION -> 7
+            else -> 6
+        }
         require(prefix.any { it.id == instance.config.getValue("base").jsonPrimitive.content &&
             it.type == "mouth/fitted" && it.version == fittedVersion }) {
             "Mouth spring v${instance.version} requires a shared fitted mouth v$fittedVersion"
