@@ -17,6 +17,64 @@ import java.util.prefs.Preferences
 import kotlin.test.*
 
 class SingleEyeOpenMouthSourceTool {
+    @Test fun compareVowel(): Unit = runBlocking {
+        requireTools()
+        val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 3,
+            "mouth/fitted" to 7, "mouth.outline" to 10, "mouth.vowel" to 1)
+        val (planned, baseline) = WorkspacePresetInitialization.prepare(singleEyeDocument(Sample.fromEnvironment()), WorkspaceRasterWork.Direct,
+            WorkspaceInitialPreset(clothing = false), requestedVersions = versions)
+        val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
+        assertEquals(versions, stack.instances.filter { it.type in versions }.associate { it.type to it.version })
+        val vowel = stack.instances.single { it.type == "mouth.vowel" }
+        val stage = stack.index(vowel.id)
+        val expected = assertNotNull(baseline.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, expected.entries[stage].status)
+        val ids = setOf("ParamA", "ParamI", "ParamU", "ParamE", "ParamO")
+        assertTrue(expected.outputs[stage - 1].parameters.none { it.id in ids })
+        assertEquals(ids, expected.outputs[stage].parameters.filter { it.id in ids }.mapTo(HashSet()) { it.id })
+        val voiced = expected.outputs[stage].meshes.flatMap { it.shapes }.filter { binding ->
+            binding.parameter in ids && binding.shapes.any { form -> form?.deltas?.toArray()?.any { it != 0f } == true }
+        }.mapTo(HashSet()) { it.parameter }
+        assertEquals(ids, voiced, "Every vowel must contribute nonzero source geometry")
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(vowel.type, 9))
+        val selected = vowel.copy(version = 9, plugin = artifact.reference)
+        val modified = stack.copy(instances = stack.instances.map { if (it.id == selected.id) selected else it })
+        val candidate = WorkspacePreviewBuilder().build(planned.copy(rigEdits = planned.rigEdits.copy(modifierStack = modified.toJson())))
+        val actual = assertNotNull(candidate.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, actual.entries[stage].status)
+        for (index in stack.instances.indices) {
+            val before = expected.outputs[index]
+            val after = actual.outputs[index]
+            if (before == after) continue
+            val meshes = before.meshes.associateBy { it.id }
+            fail("${stack.instances[index].type} differs, meshes=${after.meshes.filter { it != meshes[it.id] }.map { it.id }}")
+        }
+        assertTrue(RigIrCompiler.compile(baseline, tileArt = true) == RigIrCompiler.compile(candidate, tileArt = true),
+            "Complete single-eye vowel IR differs")
+
+        val instance = actual.entries[stage].instance
+        val definition = RigMouthVowelModifier.fallbackFrameDefinition(RigModifierSource.of(candidate))
+        val context = definition.authorContext(instance).withUpstream(actual.entries.take(stage)
+            .filter { it.status == ModifierStatus.ACTIVE && it.instance.type in definition.requires + definition.optionalUpstream }
+            .map { entry -> entry.instance.let {
+                ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+            } })
+        val root = Files.createTempDirectory("single-eye-open-vowel-package-")
+        val preferences = Preferences.userRoot().node("single-eye-open-vowel/" + UUID.randomUUID())
+        val store = ModifierPluginStore(root.resolve("installed"), preferences)
+        try {
+            BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+            val worker = store.snapshot().single()
+            val result = ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(), actual.outputs[stage - 1],
+                instance, {}, store, context = context, declaredParameters = definition.parameters(instance))
+            assertTrue(expected.outputs[stage] == result, "Installed vowel worker differs from v1")
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(root)
+        }
+    }
+
     @Test fun compareRawSingleEyePreset() {
         requireTools()
         val sample = Sample.fromEnvironment()

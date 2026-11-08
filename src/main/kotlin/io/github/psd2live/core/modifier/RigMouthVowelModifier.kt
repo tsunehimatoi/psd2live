@@ -8,6 +8,7 @@ import io.github.psd2live.algorithms.binding.MouthVowelV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV8Algorithm
+import io.github.psd2live.algorithms.binding.MouthVowelV9Algorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.i18n.tr
@@ -56,29 +57,49 @@ internal object RigMouthVowelModifier {
     fun sourceOutlineDefinition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthVowelV6Algorithm.VERSION, sourceOutlineAlgorithm)
 
-    fun sharedFrameDefinition(source: RigModifierSource?, layered: Boolean = false): RigModifierDefinition {
+    fun sharedFrameDefinition(source: RigModifierSource?, layered: Boolean = false): RigModifierDefinition =
+        frameDefinition(source, if (layered) MouthVowelV8Algorithm.VERSION else MouthVowelV7Algorithm.VERSION)
+
+    fun fallbackFrameDefinition(source: RigModifierSource?): RigModifierDefinition = frameDefinition(source, MouthVowelV9Algorithm.VERSION)
+
+    private fun frameDefinition(source: RigModifierSource?, version: Int): RigModifierDefinition {
         val legacy = RigLegacyBindings.definition(RigLegacyBindings.spec(MouthVowelAlgorithm.TYPE), source)
-        val algorithm = if (layered) MouthVowelV8Algorithm else MouthVowelV7Algorithm
-        val version = if (layered) MouthVowelV8Algorithm.VERSION else MouthVowelV7Algorithm.VERSION
+        val algorithm = when (version) {
+            MouthVowelV8Algorithm.VERSION -> MouthVowelV8Algorithm
+            MouthVowelV9Algorithm.VERSION -> MouthVowelV9Algorithm
+            else -> MouthVowelV7Algorithm
+        }
         val plugin = object : ChangingModifierAlgorithmPlugin by algorithm, ModifierOptionalUpstream, ModifierVersionSelection {
             override val optionalUpstream = RigLegacyBindings.specs.filter { !it.expressionToggles && !it.seeThrough }
                 .mapTo(linkedSetOf()) { it.type } - setOf(MouthVowelAlgorithm.TYPE, "mouth/fitted")
             override val canonicalOptInType = MouthVowelAlgorithm.TYPE
         }
         val contexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
-        fun capture(instance: RigModifierInstance) = contexts.getOrPut(instance) { requireNotNull(source).captureSharedFrames(instance, layered) }
+        fun capture(instance: RigModifierInstance) = contexts.getOrPut(instance) { requireNotNull(source).captureSharedFrames(instance, version) }
         return legacy.copy(version = version, plugin = plugin, upstreamInputs = true,
             parameters = { instance ->
                 val context = capture(instance)
-                if (layered) MouthVowelV8Algorithm.parameters(context) else MouthVowelV7Algorithm.parameters(context)
+                when (algorithm) {
+                    MouthVowelV8Algorithm -> MouthVowelV8Algorithm.parameters(context)
+                    MouthVowelV9Algorithm -> MouthVowelV9Algorithm.parameters(context)
+                    else -> MouthVowelV7Algorithm.parameters(context)
+                }
             }, resolveParameter = { _, _, _ -> null },
-            changeWrites = if (layered) MouthVowelV8Algorithm.WRITES else MouthVowelV7Algorithm.WRITES, authorContext = ::capture)
+            changeWrites = when (algorithm) {
+                MouthVowelV8Algorithm -> MouthVowelV8Algorithm.WRITES
+                MouthVowelV9Algorithm -> MouthVowelV9Algorithm.WRITES
+                else -> MouthVowelV7Algorithm.WRITES
+            }, authorContext = ::capture)
     }
 
-    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance, layered: Boolean): ModifierAlgorithmContext {
+    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance, version: Int): ModifierAlgorithmContext {
         val scaffold = provider(instance)
         val prior = bindingPredecessors(instance, scaffold)
-        val outlineVersions = if (layered) setOf(1, 11) else setOf(1, 8)
+        val outlineVersions = when (version) {
+            MouthVowelV8Algorithm.VERSION -> setOf(1, 11)
+            MouthVowelV9Algorithm.VERSION -> setOf(10)
+            else -> setOf(1, 8)
+        }
         val outline = prior.single { it.type == "mouth.outline" && it.version in outlineVersions }
         require(prior.all { it.targets.containsAll(instance.targets) } &&
             prior.none { it.type.startsWith("mouth.") && it.id != outline.id }) {
