@@ -267,10 +267,7 @@ class SingleEyeOpenMouthSourceTool {
     }
 
     @Test fun compareExpressionCheek(): Unit = runBlocking {
-        val chain = mapOf("eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3, "eye.emotion" to 3,
-            "eye.aftershock" to 4, "eye.squash" to 4, "brow.shape" to 4, "brow.lid-coupling" to 6,
-            "brow.blink" to 4, "brow.spring" to 5, "mouth.vowel" to 9, "mouth.capture" to 8,
-            "mouth.jaw" to 11, "mouth.cheek-lid" to 11, "mouth.spring" to 12)
+        val chain = singleEyeExpressionChain()
         val type = "expression.cheek"
         val parameter = "ParamCheek"
         compareShapeModule(type, 3, chain, setOf(parameter), emptySet(), RigCheekModifier::carrierDefinition) { before, after ->
@@ -284,29 +281,63 @@ class SingleEyeOpenMouthSourceTool {
             println("Cheek tint meshes: ${colored.map { it.id }}")
         }
 
+        compareRawExpression(type, chain)
+    }
+
+    @Test fun compareExpressionGloom(): Unit = runBlocking {
+        val chain = singleEyeExpressionChain() + ("expression.cheek" to 3)
+        val type = "expression.gloom"
+        val parameter = "ParamGloom"
+        compareShapeModule(type, 3, chain, setOf(parameter), emptySet(), RigGloomModifier::carrierDefinition) { before, after ->
+            val oldMeshes = before.meshes.associateBy { it.id }
+            val shaded = after.meshes.filter { mesh ->
+                val grid = mesh.channels[Channel.MULTIPLY_COLOR] ?: return@filter false
+                if (grid == oldMeshes.getValue(mesh.id).channels[Channel.MULTIPLY_COLOR]) return@filter false
+                val axis = grid.axes.indexOfFirst { it.parameter == parameter }
+                if (axis < 0) return@filter false
+                grid.cells.groupBy { cell -> grid.axes.indices.filterNot { it == axis }.map { cell.coordinate[it] } }
+                    .values.any { cells -> cells.map { it.form }.distinct().size > 1 }
+            }
+            assertTrue(shaded.any { it.id == "ArtMeshFace" }, "Gloom must add nonconstant face shading: ${shaded.map { it.id }}")
+            println("Gloom shading meshes: ${shaded.map { it.id }}")
+        }
+
+        compareRawExpression(type, chain)
+    }
+
+    private suspend fun compareRawExpression(type: String, chain: Map<String, Int>) {
         val pipeline = PSD2LivePipeline().apply { deferRuntimeBundles = true }
         val config = PipelineConfig()
         val source = singleEyeOpenDocument(Sample.fromEnvironment()).source
         val raw = pipeline.buildSourceExport(source, config)
         val rawStack = RigModifierStack.fromJson(assertNotNull(raw.config.rigEdits.modifierStack))
         val versions = rawStack.instances.filter { RigLegacyBindings.find(it.type) != null }.associate { it.type to it.version }
-        assertEquals(1, versions[type])
-        assertEquals(chain, versions.filterKeys { it in chain })
+        assertEquals(chain - "expression.cheek", versions.filterKeys { it in chain && it != "expression.cheek" })
         val analyses = RigGenerationSource.prepare(RigGenerationSource.analyze(source, config), config)
         val bindings = CliPresetBindings(analyses, config)
         val document = WorkspaceDocument(source, emptyMap(), emptySet(), emptyMap(), emptyMap(),
             config.rigEdits.copy(modifierStack = RigModifierStack().toJson()))
-        val (_, evaluated) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
-            WorkspaceInitialPreset(clothing = false), requestedVersions = versions + (type to 3),
-            cliBindings = bindings, restoreSourceRotations = true)
-        val selected = assertNotNull(evaluated.modifierEvaluation).entries.single { it.instance.type == type }
-        assertEquals(3, selected.instance.version)
-        assertEquals(ModifierStatus.ACTIVE, selected.status)
-        val candidate = CliPresetPresentation.apply(evaluated, analyses, bindings.moduleParameters, config)
+        suspend fun compile(version: Int): RigIR {
+            val (_, evaluated) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
+                WorkspaceInitialPreset(clothing = false), requestedVersions = versions + chain + (type to version),
+                cliBindings = bindings, restoreSourceRotations = true)
+            val entries = assertNotNull(evaluated.modifierEvaluation).entries.associateBy { it.instance.type }
+            for ((lockedType, lockedVersion) in chain + (type to version)) {
+                val entry = entries.getValue(lockedType)
+                assertEquals(lockedVersion, entry.instance.version, lockedType)
+                assertEquals(ModifierStatus.ACTIVE, entry.status, lockedType)
+            }
+            return RigIrCompiler.compile(CliPresetPresentation.apply(evaluated, analyses, bindings.moduleParameters, config), tileArt = true)
+        }
         val expected = RigIrCompiler.compile(raw, tileArt = true)
-        val actual = RigIrCompiler.compile(candidate, tileArt = true)
-        assertTrue(expected == actual, "Complete RAW cheek IR differs")
+        assertTrue(expected == compile(1), "Locked RAW $type v1 differs from the preset")
+        assertTrue(expected == compile(3), "Complete RAW $type IR differs")
     }
+
+    private fun singleEyeExpressionChain() = mapOf("eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3, "eye.emotion" to 3,
+            "eye.aftershock" to 4, "eye.squash" to 4, "brow.shape" to 4, "brow.lid-coupling" to 6,
+            "brow.blink" to 4, "brow.spring" to 5, "mouth.vowel" to 9, "mouth.capture" to 8,
+            "mouth.jaw" to 11, "mouth.cheek-lid" to 11, "mouth.spring" to 12)
 
     @Test fun compareRawSingleEyePreset() {
         requireTools()
