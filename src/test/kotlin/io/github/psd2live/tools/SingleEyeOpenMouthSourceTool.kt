@@ -13,14 +13,47 @@ import io.github.psd2live.format.model.KeyGrid
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.project.WorkspaceDocument
 import io.github.psd2live.project.WorkspaceSettingsCodec
+import io.github.psd2live.project.WorkspaceSourceLayer
 import kotlinx.coroutines.runBlocking
-import org.umamo.format.art.SourceArt
+import org.umamo.format.art.*
 import java.nio.file.Files
 import java.util.UUID
 import java.util.prefs.Preferences
 import kotlin.test.*
 
 class SingleEyeOpenMouthSourceTool {
+    @Test fun compareEyeHighlight(): Unit = runBlocking {
+        requireTools()
+        val (document, glintLayers) = withLeftHighlight(singleEyeOpenDocument(Sample.fromEnvironment()))
+        val chain = mapOf("eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3, "eye.emotion" to 3,
+            "eye.aftershock" to 4, "eye.squash" to 4,
+            "mouth.vowel" to 9, "mouth.capture" to 8, "mouth.jaw" to 11, "mouth.cheek-lid" to 11, "mouth.spring" to 12)
+        compareShapeModule("eye.highlight", 3, chain, emptySet(), emptySet(),
+            { RigEyeHighlightModifier.definition(it, modern = true) }, document = document) { before, after ->
+            val ids = rig.layerIdByDrawableId.filterValues { it in glintLayers }.keys
+            assertTrue(ids.isNotEmpty(), "Left highlight artwork must produce a fitted mesh")
+            for (id in ids) {
+                val old = before.meshes.single { it.id == id }
+                val glint = after.meshes.single { it.id == id }
+                val oldParent = before.deformers.single { it.id == old.parent }
+                val parent = after.deformers.single { it.id == glint.parent }
+                assertTrue(parent.id == oldParent.id || parent.parent == oldParent.id,
+                    "$id must stay on its fitted eye branch")
+                val headAxes = setOf("ParamAngleX", "ParamAngleY")
+                val changedShapes = glint.shapes - old.shapes.toSet()
+                val meshDrift = changedShapes.any { binding ->
+                    binding.parameter in headAxes &&
+                        binding.shapes.any { it?.deltas?.toArray()?.any { delta -> delta != 0f } == true }
+                }
+                val lattice = (parent as? Deformer.Warp)?.lattice
+                val warpDrift = parent != oldParent && lattice != null &&
+                    lattice.axes.any { it.parameter in headAxes } && lattice.cells.map { it.form }.distinct().size > 1
+                assertTrue(meshDrift || warpDrift, "$id must have head-angle parallax")
+                println("Left highlight mesh $id parent ${old.parent} -> ${glint.parent}")
+            }
+        }
+    }
+
     @Test fun compareEyeSquash(): Unit = runBlocking {
         val chain = mapOf("eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3, "eye.emotion" to 3, "eye.aftershock" to 4,
             "mouth.vowel" to 9, "mouth.capture" to 8, "mouth.jaw" to 11, "mouth.cheek-lid" to 11, "mouth.spring" to 12)
@@ -112,7 +145,7 @@ class SingleEyeOpenMouthSourceTool {
 
     @Test fun compareCheekLid(): Unit = runBlocking {
         compareShapeModule("mouth.cheek-lid", 11, mapOf("mouth.vowel" to 9, "mouth.capture" to 8, "mouth.jaw" to 11),
-            emptySet(), emptySet(), RigMouthCheekLidModifier::fallbackFrameDefinition, ::verifyCheekLidContribution)
+            emptySet(), emptySet(), RigMouthCheekLidModifier::fallbackFrameDefinition) { before, after -> verifyCheekLidContribution(before, after) }
     }
 
     @Test fun compareSpring(): Unit = runBlocking {
@@ -159,11 +192,12 @@ class SingleEyeOpenMouthSourceTool {
     private suspend fun compareShapeModule(type: String, version: Int, predecessors: Map<String, Int>,
                                            controls: Set<String>, moving: Set<String>,
                                            sourceDefinition: (RigModifierSource) -> RigModifierDefinition,
-                                           verifyContribution: (RigIR, RigIR) -> Unit = { _, _ -> }) {
+                                           document: WorkspaceDocument? = null,
+                                           verifyContribution: RigPreviewModel.(RigIR, RigIR) -> Unit = { _, _ -> }) {
         requireTools()
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 3,
             "mouth/fitted" to 7, "mouth.outline" to 10, type to 1) + predecessors
-        val (planned, baseline) = WorkspacePresetInitialization.prepare(singleEyeOpenDocument(Sample.fromEnvironment()), WorkspaceRasterWork.Direct,
+        val (planned, baseline) = WorkspacePresetInitialization.prepare(document ?: singleEyeOpenDocument(Sample.fromEnvironment()), WorkspaceRasterWork.Direct,
             WorkspaceInitialPreset(clothing = false), requestedVersions = versions)
         val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
         assertEquals(versions, stack.instances.filter { it.type in versions }.associate { it.type to it.version })
@@ -175,7 +209,7 @@ class SingleEyeOpenMouthSourceTool {
         }
         val before = expected.outputs[stage - 1]
         val after = expected.outputs[stage]
-        verifyContribution(before, after)
+        baseline.verifyContribution(before, after)
         assertEquals(controls, after.parameters.mapTo(HashSet()) { it.id } - before.parameters.map { it.id }.toSet())
         val oldMeshes = before.meshes.associateBy { it.id }
         val moved = buildSet {
@@ -443,4 +477,33 @@ private fun singleEyeArtwork(artwork: SourceArt, config: PipelineConfig): Source
     return object : SourceArt by artwork {
         override val layers = artwork.layers.filterNot { it.id in removed }
     }
+}
+
+private fun withLeftHighlight(document: WorkspaceDocument): Pair<WorkspaceDocument, Set<String>> {
+    val analysis = RigGenerationSource.analyze(document.source, PipelineConfig(meshSpacing = 40))
+    val irides = analysis.layers.filter {
+        it.semantic.tag == SemanticTag.IRIDES && it.semantic.side == Side.LEFT &&
+            it.source.visible && it.opaquePixels > 0
+    }
+    val existing = irides.filter { it.semantic.role == PartRole.HIGHLIGHT }.mapTo(HashSet()) { it.source.id.raw }
+    if (existing.isNotEmpty()) {
+
+        return document to existing
+    }
+    val iris = irides.first { it.semantic.role == null }.source
+    val size = (minOf(iris.bounds.width, iris.bounds.height) / 4).coerceAtLeast(4)
+    val id = LayerId("single-eye-left-glint")
+    val bounds = LayerBounds(iris.bounds.left + iris.bounds.width / 3, iris.bounds.top + iris.bounds.height / 3, size, size)
+    val raster = LayerRaster(size, size, ByteArray(size * size * 4) { -1 })
+    val glint = WorkspaceSourceLayer(id, id.raw, iris.groupPath, SourceLayerKind.Raster, true, iris.order,
+        bounds, 1f, true, LayerBlend.Normal, ChannelMask.ALL, raster, null, null, false)
+    val artwork = document.source
+    val source = object : SourceArt by artwork {
+        override val layers = artwork.layers.flatMap { layer ->
+            if (layer.id == iris.id) listOf(glint, layer) else listOf(layer)
+        }.mapIndexed { index, layer -> WorkspaceSourceLayer.copyOf(layer, index) }
+    }
+    val classification = LayerClassificationOverride(LayerType.PRESET, SemanticTag.IRIDES, Side.LEFT, role = PartRole.HIGHLIGHT)
+
+    return document.copy(source = source, layerOverrides = document.layerOverrides + (id.raw to classification)) to setOf(id.raw)
 }
