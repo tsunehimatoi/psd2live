@@ -53,6 +53,13 @@ class CreatureDsTool {
         compareCreature(6, SemanticTag.HEADWEAR, SemanticTag.WINGS, includeTail = false, layered = true)
     }
 
+    @Test fun compareLayeredMouthWingsWithoutClothingBindings(): Unit = runBlocking {
+        compareCreature(2, SemanticTag.WINGS, includeTail = false, includeSkirt = false,
+            layered = true, includeRibbons = false)
+        compareCreature(6, SemanticTag.HEADWEAR, SemanticTag.WINGS, includeTail = false, includeSkirt = false,
+            layered = true, includeRibbons = false)
+    }
+
     private suspend fun compareCreature(
         version: Int, vararg extras: SemanticTag, includeTail: Boolean = true, includeSkirt: Boolean = true,
         layered: Boolean = false, includeRibbons: Boolean = layered,
