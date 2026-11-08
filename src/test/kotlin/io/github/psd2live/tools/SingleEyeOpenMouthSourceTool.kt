@@ -17,6 +17,49 @@ import java.util.prefs.Preferences
 import kotlin.test.*
 
 class SingleEyeOpenMouthSourceTool {
+    @Test fun compareRawSingleEyePreset() {
+        requireTools()
+        val sample = Sample.fromEnvironment()
+        val pipeline = PSD2LivePipeline().apply { deferRuntimeBundles = true }
+        val config = PipelineConfig()
+        val source = singleEyeArtwork(pipeline.readPsd(sample.path), config)
+        val expected = RigIrCompiler.compile(pipeline.buildPreview(source, config), tileArt = true)
+        val preview = pipeline.buildSourceExport(source, config)
+        val actual = RigIrCompiler.compile(preview, tileArt = true)
+        val stack = RigModifierStack.fromJson(assertNotNull(preview.config.rigEdits.modifierStack))
+        assertEquals(7, stack.instances.single { it.type == "mouth/fitted" }.version)
+        assertEquals(10, stack.instances.single { it.type == "mouth.outline" }.version)
+        fun differences(a: Any, b: Any): List<String> = a.javaClass.declaredFields
+            .filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
+            .filter { it.isAccessible = true; it.get(a) != it.get(b) }.map { it.name }
+        val report = buildString {
+            appendLine("IR: ${differences(expected, actual)}")
+            val meshes = expected.meshes.associateBy { it.id }
+            for (mesh in actual.meshes) meshes[mesh.id]?.takeIf { it != mesh }?.let { old ->
+                appendLine("${mesh.id}: ${differences(old, mesh)}; geometry: ${old.geometry?.let { a -> mesh.geometry?.let { b -> differences(a, b) } }}; parents: ${old.parent} -> ${mesh.parent}")
+                appendLine("  offsets ${old.offsets?.axes?.map { it.parameter }} -> ${mesh.offsets?.axes?.map { it.parameter }}")
+                appendLine("  shapes ${old.shapes.map { it.parameter }} -> ${mesh.shapes.map { it.parameter }}")
+                appendLine("  positions ${old.geometry?.positions?.toArray()?.take(8)} -> ${mesh.geometry?.positions?.toArray()?.take(8)}")
+            }
+            val deformers = expected.deformers.associateBy { it.id }
+            for (frame in actual.deformers) deformers[frame.id]?.takeIf { it != frame }?.let { old ->
+                appendLine("${frame.id}: ${differences(old, frame)}")
+                if (old is io.github.psd2live.format.model.Deformer.Rotation && frame is io.github.psd2live.format.model.Deformer.Rotation)
+                    appendLine("  angle ${old.baseAngle} -> ${frame.baseAngle}; handle ${old.handleLength} -> ${frame.handleLength}")
+            }
+            val order = expected.deformers.map { it.id }.zip(actual.deformers.map { it.id })
+                .mapIndexedNotNull { index, (a, b) -> if (a == b) null else "$index: $a -> $b" }
+            if (order.isNotEmpty()) appendLine("Deformer order: $order")
+            appendLine("Missing deformers: ${deformers.keys - actual.deformers.map { it.id }.toSet()}")
+            appendLine("Extra deformers: ${actual.deformers.map { it.id }.toSet() - deformers.keys}")
+        }
+        output("single-eye-open-mouth").resolve("raw-${sample.name}.txt").writeText(report)
+        assertTrue(expected == actual, report)
+        val exported = pipeline.export(preview, sample.path.fileName.toString(), output("single-eye-open-mouth/readback").toPath())
+        assertTrue(exported.exportedFiles.any { it.path.fileName.toString().endsWith(".cmo3") })
+        assertTrue(exported.exportedFiles.any { it.path.fileName.toString().endsWith(".moc3") })
+    }
+
     @Test fun compareFittedMouth(): Unit = runBlocking {
         requireTools()
         val sample = Sample.fromEnvironment()
@@ -147,14 +190,7 @@ class SingleEyeOpenMouthSourceTool {
     private fun singleEyeDocument(sample: Sample): WorkspaceDocument {
         val artwork = PSD2LivePipeline().readPsd(sample.path)
         val config = PipelineConfig(meshSpacing = 40, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
-        val eyeTags = setOf(SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.IRIDES, SemanticTag.EYE_CLOSE, SemanticTag.EYEBROW)
-        val original = RigGenerationSource.analyze(artwork, config)
-        val removed = original.layers.filter { it.semantic.tag in eyeTags && it.semantic.side == Side.RIGHT }
-            .mapTo(HashSet()) { it.source.id }
-        assertTrue(removed.isNotEmpty())
-        val singleEye = object : SourceArt by artwork {
-            override val layers = artwork.layers.filterNot { it.id in removed }
-        }
+        val singleEye = singleEyeArtwork(artwork, config)
         val measured = RigGenerationSource.analyze(singleEye, config)
         val subject = RecipeSubject.of(measured)
         for (tag in listOf(SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYEBROW)) {
@@ -165,5 +201,16 @@ class SingleEyeOpenMouthSourceTool {
         assertFalse(mouthFit.closedLine || mouthFit.layered)
         return WorkspaceDocument(singleEye, emptyMap(), emptySet(), emptyMap(), emptyMap(), config.rigEdits,
             WorkspaceSettingsCodec.encode(config))
+    }
+
+    private fun singleEyeArtwork(artwork: SourceArt, config: PipelineConfig): SourceArt {
+        val eyeTags = setOf(SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.IRIDES, SemanticTag.EYE_CLOSE, SemanticTag.EYEBROW)
+        val original = RigGenerationSource.analyze(artwork, config)
+        val removed = original.layers.filter { it.semantic.tag in eyeTags && it.semantic.side == Side.RIGHT }
+            .mapTo(HashSet()) { it.source.id }
+        assertTrue(removed.isNotEmpty())
+        return object : SourceArt by artwork {
+            override val layers = artwork.layers.filterNot { it.id in removed }
+        }
     }
 }
