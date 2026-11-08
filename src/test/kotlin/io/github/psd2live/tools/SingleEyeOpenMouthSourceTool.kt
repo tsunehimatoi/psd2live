@@ -18,6 +18,11 @@ import io.github.psd2live.project.WorkspaceSettingsCodec
 import io.github.psd2live.project.WorkspaceSourceLayer
 import kotlinx.coroutines.runBlocking
 import org.umamo.format.art.*
+import org.umamo.format.cmo3.Cmo3
+import org.umamo.format.cmo3.model.custom.CModelSource
+import org.umamo.format.moc3.Moc3
+import org.umamo.interop.cmo3.Cmo3Import
+import org.umamo.interop.moc3.import.Moc3Import
 import java.nio.file.Files
 import java.util.UUID
 import java.util.prefs.Preferences
@@ -517,12 +522,18 @@ class SingleEyeOpenMouthSourceTool {
             "brow.blink" to 4, "brow.spring" to 5, "mouth.vowel" to 9, "mouth.capture" to 8,
             "mouth.jaw" to 11, "mouth.cheek-lid" to 11, "mouth.spring" to 12)
 
-    @Test fun compareRawSingleEyePreset() {
+    @Test fun compareRawSingleEyePreset() = compareRawSingleEye(tongue = false)
+
+    @Test fun compareRawSingleEyeWithTongue() = compareRawSingleEye(tongue = true)
+
+    private fun compareRawSingleEye(tongue: Boolean) {
         requireTools()
         val sample = Sample.fromEnvironment()
         val pipeline = PSD2LivePipeline().apply { deferRuntimeBundles = true }
-        val config = PipelineConfig()
-        val source = singleEyeArtwork(pipeline.readPsd(sample.path), config)
+        val document = singleEyeOpenDocument(sample)
+        val fixture = if (tongue) withTongue(document) else document
+        val config = PipelineConfig(layerOverrides = fixture.layerOverrides)
+        val source = fixture.source
         val expected = RigIrCompiler.compile(pipeline.buildPreview(source, config), tileArt = true)
         RigBuildProfile.reset()
         val recording = RigBuildProfile.recording
@@ -539,9 +550,12 @@ class SingleEyeOpenMouthSourceTool {
             "eye.aftershock" to 4, "eye.squash" to 4,
             "brow.shape" to 4, "brow.lid-coupling" to 6, "brow.blink" to 4, "brow.spring" to 5,
             "mouth/fitted" to 7, "mouth.outline" to 10, "mouth.vowel" to 9, "mouth.capture" to 8,
-            "mouth.jaw" to 11, "mouth.cheek-lid" to 11, "mouth.spring" to 12,
             "body.arms" to 3, "expression.cheek" to 3, "expression.gloom" to 3,
-        )
+        ) + if (tongue) {
+            mapOf("mouth.tongue" to 8, "mouth.jaw" to 13, "mouth.cheek-lid" to 13, "mouth.interior-depth" to 10, "mouth.spring" to 15)
+        } else {
+            mapOf("mouth.jaw" to 11, "mouth.cheek-lid" to 11, "mouth.spring" to 12)
+        }
         assertEquals(versions, stack.instances.filter { it.type in versions }.associate { it.type to it.version })
         val templateConsumers = legacyTemplateConsumers()
         assertTrue(templateConsumers.isEmpty(), "Unexpected legacy template consumers: $templateConsumers")
@@ -551,6 +565,8 @@ class SingleEyeOpenMouthSourceTool {
         val report = buildString {
             appendLine("IR: ${differences(expected, actual)}")
             appendLine("Legacy template consumers: ${templateConsumers.sorted()}")
+            appendLine("Legacy tongue meshes: ${expected.meshes.filter { it.id.startsWith("ArtMeshTongue") }.map { it.id to it.maskedBy }}")
+            appendLine("RAW tongue meshes: ${actual.meshes.filter { it.id.startsWith("ArtMeshTongue") }.map { it.id to it.maskedBy }}")
             val meshes = expected.meshes.associateBy { it.id }
             for (mesh in actual.meshes) meshes[mesh.id]?.takeIf { it != mesh }?.let { old ->
                 appendLine("${mesh.id}: ${differences(old, mesh)}; geometry: ${old.geometry?.let { a -> mesh.geometry?.let { b -> differences(a, b) } }}; parents: ${old.parent} -> ${mesh.parent}")
@@ -570,11 +586,23 @@ class SingleEyeOpenMouthSourceTool {
             appendLine("Missing deformers: ${deformers.keys - actual.deformers.map { it.id }.toSet()}")
             appendLine("Extra deformers: ${actual.deformers.map { it.id }.toSet() - deformers.keys}")
         }
-        output("single-eye-open-mouth").resolve("raw-${sample.name}.txt").writeText(report)
+        val reportName = if (tongue) "single-eye-open-mouth-tongue" else "single-eye-open-mouth"
+        output(reportName).resolve("raw-${sample.name}.txt").writeText(report)
         assertTrue(expected == actual, report)
-        val exported = pipeline.export(preview, sample.path.fileName.toString(), output("single-eye-open-mouth/readback").toPath())
-        assertTrue(exported.exportedFiles.any { it.path.fileName.toString().endsWith(".cmo3") })
-        assertTrue(exported.exportedFiles.any { it.path.fileName.toString().endsWith(".moc3") })
+        val exported = pipeline.export(preview, sample.path.fileName.toString(), output("$reportName/readback").toPath())
+        val cmo3 = exported.exportedFiles.single { it.path.fileName.toString().endsWith(".cmo3") }.path
+        val moc3 = exported.exportedFiles.single { it.path.fileName.toString().endsWith(".moc3") }.path
+        if (tongue) {
+            val expectedTongues = expected.meshes.filter { it.id.startsWith("ArtMeshTongue") }.associate { it.id to it.maskedBy }
+            assertEquals(listOf("ArtMeshMouth"), expectedTongues["ArtMeshTongue"])
+            val editor = Cmo3Import.fromModelSource(Cmo3.read(Files.readAllBytes(cmo3)).root as CModelSource)
+            val runtime = Moc3Import.fromMocDocument(Moc3.read(Files.readAllBytes(moc3)), null)
+            for (readBack in listOf(editor, runtime)) {
+                assertEquals(expectedTongues, readBack.drawables.filter { it.id.raw.startsWith("ArtMeshTongue") }
+                    .associate { it.id.raw to it.maskedBy.map { mask -> mask.raw } })
+                assertTrue(readBack.parameters.any { it.id.raw == "ParamTongueOut" })
+            }
+        }
     }
 
     @Test fun compareFittedMouth(): Unit = runBlocking {

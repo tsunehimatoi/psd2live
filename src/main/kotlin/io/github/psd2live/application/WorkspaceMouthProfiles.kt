@@ -22,7 +22,7 @@ internal object WorkspaceMouthProfiles {
             speech = speech(fitted = 7, outline = 10, vowel = 9, capture = 8),
             plain = motion(jaw = 11, lids = 11, spring = 12),
             depth = motion(jaw = 11, lids = 11),
-            tongue = emptyList(),
+            tongue = motion(tongue = 8, jaw = 13, lids = 13, depth = 10, spring = 15),
         ),
         Source.LAYERED to Profile(
             speech = speech(fitted = 8, outline = 11, vowel = 8, capture = 7),
