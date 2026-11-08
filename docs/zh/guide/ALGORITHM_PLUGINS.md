@@ -162,6 +162,8 @@ API JAR 本身不是可安装算法包。独立编译契约不等于内置实现
 - `algorithms`：算法类型必须以 `包ID/` 开头；声明算法版本、名称、目标、依赖、互斥关系、读写范围、可组合写入类型、`configSchema` 和 `defaults`。
 - 可选 `parameters` 声明共享标准参数的 `id/name/min/max/default`。定义必须兼容上游同名参数；其他新增对象使用实例所属 ID。
 
+`protocol` 表示工作进程的通信协议版本。`plugin.json` 根级的 `version` 用于解析安装包依赖，算法列表中的整数 `version` 则与类型一起标识可执行入口。例如 `mouth.outline@4` 表示描边算法的第 4 版。工程同时锁定算法入口和安装包的版本、内容摘要及依赖锁。包升级后，已有实例继续使用保存时锁定的入口。
+
 每次请求和响应各占一行 UTF-8 JSON。标准输出只用于协议，日志写标准错误。请求包含 `protocol/id/method/type/version/instance/config/targets`；响应回显 `protocol/id`，返回 `commands` 或 `error`。同一工作进程串行处理请求，故障或超时后重建进程；取消执行中的请求会终止进程，不提交其部分结果。排队中的请求可独立取消，不中断正在执行的其他请求；等待响应期间也检查取消。
 
 模型输入按声明的读写组件裁剪；未知范围或 `*` 保守使用完整输入。`changed` 和 `removed` 同步对象索引，`reset` 表示全新会话。`frame`、`mesh:<id>`、`deformer:<id>` 的值为资源摘要，资源目录通过请求及 `PSD2LIVE_PLUGIN_RESOURCES` 提供；资源使用 `RigIrObjects` 的版本化精确二进制格式。`mesh_order` 和 `deformer_order` 保留顺序。
