@@ -56,6 +56,7 @@ import io.github.psd2live.algorithms.binding.MouthCheekLidV8Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV9Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV10Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV11Algorithm
+import io.github.psd2live.algorithms.binding.MouthCheekLidV12Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV5Algorithm
@@ -75,6 +76,7 @@ import io.github.psd2live.algorithms.binding.MouthJawV8Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV9Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV10Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV11Algorithm
+import io.github.psd2live.algorithms.binding.MouthJawV12Algorithm
 import io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV5Algorithm
@@ -587,15 +589,13 @@ internal object WorkspacePresetInitialization {
                 put(RigModules.MOUTH_VOWEL.id, MouthVowelV8Algorithm.VERSION)
                 if (RigModules.MOUTH_CAPTURE.id !in types) return@buildMap
                 put(RigModules.MOUTH_CAPTURE.id, MouthCaptureV7Algorithm.VERSION)
-                if (RigModules.MOUTH_TONGUE.id in types) {
-                    put(RigModules.MOUTH_TONGUE.id, MouthTongueV7Algorithm.VERSION)
-                    return@buildMap
-                }
+                val tongue = RigModules.MOUTH_TONGUE.id in types
+                if (tongue) put(RigModules.MOUTH_TONGUE.id, MouthTongueV7Algorithm.VERSION)
                 if (RigModules.MOUTH_JAW.id !in types) return@buildMap
-                put(RigModules.MOUTH_JAW.id, MouthJawV10Algorithm.VERSION)
+                put(RigModules.MOUTH_JAW.id, if (tongue) MouthJawV12Algorithm.VERSION else MouthJawV10Algorithm.VERSION)
                 if (RigModules.MOUTH_CHEEK_LID.id !in types) return@buildMap
-                put(RigModules.MOUTH_CHEEK_LID.id, MouthCheekLidV10Algorithm.VERSION)
-                if (RigModules.MOUTH_SPRING.id in types && RigModules.MOUTH_DEPTH.id !in types)
+                put(RigModules.MOUTH_CHEEK_LID.id, if (tongue) MouthCheekLidV12Algorithm.VERSION else MouthCheekLidV10Algorithm.VERSION)
+                if (!tongue && RigModules.MOUTH_SPRING.id in types && RigModules.MOUTH_DEPTH.id !in types)
                     put(RigModules.MOUTH_SPRING.id, MouthSpringV11Algorithm.VERSION)
             }
         }

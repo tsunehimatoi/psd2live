@@ -44,7 +44,8 @@ class LayeredMouthOutlineSourceTool {
         val document = if (withTongue) layeredMouthDocument(source, config, withTongue = true)
         else ribbonDsDocument(source, config, layered = true)
         val versions = if (withTongue) mapOf(
-            "mouth/fitted" to 8, "mouth.outline" to 11, "mouth.vowel" to 8, "mouth.capture" to 7, "mouth.tongue" to 7,
+            "mouth/fitted" to 8, "mouth.outline" to 11, "mouth.vowel" to 8, "mouth.capture" to 7,
+            "mouth.tongue" to 7, "mouth.jaw" to 12, "mouth.cheek-lid" to 12,
         ) else layeredRibbonMouthVersions + mapOf("body.bust" to 3, "body.arms" to 3, "outfit.ribbons" to 6, "outfit.creature" to 2)
         RigBuildProfile.reset()
         val recording = RigBuildProfile.recording
