@@ -117,6 +117,8 @@ class SingleEyeOpenMouthSourceTool {
         val stack = RigModifierStack.fromJson(assertNotNull(preview.config.rigEdits.modifierStack))
         assertEquals(7, stack.instances.single { it.type == "mouth/fitted" }.version)
         assertEquals(10, stack.instances.single { it.type == "mouth.outline" }.version)
+        assertEquals(9, stack.instances.single { it.type == "mouth.vowel" }.version)
+        assertEquals(8, stack.instances.single { it.type == "mouth.capture" }.version)
         fun differences(a: Any, b: Any): List<String> = a.javaClass.declaredFields
             .filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
             .filter { it.isAccessible = true; it.get(a) != it.get(b) }.map { it.name }

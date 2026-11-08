@@ -48,6 +48,7 @@ import io.github.psd2live.algorithms.binding.MouthCaptureV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthCaptureV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthCaptureV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthCaptureV7Algorithm
+import io.github.psd2live.algorithms.binding.MouthCaptureV8Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV7Algorithm
@@ -94,6 +95,7 @@ import io.github.psd2live.algorithms.binding.MouthVowelV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV8Algorithm
+import io.github.psd2live.algorithms.binding.MouthVowelV9Algorithm
 import io.github.psd2live.algorithms.binding.NeckV3Algorithm
 import io.github.psd2live.algorithms.binding.RibbonsResidualAlgorithm
 import io.github.psd2live.algorithms.binding.RibbonsV4Algorithm
@@ -290,9 +292,16 @@ internal object WorkspacePresetInitialization {
                     } }.orEmpty()
                     val outlineSupported = RigModules.MOUTH_OUTLINE.id !in plannedTypes || supportsClassicOutline(model.analysis, config)
                     if (mouth != null && outlineSupported && RigFittedMouthDefinition.supportsFallbackFrames(source, scaffold, prefix, mouth)) {
-                        packages(headVersions + mapOf(RigModules.BROW_FITTED.id to BrowFittedV3Binding.VERSION,
-                            RigModules.MOUTH_FITTED.id to MouthFittedV7Algorithm.VERSION,
-                            RigModules.MOUTH_OUTLINE.id to MouthOutlineV10Algorithm.VERSION).filterKeys { it in plannedTypes })
+                        packages(headVersions + buildMap {
+                            put(RigModules.BROW_FITTED.id, BrowFittedV3Binding.VERSION)
+                            put(RigModules.MOUTH_FITTED.id, MouthFittedV7Algorithm.VERSION)
+                            if (RigModules.MOUTH_OUTLINE.id !in plannedTypes) return@buildMap
+                            put(RigModules.MOUTH_OUTLINE.id, MouthOutlineV10Algorithm.VERSION)
+                            if (RigModules.MOUTH_VOWEL.id !in plannedTypes) return@buildMap
+                            put(RigModules.MOUTH_VOWEL.id, MouthVowelV9Algorithm.VERSION)
+                            if (RigModules.MOUTH_CAPTURE.id in plannedTypes)
+                                put(RigModules.MOUTH_CAPTURE.id, MouthCaptureV8Algorithm.VERSION)
+                        })
                     } else emptyMap()
                 }
             } else {
