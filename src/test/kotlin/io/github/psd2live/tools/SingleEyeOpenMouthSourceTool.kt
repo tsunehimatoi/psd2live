@@ -21,6 +21,17 @@ import java.util.prefs.Preferences
 import kotlin.test.*
 
 class SingleEyeOpenMouthSourceTool {
+    @Test fun compareEyeEmotion(): Unit = runBlocking {
+        val chain = mapOf("eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3, "mouth.vowel" to 9,
+            "mouth.capture" to 8, "mouth.jaw" to 11, "mouth.cheek-lid" to 11, "mouth.spring" to 12)
+        val controls = RigModules.EYE_EMOTION.defines.mapTo(HashSet()) { it.id }
+        compareShapeModule("eye.emotion", 3, chain, controls, setOf("ParamEyeLForm", "ParamEyeLSquint"),
+            { source -> RigEyeEmotionModifier.definition(source, modern = true) }) { before, after ->
+            val id = "ArtMeshEyelashL"
+            assertNotEquals(before.meshes.single { it.id == id }, after.meshes.single { it.id == id })
+        }
+    }
+
     @Test fun compareEyeSmile(): Unit = runBlocking {
         val downstream = mapOf("eye.wide" to 3, "eye.gaze-lid" to 3, "mouth.vowel" to 9, "mouth.capture" to 8,
             "mouth.jaw" to 11, "mouth.cheek-lid" to 11, "mouth.spring" to 12)
