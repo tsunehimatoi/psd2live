@@ -5468,6 +5468,39 @@ tasks.register("pluginMouthJawV13") {
     }
 }
 
+val mouthJawV14WorkerJar = registerIsolatedBindingWorker(
+    "mouthJawV14", "mouth-jaw-v14", "worker-mouth-jaw-v14", "io.github.psd2live.algorithms.binding.MouthJawV14Worker",
+)
+
+kotlin.target.compilations.named("mouthJawV14") {
+    associateWith(kotlin.target.compilations.getByName("mouthTongueV9"))
+}
+mouthJawV14WorkerJar.configure { from(sourceSets["mouthTongueV9"].output) }
+
+tasks.register("pluginMouthJawV14") {
+    dependsOn(mouthJawV14WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-jaw-v14")
+    inputs.file(mouthJawV14WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", project.version.toString())
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthJawV14WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682e6a6177.v14"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"${project.version}","name":"Layered mouth jaw with tongue tip",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/jaw","aliases":["mouth.jaw"],"version":14,"name":"Layered mouth jaw with tongue tip","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","mouth/fitted"],"contextVersion":2,
+               "reads":["*"],"writes":["mesh"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val mouthSpringV5WorkerJar = registerIsolatedBindingWorker(
     "mouthSpringV5", "mouth-spring-v5", "worker-mouth-spring-v5", "io.github.psd2live.algorithms.binding.MouthSpringV5Worker",
 )
