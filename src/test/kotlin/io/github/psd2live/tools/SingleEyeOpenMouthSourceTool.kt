@@ -362,6 +362,31 @@ class SingleEyeOpenMouthSourceTool {
         }
     }
 
+    @Test fun compareSpringWithTeeth(): Unit = runBlocking {
+        requireTools()
+        val document = withInterior(singleEyeOpenDocument(Sample.fromEnvironment()), SemanticTag.TOOTH_T)
+        val chain = mapOf("mouth.vowel" to 9, "mouth.capture" to 8, "mouth.jaw" to 11,
+            "mouth.cheek-lid" to 11, "mouth.interior-depth" to 11)
+        val control = "ParamMouthSpring"
+        compareShapeModule("mouth.spring", 16, chain, setOf(control), setOf(control),
+            RigMouthSpringModifier::fallbackDepthFrameDefinition, document = document) { before, after ->
+            val tooth = after.meshes.single { rig.layerIdByDrawableId[it.id] == "single-eye-source-tooth_t" }
+            assertEquals(before.meshes.single { it.id == tooth.id }, tooth)
+            assertEquals(listOf("ArtMeshMouth"), tooth.maskedBy)
+            assertTrue(tooth.visible && tooth.opacity > 0f)
+            assertTrue(after.parameters.none { it.id == "ParamTongueOut" })
+            val face = after.meshes.single { it.id == "ArtMeshFace" }
+            val movement = face.shapes.single { it.parameter == control }
+            assertTrue(movement.shapes.any { it?.deltas?.toArray()?.any { delta -> delta != 0f } == true })
+            val physics = (after.physics.groups - before.physics.groups.toSet()).single()
+            assertEquals(mapOf("ParamMouthOpenY" to 80f, "ParamMouthForm" to 20f),
+                physics.inputs.associate { it.parameter to it.weight })
+            assertEquals(control, physics.outputs.single().parameter)
+            assertTrue(physics.outputs.single().scale > 0f)
+            assertEquals(2, physics.segments.size)
+        }
+    }
+
     @Test fun compareSpringWithTongue(): Unit = runBlocking {
         requireTools()
         val document = withTongue(singleEyeOpenDocument(Sample.fromEnvironment()))

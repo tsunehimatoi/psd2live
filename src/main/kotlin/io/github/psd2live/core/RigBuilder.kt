@@ -3738,7 +3738,7 @@ object RigBuilder {
 	                                      layers: Map<String, ClassifiedLayer>, kept: Set<ParameterId>, includeFaceLean: Boolean = false,
                                           chains: List<io.github.psd2live.core.fit.HairChain> = emptyList(),
                                           includeMouthShading: Boolean = false,
-                                          includeLayeredTongueKeys: Boolean = false): PuppetModel {
+                                          includeLayeredTongueKeys: Boolean = false, lowerShapes: Boolean = true): PuppetModel {
 		val switches = io.github.psd2live.algorithms.binding.ExpressionChannels.catalog(context.analysis.layers.mapNotNull { layer ->
 			val override = config.layerOverrides[layer.source.id.raw]
 			val type = override?.type ?: layer.semantic.type
@@ -3765,7 +3765,9 @@ object RigBuilder {
 		else emptyList()
 		val model = material.copy(parameters = parameters, deformers = deformers, drawables = drawables + tongueCopies,
 			parameterTree = StandardParameters.tree(), parameterLinks = emptyList())
-		val projected = CubismBlendShapes.lawful(withoutLegacyHairSway(model, config))
+		val source = withoutLegacyHairSway(model, config)
+		if (!lowerShapes) return source
+		val projected = CubismBlendShapes.lawful(source)
 		val generatedIds = tongueCopies.mapTo(hashSetOf()) { it.id }
 		return BindingProjection.retain(projected.copy(drawables = projected.drawables.filterNot { it.id in generatedIds }),
 			kept, mapOf(StandardParameters.MOUTH_OPEN to 1f))

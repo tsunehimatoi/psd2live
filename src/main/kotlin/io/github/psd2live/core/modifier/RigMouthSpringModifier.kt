@@ -14,6 +14,7 @@ import io.github.psd2live.algorithms.binding.MouthSpringV12Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV13Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV14Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV15Algorithm
+import io.github.psd2live.algorithms.binding.MouthSpringV16Algorithm
 import io.github.psd2live.core.CharacterAnalyzer
 import io.github.psd2live.core.PartRole
 import io.github.psd2live.core.PhysicsGenerator
@@ -136,6 +137,51 @@ internal object RigMouthSpringModifier {
     fun fallbackTongueFrameDefinition(source: RigModifierSource?): RigModifierDefinition =
         sourceFrameDefinition(source, MouthSpringV15Algorithm.VERSION, MouthSpringV15Algorithm())
 
+    fun fallbackDepthFrameDefinition(source: RigModifierSource?): RigModifierDefinition =
+        sourceFrameDefinition(source, MouthSpringV16Algorithm.VERSION, MouthSpringV16Algorithm())
+
+    private fun RigModifierSource.captureFallbackDepth(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val scaffold = provider(instance)
+        val prefix = bindingPredecessors(instance, scaffold)
+        val providers = setOf("mouth.outline", "mouth.vowel", "mouth.capture", "mouth.jaw", "mouth.cheek-lid", "mouth.interior-depth")
+        require(prefix.none { it.type.startsWith("mouth.") && it.type !in providers })
+        val (native, context) = RigFittedMouthModuleSource.context(this, scaffold, prefix, null)
+        val fitted = requireNotNull(context.fittedMouth(native))
+        val mouth = requireNotNull(fitted.rig)
+        val face = setOf(SemanticTag.FACE, SemanticTag.NOSE, SemanticTag.FACE_DETAIL)
+        val shell = bindingSourceLayers(instance, context) { it.semantic.tag in face || it.semantic.tag in CharacterAnalyzer.MOUTH_TAGS }
+        val projected = shell.filterValues { it.semantic.tag in face }
+        val springLayers = projected.filterValues { layer ->
+            val measured = context.rigLayer(layer)
+            val tag = measured.semantic.tag
+            val role = measured.semantic.role
+            val below = tag == SemanticTag.FACE_DETAIL && mouth.fit.toMouth(measured.centroidX, measured.centroidY).second > 0f
+            !fitted.covers(measured) && (role == null || role == PartRole.SHADOW) &&
+                (tag == SemanticTag.FACE || tag == SemanticTag.NOSE || below)
+        }
+        require(springLayers.isNotEmpty())
+        val measurement = RigFittedMouthModuleSource.measure(this, native, context, prefix, springLayers)
+        val lipped = springLayers.filterValues { layer ->
+            layer.semantic.tag == SemanticTag.FACE && layer.semantic.role == null && fitted.lipped && !mouth.fit.hasLines
+        }.keys
+        val axes = prefix.flatMapTo(linkedSetOf()) { RigLegacyBindings.spec(it.type).parameters }
+        return ModifierAlgorithmContext(buildJsonObject {
+            put("measurement", measurement.values)
+            put("projected", JsonArray(projected.keys.map(::JsonPrimitive)))
+            put("lipped", JsonArray(lipped.map(::JsonPrimitive)))
+            put("axes", JsonArray(axes.map { JsonPrimitive(it.raw) }))
+            put("name", tr(RigModules.MOUTH_SPRING.defines.single().nameKey))
+            put("group", tr("model.group.physics"))
+            put("physicsName", tr("model.physics.mouthSpring"))
+            put("shapeCarrier", tr("model.deformer.meshShape", "{meshName}"))
+            put("turnCarrier", tr("model.deformer.meshTurn", "{meshName}"))
+            putJsonObject("providers") {
+                providers.forEach { type -> put(type, prefix.single { it.type == type }.id) }
+            }
+        }, measurement.resources + ("shell" to outlineShellSource(context, native, shell, axes,
+            includeFaceLean = true, lowerShapes = false)))
+    }
+
     private fun sourceFrameDefinition(source: RigModifierSource?, version: Int,
                                       algorithm: ChangingModifierAlgorithmPlugin): RigModifierDefinition {
         val projected = object : ChangingModifierAlgorithmPlugin by algorithm,
@@ -145,10 +191,16 @@ internal object RigMouthSpringModifier {
                 .mapTo(linkedSetOf()) { it.type } - setOf(MouthSpringAlgorithm.TYPE, "mouth/fitted", "mouth.jaw")
         }
         val contexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
-        fun capture(instance: RigModifierInstance) = contexts.getOrPut(instance) { requireNotNull(source).captureSharedFrames(instance) }
+        fun capture(instance: RigModifierInstance) = contexts.getOrPut(instance) {
+            val owner = requireNotNull(source)
+            if (version == MouthSpringV16Algorithm.VERSION) owner.captureFallbackDepth(instance) else owner.captureSharedFrames(instance)
+        }
         return definition(source).copy(version = version, plugin = projected,
-            parameters = { instance -> RigIrBinary.decode(capture(instance).resources.getValue("after").read())
-                .parameters.filter { it.id == "ParamMouthSpring" } },
+            parameters = { instance ->
+                val context = capture(instance)
+                if (version == MouthSpringV16Algorithm.VERSION) MouthSpringV16Algorithm.parameters(context)
+                else RigIrBinary.decode(context.resources.getValue("after").read()).parameters.filter { it.id == "ParamMouthSpring" }
+            },
             changeWrites = setOf("mesh", "deformer", "part", "parameter", "hierarchy", "physics"),
             authorContext = ::capture)
     }
