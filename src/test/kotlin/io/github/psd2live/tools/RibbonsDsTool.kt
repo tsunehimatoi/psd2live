@@ -19,6 +19,10 @@ class RibbonsDsTool {
 
     @Test fun compareLayeredMouthRibbons(): Unit = runBlocking { compareRibbons(includeSkirt = true, layered = true) }
 
+    @Test fun compareLayeredMouthRibbonsWithoutSkirt(): Unit = runBlocking {
+        compareRibbons(includeSkirt = false, layered = true)
+    }
+
     private suspend fun compareRibbons(includeSkirt: Boolean, layered: Boolean = false) {
         requireTools()
         val config = PipelineConfig(meshSpacing = 40)
@@ -53,6 +57,14 @@ class RibbonsDsTool {
 
         assertEquals(includeSkirt, stack.instances.any { it.type == "outfit.skirt" })
         assertEquals(includeSkirt, historical.analysis.layers.any { it.opaquePixels > 0 && it.semantic.role == PartRole.SKIRT })
+        if (!includeSkirt) {
+            val analyzed = historical.analysis.layers.associateBy { it.source.id }
+            for (originalLayer in skirtLayers) {
+                val retained = assertNotNull(analyzed[originalLayer.source.id])
+                assertNull(retained.semantic.role)
+                assertEquals(originalLayer.opaquePixels, retained.opaquePixels)
+            }
+        }
         val historicalEvaluation = assertNotNull(historical.modifierEvaluation)
         for ((type, version) in versions) {
             val provider = historicalEvaluation.entries.single { it.instance.type == type }
@@ -93,21 +105,23 @@ class RibbonsDsTool {
             val next = stack.copy(instances = stack.instances.map { if (it.id == entry.id) selected else it })
             return planned.copy(rigEdits = planned.rigEdits.copy(modifierStack = next.toJson())) to selected
         }
-        val v2 = WorkspacePreviewBuilder().build(select(2).first)
-        val plain = assertNotNull(v2.modifierEvaluation).outputs[index]
-        val head = changed.single { it.id == "ArtMeshHeadwear" }
-        val actualHead = plain.meshes.single { it.id == head.id }
-        assertNotEquals(head.offsets, actualHead.offsets)
-        val corrected = plain.copy(meshes = plain.meshes.map { if (it.id == head.id) it.copy(offsets = head.offsets) else it })
-        assertTrue(after == corrected, "v2 differs in more than the pendant offsets")
-        assertContains(assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(select(3).first) }.message.orEmpty(),
-            "Ribbons v3 requires mouth/fitted@4")
-        assertContains(assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(select(4).first) }.message.orEmpty(),
-            "Ribbons v4 requires a fitted open or closed mouth source")
+        if (!layered || includeSkirt) {
+            val v2 = WorkspacePreviewBuilder().build(select(2).first)
+            val plain = assertNotNull(v2.modifierEvaluation).outputs[index]
+            val head = changed.single { it.id == "ArtMeshHeadwear" }
+            val actualHead = plain.meshes.single { it.id == head.id }
+            assertNotEquals(head.offsets, actualHead.offsets)
+            val corrected = plain.copy(meshes = plain.meshes.map { if (it.id == head.id) it.copy(offsets = head.offsets) else it })
+            assertTrue(after == corrected, "v2 differs in more than the pendant offsets")
+            assertContains(assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(select(3).first) }.message.orEmpty(),
+                "Ribbons v3 requires mouth/fitted@4")
+            assertContains(assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(select(4).first) }.message.orEmpty(),
+                "Ribbons v4 requires a fitted open or closed mouth source")
 
-        if (layered) {
-            assertContains(assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(select(5).first) }.message.orEmpty(),
-                "Ribbons v5 requires mouth/fitted@6")
+            if (layered) {
+                assertContains(assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(select(5).first) }.message.orEmpty(),
+                    "Ribbons v5 requires mouth/fitted@6")
+            }
         }
         val version = if (layered) 6 else 5
         val (candidate, selected) = select(version)
