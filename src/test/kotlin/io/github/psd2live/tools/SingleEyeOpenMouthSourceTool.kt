@@ -55,10 +55,12 @@ class SingleEyeOpenMouthSourceTool {
         }
     }
 
-    private fun withTongue(original: WorkspaceDocument): WorkspaceDocument {
+    private fun withTongue(original: WorkspaceDocument): WorkspaceDocument = withInterior(original, SemanticTag.TONGUE)
+
+    private fun withInterior(original: WorkspaceDocument, tag: SemanticTag): WorkspaceDocument {
         val config = PipelineConfig(meshSpacing = 40)
         val analysis = RigGenerationSource.analyze(original.source, config)
-        return if (analysis.layers.any { it.semantic.tag == SemanticTag.TONGUE && it.source.visible && it.opaquePixels > 0 }) {
+        return if (analysis.layers.any { it.semantic.tag == tag && it.source.visible && it.opaquePixels > 0 }) {
             original
         } else {
             val mouth = analysis.layers.filter { it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) &&
@@ -67,9 +69,9 @@ class SingleEyeOpenMouthSourceTool {
             val bounds = owner.bounds
             val width = (bounds.width / 3).coerceAtLeast(5)
             val height = (bounds.height / 5).coerceAtLeast(4)
-            val tongueBounds = LayerBounds(bounds.left + (bounds.width - width) / 2, bounds.top + bounds.height / 2, width, height)
-            val id = LayerId("single-eye-source-tongue")
-            val color = byteArrayOf(182.toByte(), 78, 93, -1)
+            val tongueBounds = LayerBounds(bounds.left + (bounds.width - width) / 2, bounds.top + bounds.height / if (tag == SemanticTag.TONGUE) 2 else 4, width, height)
+            val id = LayerId("single-eye-source-${tag.name.lowercase()}")
+            val color = if (tag == SemanticTag.TONGUE) byteArrayOf(182.toByte(), 78, 93, -1) else byteArrayOf(-1, -1, -1, -1)
             val raster = LayerRaster(width, height, ByteArray(width * height * 4) { color[it % 4] })
             val tongue = WorkspaceSourceLayer(id, id.raw, owner.groupPath, SourceLayerKind.Raster, true, owner.order,
                 tongueBounds, 1f, true, LayerBlend.Normal, ChannelMask.ALL, raster, null, null, false)
@@ -78,8 +80,8 @@ class SingleEyeOpenMouthSourceTool {
                     if (layer.id == owner.id) listOf(tongue, layer) else listOf(layer)
                 }.mapIndexed { index, layer -> WorkspaceSourceLayer.copyOf(layer, index) }
             }
-            val classification = LayerClassificationOverride(LayerType.PRESET, SemanticTag.TONGUE, mouth.semantic.side)
-            println("Added a visible clipped tongue to ${owner.name}")
+            val classification = LayerClassificationOverride(LayerType.PRESET, tag, mouth.semantic.side)
+            println("Added a visible clipped ${tag.name.lowercase()} to ${owner.name}")
             original.copy(source = source, layerOverrides = original.layerOverrides + (id.raw to classification))
         }
     }
@@ -259,6 +261,65 @@ class SingleEyeOpenMouthSourceTool {
     @Test fun compareCheekLid(): Unit = runBlocking {
         compareShapeModule("mouth.cheek-lid", 11, mapOf("mouth.vowel" to 9, "mouth.capture" to 8, "mouth.jaw" to 11),
             emptySet(), emptySet(), RigMouthCheekLidModifier::fallbackFrameDefinition) { before, after -> verifyCheekLidContribution(before, after) }
+    }
+
+    @Test fun compareDepthWithTeeth(): Unit = runBlocking {
+        requireTools()
+        val document = withInterior(singleEyeOpenDocument(Sample.fromEnvironment()), SemanticTag.TOOTH_T)
+        val type = "mouth.interior-depth"
+        val jaw = "mouth.jaw"
+        val cheek = "mouth.cheek-lid"
+        val chain = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 3,
+            "mouth/fitted" to 7, "mouth.outline" to 10, "mouth.vowel" to 9, "mouth.capture" to 8,
+            jaw to 11, cheek to 11, type to 1)
+        val (planned, baseline) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
+            WorkspaceInitialPreset(clothing = false), requestedVersions = chain)
+        val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
+        assertEquals(chain, stack.instances.filter { it.type in chain }.associate { it.type to it.version })
+        val evaluated = assertNotNull(baseline.modifierEvaluation)
+        val legacy = stack.copy(instances = stack.instances.map {
+            if (it.type in setOf(jaw, cheek)) it.copy(version = 1, plugin = BuiltinModifierPlugins.reference(it.type, 1)) else it
+        })
+        val historical = WorkspacePreviewBuilder().build(planned.copy(rigEdits = planned.rigEdits.copy(modifierStack = legacy.toJson())))
+        val original = assertNotNull(historical.modifierEvaluation)
+        for (instance in stack.instances.filter { it.type in setOf(jaw, cheek, type) }) {
+            val stage = stack.index(instance.id)
+            assertEquals(ModifierStatus.ACTIVE, evaluated.entries[stage].status, instance.type)
+            assertEquals(ModifierStatus.ACTIVE, original.entries[stage].status, instance.type)
+            val before = original.outputs[stage]
+            val after = evaluated.outputs[stage]
+            val old = before.meshes.associateBy { it.id }
+            assertTrue(before == after, "${instance.type} differs from v1. Meshes: ${after.meshes.filter { it != old[it.id] }.map { it.id }}")
+        }
+        val depth = stack.instances.single { it.type == type }
+        val stage = stack.index(depth.id)
+        val before = evaluated.outputs[stage - 1]
+        val after = evaluated.outputs[stage]
+        val tooth = after.meshes.single { baseline.rig.layerIdByDrawableId[it.id] == "single-eye-source-tooth_t" }
+        val old = before.meshes.single { it.id == tooth.id }
+        assertTrue(tooth.visible && tooth.opacity > 0f)
+        assertEquals(listOf("ArtMeshMouth"), tooth.maskedBy)
+        assertEquals(old.maskedBy, tooth.maskedBy)
+        assertTrue(after.parameters.none { it.id == "ParamTongueOut" })
+        assertEquals(old.channels[Channel.MULTIPLY_COLOR], tooth.channels[Channel.MULTIPLY_COLOR])
+        val head = setOf("ParamAngleX", "ParamAngleY")
+        val changedShapes = tooth.shapes - old.shapes.toSet()
+        val local = changedShapes.any { binding ->
+            binding.parameter in head && binding.shapes.any { it?.deltas?.toArray()?.any { delta -> delta != 0f } == true }
+        } || (tooth.offsets != old.offsets && tooth.offsets?.let { grid ->
+            grid.axes.any { it.parameter in head } && grid.cells.map { it.form }.distinct().size > 1
+        } == true)
+        val frames = after.deformers.associateBy { it.id }
+        val oldFrames = before.deformers.associateBy { it.id }
+        val inherited = generateSequence(tooth.parent) { frames[it]?.parent }.any { id ->
+            val warp = frames[id] as? Deformer.Warp
+            val lattice = warp?.lattice
+            warp != oldFrames[id] && lattice != null && lattice.axes.any { it.parameter in head } &&
+                lattice.cells.map { it.form }.distinct().size > 1
+        }
+        assertTrue(local || inherited, "The tooth must gain head-angle depth")
+        compareShapeModule(type, 11, chain - type, emptySet(), emptySet(),
+            RigMouthDepthModifier::fallbackFrameDefinition, document = document)
     }
 
     @Test fun compareDepthWithTongue(): Unit = runBlocking {

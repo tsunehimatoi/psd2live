@@ -9,6 +9,7 @@ import io.github.psd2live.algorithms.binding.MouthDepthV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV8Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV9Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV10Algorithm
+import io.github.psd2live.algorithms.binding.MouthDepthV11Algorithm
 import io.github.psd2live.algorithms.binding.MouthRig.Follow
 import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.RigModules
@@ -53,6 +54,9 @@ internal object RigMouthDepthModifier {
     fun closedShellDefinition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthDepthV5Algorithm.VERSION, closedShellAlgorithm)
 
+    fun fallbackFrameDefinition(source: RigModifierSource?): RigModifierDefinition =
+        sourceFrameDefinition(source, MouthDepthV11Algorithm.VERSION, MouthDepthV11Algorithm, layered = false)
+
     fun fallbackTongueFrameDefinition(source: RigModifierSource?): RigModifierDefinition =
         sourceFrameDefinition(source, MouthDepthV10Algorithm.VERSION, MouthDepthV10Algorithm, layered = false)
 
@@ -85,6 +89,7 @@ internal object RigMouthDepthModifier {
             changeWrites = when (version) {
                 MouthDepthV9Algorithm.VERSION -> MouthDepthV9Algorithm.WRITES
                 MouthDepthV10Algorithm.VERSION -> MouthDepthV10Algorithm.WRITES
+                MouthDepthV11Algorithm.VERSION -> MouthDepthV11Algorithm.WRITES
                 MouthDepthV8Algorithm.VERSION -> MouthDepthV8Algorithm.WRITES
                 MouthDepthV7Algorithm.VERSION -> MouthDepthV7Algorithm.WRITES
                 else -> MouthDepthV6Algorithm.WRITES
@@ -95,7 +100,7 @@ internal object RigMouthDepthModifier {
         val scaffold = provider(instance)
         val prefix = bindingPredecessors(instance, scaffold)
         val fittedVersion = when {
-            instance.version == MouthDepthV10Algorithm.VERSION -> 7
+            instance.version in setOf(MouthDepthV10Algorithm.VERSION, MouthDepthV11Algorithm.VERSION) -> 7
             layered -> 8
             else -> 6
         }
