@@ -6,6 +6,7 @@ import androidx.compose.ui.unit.Density
 import io.github.psd2live.application.WorkspaceViewRenderer
 import io.github.psd2live.core.Bounds
 import io.github.psd2live.core.PSD2LivePipeline
+import io.github.psd2live.core.RigBuildProfile
 import io.github.psd2live.core.RigPreviewModel
 import io.github.psd2live.core.SkeletonAutoBuilder
 import io.github.psd2live.core.SkeletonSpec
@@ -44,6 +45,10 @@ import javax.imageio.ImageIO
 internal fun requireTools() {
 	assumeTrue(System.getenv("PSD2LIVE_TOOLS") == "1", "Set PSD2LIVE_TOOLS=1 to run the development tools")
 }
+
+internal fun legacyTemplateConsumers(): Set<String> = RigBuildProfile.snapshot().keys
+	.filter { it.startsWith("modifier template consumer:") }
+	.mapTo(linkedSetOf()) { it.substringBefore(" -> ").substringAfterLast(": ") }
 
 /** An environment setting of a tool, or [default]. */
 internal fun setting(name: String, default: String): String = System.getenv(name)?.takeIf { it.isNotBlank() } ?: default

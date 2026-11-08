@@ -55,7 +55,7 @@ class MouthCheekLidTongueSourceTool {
         } finally {
             RigBuildProfile.recording = recording
         }
-        assertTrue(RigBuildProfile.snapshot().keys.none { it.startsWith("modifier template consumer: mouth.cheek-lid ->") })
+        assertTrue("mouth.cheek-lid" !in legacyTemplateConsumers())
         val actual = assertNotNull(preview.modifierEvaluation)
         assertEquals(9, actual.entries[index].instance.version)
         for (entry in actual.entries.filter { it.instance.type in versions }) {

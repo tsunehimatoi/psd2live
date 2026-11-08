@@ -63,7 +63,7 @@ class MouthOutlineSourceTool {
         } finally {
             RigBuildProfile.recording = recording
         }
-        assertTrue(RigBuildProfile.snapshot().keys.none { it.startsWith("modifier template consumer: mouth.outline ->") })
+        assertTrue("mouth.outline" !in legacyTemplateConsumers())
         val actual = assertNotNull(preview.modifierEvaluation)
         for (entry in actual.entries.filter { it.instance.type in versions }) {
             assertEquals(ModifierStatus.ACTIVE, entry.status, entry.instance.type)
