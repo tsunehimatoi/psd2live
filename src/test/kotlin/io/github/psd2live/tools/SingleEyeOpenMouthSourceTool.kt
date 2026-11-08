@@ -1,5 +1,6 @@
 package io.github.psd2live.tools
 
+import io.github.psd2live.application.CliPresetBindings
 import io.github.psd2live.application.WorkspaceInitialPreset
 import io.github.psd2live.application.WorkspacePresetInitialization
 import io.github.psd2live.application.WorkspacePreviewBuilder
@@ -8,6 +9,7 @@ import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.recipe.RecipeSubject
 import io.github.psd2live.core.recipe.RigModules
+import io.github.psd2live.format.model.Channel
 import io.github.psd2live.format.model.Deformer
 import io.github.psd2live.format.model.KeyGrid
 import io.github.psd2live.format.model.RigIR
@@ -262,6 +264,48 @@ class SingleEyeOpenMouthSourceTool {
             preferences.removeNode()
             ModifierPluginStore.deleteTree(root)
         }
+    }
+
+    @Test fun compareExpressionCheek(): Unit = runBlocking {
+        val chain = mapOf("eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3, "eye.emotion" to 3,
+            "eye.aftershock" to 4, "eye.squash" to 4, "brow.shape" to 4, "brow.lid-coupling" to 6,
+            "brow.blink" to 4, "brow.spring" to 5, "mouth.vowel" to 9, "mouth.capture" to 8,
+            "mouth.jaw" to 11, "mouth.cheek-lid" to 11, "mouth.spring" to 12)
+        val type = "expression.cheek"
+        val parameter = "ParamCheek"
+        compareShapeModule(type, 3, chain, setOf(parameter), emptySet(), RigCheekModifier::carrierDefinition) { before, after ->
+            val oldMeshes = before.meshes.associateBy { it.id }
+            val colored = after.meshes.filter { mesh ->
+                val grid = mesh.channels[Channel.MULTIPLY_COLOR]
+                grid != null && grid != oldMeshes.getValue(mesh.id).channels[Channel.MULTIPLY_COLOR] &&
+                    grid.axes.any { it.parameter == parameter } && grid.cells.map { it.form }.distinct().size > 1
+            }
+            assertTrue(colored.any { it.id == "ArtMeshFace" }, "Cheek must add a nonconstant face tint: ${colored.map { it.id }}")
+            println("Cheek tint meshes: ${colored.map { it.id }}")
+        }
+
+        val pipeline = PSD2LivePipeline().apply { deferRuntimeBundles = true }
+        val config = PipelineConfig()
+        val source = singleEyeOpenDocument(Sample.fromEnvironment()).source
+        val raw = pipeline.buildSourceExport(source, config)
+        val rawStack = RigModifierStack.fromJson(assertNotNull(raw.config.rigEdits.modifierStack))
+        val versions = rawStack.instances.filter { RigLegacyBindings.find(it.type) != null }.associate { it.type to it.version }
+        assertEquals(1, versions[type])
+        assertEquals(chain, versions.filterKeys { it in chain })
+        val analyses = RigGenerationSource.prepare(RigGenerationSource.analyze(source, config), config)
+        val bindings = CliPresetBindings(analyses, config)
+        val document = WorkspaceDocument(source, emptyMap(), emptySet(), emptyMap(), emptyMap(),
+            config.rigEdits.copy(modifierStack = RigModifierStack().toJson()))
+        val (_, evaluated) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
+            WorkspaceInitialPreset(clothing = false), requestedVersions = versions + (type to 3),
+            cliBindings = bindings, restoreSourceRotations = true)
+        val selected = assertNotNull(evaluated.modifierEvaluation).entries.single { it.instance.type == type }
+        assertEquals(3, selected.instance.version)
+        assertEquals(ModifierStatus.ACTIVE, selected.status)
+        val candidate = CliPresetPresentation.apply(evaluated, analyses, bindings.moduleParameters, config)
+        val expected = RigIrCompiler.compile(raw, tileArt = true)
+        val actual = RigIrCompiler.compile(candidate, tileArt = true)
+        assertTrue(expected == actual, "Complete RAW cheek IR differs")
     }
 
     @Test fun compareRawSingleEyePreset() {
