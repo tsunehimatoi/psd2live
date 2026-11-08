@@ -21,6 +21,17 @@ import java.util.prefs.Preferences
 import kotlin.test.*
 
 class SingleEyeOpenMouthSourceTool {
+    @Test fun compareWideEye(): Unit = runBlocking {
+        val downstream = mapOf("eye.gaze-lid" to 3, "mouth.vowel" to 9, "mouth.capture" to 8,
+            "mouth.jaw" to 11, "mouth.cheek-lid" to 11)
+        compareShapeModule("eye.wide", 3, downstream, emptySet(), emptySet(), RigEyeWideModifier::modernDefinition) { before, after ->
+            val id = "ArtMeshEyelashL"
+            assertNotEquals(before.meshes.single { it.id == id }, after.meshes.single { it.id == id })
+            val open = "ParamEyeLOpen"
+            assertTrue(after.parameters.single { it.id == open }.max > before.parameters.single { it.id == open }.max)
+        }
+    }
+
     @Test fun compareGazeLid(): Unit = runBlocking {
         val speech = mapOf("mouth.vowel" to 9, "mouth.capture" to 8, "mouth.jaw" to 11, "mouth.cheek-lid" to 11)
         val controls = RigModules.EYE_GAZE_LID.defines.mapTo(HashSet()) { it.id }
@@ -109,7 +120,9 @@ class SingleEyeOpenMouthSourceTool {
         val module = stack.instances.single { it.type == type }
         val stage = stack.index(module.id)
         val expected = assertNotNull(baseline.modifierEvaluation)
-        assertEquals(ModifierStatus.ACTIVE, expected.entries[stage].status)
+        for (entry in expected.entries.filter { it.instance.type in versions }) {
+            assertEquals(ModifierStatus.ACTIVE, entry.status, entry.instance.type)
+        }
         val before = expected.outputs[stage - 1]
         val after = expected.outputs[stage]
         verifyContribution(before, after)
