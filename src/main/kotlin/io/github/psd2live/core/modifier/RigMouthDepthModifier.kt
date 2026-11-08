@@ -6,6 +6,7 @@ import io.github.psd2live.algorithms.binding.MouthDepthV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV7Algorithm
+import io.github.psd2live.algorithms.binding.MouthDepthV8Algorithm
 import io.github.psd2live.algorithms.binding.MouthRig.Follow
 import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.RigModules
@@ -50,9 +51,17 @@ internal object RigMouthDepthModifier {
     fun closedShellDefinition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthDepthV5Algorithm.VERSION, closedShellAlgorithm)
 
-    fun sharedFrameDefinition(source: RigModifierSource?, withSharedTongue: Boolean = false): RigModifierDefinition {
-        val algorithm = if (withSharedTongue) MouthDepthV7Algorithm else MouthDepthV6Algorithm
-        val version = if (withSharedTongue) MouthDepthV7Algorithm.VERSION else MouthDepthV6Algorithm.VERSION
+    fun sharedFrameDefinition(source: RigModifierSource?, withSharedTongue: Boolean = false, layered: Boolean = false): RigModifierDefinition {
+        val algorithm = when {
+            layered -> MouthDepthV8Algorithm
+            withSharedTongue -> MouthDepthV7Algorithm
+            else -> MouthDepthV6Algorithm
+        }
+        val version = when {
+            layered -> MouthDepthV8Algorithm.VERSION
+            withSharedTongue -> MouthDepthV7Algorithm.VERSION
+            else -> MouthDepthV6Algorithm.VERSION
+        }
         val projected = object : ChangingModifierAlgorithmPlugin by algorithm,
             ModifierOptionalUpstream, ModifierVersionSelection {
             override val canonicalOptInType = MouthDepthAlgorithm.TYPE
@@ -60,23 +69,30 @@ internal object RigMouthDepthModifier {
                 .mapTo(linkedSetOf()) { it.type } - setOf(MouthDepthAlgorithm.TYPE, "mouth/fitted")
         }
         return fittedDefinition(source).copy(version = version, plugin = projected,
-            changeWrites = if (withSharedTongue) MouthDepthV7Algorithm.WRITES else MouthDepthV6Algorithm.WRITES,
-            authorContext = { requireNotNull(source).captureSharedFrames(it) })
+            changeWrites = when (version) {
+                MouthDepthV8Algorithm.VERSION -> MouthDepthV8Algorithm.WRITES
+                MouthDepthV7Algorithm.VERSION -> MouthDepthV7Algorithm.WRITES
+                else -> MouthDepthV6Algorithm.WRITES
+            }, authorContext = { requireNotNull(source).captureSharedFrames(it, layered) })
     }
 
-    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance): ModifierAlgorithmContext {
+    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance, layered: Boolean): ModifierAlgorithmContext {
         val scaffold = provider(instance)
         val prefix = bindingPredecessors(instance, scaffold)
+        val fittedVersion = if (layered) 8 else 6
         require(prefix.any { it.id == instance.config.getValue("base").jsonPrimitive.content &&
-            it.type == "mouth/fitted" && it.version == 6 }) { "Mouth interior depth v${instance.version} requires a shared fitted mouth v6" }
+            it.type == "mouth/fitted" && it.version == fittedVersion }) {
+            "Mouth interior depth v${instance.version} requires a shared fitted mouth v$fittedVersion"
+        }
         val providers = setOf("mouth.outline", "mouth.vowel", "mouth.capture", "mouth.jaw", "mouth.cheek-lid") +
             prefix.filter { it.type == "mouth.tongue" }.map { it.type }
         require(prefix.none { it.type.startsWith("mouth.") && it.type !in providers }) {
             "Mouth interior depth v${instance.version} requires the shared open-mouth source chain"
         }
         val interior = setOf(SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE, SemanticTag.MOUTH_OPEN)
+        val projected = if (layered) interior + SemanticTag.MOUTH else interior
         return captureBindingTransition(instance, scaffold, prefix, CharacterAnalyzer.MOUTH_TAGS + SemanticTag.FACE + SemanticTag.NOSE,
-            projectedTags = interior, includeMouthShading = true, values = buildJsonObject {
+            projectedTags = projected, includeMouthShading = true, includeLayeredTongueKeys = layered, values = buildJsonObject {
                 putJsonObject("providers") {
                     providers.forEach { type -> put(type, prefix.single { it.type == type }.id) }
                 }

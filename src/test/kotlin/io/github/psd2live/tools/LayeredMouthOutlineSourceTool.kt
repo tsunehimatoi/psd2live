@@ -4,6 +4,7 @@ import io.github.psd2live.application.*
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.recipe.RigModules
+import io.github.psd2live.format.model.Channel
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.project.WorkspaceDocument
 import io.github.psd2live.project.WorkspaceSettingsCodec
@@ -20,7 +21,7 @@ class LayeredMouthOutlineSourceTool {
     private enum class Upgrade(val type: String, val version: Int) {
         OUTLINE("mouth.outline", 9), FITTED("mouth/fitted", 8), VOWEL("mouth.vowel", 8),
         CAPTURE("mouth.capture", 7), JAW("mouth.jaw", 10), CHEEK_LID("mouth.cheek-lid", 10), SPRING("mouth.spring", 11),
-        TONGUE("mouth.tongue", 7), TONGUE_JAW("mouth.jaw", 12), TONGUE_CHEEK_LID("mouth.cheek-lid", 12),
+        TONGUE("mouth.tongue", 7), TONGUE_JAW("mouth.jaw", 12), TONGUE_CHEEK_LID("mouth.cheek-lid", 12), TONGUE_DEPTH("mouth.interior-depth", 8),
     }
 
     @Test fun compareLayeredOutlineWithLegacyFittedMouth(): Unit = runBlocking { compareLayered(Upgrade.OUTLINE) }
@@ -111,6 +112,8 @@ class LayeredMouthOutlineSourceTool {
 
     @Test fun compareLayeredCheekLidsWithSharedTongueJaw(): Unit = runBlocking { compareLayered(Upgrade.TONGUE_CHEEK_LID) }
 
+    @Test fun compareLayeredDepthWithSharedTongueCheekLids(): Unit = runBlocking { compareLayered(Upgrade.TONGUE_DEPTH) }
+
     private suspend fun compareLayered(upgrade: Upgrade) {
         requireTools()
         val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
@@ -125,10 +128,14 @@ class LayeredMouthOutlineSourceTool {
             "mouth.capture" to (if (upgrade >= Upgrade.JAW) 7 else 1),
             "mouth.jaw" to when (upgrade) {
                 Upgrade.CHEEK_LID, Upgrade.SPRING -> 10
-                Upgrade.TONGUE_CHEEK_LID -> 12
+                Upgrade.TONGUE_CHEEK_LID, Upgrade.TONGUE_DEPTH -> 12
                 else -> 1
             },
-            "mouth.cheek-lid" to (if (upgrade == Upgrade.SPRING) 10 else 1), "mouth.spring" to 1) +
+            "mouth.cheek-lid" to when (upgrade) {
+                Upgrade.SPRING -> 10
+                Upgrade.TONGUE_DEPTH -> 12
+                else -> 1
+            }, "mouth.spring" to 1) +
             if (withTongue) mapOf("mouth.tongue" to (if (upgrade == Upgrade.TONGUE) 1 else 7), "mouth.interior-depth" to 1)
             else emptyMap()
         val (planned, reference) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
@@ -292,6 +299,30 @@ class LayeredMouthOutlineSourceTool {
                 previous.parameters.single { it.id == "ParamTongueOut" }.keys?.shared()?.toList())
             assertEquals(previous.parameters, desired.parameters)
         }
+        if (upgrade == Upgrade.TONGUE_DEPTH) {
+            val rejected = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(candidate(7)) }
+            assertContains(rejected.message.orEmpty(), "requires a shared fitted mouth v6")
+            val previous = referenceStages[stage - 1]
+            val desired = referenceStages[stage]
+            val priorById = previous.meshes.associateBy { it.id }
+            val before = previous.meshes.single { reference.rig.layerIdByDrawableId[it.id] == "test-layered-tongue" }
+            val after = desired.meshes.single { it.id == before.id }
+            assertEquals(before.maskedBy, after.maskedBy)
+            val opening = after.maskedBy.single()
+            assertEquals(setOf(before.id, opening), desired.meshes.filter { it != priorById[it.id] }.map { it.id }.toSet())
+            assertEquals(before.tile, after.tile)
+            assertNotEquals(before.offsets, after.offsets)
+            val shading = after.channels.getValue(Channel.MULTIPLY_COLOR)
+            assertTrue(shading.cells.map { it.form }.distinct().size > 1)
+            val tongueOut = "ParamTongueOut"
+            val beforeOut = before.shapes.single { it.parameter == tongueOut }
+            val afterOut = after.shapes.single { it.parameter == tongueOut }
+            assertEquals(beforeOut.keys, afterOut.keys)
+            assertEquals(beforeOut.limits, afterOut.limits)
+            assertTrue(afterOut.shapes.filterNotNull().any { form -> form.deltas.shared().any { it != 0f } })
+            assertEquals(listOf(0f, 0.12f, 1f), desired.parameters.single { it.id == tongueOut }.keys?.shared()?.toList())
+            assertEquals(previous.parameters, desired.parameters)
+        }
         RigBuildProfile.reset()
         val recording = RigBuildProfile.recording
         val preview = try {
@@ -344,6 +375,7 @@ class LayeredMouthOutlineSourceTool {
                 Upgrade.TONGUE -> RigMouthTongueModifier.sharedFrameDefinition(sourceInputs, layered = true)
                 Upgrade.TONGUE_JAW -> RigMouthJawModifier.sharedFrameDefinition(sourceInputs, withTongue = true, layered = true)
                 Upgrade.TONGUE_CHEEK_LID -> RigMouthCheekLidModifier.sharedFrameDefinition(sourceInputs, withTongue = true, layered = true)
+                Upgrade.TONGUE_DEPTH -> RigMouthDepthModifier.sharedFrameDefinition(sourceInputs, layered = true)
             }
             val context = definition.authorContext(instance).withUpstream(actual.entries.take(stage)
                 .filter { it.status == ModifierStatus.ACTIVE && it.instance.type in definition.requires + definition.optionalUpstream }
@@ -362,6 +394,7 @@ class LayeredMouthOutlineSourceTool {
                 Upgrade.TONGUE -> listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture")
                 Upgrade.TONGUE_JAW -> listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture", "mouth.tongue")
                 Upgrade.TONGUE_CHEEK_LID -> listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture", "mouth.tongue", "mouth.jaw")
+                Upgrade.TONGUE_DEPTH -> listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture", "mouth.tongue", "mouth.jaw", "mouth.cheek-lid")
             }
             for (type in providerTypes) {
                 val provider = context.upstream.single { it.type == type }
