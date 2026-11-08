@@ -119,7 +119,7 @@ internal object WorkspaceModifierEdits {
         val config = request.getValue("config").jsonObject
         val requestedVersion = request["version"]?.jsonPrimitive?.int
         val sourceVersion = if (model != null && requestedVersion == null && request["plugin"] == null &&
-            request["index"] == null && stored == type) WorkspaceModifierPlan.legacySourceBaseVersion(model, stack, stored, targets, config)
+            request["index"] == null && stored == type) WorkspaceModifierPlan.preferredSourceVersion(model, stack, stored, targets, config)
             else null
         val version = requestedVersion ?: sourceVersion ?: registry.defaultDefinition(type)?.version
             ?: error("Unknown modifier algorithm: $type")

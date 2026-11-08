@@ -10,6 +10,7 @@ import io.github.psd2live.project.WorkspaceDocument
 import io.github.psd2live.project.WorkspaceSettingsCodec
 import io.github.psd2live.project.WorkspaceSourceLayer
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.*
 import org.umamo.format.art.*
 import java.nio.file.Files
 import java.util.UUID
@@ -37,6 +38,44 @@ class LayeredMouthOutlineSourceTool {
     @Test fun recommendedLayeredMouthUsesSharedSources(): Unit = runBlocking { compareRecommendedLayered(withTongue = false) }
 
     @Test fun recommendedLayeredTongueUsesSharedSources(): Unit = runBlocking { compareRecommendedLayered(withTongue = true) }
+
+    @Test fun appendLayeredCaptureUsesStandalonePlugin(): Unit = runBlocking {
+        requireTools()
+        val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
+        val config = PipelineConfig(meshSpacing = 40, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val document = layeredMouthDocument(source, config)
+        val planned = WorkspacePresetInitialization.create(document, WorkspaceRasterWork.Direct,
+            WorkspaceInitialPreset(clothing = false))
+        val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
+        val capture = stack.instances.single { it.type == "mouth.capture" }
+        val index = stack.index(capture.id)
+        val prefix = stack.copy(instances = stack.instances.take(index))
+        val before = planned.copy(rigEdits = planned.rigEdits.copy(modifierStack = prefix.toJson()))
+        val preview = WorkspacePreviewBuilder().build(before)
+        val request = buildJsonObject {
+            put("type", capture.type)
+            putJsonArray("targets") { capture.targets.forEach { target -> add(buildJsonObject {
+                put("kind", target.kind)
+                put("id", target.id)
+            }) } }
+        }
+        val (proposed, plan) = WorkspaceModifierPlan.plan(preview, prefix, request)
+        val addition = proposed.instances.last()
+        assertEquals(7, addition.version)
+        assertEquals(BuiltinModifierPlugins.reference(capture.type, 7), addition.plugin)
+        val additionRequest = plan.getValue("entries").jsonArray.single().jsonObject
+        val appended = WorkspaceModifierEdits.apply(WorkspaceDocumentOperation("modifier_add",
+            JsonObject(additionRequest - "version" - "plugin")), before, preview)
+        val direct = RigModifierStack.fromJson(assertNotNull(appended.rigEdits.modifierStack))
+        assertEquals(addition, direct.instances.last())
+        val evaluated = assertNotNull(WorkspacePreviewBuilder().build(appended).modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, evaluated.entries.last().status)
+        val legacyRequest = JsonObject(additionRequest - "plugin" + ("version" to JsonPrimitive(1)))
+        val legacy = WorkspaceModifierEdits.apply(WorkspaceDocumentOperation("modifier_add", legacyRequest), before, preview)
+        val historical = WorkspacePreviewBuilder().build(legacy)
+        val expected = assertNotNull(historical.modifierEvaluation).outputs.last()
+        assertTrue(expected == evaluated.outputs.last(), "Independent capture differs from v1 with the same instance ID")
+    }
 
     private suspend fun compareRecommendedLayered(withTongue: Boolean) {
         requireTools()

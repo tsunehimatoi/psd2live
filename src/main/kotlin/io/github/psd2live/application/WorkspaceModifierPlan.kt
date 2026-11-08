@@ -183,7 +183,7 @@ internal object WorkspaceModifierPlan {
                 }
             }
             val sourceVersion = if (requestedTypes == null && wanted == storedType && packaged == null)
-                legacySourceBaseVersion(model, candidate, storedType, targets, configuration, available) else null
+                preferredSourceVersion(model, candidate, storedType, targets, configuration, available) else null
             candidate = candidate.add(storedType, sourceVersion ?: version, targets, configuration, group, plugin = packaged?.first?.reference)
             val instance = candidate.instances.last()
             val cap = instance.capability()
@@ -206,23 +206,50 @@ internal object WorkspaceModifierPlan {
         }
     }
 
-    /** Use the independent legacy bases when the live prefix is a shared, unedited source frame. */
-    fun legacySourceBaseVersion(model: RigPreviewModel, stack: RigModifierStack, type: String,
-                                targets: List<ModifierTarget>, configuration: JsonObject,
-                                available: List<ModifierCapability>? = null): Int? {
-        val version = legacySourceBases[type] ?: return null
-        if (configuration.keys != setOf("scaffold") || !WorkspacePresetInitialization.freshSource(model.config) ||
-            stack.appliedCapabilities.isNotEmpty() ||
-            stack.overrides.values.any { it.isNotEmpty() }) return null
+    /** Select a standalone binding for a supported, unedited source prefix. */
+    fun preferredSourceVersion(model: RigPreviewModel, stack: RigModifierStack, type: String,
+                               targets: List<ModifierTarget>, configuration: JsonObject,
+                               available: List<ModifierCapability>? = null): Int? {
+        val legacyVersion = legacySourceBases[type]
+        val speech = type == "mouth.vowel" || type == "mouth.capture"
+        if (legacyVersion == null && !speech) return null
+        val keys = if (speech) setOf("scaffold", "base") else setOf("scaffold")
+        if (configuration.keys != keys || !WorkspacePresetInitialization.freshSource(model.config) ||
+            stack.appliedCapabilities.isNotEmpty() || stack.overrides.values.any { it.isNotEmpty() }) return null
         val scoped = (available ?: activeCapabilities(model, stack)).filter { entry -> entry.targets.any(targets::contains) }
         val scaffold = scoped.singleOrNull { it.type == RigSourceModifiers.SCAFFOLD && it.version == 2 &&
             JsonPrimitive(it.id) == configuration["scaffold"] && it.targets.toSet() == targets.toSet() } ?: return null
         if (scaffold.plugin != BuiltinModifierPlugins.reference(scaffold.type, scaffold.version) ||
             scaffold.config["featureDisplacement"] == JsonPrimitive(true)) return null
-        val earlier = legacySourceBases.keys.takeWhile { it != type }
-        if (scoped.any { it != scaffold && (it.type !in earlier || it.version != legacySourceBases[it.type] ||
-                it.targets.toSet() != targets.toSet() || it.config["scaffold"] != configuration["scaffold"]) }) return null
-        return version.takeIf { ModifierPluginCatalog.available(type, it) }
+        val version = if (legacyVersion != null) {
+            val earlier = legacySourceBases.keys.takeWhile { it != type }
+            if (scoped.any { it != scaffold && (it.type !in earlier || it.version != legacySourceBases[it.type] ||
+                    it.targets.toSet() != targets.toSet() || it.config["scaffold"] != configuration["scaffold"]) }) return null
+            legacyVersion
+        } else speechSourceVersion(type, targets, configuration, scoped) ?: return null
+        val reference = BuiltinModifierPlugins.reference(type, version) ?: return null
+        return version.takeIf { ModifierPluginCatalog.available(type, it, reference) }
+    }
+
+    private fun speechSourceVersion(type: String, targets: List<ModifierTarget>, configuration: JsonObject,
+                                    scoped: List<ModifierCapability>): Int? {
+        val prefix = scoped.filter { it.config["scaffold"] == configuration["scaffold"] }
+        if (prefix.any { !it.targets.containsAll(targets) }) return null
+        val mouth = prefix.singleOrNull { it.type == "mouth/fitted" && JsonPrimitive(it.id) == configuration["base"] } ?: return null
+        // Source profiles for shared open, single-eye open and authored layered mouths.
+        val (outline, vowel, capture) = when (mouth.version) {
+            6 -> Triple(8, 7, 6)
+            7 -> Triple(10, 9, 8)
+            8 -> Triple(11, 8, 7)
+            else -> return null
+        }
+        val stages = prefix.filter { it.type.startsWith("mouth.") }
+        val expected = if (type == "mouth.vowel") listOf("mouth.outline" to outline)
+            else listOf("mouth.outline" to outline, "mouth.vowel" to vowel)
+        if (stages.map { it.type to it.version } != expected || (stages + mouth).any {
+                it.plugin != BuiltinModifierPlugins.reference(it.type, it.version)
+            }) return null
+        return if (type == "mouth.vowel") vowel else capture
     }
 
     private fun activeCapabilities(model: RigPreviewModel, stack: RigModifierStack): List<ModifierCapability> {
