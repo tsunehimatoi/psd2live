@@ -1,5 +1,6 @@
 package io.github.psd2live.core.legacy
 
+import io.github.psd2live.algorithms.binding.GeometryResidual
 import io.github.psd2live.core.*
 
 import kotlinx.serialization.json.*
@@ -69,9 +70,9 @@ internal object RigGenerationJournal {
                 return RasterMeshJournal.prepare(DrawableMesh(input.uvs, input.uvs, input.indices),
                     DrawableMesh(actualUv, actualUv, mesh.indices), checkpoint).sources
             }
-            val geometry = if (original == null) drawable.geometryGrid else RigGenerationResidual.geometry(context, previousProjection,
+            val geometry = if (original == null) drawable.geometryGrid else GeometryResidual.geometry(context, previousProjection,
                 desiredProjection, drawable.id, sources(old), sources(next), checkpoint)
-            val channels = if (original == null) drawable.channelGrids else RigGenerationResidual.channels(context, drawable, old, next, checkpoint)
+            val channels = if (original == null) drawable.channelGrids else GeometryResidual.channels(context, drawable, old, next, checkpoint)
             buildJsonObject {
                 put("id", drawable.id.raw); put("expected", RasterMeshJournal.fingerprint(mesh))
                 put("parent", drawable.parentDeformerId?.raw?.let(::JsonPrimitive) ?: JsonNull)
