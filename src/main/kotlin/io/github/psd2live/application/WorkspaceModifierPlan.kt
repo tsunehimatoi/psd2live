@@ -56,15 +56,6 @@ internal object WorkspaceModifierPlan {
         })
     }
 
-    fun initial(model: RigPreviewModel, group: String): RigModifierStack {
-        val targets = model.rig.puppet.drawables.filter { it.mesh != null && it.id.raw in model.rig.ownLayerIdByDrawableId }
-        if (targets.isEmpty()) return RigModifierStack()
-        return plan(model, RigModifierStack(), buildJsonObject {
-            put("group", group)
-            putJsonArray("targets") { targets.forEach { addJsonObject { put("kind", "mesh"); put("id", it.id.raw) } } }
-        }).first
-    }
-
     internal fun plan(model: RigPreviewModel, stack: RigModifierStack, request: JsonObject,
                       requestedTypes: List<String>? = null): Pair<RigModifierStack, JsonObject> {
         val requestedTargets = request.getValue("targets").jsonArray.map { raw -> raw.jsonObject.let {

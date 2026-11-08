@@ -45,6 +45,14 @@ import kotlin.math.abs
 import kotlin.test.*
 
 class WorkspaceLegacyBindingTest {
+    private fun planFromEmptyStack(model: RigPreviewModel, group: String): RigModifierStack {
+        val targets = model.rig.puppet.drawables.filter { it.mesh != null && it.id.raw in model.rig.ownLayerIdByDrawableId }
+        return WorkspaceModifierPlan.plan(model, RigModifierStack(), buildJsonObject {
+            put("group", group)
+            putJsonArray("targets") { targets.forEach { addJsonObject { put("kind", "mesh"); put("id", it.id.raw) } } }
+        }).first
+    }
+
     private fun prepareHistoricalModernReference(source: WorkspaceDocument, choices: WorkspaceInitialPreset = WorkspaceInitialPreset()) =
         WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
             requestedVersions = mapOf("face/fitted" to 1, "eye/fitted" to 2))
@@ -608,7 +616,7 @@ class WorkspaceLegacyBindingTest {
     @Test fun independentBrowBlinkPreservesTheRecommendedPreset(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
         val builder = WorkspacePreviewBuilder()
-        val stack = WorkspaceModifierPlan.initial(builder.build(art), WorkspaceModifierPlan.RECOMMENDED_GROUP)
+        val stack = planFromEmptyStack(builder.build(art), WorkspaceModifierPlan.RECOMMENDED_GROUP)
         val locked = stack.instances.single { it.type == "brow.blink" }
         assertEquals(1, locked.version)
         val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 2))
@@ -1432,7 +1440,7 @@ class WorkspaceLegacyBindingTest {
     @Test fun independentMouthSpringPreservesFullModernPreset(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
         val builder = WorkspacePreviewBuilder()
-        val stack = WorkspaceModifierPlan.initial(builder.build(art), "modern-full")
+        val stack = planFromEmptyStack(builder.build(art), "modern-full")
         val locked = stack.instances.single { it.type == "mouth.spring" }
         assertEquals(1, locked.version)
         assertTrue(stack.instances.takeWhile { it != locked }.any { it.type == "mouth.cheek-lid" })
@@ -1831,7 +1839,7 @@ class WorkspaceLegacyBindingTest {
     @Test fun independentMouthCapturePreservesRecommendedPreset(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
         val builder = WorkspacePreviewBuilder()
-        val stack = WorkspaceModifierPlan.initial(builder.build(art), WorkspaceModifierPlan.RECOMMENDED_GROUP)
+        val stack = planFromEmptyStack(builder.build(art), WorkspaceModifierPlan.RECOMMENDED_GROUP)
         val locked = stack.instances.single { it.type == "mouth.capture" }
         assertEquals(1, locked.version)
         assertTrue(stack.instances.takeWhile { it.id != locked.id }.any { it.type == "mouth.vowel" })
@@ -2129,7 +2137,7 @@ class WorkspaceLegacyBindingTest {
     @Test fun independentCheekPreservesRecommendedPreset(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
         val builder = WorkspacePreviewBuilder()
-        val stack = WorkspaceModifierPlan.initial(builder.build(art), WorkspaceModifierPlan.RECOMMENDED_GROUP)
+        val stack = planFromEmptyStack(builder.build(art), WorkspaceModifierPlan.RECOMMENDED_GROUP)
         val locked = stack.instances.single { it.type == "expression.cheek" }
         assertEquals(1, locked.version)
         val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 2))
@@ -2240,7 +2248,7 @@ class WorkspaceLegacyBindingTest {
     @Test fun independentMouthJawPreservesRecommendedPreset(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
         val builder = WorkspacePreviewBuilder()
-        val stack = WorkspaceModifierPlan.initial(builder.build(art), WorkspaceModifierPlan.RECOMMENDED_GROUP)
+        val stack = planFromEmptyStack(builder.build(art), WorkspaceModifierPlan.RECOMMENDED_GROUP)
         val locked = stack.instances.single { it.type == "mouth.jaw" }
         assertEquals(1, locked.version)
         val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 2))
@@ -2804,7 +2812,7 @@ class WorkspaceLegacyBindingTest {
     @Test fun independentMouthVowelsPreserveRecommendedPresetAndNaturalTalk(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
         val builder = WorkspacePreviewBuilder()
-        val stack = WorkspaceModifierPlan.initial(builder.build(art), WorkspaceModifierPlan.RECOMMENDED_GROUP)
+        val stack = planFromEmptyStack(builder.build(art), WorkspaceModifierPlan.RECOMMENDED_GROUP)
         val locked = stack.instances.single { it.type == "mouth.vowel" }
         assertEquals(1, locked.version)
         val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 2))
@@ -3453,7 +3461,7 @@ class WorkspaceLegacyBindingTest {
     @Test fun independentEyeGazeLidPreservesTheRecommendedPreset(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
         val builder = WorkspacePreviewBuilder()
-        val stack = WorkspaceModifierPlan.initial(builder.build(art), WorkspaceModifierPlan.RECOMMENDED_GROUP)
+        val stack = planFromEmptyStack(builder.build(art), WorkspaceModifierPlan.RECOMMENDED_GROUP)
         val locked = stack.instances.single { it.type == "eye.gaze-lid" }
         assertEquals(1, locked.version)
         val artifact = assertNotNull(BundledAlgorithmArtifacts.find(locked.type, 2))
@@ -3741,7 +3749,7 @@ class WorkspaceLegacyBindingTest {
     @Test fun independentEyeEmotionPreservesTheRecommendedPreset(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true)
         val builder = WorkspacePreviewBuilder()
-        val stack = WorkspaceModifierPlan.initial(builder.build(art), WorkspaceModifierPlan.RECOMMENDED_GROUP)
+        val stack = planFromEmptyStack(builder.build(art), WorkspaceModifierPlan.RECOMMENDED_GROUP)
         val locked = stack.instances.single { it.type == "eye.emotion" }
         assertEquals(1, locked.version)
         val downstream = stack.instances.dropWhile { it.id != locked.id }.drop(1)
@@ -3757,7 +3765,7 @@ class WorkspaceLegacyBindingTest {
         assertEquals(expected.rig.modifierOutput, current.rig.modifierOutput)
         assertEquals(RigIrCompiler.compile(expected), RigIrCompiler.compile(current))
 
-        val full = WorkspaceModifierPlan.initial(builder.build(art), "modern-full")
+        val full = planFromEmptyStack(builder.build(art), "modern-full")
         val aftershock = full.instances.single { it.type == "eye.aftershock" }
         val fullEmotion = full.instances.single { it.type == "eye.emotion" }
         assertTrue(full.instances.indexOf(aftershock) < full.instances.indexOf(fullEmotion))
@@ -6664,7 +6672,7 @@ class WorkspaceLegacyBindingTest {
         val art = document(eyeDetails = true, mouthDetails = true, pairedBrows = true, bilateralEyes = true,
             pairedArms = true, chestDetail = true)
         val builder = WorkspacePreviewBuilder()
-        val stack = WorkspaceModifierPlan.initial(builder.build(art), WorkspaceModifierPlan.RECOMMENDED_GROUP)
+        val stack = planFromEmptyStack(builder.build(art), WorkspaceModifierPlan.RECOMMENDED_GROUP)
         val body = stack.instances.single { it.type == "body/legacy" }
         val arms = stack.instances.single { it.type == "body.arms" }
         assertEquals(1, arms.version)
