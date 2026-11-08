@@ -80,6 +80,7 @@ internal object BuiltinModifierPlugins {
         RigMouthTongueModifier.closedDefinition(source),
         RigMouthTongueModifier.modernDefinition(source),
         RigMouthTongueModifier.sharedFrameDefinition(source),
+        RigMouthTongueModifier.sharedFrameDefinition(source, layered = true),
         RigFittedFaceDefinition.definition(source),
         RigLegacyFaceDefinition.definition(source),
         RigFittedFaceDefinition.bodyDefinition(source),

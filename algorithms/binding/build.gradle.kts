@@ -4852,6 +4852,34 @@ tasks.register("pluginMouthTongueV6") {
     }
 }
 
+val mouthTongueV7WorkerJar = registerIsolatedBindingWorker(
+    "mouthTongueV7", "mouth-tongue-v7", "worker-mouth-tongue-v7", "io.github.psd2live.algorithms.binding.MouthTongueV7Worker",
+)
+
+tasks.register("pluginMouthTongueV7") {
+    dependsOn(mouthTongueV7WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-tongue-v7")
+    inputs.file(mouthTongueV7WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", project.version.toString())
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthTongueV7WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682e746f6e677565.v7"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"${project.version}","name":"Mouth tongue after fitted capture",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/tongue","aliases":["mouth.tongue"],"version":7,"name":"Mouth tongue after fitted capture","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","mouth/fitted","mouth.capture"],"contextVersion":2,
+               "reads":["*"],"writes":["mesh","deformer","part","parameter","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val mouthJawV4WorkerJar = registerIsolatedBindingWorker(
     "mouthJawV4", "mouth-jaw-v4", "worker-mouth-jaw-v4", "io.github.psd2live.algorithms.binding.MouthJawV4Worker",
 )

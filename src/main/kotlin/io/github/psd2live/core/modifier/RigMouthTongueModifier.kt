@@ -6,6 +6,7 @@ import io.github.psd2live.algorithms.binding.MouthTongueV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV6Algorithm
+import io.github.psd2live.algorithms.binding.MouthTongueV7Algorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.i18n.tr
@@ -49,34 +50,40 @@ internal object RigMouthTongueModifier {
     fun modernDefinition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthTongueV5Algorithm.VERSION, modernAlgorithm)
 
-    fun sharedFrameDefinition(source: RigModifierSource?): RigModifierDefinition {
-        val projected = object : ChangingModifierAlgorithmPlugin by MouthTongueV6Algorithm(),
+    fun sharedFrameDefinition(source: RigModifierSource?, layered: Boolean = false): RigModifierDefinition {
+        val algorithm = if (layered) MouthTongueV7Algorithm() else MouthTongueV6Algorithm()
+        val version = if (layered) MouthTongueV7Algorithm.VERSION else MouthTongueV6Algorithm.VERSION
+        val projected = object : ChangingModifierAlgorithmPlugin by algorithm,
             ModifierOptionalUpstream, ModifierVersionSelection {
             override val canonicalOptInType = MouthTongueAlgorithm.TYPE
             override val optionalUpstream = RigLegacyBindings.specs.filter { !it.expressionToggles && !it.seeThrough }
                 .mapTo(linkedSetOf()) { it.type } - setOf(MouthTongueAlgorithm.TYPE, "mouth/fitted", "mouth.capture")
         }
         val contexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
-        fun capture(instance: RigModifierInstance) = contexts.getOrPut(instance) { requireNotNull(source).captureSharedFrames(instance) }
-        return definition(source).copy(version = MouthTongueV6Algorithm.VERSION, plugin = projected,
+        fun capture(instance: RigModifierInstance) = contexts.getOrPut(instance) { requireNotNull(source).captureSharedFrames(instance, layered) }
+        return definition(source).copy(version = version, plugin = projected,
             parameters = { instance -> RigIrBinary.decode(capture(instance).resources.getValue("after").read())
                 .parameters.filter { it.id == MouthRig.TONGUE_OUT.raw } },
             changeWrites = setOf("mesh", "deformer", "part", "parameter", "hierarchy"),
             authorContext = ::capture)
     }
 
-    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance): ModifierAlgorithmContext {
+    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance, layered: Boolean): ModifierAlgorithmContext {
         val scaffold = provider(instance)
         val prefix = bindingPredecessors(instance, scaffold)
+        val fittedVersion = if (layered) 8 else 6
         require(prefix.any { it.id == instance.config.getValue("base").jsonPrimitive.content &&
-            it.type == "mouth/fitted" && it.version == 6 }) { "Mouth tongue v6 requires a shared fitted mouth v6" }
+            it.type == "mouth/fitted" && it.version == fittedVersion }) {
+            "Mouth tongue v${instance.version} requires a shared fitted mouth v$fittedVersion"
+        }
         require(prefix.none { it.type.startsWith("mouth.") && it.type !in supportedMouth }) {
-            "Mouth tongue v6 requires the shared open-mouth source chain"
+            "Mouth tongue v${instance.version} requires the shared open-mouth source chain"
         }
         require(instance.targets.any { target -> analysis.layers.any { layer ->
             layer.source.id.raw == layersByMesh[target.id] && layer.semantic.tag == SemanticTag.TONGUE && layer.opaquePixels > 0
-        } }) { "Mouth tongue v6 requires source tongue artwork" }
-        return captureBindingTransition(instance, scaffold, prefix, CharacterAnalyzer.MOUTH_TAGS, values = buildJsonObject {
+        } }) { "Mouth tongue v${instance.version} requires source tongue artwork" }
+        val tags = if (layered) CharacterAnalyzer.MOUTH_TAGS + SemanticTag.FACE else CharacterAnalyzer.MOUTH_TAGS
+        return captureBindingTransition(instance, scaffold, prefix, tags, includeLayeredTongueKeys = layered, values = buildJsonObject {
             put("group", tr("model.group.mouth"))
             putJsonObject("providers") {
                 supportedMouth.forEach { type -> put(type, prefix.single { it.type == type }.id) }

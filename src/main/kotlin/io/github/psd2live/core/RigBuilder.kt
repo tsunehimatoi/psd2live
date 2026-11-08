@@ -3679,7 +3679,8 @@ object RigBuilder {
 	                                      cache: PreviewMeshCache, material: PuppetModel,
 	                                      layers: Map<String, ClassifiedLayer>, kept: Set<ParameterId>, includeFaceLean: Boolean = false,
                                           chains: List<io.github.psd2live.core.fit.HairChain> = emptyList(),
-                                          includeMouthShading: Boolean = false): PuppetModel {
+                                          includeMouthShading: Boolean = false,
+                                          includeLayeredTongueKeys: Boolean = false): PuppetModel {
 		val switches = io.github.psd2live.algorithms.binding.ExpressionChannels.catalog(context.analysis.layers.mapNotNull { layer ->
 			val override = config.layerOverrides[layer.source.id.raw]
 			val type = override?.type ?: layer.semantic.type
@@ -3700,10 +3701,16 @@ object RigBuilder {
 		}
 		val parameters = standardParameters(context, config) + moduleParameters(context, config, chains)
 		val deformers = if (includeFaceLean) faceTurnAndLean(context, config, stagesOf(cache)) else context.deformers
-		val model = material.copy(parameters = parameters, deformers = deformers, drawables = drawables,
+		// The workspace binding keeps source meshes, but the native protruding tongue also defines parameter keys.
+		val tongueCopies = if (includeLayeredTongueKeys) protrudingTongues(drawables,
+			layers.mapKeys { (id, _) -> DrawableId(id) }, context, config, context.fittedMouth(config)).map { it.second }
+		else emptyList()
+		val model = material.copy(parameters = parameters, deformers = deformers, drawables = drawables + tongueCopies,
 			parameterTree = StandardParameters.tree(), parameterLinks = emptyList())
 		val projected = CubismBlendShapes.lawful(withoutLegacyHairSway(model, config))
-		return BindingProjection.retain(projected, kept, mapOf(StandardParameters.MOUTH_OPEN to 1f))
+		val generatedIds = tongueCopies.mapTo(hashSetOf()) { it.id }
+		return BindingProjection.retain(projected.copy(drawables = projected.drawables.filterNot { it.id in generatedIds }),
+			kept, mapOf(StandardParameters.MOUTH_OPEN to 1f))
 	}
 
 	/** Raw mouth topology for the outline binding, before replacing the opening with shared columns. */
