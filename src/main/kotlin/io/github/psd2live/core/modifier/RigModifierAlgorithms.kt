@@ -2,9 +2,6 @@ package io.github.psd2live.core.modifier
 
 import io.github.psd2live.core.*
 import io.github.psd2live.core.sim.RigSimEdit
-import io.github.psd2live.core.sim.SimGenerator
-import io.github.psd2live.format.model.Clip
-import io.github.psd2live.format.model.ClipEvent
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.targets.cubism.PuppetIr
 import org.umamo.runtime.model.PuppetModel
@@ -15,11 +12,6 @@ import kotlinx.serialization.json.jsonPrimitive
 
 /** Adapters for generators that already accept an authored model. Binding recipes need source-aware adapters. */
 internal object RigModifierAlgorithms {
-    val swing get() = SwingAlgorithmPlugin.definition
-    val simulation get() = SimulationAlgorithmPlugin.definition
-    val physics get() = PhysicsAlgorithmPlugin.definition
-    val motion get() = MotionAlgorithmPlugin.definition
-
     private val emptyRegistry = RigModifierRegistry(emptyList())
     @Volatile private var catalog: Pair<Long, RigModifierRegistry>? = null
     val registry: RigModifierRegistry get() {

@@ -38,7 +38,8 @@ internal object ModifierPluginOutput {
             val command = raw.jsonObject
             when (command["op"]?.jsonPrimitive?.content) {
                 "physics", "motion" -> {
-                    val definition = if (command.getValue("op").jsonPrimitive.content == "physics") RigModifierAlgorithms.physics else RigModifierAlgorithms.motion
+                    val definition = if (command.getValue("op").jsonPrimitive.content == "physics")
+                        PhysicsAlgorithmPlugin.definition else MotionAlgorithmPlugin.definition
                     output = definition.plugin.evaluate(output, instance.copy(config = command.getValue("config").jsonObject), checkpoint)
                 }
                 "mesh_opacity" -> {
