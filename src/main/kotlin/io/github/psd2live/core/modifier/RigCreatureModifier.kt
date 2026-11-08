@@ -4,6 +4,7 @@ import io.github.psd2live.algorithms.binding.CreatureAlgorithm
 import io.github.psd2live.algorithms.binding.CreatureInputs
 import io.github.psd2live.algorithms.binding.CreatureResidualAlgorithm
 import io.github.psd2live.algorithms.binding.CreatureV4Algorithm
+import io.github.psd2live.algorithms.binding.CreatureV5Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldPairs
 import io.github.psd2live.algorithms.binding.ScaffoldParts
 import io.github.psd2live.core.*
@@ -45,6 +46,16 @@ internal object RigCreatureModifier {
             override val optionalUpstream = CreatureV4Algorithm.PROFILE.keys
         }
         return definition(source).copy(version = CreatureV4Algorithm.VERSION, plugin = worker,
+            authorContext = { captureResidual(requireNotNull(source), it) })
+    }
+
+    fun optionalSkirtDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val worker = object : ReadingModifierAlgorithmPlugin by CreatureV5Algorithm(),
+            ModifierVersionSelection, ModifierOptionalUpstream {
+            override val canonicalOptInType = CreatureAlgorithm.TYPE
+            override val optionalUpstream = CreatureV5Algorithm.UPSTREAM
+        }
+        return definition(source).copy(version = CreatureV5Algorithm.VERSION, plugin = worker,
             authorContext = { captureResidual(requireNotNull(source), it) })
     }
 

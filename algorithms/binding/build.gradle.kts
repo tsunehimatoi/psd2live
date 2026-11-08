@@ -3091,6 +3091,39 @@ tasks.register("pluginCreatureV4") {
     }
 }
 
+val creatureV5WorkerJar = registerIsolatedBindingWorker(
+    "creatureV5", "outfit-creature-v5", "worker-outfit-creature-v5", "io.github.psd2live.algorithms.binding.CreatureV5Worker",
+)
+
+kotlin.target.compilations.named("creatureV5") {
+    associateWith(kotlin.target.compilations.getByName("creature"))
+}
+creatureV5WorkerJar.configure { from(sourceSets["creature"].output) }
+
+tasks.register("pluginCreatureV5") {
+    dependsOn(creatureV5WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-outfit-creature-v5")
+    inputs.file(creatureV5WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", project.version.toString())
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        creatureV5WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"builtin.6f75746669742e6372656174757265.v5","version":"${project.version}","name":"Animal ears, tails and wings",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"builtin.6f75746669742e6372656174757265.v5/creature","aliases":["outfit.creature"],
+               "version":5,"name":"Animal ears, tails and wings","category":"outfit","contextVersion":2,"targets":["mesh"],
+               "requires":["rig.scaffold","body/legacy","face/legacy"],"exclusiveFamily":"chain:outfit.creature",
+               "reads":["*"],"writes":["mesh","part","deformer","hierarchy","parameter","physics"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter","physics"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val mouthCaptureWorkerJar = registerIsolatedBindingWorker(
     "mouthCapture", "mouth-capture", "worker-mouth-capture", "io.github.psd2live.algorithms.binding.MouthCaptureWorker",
 )

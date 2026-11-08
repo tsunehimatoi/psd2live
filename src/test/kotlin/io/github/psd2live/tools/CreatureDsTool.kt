@@ -25,7 +25,17 @@ class CreatureDsTool {
         compareCreature(2, SemanticTag.WINGS, includeTail = false)
     }
 
-    private suspend fun compareCreature(version: Int, vararg extras: SemanticTag, includeTail: Boolean = true) {
+    @Test fun compareWorkspaceAnimalEarWithoutSkirt(): Unit = runBlocking {
+        compareCreature(5, SemanticTag.HEADWEAR, includeTail = false, includeSkirt = false)
+    }
+
+    @Test fun compareWorkspaceAnimalEarWithOptionalSkirt(): Unit = runBlocking {
+        compareCreature(5, SemanticTag.HEADWEAR, includeTail = false)
+    }
+
+    private suspend fun compareCreature(
+        version: Int, vararg extras: SemanticTag, includeTail: Boolean = true, includeSkirt: Boolean = true,
+    ) {
         requireTools()
         val config = PipelineConfig(meshSpacing = 40)
         val artwork = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
@@ -41,20 +51,33 @@ class CreatureDsTool {
             override val layers = (fixtures.values + artwork.layers.filter { includeTail || it.name != "tail" })
                 .mapIndexed { index, layer -> WorkspaceSourceLayer.copyOf(layer, index) }
         }
+        val skirtOverrides = if (includeSkirt) emptyMap() else {
+            val skirts = CharacterAnalyzer.analyze(artwork, config).layers.filter {
+                it.opaquePixels > 0 && it.semantic.role == PartRole.SKIRT
+            }
+            assertTrue(skirts.isNotEmpty())
+            skirts.associate { layer ->
+                val semantic = layer.semantic
+                layer.source.id.raw to LayerClassificationOverride(semantic.type, semantic.tag, semantic.side,
+                    semantic.parameter, semantic.switchId, PartRole.PLAIN)
+            }
+        }
         val overrides = fixtures.entries.associate { (tag, fixture) ->
             fixture.id.raw to LayerClassificationOverride(LayerType.PRESET, tag, Side.NONE,
                 role = PartRole.ANIMAL.takeIf { tag == SemanticTag.HEADWEAR })
-        }
+        } + skirtOverrides
         val document = WorkspaceDocument(source, emptyMap(), emptySet(), overrides, emptyMap(), overlay,
             WorkspaceSettingsCodec.encode(config.copy(rigEdits = overlay)))
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4,
-            "mouth/fitted" to 6, "mouth.outline" to 8, "mouth.vowel" to 7, "mouth.capture" to 6, "mouth.jaw" to 8, "mouth.cheek-lid" to 8, "mouth.spring" to 9, "face.neck" to 3, "body.arms" to 3, "body.bust" to 3, "outfit.skirt" to 2, "outfit.creature" to 1,
+            "mouth/fitted" to 6, "mouth.outline" to 8, "mouth.vowel" to 7, "mouth.capture" to 6, "mouth.jaw" to 8, "mouth.cheek-lid" to 8, "mouth.spring" to 9, "face.neck" to 3, "body.arms" to 3, "body.bust" to 3, "outfit.creature" to 1,
             "eye.smile" to 4, "eye.wide" to 4, "eye.gaze-lid" to 4, "eye.emotion" to 4, "eye.aftershock" to 5, "eye.squash" to 5,
-            "brow.shape" to 5, "brow.lid-coupling" to 7, "brow.blink" to 5, "brow.spring" to 6)
+            "brow.shape" to 5, "brow.lid-coupling" to 7, "brow.blink" to 5, "brow.spring" to 6) + if (includeSkirt) mapOf("outfit.skirt" to 2) else emptyMap()
         val (planned, historical) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
             WorkspaceInitialPreset(), requestedVersions = versions)
         val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
 
+        assertEquals(includeSkirt, stack.instances.any { it.type == "outfit.skirt" })
+        assertEquals(includeSkirt, historical.analysis.layers.any { it.opaquePixels > 0 && it.semantic.role == PartRole.SKIRT })
         val historicalEvaluation = assertNotNull(historical.modifierEvaluation)
         for ((type, version) in versions) {
             val provider = historicalEvaluation.entries.single { it.instance.type == type }
@@ -66,7 +89,7 @@ class CreatureDsTool {
         assertTrue(entry.outputAliases.isEmpty())
         val index = stack.index(entry.id)
 
-        for (type in listOf("mouth.spring", "body.bust", "body.arms", "outfit.skirt")) {
+        for (type in listOf("mouth.spring", "body.bust", "body.arms") + listOfNotNull("outfit.skirt".takeIf { includeSkirt })) {
             assertTrue(stack.index(stack.instances.single { it.type == type }.id) < index, type)
         }
         val before = historicalEvaluation.outputs[index - 1]
@@ -116,6 +139,10 @@ class CreatureDsTool {
                 if (mesh.id == earId) mesh.copy(offsets = earOffsets) else mesh
             }))
         }
+        if (!includeSkirt) {
+            val v4 = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(select(4).first) }
+            assertContains(v4.message.orEmpty(), "Creature v4 requires outfit.skirt@2")
+        }
         val (candidate, selected) = select(version)
         val model = WorkspacePreviewBuilder().build(candidate)
         val actual = assertNotNull(model.modifierEvaluation)
@@ -140,22 +167,10 @@ class CreatureDsTool {
         try {
             BundledAlgorithmArtifacts.retain(store, listOf(artifact))
             val worker = store.snapshot().single()
-            val workerSource = RigModifierSource.of(model)
-            val definition = if (version == 4) RigCreatureModifier.sharedFrameDefinition(workerSource)
-                else RigCreatureModifier.definition(workerSource)
-            val providerIds = RigLegacyBindings.providers(selected) + definition.optionalUpstream.associateWith { type ->
-                actual.entries.take(index).single { it.instance.type == type }.instance.id
-            }
-            val providers = providerIds.map { (capability, id) ->
-                val provider = actual.entries.take(index).single { it.instance.id == id }
-                assertEquals(ModifierStatus.ACTIVE, provider.status)
-                val instance = provider.instance
-                ModifierUpstreamCapability(capability, instance.type, instance.version, instance.targets,
-                    instance.id, instance.config, instance.outputAliases, instance.plugin)
-            }
-            val context = definition.authorContext(selected).withUpstream(providers)
+            val context = assertNotNull(actual.readAlgorithms[entry.id]).context
+            if (version >= 4) assertEquals(includeSkirt, context.upstream.any { it.capability == "outfit.skirt" })
             assertEquals(after, ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(), before,
-                selected, {}, store, context = context, declaredParameters = definition.parameters(selected)))
+                selected, {}, store, context = context))
         } finally {
             ModifierPluginWorkers.stop(artifact.reference)
             preferences.removeNode()
