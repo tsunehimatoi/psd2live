@@ -91,6 +91,7 @@ import io.github.psd2live.algorithms.binding.MouthSpringV11Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV6Algorithm
+import io.github.psd2live.algorithms.binding.MouthTongueV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV7Algorithm
@@ -100,6 +101,7 @@ import io.github.psd2live.algorithms.binding.NeckV3Algorithm
 import io.github.psd2live.algorithms.binding.RibbonsResidualAlgorithm
 import io.github.psd2live.algorithms.binding.RibbonsV4Algorithm
 import io.github.psd2live.algorithms.binding.RibbonsV5Algorithm
+import io.github.psd2live.algorithms.binding.RibbonsV6Algorithm
 import io.github.psd2live.algorithms.binding.SkirtAlgorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.fit.HairKind
@@ -267,9 +269,13 @@ internal object WorkspacePresetInitialization {
                         val moods = if (RigCheekModifier.sourceMoodParametersAvailable(source, scaffold))
                             packages(moodVersions) else emptyMap()
                         val mouth = packages(sourceMouthVersions(model.analysis, config, types, sharedBrow = true))
-                        val arms = if (mouth[RigModules.MOUTH_FITTED.id]?.first == MouthFittedV6Algorithm.VERSION)
-                            sourceArmVersion(model.analysis, allowSingle = true)
-                            ?.let { packages(mapOf(RigModules.BODY_ARMS.id to it)) }.orEmpty() else emptyMap()
+                        val fittedMouthVersion = mouth[RigModules.MOUTH_FITTED.id]?.first
+                        val armVersion = when (fittedMouthVersion) {
+                            MouthFittedV6Algorithm.VERSION -> sourceArmVersion(model.analysis, allowSingle = true)
+                            MouthFittedV8Algorithm.VERSION -> sourceArmVersion(model.analysis, allowSingle = false)
+                            else -> null
+                        }
+                        val arms = armVersion?.let { packages(mapOf(RigModules.BODY_ARMS.id to it)) }.orEmpty()
                         val neck = packages(mapOf(RigModules.FACE_NECK.id to NeckV3Algorithm.VERSION).filterKeys { it in plannedTypes })
                         frameBindings + mouth + moods + arms + neck
                     }
@@ -366,13 +372,26 @@ internal object WorkspacePresetInitialization {
         if (fittedSources.isNotEmpty()) {
             val fittedBody = mapOf(RigSourceModifiers.SCAFFOLD to 2, LegacyBodyV2Algorithm.TYPE to LegacyBodyV2Algorithm.VERSION,
                 RigLegacyBindings.FITTED_FACE to FittedFaceV3Algorithm.VERSION)
-            stack = stack.copy(instances = stack.instances.mapIndexed { index, entry ->
-                val upstream = stack.instances.take(index)
+            val layeredAttachments = mapOf(
+                RigModules.EYE_FITTED.id to EyeFittedV5Algorithm.VERSION,
+                RigModules.BROW_FITTED.id to BrowFittedV4Binding.VERSION,
+                RigModules.MOUTH_FITTED.id to MouthFittedV8Algorithm.VERSION,
+                RigModules.MOUTH_OUTLINE.id to MouthOutlineV11Algorithm.VERSION,
+                RigModules.MOUTH_VOWEL.id to MouthVowelV8Algorithm.VERSION,
+                RigModules.MOUTH_CAPTURE.id to MouthCaptureV7Algorithm.VERSION,
+                RigModules.MOUTH_JAW.id to MouthJawV10Algorithm.VERSION,
+                RigModules.MOUTH_CHEEK_LID.id to MouthCheekLidV10Algorithm.VERSION,
+                RigModules.MOUTH_SPRING.id to MouthSpringV11Algorithm.VERSION,
+                RigModules.OUTFIT_SKIRT.id to SkirtAlgorithm.VERSION,
+            )
+            fun selectAttachment(entry: RigModifierInstance, upstream: List<RigModifierInstance>): RigModifierInstance {
                 val (version, profile) = when {
                     entry.type == RigModules.OUTFIT_RIBBONS.id && entry.version == 1 -> {
                         val mouth = upstream.singleOrNull { it.type == RigModules.MOUTH_FITTED.id }?.version
                         val skirt = upstream.singleOrNull { it.type == RigModules.OUTFIT_SKIRT.id }?.version
                         when {
+                            mouth == MouthFittedV8Algorithm.VERSION && skirt == SkirtAlgorithm.VERSION ->
+                                RibbonsV6Algorithm.VERSION to layeredAttachments
                             mouth == MouthFittedV6Algorithm.VERSION && (skirt == null || skirt == SkirtAlgorithm.VERSION) ->
                                 RibbonsV5Algorithm.VERSION to buildMap {
                                     put(RigModules.EYE_FITTED.id, EyeFittedV5Algorithm.VERSION)
@@ -391,6 +410,12 @@ internal object WorkspacePresetInitialization {
                         val mouth = upstream.singleOrNull { it.type == RigModules.MOUTH_FITTED.id }?.version
                         val kinds = model.analysis.layers.filter { it.opaquePixels > 0 }.mapNotNull { HairKind.partOf(it) }.toSet()
                         when {
+                            mouth == MouthFittedV8Algorithm.VERSION && kinds == setOf(HairKind.ANIMAL_TAIL) ->
+                                CreatureAlgorithm.VERSION to buildMap {
+                                    putAll(layeredAttachments)
+                                    if (upstream.any { it.type == RigModules.OUTFIT_RIBBONS.id })
+                                        put(RigModules.OUTFIT_RIBBONS.id, RibbonsV6Algorithm.VERSION)
+                                }
                             mouth != MouthFittedV6Algorithm.VERSION -> CreatureResidualAlgorithm.VERSION to CreatureResidualAlgorithm.PROFILE
                             HairKind.EAR in kinds -> {
                                 val hasSkirt = upstream.any { it.type == RigModules.OUTFIT_SKIRT.id &&
@@ -400,11 +425,11 @@ internal object WorkspacePresetInitialization {
                             }
                             HairKind.WING in kinds -> CreatureAlgorithm.VERSION to mapOf(RigModules.OUTFIT_SKIRT.id to SkirtAlgorithm.VERSION)
                             HairKind.ANIMAL_TAIL in kinds -> CreatureAlgorithm.VERSION to emptyMap()
-                            else -> return@mapIndexed entry
+                            else -> return entry
                         }
                     }
                     entry.type == RigModules.BODY_BUST.id && entry.version == 2 && completeEyePair -> {
-                        val mouth = upstream.singleOrNull { it.type == RigModules.MOUTH_FITTED.id }?.version ?: return@mapIndexed entry
+                        val mouth = upstream.singleOrNull { it.type == RigModules.MOUTH_FITTED.id }?.version ?: return entry
                         val mouthProfile = when (mouth) {
                             MouthFittedV3Algorithm.VERSION, MouthFittedV4Algorithm.VERSION, MouthFittedV6Algorithm.VERSION -> emptyMap()
                             MouthFittedV8Algorithm.VERSION -> mapOf(
@@ -412,21 +437,24 @@ internal object WorkspacePresetInitialization {
                                 RigModules.MOUTH_VOWEL.id to MouthVowelV8Algorithm.VERSION,
                                 RigModules.MOUTH_CAPTURE.id to MouthCaptureV7Algorithm.VERSION,
                             )
-                            else -> return@mapIndexed entry
+                            else -> return entry
                         }
                         BustBindingV3Algorithm.VERSION to (mouthProfile + mapOf(
                             RigModules.EYE_FITTED.id to EyeFittedV5Algorithm.VERSION, RigModules.MOUTH_FITTED.id to mouth,
                         ))
                     }
-                    else -> return@mapIndexed entry
+                    else -> return entry
                 }
                 val compatible = (fittedBody + profile).all { (type, required) -> upstream.any {
                     it.type == type && it.version == required && it.targets.containsAll(entry.targets)
                 } }
-                if (!compatible) return@mapIndexed entry
-                val plugin = BuiltinModifierPlugins.reference(entry.type, version) ?: return@mapIndexed entry
-                if (ModifierPluginCatalog.available(entry.type, version, plugin)) entry.copy(version = version, plugin = plugin) else entry
-            })
+                if (!compatible) return entry
+                val plugin = BuiltinModifierPlugins.reference(entry.type, version) ?: return entry
+                return if (ModifierPluginCatalog.available(entry.type, version, plugin)) entry.copy(version = version, plugin = plugin) else entry
+            }
+            val selected = ArrayList<RigModifierInstance>(stack.instances.size)
+            for (entry in stack.instances) selected += selectAttachment(entry, selected)
+            stack = stack.copy(instances = selected)
         }
         if (cliBindings != null) stack = cliBindings.bindings(model, stack)
         model = build("binding preview")
@@ -550,7 +578,11 @@ internal object WorkspacePresetInitialization {
                 put(RigModules.MOUTH_VOWEL.id, MouthVowelV8Algorithm.VERSION)
                 if (RigModules.MOUTH_CAPTURE.id !in types) return@buildMap
                 put(RigModules.MOUTH_CAPTURE.id, MouthCaptureV7Algorithm.VERSION)
-                if (RigModules.MOUTH_JAW.id !in types || RigModules.MOUTH_TONGUE.id in types) return@buildMap
+                if (RigModules.MOUTH_TONGUE.id in types) {
+                    put(RigModules.MOUTH_TONGUE.id, MouthTongueV7Algorithm.VERSION)
+                    return@buildMap
+                }
+                if (RigModules.MOUTH_JAW.id !in types) return@buildMap
                 put(RigModules.MOUTH_JAW.id, MouthJawV10Algorithm.VERSION)
                 if (RigModules.MOUTH_CHEEK_LID.id !in types) return@buildMap
                 put(RigModules.MOUTH_CHEEK_LID.id, MouthCheekLidV10Algorithm.VERSION)
