@@ -1,5 +1,7 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.algorithms.binding.MouthOutlineV11Algorithm
+import io.github.psd2live.algorithms.binding.MouthOutlineV8Algorithm
 import io.github.psd2live.core.modifier.BuiltinModifierPlugins
 import io.github.psd2live.core.modifier.ModifierStatus
 import io.github.psd2live.core.modifier.RigFittedMouthOutlineDefinition
@@ -93,13 +95,17 @@ internal object CliFaceSourcePresentation {
 
     fun restoreBrowForms(source: RigPreviewModel, preview: RigPreviewModel, config: PipelineConfig): RigPreviewModel {
         val outline = source.modifierEvaluation?.entries?.singleOrNull {
-            it.status == ModifierStatus.ACTIVE && it.instance.type == "mouth.outline" && it.instance.version == 8
+            it.status == ModifierStatus.ACTIVE && it.instance.type == "mouth.outline" &&
+                it.instance.version in setOf(MouthOutlineV8Algorithm.VERSION, MouthOutlineV11Algorithm.VERSION)
         }?.instance ?: return preview
         if (!BuiltinModifierPlugins.matches(outline)) return preview
         val owner = RigModifierSource.of(source)
         val sourceBrows = owner.analysis.layers.filter { it.semantic.tag == SemanticTag.EYEBROW }
             .mapTo(hashSetOf()) { it.source.id.raw }
-        val context = RigFittedMouthOutlineDefinition.sharedFrameDefinition(owner).authorContext(outline)
+        val definition = if (outline.version == MouthOutlineV11Algorithm.VERSION)
+            RigFittedMouthOutlineDefinition.layeredSourceDefinition(owner)
+        else RigFittedMouthOutlineDefinition.sharedFrameDefinition(owner)
+        val context = definition.authorContext(outline)
         fun phase(name: String) = RigIrBinary.decode(context.resources.getValue(name).read())
         val prior = phase("before").meshes.associateBy { it.id }
         val desired = phase("after")

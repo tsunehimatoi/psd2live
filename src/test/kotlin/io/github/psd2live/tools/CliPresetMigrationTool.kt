@@ -41,6 +41,56 @@ import kotlin.test.assertTrue
 
 /** Compare a raw PSD export with a stack that uses names derived from the same source. */
 class CliPresetMigrationTool {
+    @Test fun compareLayeredOutlineRawExport() {
+        requireTools()
+        val pipeline = PSD2LivePipeline().apply { deferRuntimeBundles = true }
+        val config = PipelineConfig(meshSpacing = 64, exportMoc3 = false)
+        val fixture = layeredMouthDocument(pipeline.readPsd(Sample.fromEnvironment().path), config, openingOnly = true)
+        val raw = config.copy(layerOverrides = fixture.layerOverrides)
+        val native = pipeline.buildPreview(fixture.source, raw)
+        val fit = assertNotNull(RigBuilder.rigContext(native.analysis, raw).fittedMouth(raw))
+        assertTrue(fit.layered && fit.rig?.fit?.layered != null, fit.result.reason)
+        val target = Files.createTempDirectory("layered-outline-raw-export-")
+        try {
+            val export = pipeline.run(fixture.source, "layered-outline.psd", target, raw)
+            val preview = export.previewModel
+            val exportedStack = RigModifierStack.fromJson(assertNotNull(preview.config.rigEdits.modifierStack))
+            val outline = exportedStack.instances.single { it.type == "mouth.outline" }
+            assertEquals(11, outline.version)
+            assertEquals(BuiltinModifierPlugins.reference("mouth.outline", 11), outline.plugin)
+            assertTrue(outline.outputAliases.keys.none { it.startsWith("mouth-lip:") })
+            val layers = preview.analysis.layers.filter { it.source.id.raw.startsWith("test-lip-line-") && it.opaquePixels > 0 }
+            assertEquals(setOf(PartRole.UPPER_LINE, PartRole.LOWER_LINE), layers.mapNotNull { it.semantic.role }.toSet())
+            val lipIds = layers.mapTo(hashSetOf()) { it.source.id.raw }
+            val nativeLips = native.rig.layerIdByDrawableId.filterValues { it in lipIds }
+            val exportedLips = preview.rig.layerIdByDrawableId.filterValues { it in lipIds }
+            assertEquals(2, nativeLips.size)
+            assertEquals(nativeLips, exportedLips)
+            assertTrue(preview.analysis.layers.none { it.source is MouthLipLayer })
+            val expected = RigIrCompiler.compile(native, tileArt = true)
+            val actual = RigIrCompiler.compile(preview, tileArt = true)
+            val report = buildString {
+                appendLine("mouth.outline=${outline.version} authored lips=$exportedLips")
+                compare("shared export layout", expected, actual)
+            }
+            output("cli-preset-migration").resolve("layered-outline-v11-raw.txt").writeText(report)
+
+            val source = RigGenerationSource.prepare(RigGenerationSource.analyze(fixture.source, raw), raw)
+            val bindings = CliPresetBindings(source, raw)
+            val edits = raw.rigEdits.copy(modifierStack = RigModifierStack().toJson())
+            val document = fixture.copy(rigEdits = edits, settings = JsonObject(emptyMap()))
+            val (_, evaluated) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
+                WorkspaceInitialPreset(clothing = false), cliBindings = bindings, restoreSourceRotations = true)
+            val active = assertNotNull(evaluated.modifierEvaluation).entries.single { it.instance.type == "mouth.outline" }
+            assertEquals(outline, active.instance)
+            assertEquals(ModifierStatus.ACTIVE, active.status)
+
+            assertTrue(expected == actual, report)
+        } finally {
+            ModifierPluginStore.deleteTree(target)
+        }
+    }
+
     @Test fun compareRawPreset() = compareRawPreset(meshOnly = false, generateDeformers = true)
 
     @Test fun compareMeshOnly() = compareRawPreset(meshOnly = true, generateDeformers = true)
