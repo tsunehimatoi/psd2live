@@ -35,6 +35,8 @@ internal object WorkspaceMouthProfiles {
     val selectableAdditions = setOf("mouth.vowel", "mouth.capture", "mouth.tongue", "mouth.jaw",
         "mouth.cheek-lid", "mouth.interior-depth", "mouth.spring")
 
+    fun plain(source: Source): Map<String, Int> = profiles.getValue(source).let { (it.speech + it.plain).toMap() }
+
     fun preset(source: Source, planned: Collection<String>): Map<String, Int> {
         val profile = profiles.getValue(source)
         val motion = when {

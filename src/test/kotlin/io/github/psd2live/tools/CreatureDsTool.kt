@@ -171,10 +171,10 @@ class CreatureDsTool {
             return planned.copy(rigEdits = planned.rigEdits.copy(modifierStack = next.toJson())) to selected
         }
 
-        if (!includeSkirt && version == 5) {
+        if (!includeSkirt && version == 5 || layered && version == 6 && !includeRibbons) {
             val (recommended, preview) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct, WorkspaceInitialPreset())
             val selected = assertNotNull(preview.modifierEvaluation).entries.single { it.instance.type == entry.type }
-            assertEquals(5, selected.instance.version)
+            assertEquals(version, selected.instance.version)
             assertEquals(ModifierStatus.ACTIVE, selected.status)
             val recommendedStack = RigModifierStack.fromJson(assertNotNull(recommended.rigEdits.modifierStack))
             val historicalStack = recommendedStack.copy(instances = recommendedStack.instances.map {

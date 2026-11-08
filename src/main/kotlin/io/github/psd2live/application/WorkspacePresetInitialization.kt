@@ -23,6 +23,7 @@ import io.github.psd2live.algorithms.binding.CreatureAlgorithm
 import io.github.psd2live.algorithms.binding.CreatureResidualAlgorithm
 import io.github.psd2live.algorithms.binding.CreatureV4Algorithm
 import io.github.psd2live.algorithms.binding.CreatureV5Algorithm
+import io.github.psd2live.algorithms.binding.CreatureV6Algorithm
 import io.github.psd2live.algorithms.binding.EyeAftershockV4Algorithm
 import io.github.psd2live.algorithms.binding.EyeAftershockV5Algorithm
 import io.github.psd2live.algorithms.binding.EyeEmotionV3Algorithm
@@ -50,7 +51,6 @@ import io.github.psd2live.algorithms.binding.MouthCaptureV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV7Algorithm
-import io.github.psd2live.algorithms.binding.MouthCheekLidV10Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV5Algorithm
@@ -63,7 +63,6 @@ import io.github.psd2live.algorithms.binding.MouthJawV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV7Algorithm
-import io.github.psd2live.algorithms.binding.MouthJawV10Algorithm
 import io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV5Algorithm
@@ -74,7 +73,6 @@ import io.github.psd2live.algorithms.binding.MouthSpringV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV8Algorithm
-import io.github.psd2live.algorithms.binding.MouthSpringV11Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV5Algorithm
@@ -367,14 +365,7 @@ internal object WorkspacePresetInitialization {
             val layeredAttachments = mapOf(
                 RigModules.EYE_FITTED.id to EyeFittedV5Algorithm.VERSION,
                 RigModules.BROW_FITTED.id to BrowFittedV4Binding.VERSION,
-                RigModules.MOUTH_FITTED.id to MouthFittedV8Algorithm.VERSION,
-                RigModules.MOUTH_OUTLINE.id to MouthOutlineV11Algorithm.VERSION,
-                RigModules.MOUTH_VOWEL.id to MouthVowelV8Algorithm.VERSION,
-                RigModules.MOUTH_CAPTURE.id to MouthCaptureV7Algorithm.VERSION,
-                RigModules.MOUTH_JAW.id to MouthJawV10Algorithm.VERSION,
-                RigModules.MOUTH_CHEEK_LID.id to MouthCheekLidV10Algorithm.VERSION,
-                RigModules.MOUTH_SPRING.id to MouthSpringV11Algorithm.VERSION,
-            )
+            ) + WorkspaceMouthProfiles.plain(WorkspaceMouthProfiles.Source.LAYERED)
             val skirtBinding = RigModules.OUTFIT_SKIRT.id to SkirtAlgorithm.VERSION
             fun selectAttachment(entry: RigModifierInstance, upstream: List<RigModifierInstance>): RigModifierInstance {
                 val (version, profile) = when {
@@ -402,14 +393,17 @@ internal object WorkspacePresetInitialization {
                         val mouth = upstream.singleOrNull { it.type == RigModules.MOUTH_FITTED.id }?.version
                         val kinds = model.analysis.layers.filter { it.opaquePixels > 0 }.mapNotNull { HairKind.partOf(it) }.toSet()
                         when {
-                            mouth == MouthFittedV8Algorithm.VERSION && kinds == setOf(HairKind.ANIMAL_TAIL) ->
-                                CreatureAlgorithm.VERSION to buildMap {
+                            mouth == MouthFittedV8Algorithm.VERSION && HairKind.WING !in kinds &&
+                                (HairKind.EAR in kinds || kinds == setOf(HairKind.ANIMAL_TAIL)) -> {
+                                val version = if (HairKind.EAR in kinds) CreatureV6Algorithm.VERSION else CreatureAlgorithm.VERSION
+                                version to buildMap {
                                     putAll(layeredAttachments)
                                     if (upstream.any { it.type == RigModules.OUTFIT_SKIRT.id })
                                         put(skirtBinding.first, skirtBinding.second)
                                     if (upstream.any { it.type == RigModules.OUTFIT_RIBBONS.id })
                                         put(RigModules.OUTFIT_RIBBONS.id, RibbonsV6Algorithm.VERSION)
                                 }
+                            }
                             mouth != MouthFittedV6Algorithm.VERSION -> CreatureResidualAlgorithm.VERSION to CreatureResidualAlgorithm.PROFILE
                             HairKind.EAR in kinds -> {
                                 val hasSkirt = upstream.any { it.type == RigModules.OUTFIT_SKIRT.id &&
