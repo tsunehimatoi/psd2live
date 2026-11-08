@@ -9,6 +9,7 @@ import io.github.psd2live.algorithms.binding.MouthSpringV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV8Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV9Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV10Algorithm
+import io.github.psd2live.algorithms.binding.MouthSpringV11Algorithm
 import io.github.psd2live.core.CharacterAnalyzer
 import io.github.psd2live.core.PartRole
 import io.github.psd2live.core.PhysicsGenerator
@@ -116,9 +117,17 @@ internal object RigMouthSpringModifier {
             authorContext = ::capture)
     }
 
-    fun sharedFrameDefinition(source: RigModifierSource?, withSharedTongue: Boolean = false): RigModifierDefinition {
-        val algorithm = if (withSharedTongue) MouthSpringV10Algorithm() else MouthSpringV9Algorithm()
-        val version = if (withSharedTongue) MouthSpringV10Algorithm.VERSION else MouthSpringV9Algorithm.VERSION
+    fun sharedFrameDefinition(source: RigModifierSource?, withSharedTongue: Boolean = false, layered: Boolean = false): RigModifierDefinition {
+        val algorithm = when {
+            layered -> MouthSpringV11Algorithm()
+            withSharedTongue -> MouthSpringV10Algorithm()
+            else -> MouthSpringV9Algorithm()
+        }
+        val version = when {
+            layered -> MouthSpringV11Algorithm.VERSION
+            withSharedTongue -> MouthSpringV10Algorithm.VERSION
+            else -> MouthSpringV9Algorithm.VERSION
+        }
         val projected = object : ChangingModifierAlgorithmPlugin by algorithm,
             ModifierOptionalUpstream, ModifierVersionSelection {
             override val canonicalOptInType = MouthSpringAlgorithm.TYPE
@@ -137,8 +146,11 @@ internal object RigMouthSpringModifier {
     private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance): ModifierAlgorithmContext {
         val scaffold = provider(instance)
         val prefix = bindingPredecessors(instance, scaffold)
+        val fittedVersion = if (instance.version == MouthSpringV11Algorithm.VERSION) 8 else 6
         require(prefix.any { it.id == instance.config.getValue("base").jsonPrimitive.content &&
-            it.type == "mouth/fitted" && it.version == 6 }) { "Mouth spring v${instance.version} requires a shared fitted mouth v6" }
+            it.type == "mouth/fitted" && it.version == fittedVersion }) {
+            "Mouth spring v${instance.version} requires a shared fitted mouth v$fittedVersion"
+        }
         val baseProviders = setOf("mouth.outline", "mouth.vowel", "mouth.capture", "mouth.jaw", "mouth.cheek-lid")
         val providers = if (instance.version == MouthSpringV10Algorithm.VERSION) {
             baseProviders + setOf("mouth.tongue", "mouth.interior-depth")

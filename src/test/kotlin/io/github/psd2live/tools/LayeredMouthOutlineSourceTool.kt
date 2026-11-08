@@ -19,7 +19,7 @@ import kotlin.test.*
 class LayeredMouthOutlineSourceTool {
     private enum class Upgrade(val type: String, val version: Int) {
         OUTLINE("mouth.outline", 9), FITTED("mouth/fitted", 8), VOWEL("mouth.vowel", 8),
-        CAPTURE("mouth.capture", 7), JAW("mouth.jaw", 10), CHEEK_LID("mouth.cheek-lid", 10),
+        CAPTURE("mouth.capture", 7), JAW("mouth.jaw", 10), CHEEK_LID("mouth.cheek-lid", 10), SPRING("mouth.spring", 11),
     }
 
     @Test fun compareLayeredOutlineWithLegacyFittedMouth(): Unit = runBlocking { compareLayered(Upgrade.OUTLINE) }
@@ -92,19 +92,21 @@ class LayeredMouthOutlineSourceTool {
 
     @Test fun compareLayeredCheekLidsWithSharedJaw(): Unit = runBlocking { compareLayered(Upgrade.CHEEK_LID) }
 
+    @Test fun compareLayeredSpringWithSharedCheekLids(): Unit = runBlocking { compareLayered(Upgrade.SPRING) }
+
     private suspend fun compareLayered(upgrade: Upgrade) {
         requireTools()
         val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
         val config = PipelineConfig(meshSpacing = 40, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val document = layeredMouthDocument(source, config)
-        val fittedVersion = if (upgrade in setOf(Upgrade.VOWEL, Upgrade.CAPTURE, Upgrade.JAW, Upgrade.CHEEK_LID)) 8 else 1
+        val fittedVersion = if (upgrade in setOf(Upgrade.OUTLINE, Upgrade.FITTED)) 1 else 8
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4, "mouth/fitted" to fittedVersion,
             "eye.smile" to 4, "eye.wide" to 4, "eye.gaze-lid" to 4, "eye.emotion" to 4, "eye.aftershock" to 5,
             "eye.squash" to 5, "brow.shape" to 5, "brow.lid-coupling" to 7, "brow.blink" to 5, "brow.spring" to 6,
-            "mouth.outline" to 1, "mouth.vowel" to (if (upgrade in setOf(Upgrade.CAPTURE, Upgrade.JAW, Upgrade.CHEEK_LID)) 8 else 1),
-            "mouth.capture" to (if (upgrade in setOf(Upgrade.JAW, Upgrade.CHEEK_LID)) 7 else 1),
-            "mouth.jaw" to (if (upgrade == Upgrade.CHEEK_LID) 10 else 1),
-            "mouth.cheek-lid" to 1, "mouth.spring" to 1)
+            "mouth.outline" to 1, "mouth.vowel" to (if (upgrade >= Upgrade.CAPTURE) 8 else 1),
+            "mouth.capture" to (if (upgrade >= Upgrade.JAW) 7 else 1),
+            "mouth.jaw" to (if (upgrade >= Upgrade.CHEEK_LID) 10 else 1),
+            "mouth.cheek-lid" to (if (upgrade == Upgrade.SPRING) 10 else 1), "mouth.spring" to 1)
         val (planned, reference) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
             WorkspaceInitialPreset(clothing = false), requestedVersions = versions)
         val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
@@ -194,6 +196,24 @@ class LayeredMouthOutlineSourceTool {
                 desired.meshes.filter { it != priorById[it.id] }.map { it.id }.toSet())
             assertEquals(previous.parameters, desired.parameters)
         }
+        if (upgrade == Upgrade.SPRING) {
+            assertTrue(stack.instances.none { it.type in setOf("mouth.tongue", "mouth.interior-depth") })
+            val rejected = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(candidate(9)) }
+            assertContains(rejected.message.orEmpty(), "requires a shared fitted mouth v6")
+            val previous = referenceStages[stage - 1]
+            val desired = referenceStages[stage]
+            val priorById = previous.meshes.associateBy { it.id }
+            val changed = desired.meshes.filter { it != priorById[it.id] }
+            assertEquals(setOf("ArtMeshFace", "ArtMeshNose"), changed.map { it.id }.toSet())
+            for (mesh in changed) {
+                val spring = mesh.shapes.single { it.parameter == "ParamMouthSpring" }
+                assertTrue(spring.shapes.filterNotNull().any { shape -> shape.deltas.shared().any { it != 0f } }, mesh.id)
+            }
+            val added = (desired.physics.groups.toSet() - previous.physics.groups.toSet()).single()
+            assertEquals(listOf("ParamMouthOpenY", "ParamMouthForm"), added.inputs.map { it.parameter })
+            assertEquals(listOf("ParamMouthSpring"), added.outputs.map { it.parameter })
+            assertTrue(added.segments.isNotEmpty())
+        }
         RigBuildProfile.reset()
         val recording = RigBuildProfile.recording
         val preview = try {
@@ -242,6 +262,7 @@ class LayeredMouthOutlineSourceTool {
                 Upgrade.CAPTURE -> RigMouthCaptureModifier.sharedFrameDefinition(sourceInputs, layered = true)
                 Upgrade.JAW -> RigMouthJawModifier.sharedFrameDefinition(sourceInputs, layered = true)
                 Upgrade.CHEEK_LID -> RigMouthCheekLidModifier.sharedFrameDefinition(sourceInputs, layered = true)
+                Upgrade.SPRING -> RigMouthSpringModifier.sharedFrameDefinition(sourceInputs, layered = true)
             }
             val context = definition.authorContext(instance).withUpstream(actual.entries.take(stage)
                 .filter { it.status == ModifierStatus.ACTIVE && it.instance.type in definition.requires + definition.optionalUpstream }
@@ -256,6 +277,7 @@ class LayeredMouthOutlineSourceTool {
                 Upgrade.CAPTURE -> listOf("mouth/fitted", "mouth.outline", "mouth.vowel")
                 Upgrade.JAW -> listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture")
                 Upgrade.CHEEK_LID -> listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture", "mouth.jaw")
+                Upgrade.SPRING -> listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture", "mouth.jaw", "mouth.cheek-lid")
             }
             for (type in providerTypes) {
                 val provider = context.upstream.single { it.type == type }

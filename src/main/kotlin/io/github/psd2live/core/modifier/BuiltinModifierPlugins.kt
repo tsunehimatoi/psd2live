@@ -113,6 +113,7 @@ internal object BuiltinModifierPlugins {
         RigMouthSpringModifier.modernDefinition(source),
         RigMouthSpringModifier.sharedFrameDefinition(source),
         RigMouthSpringModifier.sharedFrameDefinition(source, withSharedTongue = true),
+        RigMouthSpringModifier.sharedFrameDefinition(source, layered = true),
         RigMouthCheekLidModifier.definition(source),
         RigMouthCheekLidModifier.fittedDefinition(source),
         RigMouthCheekLidModifier.fittedMouthDefinition(source),
