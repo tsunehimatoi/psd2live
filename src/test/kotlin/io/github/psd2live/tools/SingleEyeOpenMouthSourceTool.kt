@@ -296,6 +296,38 @@ class SingleEyeOpenMouthSourceTool {
         }
     }
 
+    @Test fun compareSpringWithTongue(): Unit = runBlocking {
+        requireTools()
+        val document = withTongue(singleEyeOpenDocument(Sample.fromEnvironment()))
+        val chain = mapOf("eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3, "eye.emotion" to 3,
+            "eye.aftershock" to 4, "eye.squash" to 4, "brow.shape" to 4, "brow.lid-coupling" to 6,
+            "brow.blink" to 4, "brow.spring" to 5, "mouth.vowel" to 9, "mouth.capture" to 8,
+            "mouth.tongue" to 8, "mouth.jaw" to 13, "mouth.cheek-lid" to 13, "mouth.interior-depth" to 10)
+        val control = "ParamMouthSpring"
+        compareShapeModule("mouth.spring", 15, chain, setOf(control), setOf(control),
+            RigMouthSpringModifier::fallbackTongueFrameDefinition, document = document) { before, after ->
+            assertTrue(before.physics.groups.none { group -> group.outputs.any { it.parameter == control } })
+            val group = (after.physics.groups - before.physics.groups.toSet()).single()
+            assertEquals(mapOf("ParamMouthOpenY" to 80f, "ParamMouthForm" to 20f), group.inputs.associate { it.parameter to it.weight })
+            val output = group.outputs.single()
+            assertEquals(control, output.parameter)
+            assertTrue(output.scale > 0f && output.weight > 0f)
+            assertEquals(2, group.segments.size)
+            val face = after.meshes.single { it.id == "ArtMeshFace" }
+            val local = face.shapes.any { binding -> binding.parameter == control &&
+                binding.shapes.any { it?.deltas?.toArray()?.any { delta -> delta != 0f } == true } } ||
+                face.offsets?.let { grid -> grid.axes.any { it.parameter == control } &&
+                    grid.cells.map { it.form }.distinct().size > 1 } == true
+            assertTrue(local, "Spring must move the lower face")
+            val tongue = after.meshes.single { it.id == "ArtMeshTongue" }
+            assertEquals(before.meshes.single { it.id == tongue.id }, tongue)
+            assertEquals(listOf("ArtMeshMouth"), tongue.maskedBy)
+            assertTrue(after.meshes.any { it.id == tongue.maskedBy.single() })
+            assertEquals(before.parameters.single { it.id == "ParamTongueOut" }, after.parameters.single { it.id == "ParamTongueOut" })
+            println("Spring moves ${face.id} with physics; retained tongue ${tongue.id} masked by ${tongue.maskedBy}")
+        }
+    }
+
     @Test fun compareSpring(): Unit = runBlocking {
         val preceding = mapOf("mouth.vowel" to 9, "mouth.capture" to 8, "mouth.jaw" to 11, "mouth.cheek-lid" to 11)
         val control = setOf("ParamMouthSpring")
