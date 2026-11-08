@@ -26,10 +26,34 @@ import kotlin.test.*
 class SingleEyeOpenMouthSourceTool {
     @Test fun compareTongue(): Unit = runBlocking {
         requireTools()
+        val document = withTongue(singleEyeOpenDocument(Sample.fromEnvironment()))
+        val preceding = mapOf("eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3, "eye.emotion" to 3,
+            "eye.aftershock" to 4, "eye.squash" to 4, "brow.shape" to 4, "brow.lid-coupling" to 6,
+            "brow.blink" to 4, "brow.spring" to 5, "mouth.vowel" to 9, "mouth.capture" to 8)
+        val control = "ParamTongueOut"
+        compareShapeModule("mouth.tongue", 8, preceding, setOf(control), emptySet(),
+            RigMouthTongueModifier::fallbackFrameDefinition, document = document) { before, after ->
+            val tongue = after.meshes.single { it.id == "ArtMeshTongue" }
+            val previous = before.meshes.single { it.id == tongue.id }
+            assertTrue(tongue.visible && tongue.opacity > 0f)
+            assertTrue(tongue.maskedBy.any { id -> after.meshes.any { it.id == id && id.startsWith("ArtMeshMouth") } },
+                "Tongue needs the live mouth opening mask: ${tongue.maskedBy}")
+            val local = tongue.shapes.any { binding -> binding.parameter == control &&
+                binding.shapes.any { it?.deltas?.toArray()?.any { delta -> delta != 0f } == true } } ||
+                tongue.offsets?.let { grid -> grid.axes.any { it.parameter == control } &&
+                    grid.cells.map { it.form }.distinct().size > 1 } == true
+            val parent = after.deformers.singleOrNull { it.id == tongue.parent } as? Deformer.Warp
+            val inherited = parent?.lattice?.let { grid -> grid.axes.any { it.parameter == control } &&
+                grid.cells.map { it.form }.distinct().size > 1 } == true
+            assertTrue(tongue != previous && (local || inherited), "TongueOut must change the tongue shape")
+            println("Tongue mesh: ${tongue.id}; mask: ${tongue.maskedBy}; parent: ${tongue.parent}")
+        }
+    }
+
+    private fun withTongue(original: WorkspaceDocument): WorkspaceDocument {
         val config = PipelineConfig(meshSpacing = 40)
-        val original = singleEyeOpenDocument(Sample.fromEnvironment())
         val analysis = RigGenerationSource.analyze(original.source, config)
-        val document = if (analysis.layers.any { it.semantic.tag == SemanticTag.TONGUE && it.source.visible && it.opaquePixels > 0 }) {
+        return if (analysis.layers.any { it.semantic.tag == SemanticTag.TONGUE && it.source.visible && it.opaquePixels > 0 }) {
             original
         } else {
             val mouth = analysis.layers.filter { it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) &&
@@ -52,27 +76,6 @@ class SingleEyeOpenMouthSourceTool {
             val classification = LayerClassificationOverride(LayerType.PRESET, SemanticTag.TONGUE, mouth.semantic.side)
             println("Added a visible clipped tongue to ${owner.name}")
             original.copy(source = source, layerOverrides = original.layerOverrides + (id.raw to classification))
-        }
-        val preceding = mapOf("eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3, "eye.emotion" to 3,
-            "eye.aftershock" to 4, "eye.squash" to 4, "brow.shape" to 4, "brow.lid-coupling" to 6,
-            "brow.blink" to 4, "brow.spring" to 5, "mouth.vowel" to 9, "mouth.capture" to 8)
-        val control = "ParamTongueOut"
-        compareShapeModule("mouth.tongue", 8, preceding, setOf(control), emptySet(),
-            RigMouthTongueModifier::fallbackFrameDefinition, document = document) { before, after ->
-            val tongue = after.meshes.single { it.id == "ArtMeshTongue" }
-            val previous = before.meshes.single { it.id == tongue.id }
-            assertTrue(tongue.visible && tongue.opacity > 0f)
-            assertTrue(tongue.maskedBy.any { id -> after.meshes.any { it.id == id && id.startsWith("ArtMeshMouth") } },
-                "Tongue needs the live mouth opening mask: ${tongue.maskedBy}")
-            val local = tongue.shapes.any { binding -> binding.parameter == control &&
-                binding.shapes.any { it?.deltas?.toArray()?.any { delta -> delta != 0f } == true } } ||
-                tongue.offsets?.let { grid -> grid.axes.any { it.parameter == control } &&
-                    grid.cells.map { it.form }.distinct().size > 1 } == true
-            val parent = after.deformers.singleOrNull { it.id == tongue.parent } as? Deformer.Warp
-            val inherited = parent?.lattice?.let { grid -> grid.axes.any { it.parameter == control } &&
-                grid.cells.map { it.form }.distinct().size > 1 } == true
-            assertTrue(tongue != previous && (local || inherited), "TongueOut must change the tongue shape")
-            println("Tongue mesh: ${tongue.id}; mask: ${tongue.maskedBy}; parent: ${tongue.parent}")
         }
     }
 
@@ -190,6 +193,36 @@ class SingleEyeOpenMouthSourceTool {
         val moved = setOf("ParamMouthX", "ParamMouthPuckerWiden", "ParamMouthFunnel")
         compareShapeModule("mouth.capture", 8, mapOf("mouth.vowel" to 9), controls, moved,
             RigMouthCaptureModifier::fallbackFrameDefinition)
+    }
+
+    @Test fun compareJawWithTongue(): Unit = runBlocking {
+        requireTools()
+        val document = withTongue(singleEyeOpenDocument(Sample.fromEnvironment()))
+        val chain = mapOf("eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3, "eye.emotion" to 3,
+            "eye.aftershock" to 4, "eye.squash" to 4, "brow.shape" to 4, "brow.lid-coupling" to 6,
+            "brow.blink" to 4, "brow.spring" to 5,
+            "mouth.vowel" to 9, "mouth.capture" to 8, "mouth.tongue" to 8)
+        val opening = "ParamMouthOpenY"
+        compareShapeModule("mouth.jaw", 13, chain, emptySet(), setOf(opening),
+            RigMouthJawModifier::fallbackTongueFrameDefinition, document = document) { before, after ->
+            val face = after.meshes.single { it.id == "ArtMeshFace" }
+            val oldFace = before.meshes.single { it.id == face.id }
+            val shapes = face.shapes - oldFace.shapes.toSet()
+            val offsets = face.offsets
+            val motion = shapes.any { binding -> binding.parameter == opening &&
+                binding.shapes.any { it?.deltas?.toArray()?.any { delta -> delta != 0f } == true } } ||
+                (offsets != null && offsets != oldFace.offsets && offsets.axes.any { it.parameter == opening } &&
+                    offsets.cells.map { it.form }.distinct().size > 1)
+            assertTrue(motion, "Jaw must deform the face with mouth opening")
+            val tongue = after.meshes.single { it.id == "ArtMeshTongue" }
+            assertEquals(before.meshes.single { it.id == tongue.id }, tongue)
+            assertEquals(listOf("ArtMeshMouth"), tongue.maskedBy)
+            assertTrue(after.meshes.any { it.id == tongue.maskedBy.single() })
+            assertTrue(tongue.visible && tongue.opacity > 0f)
+            assertTrue(tongue.shapes.any { it.parameter == "ParamTongueOut" } ||
+                tongue.offsets?.axes.orEmpty().any { it.parameter == "ParamTongueOut" })
+            println("Jaw moves ${face.id}; retained tongue ${tongue.id} masked by ${tongue.maskedBy}")
+        }
     }
 
     @Test fun compareJaw(): Unit = runBlocking {
