@@ -114,7 +114,8 @@ internal object RigMouthJawModifier {
             else "Mouth jaw v$version requires the shared open-mouth outline, vowel and capture chain"
         }
         val face = setOf(SemanticTag.FACE, SemanticTag.NOSE, SemanticTag.FACE_DETAIL)
-        return captureBindingTransition(instance, scaffold, prefix, face + CharacterAnalyzer.MOUTH_TAGS,
+        val captured = face + CharacterAnalyzer.MOUTH_TAGS
+        return captureBindingTransition(instance, scaffold, prefix, captured,
             projectedTags = if (mode == FrameMode.LAYERED) captured else face, values = buildJsonObject {
                 putJsonObject("providers") {
                     providers.forEach { type -> put(type, prefix.single { it.type == type }.id) }
