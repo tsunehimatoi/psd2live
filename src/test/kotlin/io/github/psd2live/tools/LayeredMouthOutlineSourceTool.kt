@@ -16,7 +16,11 @@ import kotlin.math.sqrt
 import kotlin.test.*
 
 class LayeredMouthOutlineSourceTool {
-    @Test fun compareLayeredOutlineWithLegacyFittedMouth(): Unit = runBlocking {
+    @Test fun compareLayeredOutlineWithLegacyFittedMouth(): Unit = runBlocking { compareLayered(upgradeFitted = false) }
+
+    @Test fun compareLayeredFittedMouthWithLegacyOutline(): Unit = runBlocking { compareLayered(upgradeFitted = true) }
+
+    private suspend fun compareLayered(upgradeFitted: Boolean) {
         requireTools()
         val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
         val config = PipelineConfig(meshSpacing = 40, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
@@ -53,9 +57,12 @@ class LayeredMouthOutlineSourceTool {
         assertEquals(2, authored.size)
         assertTrue(referenceStages[fittedIndex].meshes.filter { it.id in authored }.all { it != fittedBefore[it.id] })
 
-        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(outline.type, 9))
+        val upgraded = if (upgradeFitted) fitted else outline
+        val version = if (upgradeFitted) 8 else 9
+        val stage = stack.index(upgraded.id)
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(upgraded.type, version))
         val replaced = stack.copy(instances = stack.instances.map { entry ->
-            if (entry.id == outline.id) entry.copy(version = 9, plugin = artifact.reference) else entry
+            if (entry.id == upgraded.id) entry.copy(version = version, plugin = artifact.reference) else entry
         })
         val next = planned.copy(rigEdits = planned.rigEdits.copy(modifierStack = replaced.toJson()))
         RigBuildProfile.reset()
@@ -66,11 +73,11 @@ class LayeredMouthOutlineSourceTool {
         } finally {
             RigBuildProfile.recording = recording
         }
-        assertTrue("mouth.outline" !in legacyTemplateConsumers())
+        assertTrue(upgraded.type !in legacyTemplateConsumers())
         val actual = assertNotNull(preview.modifierEvaluation)
-        assertEquals(9, actual.entries[index].instance.version)
+        assertEquals(if (upgradeFitted) 1 else 9, actual.entries[index].instance.version)
         assertEquals(ModifierStatus.ACTIVE, actual.entries[index].status)
-        assertEquals(1, actual.entries[fittedIndex].instance.version)
+        assertEquals(if (upgradeFitted) 8 else 1, actual.entries[fittedIndex].instance.version)
         assertEquals(ModifierStatus.ACTIVE, actual.entries[fittedIndex].status)
         fun equal(expected: RigIR, next: RigIR, stage: String) {
             if (expected == next) return
@@ -95,20 +102,27 @@ class LayeredMouthOutlineSourceTool {
         try {
             BundledAlgorithmArtifacts.retain(store, listOf(artifact))
             val worker = store.snapshot().single()
-            val instance = actual.entries[index].instance
+            val instance = actual.entries[stage].instance
             val sourceInputs = RigModifierSource.of(preview)
-            val definition = RigFittedMouthOutlineDefinition.sharedFrameDefinition(sourceInputs, layered = true)
-            val context = definition.authorContext(instance).withUpstream(actual.entries.take(index)
+            val definition = if (upgradeFitted) RigFittedMouthDefinition.sharedFrameDefinition(sourceInputs, layered = true)
+                else RigFittedMouthOutlineDefinition.sharedFrameDefinition(sourceInputs, layered = true)
+            val context = definition.authorContext(instance).withUpstream(actual.entries.take(stage)
                 .filter { it.status == ModifierStatus.ACTIVE && it.instance.type in definition.requires + definition.optionalUpstream }
                 .map { entry -> entry.instance.let {
                     ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
                 } })
             assertEquals(setOf("before", "after"), context.resources.keys)
-            val provider = context.upstream.single { it.type == "mouth/fitted" }
-            assertEquals(1, provider.version)
-            assertEquals(fitted.id, provider.instanceId)
-            equal(afterOutline, ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(),
-                actual.outputs[index - 1], instance, {}, store, context = context), "installed JVM")
+            val providerTypes = if (upgradeFitted) listOf("face/fitted", "eye/fitted", "brow/fitted") else listOf("mouth/fitted")
+            for (type in providerTypes) {
+                val provider = context.upstream.single { it.type == type }
+                val original = stack.instances.single { it.type == type }
+                assertEquals(original.version, provider.version)
+                assertEquals(original.id, provider.instanceId)
+                assertEquals(original.plugin, provider.plugin)
+            }
+            equal(referenceStages[stage], ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(),
+                actual.outputs[stage - 1], instance, {}, store, context = context,
+                declaredParameters = definition.parameters(instance)), "installed JVM")
         } finally {
             store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
             preferences.removeNode()

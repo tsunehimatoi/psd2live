@@ -7,6 +7,7 @@ import io.github.psd2live.algorithms.binding.MouthFittedV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV7Algorithm
+import io.github.psd2live.algorithms.binding.MouthFittedV8Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
 import io.github.psd2live.algorithms.binding.ScaffoldMesh
 import io.github.psd2live.algorithms.binding.ScaffoldMeshContext
@@ -70,34 +71,36 @@ internal object RigFittedMouthDefinition {
             authorContext = { requireNotNull(source).closedMouthShellContext(it) })
     }
 
-    fun sharedFrameDefinition(source: RigModifierSource?): RigModifierDefinition {
+    private enum class SourceFrame(val version: Int, val algorithm: ChangingModifierAlgorithmPlugin, val writes: Set<String>) {
+        OPEN(MouthFittedV6Algorithm.VERSION, MouthFittedV6Algorithm, MouthFittedV6Algorithm.WRITES),
+        FALLBACK(MouthFittedV7Algorithm.VERSION, MouthFittedV7Algorithm, MouthFittedV7Algorithm.WRITES),
+        LAYERED(MouthFittedV8Algorithm.VERSION, MouthFittedV8Algorithm, MouthFittedV8Algorithm.WRITES),
+    }
+
+    fun sharedFrameDefinition(source: RigModifierSource?, layered: Boolean = false): RigModifierDefinition =
+        frameDefinition(source, if (layered) SourceFrame.LAYERED else SourceFrame.OPEN)
+
+    fun fallbackFrameDefinition(source: RigModifierSource?): RigModifierDefinition = frameDefinition(source, SourceFrame.FALLBACK)
+
+    private fun frameDefinition(source: RigModifierSource?, frame: SourceFrame): RigModifierDefinition {
         val modern = modernDefinition(source)
-        val plugin = object : ChangingModifierAlgorithmPlugin by MouthFittedV6Algorithm, ModifierOptionalUpstream, ModifierVersionSelection {
+        val plugin = object : ChangingModifierAlgorithmPlugin by frame.algorithm, ModifierOptionalUpstream, ModifierVersionSelection {
             override val optionalUpstream = modern.optionalUpstream
             override val canonicalOptInType = TYPE
         }
-        return modern.copy(version = MouthFittedV6Algorithm.VERSION, plugin = plugin,
-            changeWrites = MouthFittedV6Algorithm.WRITES, composableKinds = MouthFittedV6Algorithm.WRITES - "restPose" + "relations",
-            authorContext = { requireNotNull(source).captureSharedFrames(it) })
+        return modern.copy(version = frame.version, plugin = plugin,
+            changeWrites = frame.writes, composableKinds = frame.writes - "restPose" + "relations",
+            authorContext = { requireNotNull(source).captureSharedFrames(it, frame) })
     }
 
-    fun fallbackFrameDefinition(source: RigModifierSource?): RigModifierDefinition {
-        val shared = sharedFrameDefinition(source)
-        val plugin = object : ChangingModifierAlgorithmPlugin by MouthFittedV7Algorithm, ModifierOptionalUpstream, ModifierVersionSelection {
-            override val optionalUpstream = shared.optionalUpstream
-            override val canonicalOptInType = TYPE
-        }
-        return shared.copy(version = MouthFittedV7Algorithm.VERSION, plugin = plugin,
-            changeWrites = MouthFittedV7Algorithm.WRITES, composableKinds = MouthFittedV7Algorithm.WRITES - "restPose" + "relations",
-            authorContext = { requireNotNull(source).captureSharedFrames(it, fallback = true) })
-    }
-
-    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance, fallback: Boolean = false): ModifierAlgorithmContext {
+    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance, frame: SourceFrame): ModifierAlgorithmContext {
+        val fallback = frame == SourceFrame.FALLBACK
+        val layered = frame == SourceFrame.LAYERED
         val scaffold = provider(instance)
         val preceding = bindingPredecessors(instance, scaffold)
         require(scaffold.version == 2 && preceding.all { entry ->
             entry.targets.toSet() == instance.targets.toSet() && entry.type in setOf("body/legacy", "face/fitted", "eye/fitted", "brow/fitted")
-        }) { "Fitted mouth v6 requires a shared source head" }
+        }) { "Fitted mouth v${instance.version} requires a shared source head" }
         val head = preceding.single { it.type == "face/fitted" && it.version == 3 }
         val eye = preceding.single { it.type == "eye/fitted" && it.version == 5 }
         val browVersion = if (fallback) 3 else 4
@@ -112,10 +115,14 @@ internal object RigFittedMouthDefinition {
             }
         }
         val mouth = after.fittedMouth(next)
-        require(mouth?.source != null && !mouth.closedLine && !mouth.layered && mouth.rig?.fit?.layered == null &&
+        val layeredFit = mouth?.rig?.fit?.layered != null
+        require(mouth?.source != null && !mouth.closedLine && mouth.layered == layered && layeredFit == layered &&
             (before.faceTurn(old) != null) != fallback && (after.faceTurn(next) != null) != fallback) {
-            if (fallback) "Fitted mouth v7 requires an open source drawing and fallback head frames"
-            else "Fitted mouth v6 requires an open source drawing and fitted head frames"
+            when (frame) {
+                SourceFrame.OPEN -> "Fitted mouth v6 requires an open source drawing and fitted head frames"
+                SourceFrame.FALLBACK -> "Fitted mouth v7 requires an open source drawing and fallback head frames"
+                SourceFrame.LAYERED -> "Fitted mouth v8 requires an open layered source drawing and fitted head frames"
+            }
         }
         fun headLayers(context: RigBuilder.RigContext, config: PipelineConfig): Map<String, ClassifiedLayer> {
             val parents = context.deformers.associate { it.id to it.parent }
@@ -127,7 +134,7 @@ internal object RigFittedMouthDefinition {
         }
         val oldLayers = headLayers(before, old)
         val nextLayers = headLayers(after, next)
-        require(oldLayers.isNotEmpty() && oldLayers.keys == nextLayers.keys) { "Fitted mouth v6 requires stable head targets" }
+        require(oldLayers.isNotEmpty() && oldLayers.keys == nextLayers.keys) { "Fitted mouth v${instance.version} requires stable head targets" }
         val axes = preceding.flatMapTo(hashSetOf()) { RigLegacyBindings.spec(it.type).parameters }
         return ModifierAlgorithmContext(buildJsonObject {
             put("face", head.id)
