@@ -66,9 +66,14 @@ class CreatureDsTool {
             layered = true, includeRibbons = false)
     }
 
+    @Test fun compareLayeredTeethWingsAndTail(): Unit = runBlocking {
+        compareCreature(2, SemanticTag.WINGS, includeSkirt = false, layered = true,
+            includeRibbons = false, withTeeth = true)
+    }
+
     private suspend fun compareCreature(
         version: Int, vararg extras: SemanticTag, includeTail: Boolean = true, includeSkirt: Boolean = true,
-        layered: Boolean = false, includeRibbons: Boolean = layered,
+        layered: Boolean = false, includeRibbons: Boolean = layered, withTeeth: Boolean = false,
     ) {
         requireTools()
         val config = PipelineConfig(meshSpacing = 40)
@@ -101,15 +106,20 @@ class CreatureDsTool {
         val fixtureConfig = config.copy(rigEdits = overlay)
         val document = when {
             includeRibbons -> ribbonDsDocument(source, fixtureConfig, layered = true, extraOverrides = overrides)
-            layered -> layeredMouthDocument(source, fixtureConfig).let {
+            layered -> layeredMouthDocument(source, fixtureConfig, withTeeth = withTeeth).let {
                 it.copy(layerOverrides = it.layerOverrides + overrides)
             }
             else -> WorkspaceDocument(source, emptyMap(), emptySet(), overrides, emptyMap(), overlay,
                 WorkspaceSettingsCodec.encode(fixtureConfig))
         }
-        val layeredPrefix = if (layered) layeredRibbonMouthVersions +
-            if (includeRibbons) mapOf("outfit.ribbons" to 6) else emptyMap()
-        else emptyMap()
+        val layeredPrefix = if (layered) buildMap {
+            putAll(layeredRibbonMouthVersions)
+            if (includeRibbons) put("outfit.ribbons", 6)
+            if (withTeeth) {
+                put("mouth.interior-depth", 9)
+                put("mouth.spring", 14)
+            }
+        } else emptyMap()
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4,
             "mouth/fitted" to 6, "mouth.outline" to 8, "mouth.vowel" to 7, "mouth.capture" to 6, "mouth.jaw" to 8, "mouth.cheek-lid" to 8, "mouth.spring" to 9, "face.neck" to 3, "body.arms" to 3, "body.bust" to 3, "outfit.creature" to 1,
             "eye.smile" to 4, "eye.wide" to 4, "eye.gaze-lid" to 4, "eye.emotion" to 4, "eye.aftershock" to 5, "eye.squash" to 5,
@@ -144,6 +154,9 @@ class CreatureDsTool {
         if (layered) {
             val fit = assertNotNull(RigBuilder.rigContext(historical.analysis, config).fittedMouth(config))
             assertTrue(fit.layered && fit.rig?.fit?.layered != null)
+            if (withTeeth) assertTrue(historical.analysis.layers.any {
+                it.opaquePixels > 0 && it.semantic.tag == SemanticTag.TOOTH_T
+            })
             val expectedCreatureTags = extras.toSet() + listOfNotNull(SemanticTag.TAIL.takeIf { includeTail })
             assertEquals(expectedCreatureTags, historical.analysis.layers.filter {
                 it.opaquePixels > 0 && (it.semantic.role == PartRole.ANIMAL ||
@@ -190,7 +203,7 @@ class CreatureDsTool {
             return planned.copy(rigEdits = planned.rigEdits.copy(modifierStack = next.toJson())) to selected
         }
 
-        if ((!includeSkirt && version == 5) || (layered && (version == 6 || SemanticTag.WINGS in fixtures))) {
+        if ((!includeSkirt && version == 5) || (layered && !withTeeth && (version == 6 || SemanticTag.WINGS in fixtures))) {
             val (recommended, preview) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct, WorkspaceInitialPreset())
             val selected = assertNotNull(preview.modifierEvaluation).entries.single { it.instance.type == entry.type }
             assertEquals(version, selected.instance.version)
