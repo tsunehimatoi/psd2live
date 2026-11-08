@@ -62,6 +62,7 @@ import io.github.psd2live.algorithms.binding.MouthDepthV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV7Algorithm
+import io.github.psd2live.algorithms.binding.MouthDepthV8Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV5Algorithm
@@ -93,6 +94,7 @@ import io.github.psd2live.algorithms.binding.MouthSpringV9Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV10Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV11Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV12Algorithm
+import io.github.psd2live.algorithms.binding.MouthSpringV13Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV6Algorithm
@@ -604,8 +606,10 @@ internal object WorkspacePresetInitialization {
                 put(RigModules.MOUTH_JAW.id, if (tongue) MouthJawV12Algorithm.VERSION else MouthJawV10Algorithm.VERSION)
                 if (RigModules.MOUTH_CHEEK_LID.id !in types) return@buildMap
                 put(RigModules.MOUTH_CHEEK_LID.id, if (tongue) MouthCheekLidV12Algorithm.VERSION else MouthCheekLidV10Algorithm.VERSION)
-                if (!tongue && RigModules.MOUTH_SPRING.id in types && RigModules.MOUTH_DEPTH.id !in types)
-                    put(RigModules.MOUTH_SPRING.id, MouthSpringV11Algorithm.VERSION)
+                val depth = RigModules.MOUTH_DEPTH.id in types
+                if (tongue && depth) put(RigModules.MOUTH_DEPTH.id, MouthDepthV8Algorithm.VERSION)
+                if (RigModules.MOUTH_SPRING.id in types && tongue == depth)
+                    put(RigModules.MOUTH_SPRING.id, if (tongue) MouthSpringV13Algorithm.VERSION else MouthSpringV11Algorithm.VERSION)
             }
         }
         if (config.mouthOutlineEnabled && !supportsClassicOutline(analysis, config)) return emptyMap()
