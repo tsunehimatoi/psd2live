@@ -4,6 +4,7 @@ import io.github.psd2live.application.*
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.format.model.Deformer
+import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.project.*
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Files
@@ -103,6 +104,104 @@ class ArmSwingDsTool {
             ModifierPluginWorkers.stop(artifact.reference)
             preferences.removeNode()
             ModifierPluginStore.deleteTree(directory)
+        }
+    }
+
+    @Test fun compareSingleEyeOpenArms(): Unit = runBlocking {
+        compareSingleEyeArms(cli = false)
+        compareSingleEyeArms(cli = true)
+    }
+
+    private suspend fun compareSingleEyeArms(cli: Boolean) {
+        requireTools()
+        val document = singleEyeOpenDocument(Sample.fromEnvironment(), meshSpacing = if (cli) 64 else 40)
+        val config = PipelineConfig(meshSpacing = if (cli) 64 else 40)
+        val analyses = if (cli) RigGenerationSource.prepare(RigGenerationSource.analyze(document.source, config), config) else null
+        val aliases = analyses?.let { CliPresetBindings(it, config) }
+        val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 3, "mouth/fitted" to 7,
+            "mouth.outline" to 10, "mouth.vowel" to 9, "mouth.capture" to 8, "brow.shape" to 4,
+            "eye.wide" to 3, "eye.gaze-lid" to 3, "brow.lid-coupling" to 6, "brow.blink" to 4, "brow.spring" to 5, "body.arms" to 1)
+        val (planned, baseline) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
+            WorkspaceInitialPreset(), requestedVersions = versions, cliBindings = aliases, restoreSourceRotations = cli)
+        val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
+        val expected = assertNotNull(baseline.modifierEvaluation)
+        for ((type, version) in versions) {
+            val entry = expected.entries.single { it.instance.type == type }
+            assertEquals(version, entry.instance.version, type)
+            assertEquals(ModifierStatus.ACTIVE, entry.status, type)
+            if (type != "body.arms") {
+                assertEquals(assertNotNull(BundledAlgorithmArtifacts.find(type, version)).reference, entry.instance.plugin, type)
+            }
+        }
+        assertEquals(cli, stack.instances.single { it.type == "rig.scaffold" }.outputAliases.isNotEmpty())
+        val armLayers = baseline.analysis.layers.filter { it.semantic.tag == SemanticTag.HANDWEAR && it.opaquePixels > 0 }
+        assertEquals(setOf(Side.LEFT, Side.RIGHT), armLayers.map { it.semantic.side }.toSet(),
+            "CLI=$cli visible handwear: " + armLayers.map { it.source.id to it.semantic.side })
+        val arms = stack.instances.single { it.type == "body.arms" }
+        val stage = stack.index(arms.id)
+        val before = expected.outputs[stage - 1]
+        val after = expected.outputs[stage]
+        val oldWarps = before.deformers.associateBy { it.id }
+        val swing = listOf("ParamArmLSwing", "ParamArmRSwing")
+        for ((side, parameter) in listOf(Side.LEFT, Side.RIGHT).zip(swing)) {
+            val warp = after.deformers.filterIsInstance<Deformer.Warp>().single {
+                it != oldWarps[it.id] && it.shapes.any { shape -> shape.parameter == parameter }
+            }
+            assertTrue(warp.shapes.single { it.parameter == parameter }.shapes.filterNotNull()
+                .any { it.points.shared().any { point -> point != 0f } })
+            val layerIds = armLayers.filter { it.semantic.side == side }.map { it.source.id.raw }
+            assertTrue(after.meshes.any { it.parent == warp.id && it.visible && it.opacity > 0f &&
+                baseline.rig.ownLayerIdByDrawableId[it.id] in layerIds }, "CLI=$cli visible $side arm carrier")
+        }
+        val additions = after.physics.groups.filter { it !in before.physics.groups }
+        assertEquals(swing, additions.flatMap { group -> group.outputs.map { it.parameter } }.sorted())
+        assertTrue(additions.all { group -> group.inputs.any { it.weight > 0f } && group.outputs.single().weight > 0f })
+
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(arms.type, 3))
+        val selected = arms.copy(version = 3, plugin = artifact.reference)
+        val modified = stack.copy(instances = stack.instances.map { if (it.id == selected.id) selected else it })
+        val candidate = planned.copy(rigEdits = planned.rigEdits.copy(modifierStack = modified.toJson()))
+        val preview = if (cli) PSD2LivePipeline().apply {
+            deferRuntimeBundles = true
+            rawSourceRotations = true
+        }.buildPreview(candidate.source, config.copy(rigEdits = candidate.rigEdits))
+        else WorkspacePreviewBuilder().build(candidate)
+        val actual = assertNotNull(preview.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, actual.entries[stage].status)
+        for (index in stack.instances.indices) {
+            val prior = expected.outputs[index]
+            val next = actual.outputs[index]
+            if (prior == next) continue
+            val old = prior.meshes.associateBy { it.id }
+            val changes = next.meshes.filter { it != old[it.id] }.map { mesh ->
+                val previous = old[mesh.id]
+                "${mesh.id} (parent=${mesh.parent != previous?.parent}, geometry=${mesh.geometry != previous?.geometry}, " +
+                    "offsets=${mesh.offsets != previous?.offsets}, shapes=${mesh.shapes != previous?.shapes})"
+            }
+            fail("CLI=$cli ${stack.instances[index].type} differs, meshes=$changes")
+        }
+        fun exported(model: RigPreviewModel): RigIR {
+            val presented = if (aliases != null) CliPresetPresentation.apply(model, assertNotNull(analyses), aliases.moduleParameters, config)
+                else model
+            return RigIrCompiler.compile(presented, tileArt = true)
+        }
+        assertTrue(exported(baseline) == exported(preview), "final IR differs")
+
+        val root = Files.createTempDirectory("arm-single-eye-")
+        val preferences = Preferences.userRoot().node("arm-single-eye/" + UUID.randomUUID())
+        val store = ModifierPluginStore(root.resolve("installed"), preferences)
+        try {
+            BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+            val worker = store.snapshot().single()
+            val definition = RigArmSwingModifier.definition(RigModifierSource.of(preview), modern = true)
+            val context = assertNotNull(actual.readAlgorithms[arms.id]).context
+            assertTrue(after == ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(),
+                before, selected, {}, store, context = context, declaredParameters = definition.parameters(selected)),
+                "installed JVM IR differs")
+        } finally {
+            ModifierPluginWorkers.stop(artifact.reference)
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(root)
         }
     }
 }
