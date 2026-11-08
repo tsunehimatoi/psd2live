@@ -71,6 +71,11 @@ class CreatureDsTool {
             includeRibbons = false, withTeeth = true)
     }
 
+    @Test fun compareLayeredTeethAnimalEar(): Unit = runBlocking {
+        compareCreature(7, SemanticTag.HEADWEAR, SemanticTag.WINGS, includeSkirt = false,
+            layered = true, includeRibbons = false, withTeeth = true)
+    }
+
     private suspend fun compareCreature(
         version: Int, vararg extras: SemanticTag, includeTail: Boolean = true, includeSkirt: Boolean = true,
         layered: Boolean = false, includeRibbons: Boolean = layered, withTeeth: Boolean = false,
@@ -222,8 +227,12 @@ class CreatureDsTool {
             assertContains(rejected.message.orEmpty(), "Creature v3 requires mouth/fitted@4")
         }
         if (layered && SemanticTag.HEADWEAR in fixtures) {
-            val v5 = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(select(5).first) }
-            assertContains(v5.message.orEmpty(), "Creature v5 requires mouth/fitted@6")
+            val rejectedVersion = if (withTeeth) 6 else 5
+            val constraint = if (withTeeth) "mouth.spring@11" else "mouth/fitted@6"
+            val rejected = assertFailsWith<IllegalArgumentException> {
+                WorkspacePreviewBuilder().build(select(rejectedVersion).first)
+            }
+            assertContains(rejected.message.orEmpty(), "Creature v$rejectedVersion requires $constraint")
         }
         fixtures[SemanticTag.HEADWEAR]?.let { ear ->
             val earId = sourceView.layersByMesh.entries.single { it.value == ear.id.raw }.key
@@ -265,7 +274,7 @@ class CreatureDsTool {
             val worker = store.snapshot().single()
             val context = assertNotNull(actual.readAlgorithms[entry.id]).context
             if (version >= 4) assertEquals(includeSkirt, context.upstream.any { it.capability == "outfit.skirt" })
-            if (version == 6) {
+            if (version >= 6) {
                 assertEquals(includeRibbons, context.upstream.any { it.capability == "outfit.ribbons" })
                 for ((type, required) in layeredPrefix) {
                     assertEquals(required, context.upstream.single { it.capability == type }.version, type)
