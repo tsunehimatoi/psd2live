@@ -80,6 +80,7 @@ import io.github.psd2live.algorithms.binding.MouthVowelV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV8Algorithm
 import io.github.psd2live.algorithms.binding.NeckV3Algorithm
+import io.github.psd2live.algorithms.binding.RibbonsAlgorithm
 import io.github.psd2live.algorithms.binding.RibbonsResidualAlgorithm
 import io.github.psd2live.algorithms.binding.RibbonsV4Algorithm
 import io.github.psd2live.algorithms.binding.RibbonsV5Algorithm
@@ -371,12 +372,21 @@ internal object WorkspacePresetInitialization {
             val layeredDepth = layeredFace + WorkspaceMouthProfiles.depth(WorkspaceMouthProfiles.Source.LAYERED)
             val layeredDepthBarriers = setOf(RigModules.MOUTH_TONGUE.id, RigModules.OUTFIT_SKIRT.id, RigModules.OUTFIT_RIBBONS.id)
             val skirtBinding = RigModules.OUTFIT_SKIRT.id to SkirtAlgorithm.VERSION
+            val visibleLayers = model.analysis.layers.filter { it.opaquePixels > 0 }
+            val creatureKinds by lazy { visibleLayers.mapNotNull { HairKind.partOf(it) }.toSet() }
+            val bodyRibbonsOnly by lazy {
+                val kinds = setOf(HairKind.RIBBON, HairKind.PENDANT)
+                val ribbons = visibleLayers.filter { HairKind.clothOf(it) in kinds }
+                ribbons.isNotEmpty() && ribbons.all { it.semantic.tag == SemanticTag.TOPWEAR && it.semantic.role == PartRole.RIBBON }
+            }
             fun selectAttachment(entry: RigModifierInstance, upstream: List<RigModifierInstance>): RigModifierInstance {
                 val (version, profile) = when {
                     entry.type == RigModules.OUTFIT_RIBBONS.id && entry.version == 1 -> {
                         val mouth = upstream.singleOrNull { it.type == RigModules.MOUTH_FITTED.id }?.version
                         val skirt = upstream.singleOrNull { it.type == RigModules.OUTFIT_SKIRT.id }?.version
                         when {
+                            mouth == MouthFittedV8Algorithm.VERSION && skirt == null && HairKind.EAR !in creatureKinds && bodyRibbonsOnly ->
+                                RibbonsAlgorithm.VERSION to layeredAttachments
                             mouth == MouthFittedV8Algorithm.VERSION && (skirt == null || skirt == SkirtAlgorithm.VERSION) ->
                                 RibbonsV6Algorithm.VERSION to if (skirt == null) layeredAttachments else layeredAttachments + skirtBinding
                             mouth == MouthFittedV6Algorithm.VERSION && (skirt == null || skirt == SkirtAlgorithm.VERSION) ->
@@ -395,7 +405,7 @@ internal object WorkspacePresetInitialization {
                     }
                     entry.type == RigModules.OUTFIT_CREATURE.id && entry.version == 1 -> {
                         val mouth = upstream.singleOrNull { it.type == RigModules.MOUTH_FITTED.id }?.version
-                        val kinds = model.analysis.layers.filter { it.opaquePixels > 0 }.mapNotNull { HairKind.partOf(it) }.toSet()
+                        val kinds = creatureKinds
                         when {
                             mouth == MouthFittedV8Algorithm.VERSION && kinds.isNotEmpty() -> {
                                 val hasEars = HairKind.EAR in kinds
@@ -410,8 +420,10 @@ internal object WorkspacePresetInitialization {
                                     putAll(if (depthWithoutAttachments) layeredDepth else layeredAttachments)
                                     if (upstream.any { it.type == RigModules.OUTFIT_SKIRT.id })
                                         put(skirtBinding.first, skirtBinding.second)
-                                    if (upstream.any { it.type == RigModules.OUTFIT_RIBBONS.id })
-                                        put(RigModules.OUTFIT_RIBBONS.id, RibbonsV6Algorithm.VERSION)
+                                    upstream.singleOrNull { it.type == RigModules.OUTFIT_RIBBONS.id }?.let { ribbons ->
+                                        put(ribbons.type, if (!hasEars && ribbons.version == RibbonsAlgorithm.VERSION)
+                                            RibbonsAlgorithm.VERSION else RibbonsV6Algorithm.VERSION)
+                                    }
                                 }
                             }
                             mouth != MouthFittedV6Algorithm.VERSION -> CreatureResidualAlgorithm.VERSION to CreatureResidualAlgorithm.PROFILE

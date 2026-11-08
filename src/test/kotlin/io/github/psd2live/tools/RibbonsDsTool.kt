@@ -74,6 +74,18 @@ class RibbonsDsTool {
 
         val entry = stack.instances.single { it.type == "outfit.ribbons" }
         val index = stack.index(entry.id)
+        if (!includePendant) {
+            val (recommended, preview) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct)
+            val selected = assertNotNull(preview.modifierEvaluation).entries.single { it.instance.type == entry.type }
+            assertEquals(2, selected.instance.version)
+            assertEquals(ModifierStatus.ACTIVE, selected.status)
+            val recommendedStack = RigModifierStack.fromJson(assertNotNull(recommended.rigEdits.modifierStack))
+            val pinned = recommendedStack.copy(instances = recommendedStack.instances.map {
+                if (it.id == selected.instance.id) it.copy(version = 1, plugin = BuiltinModifierPlugins.reference(it.type, 1)) else it
+            })
+            val legacy = WorkspacePreviewBuilder().build(recommended.copy(rigEdits = recommended.rigEdits.copy(modifierStack = pinned.toJson())))
+            assertEquals(RigIrCompiler.compile(legacy, tileArt = true), RigIrCompiler.compile(preview, tileArt = true))
+        }
         if (layered) {
             val fit = assertNotNull(RigBuilder.rigContext(historical.analysis, config).fittedMouth(config))
             assertTrue(fit.layered && fit.rig?.fit?.layered != null)
