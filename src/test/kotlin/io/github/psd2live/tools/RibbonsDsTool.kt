@@ -13,7 +13,11 @@ import java.util.prefs.Preferences
 import kotlin.test.*
 
 class RibbonsDsTool {
-    @Test fun compareWorkspaceRibbons(): Unit = runBlocking {
+    @Test fun compareWorkspaceRibbons(): Unit = runBlocking { compareRibbons(includeSkirt = true) }
+
+    @Test fun compareWorkspaceRibbonsWithoutSkirt(): Unit = runBlocking { compareRibbons(includeSkirt = false) }
+
+    private suspend fun compareRibbons(includeSkirt: Boolean) {
         requireTools()
         val config = PipelineConfig(meshSpacing = 40)
         val artwork = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
@@ -21,9 +25,16 @@ class RibbonsDsTool {
         val settings = WorkspaceSettingsCodec.encode(config.copy(rigEdits = overlay))
         val original = WorkspaceDocument(artwork, emptyMap(), emptySet(), emptyMap(), emptyMap(), overlay, settings)
         val preset = WorkspaceInitialPreset()
-        val (originalPlanned, _) = WorkspacePresetInitialization.prepare(original, WorkspaceRasterWork.Direct, preset)
+        val (originalPlanned, originalModel) = WorkspacePresetInitialization.prepare(original, WorkspaceRasterWork.Direct, preset)
         val originalStack = RigModifierStack.fromJson(assertNotNull(originalPlanned.rigEdits.modifierStack))
         assertTrue(originalStack.instances.none { it.type == "outfit.ribbons" })
+        val skirtLayers = originalModel.analysis.layers.filter { it.opaquePixels > 0 && it.semantic.role == PartRole.SKIRT }
+        assertTrue(skirtLayers.isNotEmpty())
+        val skirtOverrides = if (includeSkirt) emptyMap() else skirtLayers.associate { layer ->
+            val semantic = layer.semantic
+            layer.source.id.raw to LayerClassificationOverride(semantic.type, semantic.tag, semantic.side,
+                semantic.parameter, semantic.switchId, PartRole.PLAIN)
+        }
         fun layer(id: String, x: Int, y: Int, width: Int, height: Int) =
             WorkspaceSourceLayer(LayerId(id), id, "", SourceLayerKind.Raster, true, 0,
                 LayerBounds(x, y, width, height), 1f, false, LayerBlend.Normal, ChannelMask.ALL,
@@ -35,19 +46,21 @@ class RibbonsDsTool {
                 .mapIndexed { index, layer -> WorkspaceSourceLayer.copyOf(layer, index) }
         }
         val overrides = mapOf(ribbon.id.raw to LayerClassificationOverride(LayerType.PRESET, SemanticTag.TOPWEAR, Side.NONE, role = PartRole.RIBBON),
-            pendant.id.raw to LayerClassificationOverride(LayerType.PRESET, SemanticTag.HEADWEAR, Side.NONE, role = PartRole.PENDANT))
+            pendant.id.raw to LayerClassificationOverride(LayerType.PRESET, SemanticTag.HEADWEAR, Side.NONE, role = PartRole.PENDANT)) + skirtOverrides
         val document = WorkspaceDocument(source, emptyMap(), emptySet(), overrides, emptyMap(), overlay, settings)
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4,
             "mouth/fitted" to 6, "mouth.outline" to 8, "mouth.vowel" to 7, "mouth.capture" to 6,
             "mouth.jaw" to 8, "mouth.cheek-lid" to 8, "mouth.spring" to 9,
             "face.neck" to 3, "body.arms" to 3, "body.bust" to 3,
-            "outfit.skirt" to 2, "outfit.ribbons" to 1, "outfit.creature" to 2,
+            "outfit.ribbons" to 1, "outfit.creature" to 2,
             "eye.smile" to 4, "eye.wide" to 4, "eye.gaze-lid" to 4, "eye.emotion" to 4, "eye.aftershock" to 5, "eye.squash" to 5,
-            "brow.shape" to 5, "brow.lid-coupling" to 7, "brow.blink" to 5, "brow.spring" to 6)
+            "brow.shape" to 5, "brow.lid-coupling" to 7, "brow.blink" to 5, "brow.spring" to 6) + if (includeSkirt) mapOf("outfit.skirt" to 2) else emptyMap()
         val (planned, historical) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
             preset, requestedVersions = versions)
         val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
 
+        assertEquals(includeSkirt, stack.instances.any { it.type == "outfit.skirt" })
+        assertEquals(includeSkirt, historical.analysis.layers.any { it.opaquePixels > 0 && it.semantic.role == PartRole.SKIRT })
         val historicalEvaluation = assertNotNull(historical.modifierEvaluation)
         for ((type, version) in versions) {
             val provider = historicalEvaluation.entries.single { it.instance.type == type }
@@ -62,7 +75,7 @@ class RibbonsDsTool {
         val prior = before.meshes.associateBy { it.id }
         val changed = after.meshes.filter { it != prior[it.id] }
         assertEquals(setOf("ArtMeshTopwear", "ArtMeshHeadwear"), changed.mapTo(hashSetOf()) { it.id })
-        assertTrue(changed.all { it.parent != prior.getValue(it.id).parent })
+        assertTrue(changed.all { it.visible && it.opacity > 0f && it.parent != prior.getValue(it.id).parent })
         val carriers = changed.map { mesh -> after.deformers.single { it.id == mesh.parent } as Deformer.Warp }
         assertEquals(2, carriers.mapTo(hashSetOf()) { it.parent }.size, "Fixture must use separate head and body frames")
         val physics = after.physics.groups.filter { it !in before.physics.groups }
@@ -112,19 +125,10 @@ class RibbonsDsTool {
         try {
             BundledAlgorithmArtifacts.retain(store, listOf(artifact))
             val worker = store.snapshot().single()
-            val definition = RigRibbonsModifier.sharedFrameDefinition(RigModifierSource.of(model))
-            val providers = RigLegacyBindings.providers(selected) + definition.optionalUpstream.associateWith { type ->
-                actual.entries.take(index).single { it.instance.type == type }.instance.id
-            }
-            val context = definition.authorContext(selected).withUpstream(providers.map { (capability, id) ->
-                val provider = actual.entries.take(index).single { it.instance.id == id }
-                assertEquals(ModifierStatus.ACTIVE, provider.status)
-                val instance = provider.instance
-                ModifierUpstreamCapability(capability, instance.type, instance.version, instance.targets,
-                    instance.id, instance.config, instance.outputAliases, instance.plugin)
-            })
+            val context = assertNotNull(actual.readAlgorithms[entry.id]).context
+            assertEquals(includeSkirt, context.upstream.any { it.capability == "outfit.skirt" })
             assertEquals(after, ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(), before,
-                selected, {}, store, context = context, declaredParameters = definition.parameters(selected)))
+                selected, {}, store, context = context))
         } finally {
             ModifierPluginWorkers.stop(artifact.reference)
             preferences.removeNode()
