@@ -256,6 +256,46 @@ class SingleEyeOpenMouthSourceTool {
             emptySet(), emptySet(), RigMouthCheekLidModifier::fallbackFrameDefinition) { before, after -> verifyCheekLidContribution(before, after) }
     }
 
+    @Test fun compareDepthWithTongue(): Unit = runBlocking {
+        requireTools()
+        val document = withTongue(singleEyeOpenDocument(Sample.fromEnvironment()))
+        val chain = mapOf("eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3, "eye.emotion" to 3,
+            "eye.aftershock" to 4, "eye.squash" to 4, "brow.shape" to 4, "brow.lid-coupling" to 6,
+            "brow.blink" to 4, "brow.spring" to 5, "mouth.vowel" to 9, "mouth.capture" to 8,
+            "mouth.tongue" to 8, "mouth.jaw" to 13, "mouth.cheek-lid" to 13)
+        compareShapeModule("mouth.interior-depth", 10, chain, emptySet(), emptySet(),
+            RigMouthDepthModifier::fallbackTongueFrameDefinition, document = document) { before, after ->
+            val tongue = after.meshes.single { it.id == "ArtMeshTongue" }
+            val oldTongue = before.meshes.single { it.id == tongue.id }
+            val color = assertNotNull(tongue.channels[Channel.MULTIPLY_COLOR])
+            assertNotEquals(oldTongue.channels[Channel.MULTIPLY_COLOR], color)
+            assertEquals(listOf("ParamMouthOpenY"), color.axes.map { it.parameter })
+            assertTrue(color.cells.map { it.form }.distinct().size > 1, "Tongue must darken as the mouth closes")
+            assertEquals(listOf("ArtMeshMouth"), oldTongue.maskedBy)
+            assertEquals(oldTongue.maskedBy, tongue.maskedBy)
+            assertTrue(after.meshes.any { it.id == tongue.maskedBy.single() })
+            assertEquals(before.parameters.single { it.id == "ParamTongueOut" }, after.parameters.single { it.id == "ParamTongueOut" })
+            assertTrue(tongue.shapes.any { it.parameter == "ParamTongueOut" } ||
+                tongue.offsets?.axes.orEmpty().any { it.parameter == "ParamTongueOut" })
+            val turn = setOf("ParamAngleX", "ParamAngleY")
+            val meshDepth = (tongue.shapes - oldTongue.shapes.toSet()).any { binding -> binding.parameter in turn &&
+                binding.shapes.any { it?.deltas?.toArray()?.any { delta -> delta != 0f } == true } } ||
+                (tongue.offsets != oldTongue.offsets && tongue.offsets?.let { grid ->
+                    grid.axes.any { it.parameter in turn } && grid.cells.map { it.form }.distinct().size > 1
+                } == true)
+            val frames = after.deformers.associateBy { it.id }
+            val oldFrames = before.deformers.associateBy { it.id }
+            val inheritedDepth = generateSequence(tongue.parent) { frames[it]?.parent }.any { id ->
+                val warp = frames[id] as? Deformer.Warp
+                val grid = warp?.lattice
+                warp != oldFrames[id] && grid != null && grid.axes.any { it.parameter in turn } &&
+                    grid.cells.map { it.form }.distinct().size > 1
+            }
+            assertTrue(meshDepth || inheritedDepth, "Tongue must move with head angle to show depth")
+            println("Interior depth changes tongue turn and multiply color; retained ${tongue.maskedBy} and ParamTongueOut")
+        }
+    }
+
     @Test fun compareSpring(): Unit = runBlocking {
         val preceding = mapOf("mouth.vowel" to 9, "mouth.capture" to 8, "mouth.jaw" to 11, "mouth.cheek-lid" to 11)
         val control = setOf("ParamMouthSpring")

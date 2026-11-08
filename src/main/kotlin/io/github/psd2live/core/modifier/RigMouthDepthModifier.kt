@@ -8,6 +8,7 @@ import io.github.psd2live.algorithms.binding.MouthDepthV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV8Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV9Algorithm
+import io.github.psd2live.algorithms.binding.MouthDepthV10Algorithm
 import io.github.psd2live.algorithms.binding.MouthRig.Follow
 import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.RigModules
@@ -52,6 +53,9 @@ internal object RigMouthDepthModifier {
     fun closedShellDefinition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthDepthV5Algorithm.VERSION, closedShellAlgorithm)
 
+    fun fallbackTongueFrameDefinition(source: RigModifierSource?): RigModifierDefinition =
+        sourceFrameDefinition(source, MouthDepthV10Algorithm.VERSION, MouthDepthV10Algorithm, layered = false)
+
     fun sharedFrameDefinition(source: RigModifierSource?, withSharedTongue: Boolean = false,
                               layered: Boolean = false, withTeethOnly: Boolean = false): RigModifierDefinition {
         val algorithm = when {
@@ -66,6 +70,11 @@ internal object RigMouthDepthModifier {
             withSharedTongue -> MouthDepthV7Algorithm.VERSION
             else -> MouthDepthV6Algorithm.VERSION
         }
+        return sourceFrameDefinition(source, version, algorithm, layered)
+    }
+
+    private fun sourceFrameDefinition(source: RigModifierSource?, version: Int,
+                                      algorithm: ChangingModifierAlgorithmPlugin, layered: Boolean): RigModifierDefinition {
         val projected = object : ChangingModifierAlgorithmPlugin by algorithm,
             ModifierOptionalUpstream, ModifierVersionSelection {
             override val canonicalOptInType = MouthDepthAlgorithm.TYPE
@@ -75,6 +84,7 @@ internal object RigMouthDepthModifier {
         return fittedDefinition(source).copy(version = version, plugin = projected,
             changeWrites = when (version) {
                 MouthDepthV9Algorithm.VERSION -> MouthDepthV9Algorithm.WRITES
+                MouthDepthV10Algorithm.VERSION -> MouthDepthV10Algorithm.WRITES
                 MouthDepthV8Algorithm.VERSION -> MouthDepthV8Algorithm.WRITES
                 MouthDepthV7Algorithm.VERSION -> MouthDepthV7Algorithm.WRITES
                 else -> MouthDepthV6Algorithm.WRITES
@@ -84,7 +94,11 @@ internal object RigMouthDepthModifier {
     private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance, layered: Boolean): ModifierAlgorithmContext {
         val scaffold = provider(instance)
         val prefix = bindingPredecessors(instance, scaffold)
-        val fittedVersion = if (layered) 8 else 6
+        val fittedVersion = when {
+            instance.version == MouthDepthV10Algorithm.VERSION -> 7
+            layered -> 8
+            else -> 6
+        }
         require(prefix.any { it.id == instance.config.getValue("base").jsonPrimitive.content &&
             it.type == "mouth/fitted" && it.version == fittedVersion }) {
             "Mouth interior depth v${instance.version} requires a shared fitted mouth v$fittedVersion"
