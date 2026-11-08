@@ -12,6 +12,7 @@ import io.github.psd2live.algorithms.binding.MouthSpringV10Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV11Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV12Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV13Algorithm
+import io.github.psd2live.algorithms.binding.MouthSpringV14Algorithm
 import io.github.psd2live.core.CharacterAnalyzer
 import io.github.psd2live.core.PartRole
 import io.github.psd2live.core.PhysicsGenerator
@@ -120,7 +121,8 @@ internal object RigMouthSpringModifier {
     }
 
     fun sharedFrameDefinition(source: RigModifierSource?, withSharedTongue: Boolean = false,
-                              layered: Boolean = false): RigModifierDefinition = when {
+                              layered: Boolean = false, withTeethOnly: Boolean = false): RigModifierDefinition = when {
+        layered && withTeethOnly -> sourceFrameDefinition(source, MouthSpringV14Algorithm.VERSION, MouthSpringV14Algorithm())
         layered && withSharedTongue -> sourceFrameDefinition(source, MouthSpringV13Algorithm.VERSION, MouthSpringV13Algorithm())
         layered -> sourceFrameDefinition(source, MouthSpringV11Algorithm.VERSION, MouthSpringV11Algorithm())
         withSharedTongue -> sourceFrameDefinition(source, MouthSpringV10Algorithm.VERSION, MouthSpringV10Algorithm())
@@ -151,8 +153,9 @@ internal object RigMouthSpringModifier {
         val scaffold = provider(instance)
         val prefix = bindingPredecessors(instance, scaffold)
         val layeredTongue = instance.version == MouthSpringV13Algorithm.VERSION
+        val layeredTeeth = instance.version == MouthSpringV14Algorithm.VERSION
         val fittedVersion = when (instance.version) {
-            MouthSpringV11Algorithm.VERSION, MouthSpringV13Algorithm.VERSION -> 8
+            MouthSpringV11Algorithm.VERSION, MouthSpringV13Algorithm.VERSION, MouthSpringV14Algorithm.VERSION -> 8
             MouthSpringV12Algorithm.VERSION -> 7
             else -> 6
         }
@@ -161,9 +164,12 @@ internal object RigMouthSpringModifier {
             "Mouth spring v${instance.version} requires a shared fitted mouth v$fittedVersion"
         }
         val baseProviders = setOf("mouth.outline", "mouth.vowel", "mouth.capture", "mouth.jaw", "mouth.cheek-lid")
-        val providers = if (layeredTongue || instance.version == MouthSpringV10Algorithm.VERSION) {
-            baseProviders + setOf("mouth.tongue", "mouth.interior-depth")
-        } else baseProviders
+        val providers = when {
+            layeredTongue || instance.version == MouthSpringV10Algorithm.VERSION ->
+                baseProviders + setOf("mouth.tongue", "mouth.interior-depth")
+            layeredTeeth -> baseProviders + "mouth.interior-depth"
+            else -> baseProviders
+        }
         val extraMouth = prefix.filter { it.type.startsWith("mouth.") && it.type !in providers }
         require(extraMouth.isEmpty() || (instance.version == MouthSpringV9Algorithm.VERSION &&
             extraMouth.singleOrNull()?.let { depth ->
