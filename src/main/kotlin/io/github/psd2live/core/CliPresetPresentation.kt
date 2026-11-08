@@ -21,7 +21,9 @@ internal object CliPresetPresentation {
         val packed = restoreGeneratedFrameIds(CliFaceSourcePresentation.bindUvs(preview, rebound, config))
         val ordered = orderExportMetadata(CliMouthOutlinePresentation.orderMeshes(packed, source.geometry), moduleIds, config)
         val mouth = CliMouthOutlinePresentation.apply(ordered, config)
-        return CliHairChainsPresentation.apply(CliFaceSourcePresentation.restoreBrowForms(preview, mouth, config), config)
+        val brows = CliFaceSourcePresentation.restoreBrowForms(preview, mouth, config)
+        val face = CliFaceSourcePresentation.restoreSingleEyeForms(preview, brows, source.geometry, config)
+        return CliHairChainsPresentation.apply(face, config)
     }
 
     private fun restoreGeneratedFrameIds(preview: RigPreviewModel): RigPreviewModel {

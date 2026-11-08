@@ -6,11 +6,55 @@ import io.github.psd2live.core.modifier.RigFittedMouthOutlineDefinition
 import io.github.psd2live.core.modifier.RigModifierSource
 import io.github.psd2live.format.compile.RigIrBinary
 import io.github.psd2live.targets.cubism.PuppetIr
+import org.umamo.runtime.model.Deformer
 import org.umamo.runtime.model.DrawableMesh
 import org.umamo.runtime.model.MeshForm
 
 /** Binds unchanged source face topology directly to the RAW export atlas. */
 internal object CliFaceSourcePresentation {
+    fun restoreSingleEyeForms(source: RigPreviewModel, preview: RigPreviewModel, analysis: PipelineAnalysis,
+                              config: PipelineConfig): RigPreviewModel {
+        val active = source.modifierEvaluation?.entries?.filter { it.status == ModifierStatus.ACTIVE }
+            ?.associate { it.instance.type to it.instance } ?: return preview
+        if (active["mouth/fitted"]?.takeIf(BuiltinModifierPlugins::matches)?.version != 7 ||
+            active["mouth.outline"]?.takeIf(BuiltinModifierPlugins::matches)?.version != 10) return preview
+
+        val model = preview.rig.puppet
+        val layers = analysis.layers.associateBy { it.source.id.raw }
+        val tags = setOf(SemanticTag.EYEBROW, SemanticTag.NECK, SemanticTag.TOPWEAR)
+        // The eye's ordinary keys also govern which brow shapes Cubism lowers into keyforms.
+        val sourceTags = tags + setOf(SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYE_CLOSE, SemanticTag.IRIDES)
+        val selected = model.drawables.mapNotNull { drawable ->
+            val layer = layers[preview.rig.ownLayerIdByDrawableId[drawable.id.raw]] ?: return@mapNotNull null
+            (drawable.id.raw to layer).takeIf { drawable.mesh != null && layer.semantic.tag in sourceTags }
+        }.toMap()
+        if (selected.isEmpty()) return preview
+        val cache = PreviewMeshCache()
+        val context = RigBuilder.rigContext(analysis, config, cache)
+        val parameters = model.parameters.mapTo(hashSetOf()) { it.id }
+        val projected = RigBuilder.closedMouthShellProjection(context, config, preview.atlas, cache, model, selected, parameters,
+            includeFaceLean = true)
+        val nativeMeshes = projected.drawables.associateBy { it.id }
+        val drawables = model.drawables.map { drawable ->
+            if (selected[drawable.id.raw]?.semantic?.tag !in tags) return@map drawable
+            val native = nativeMeshes[drawable.id] ?: return@map drawable
+            require(drawable.parentDeformerId == native.parentDeformerId) {
+                "CLI single-eye forms require the source parent for ${drawable.id.raw}"
+            }
+            drawable.copy(mesh = native.mesh, geometryGrid = native.geometryGrid, blendShapes = native.blendShapes)
+        }
+        val browFrames = selected.values.filter { it.semantic.tag == SemanticTag.EYEBROW }
+            .mapTo(hashSetOf()) { context.parentAndFrame(it, config).first }
+        val nativeFrames = projected.deformers.filterIsInstance<Deformer.Warp>().associateBy { it.id }
+        val deformers = model.deformers.map { deformer ->
+            if (deformer !is Deformer.Warp || deformer.id !in browFrames) return@map deformer
+            val native = nativeFrames.getValue(deformer.id)
+            require(deformer.parent == native.parent && deformer.rows == native.rows && deformer.columns == native.columns)
+            deformer.copy(geometryGrid = native.geometryGrid)
+        }
+        return preview.copy(rig = preview.rig.copy(puppet = model.copy(drawables = drawables, deformers = deformers)))
+    }
+
     fun bindUvs(beforePacking: RigPreviewModel, packed: RigPreviewModel, config: PipelineConfig): RigPreviewModel {
         val analysis = RigGenerationSource.analyze(packed.analysis.source, config)
         val layers = analysis.layers.filter {

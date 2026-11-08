@@ -3,6 +3,7 @@ package io.github.psd2live.core
 import io.github.psd2live.algorithms.binding.MouthOutlineV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV8Algorithm
+import io.github.psd2live.algorithms.binding.MouthOutlineV10Algorithm
 import io.github.psd2live.core.modifier.RigModifierStack
 import org.umamo.runtime.model.DrawableId
 import org.umamo.runtime.model.OrgChild
@@ -18,7 +19,7 @@ internal object CliMouthOutlinePresentation {
     fun apply(preview: RigPreviewModel, sourceConfig: PipelineConfig): RigPreviewModel {
         if (sourceConfig.meshOnly || !sourceConfig.mouthOutlineEnabled) return preview
         val modern = sourceConfig.recipe.modern
-        val versions = if (modern) setOf(MouthOutlineV7Algorithm.VERSION, MouthOutlineV8Algorithm.VERSION)
+        val versions = if (modern) setOf(MouthOutlineV7Algorithm.VERSION, MouthOutlineV8Algorithm.VERSION, MouthOutlineV10Algorithm.VERSION)
             else setOf(MouthOutlineV4Algorithm.VERSION)
         val serialized = preview.config.rigEdits.modifierStack ?: return preview
         val outline = RigModifierStack.fromJson(serialized).instances.singleOrNull {
