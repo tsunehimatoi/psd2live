@@ -23,7 +23,11 @@ class RibbonsDsTool {
         compareRibbons(includeSkirt = false, layered = true)
     }
 
-    private suspend fun compareRibbons(includeSkirt: Boolean, layered: Boolean = false) {
+    @Test fun compareLayeredBodyRibbonFromSource(): Unit = runBlocking {
+        compareRibbons(includeSkirt = false, layered = true, includePendant = false)
+    }
+
+    private suspend fun compareRibbons(includeSkirt: Boolean, layered: Boolean = false, includePendant: Boolean = true) {
         requireTools()
         val config = PipelineConfig(meshSpacing = 40)
         val artwork = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
@@ -37,7 +41,7 @@ class RibbonsDsTool {
         val skirtLayers = originalModel.analysis.layers.filter { it.opaquePixels > 0 && it.semantic.role == PartRole.SKIRT }
         assertTrue(skirtLayers.isNotEmpty())
         val skirtOverrides = if (includeSkirt) emptyMap() else plainSkirtOverrides(skirtLayers)
-        val document = ribbonDsDocument(artwork, config.copy(rigEdits = overlay), layered, skirtOverrides)
+        val document = ribbonDsDocument(artwork, config.copy(rigEdits = overlay), layered, skirtOverrides, includePendant = includePendant)
         val layeredPrefix = if (layered) layeredRibbonMouthVersions else emptyMap()
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4,
             "mouth/fitted" to 6, "mouth.outline" to 8, "mouth.vowel" to 7, "mouth.capture" to 6,
@@ -83,10 +87,11 @@ class RibbonsDsTool {
         val after = historicalEvaluation.outputs[index]
         val prior = before.meshes.associateBy { it.id }
         val changed = after.meshes.filter { it != prior[it.id] }
-        assertEquals(setOf("ArtMeshTopwear", "ArtMeshHeadwear"), changed.mapTo(hashSetOf()) { it.id })
+        val expected = if (includePendant) setOf("ArtMeshTopwear", "ArtMeshHeadwear") else setOf("ArtMeshTopwear")
+        assertEquals(expected, changed.mapTo(hashSetOf()) { it.id })
         assertTrue(changed.all { it.visible && it.opacity > 0f && it.parent != prior.getValue(it.id).parent })
         val carriers = changed.map { mesh -> after.deformers.single { it.id == mesh.parent } as Deformer.Warp }
-        assertEquals(2, carriers.mapTo(hashSetOf()) { it.parent }.size, "Fixture must use separate head and body frames")
+        assertEquals(expected.size, carriers.mapTo(hashSetOf()) { it.parent }.size)
         val physics = after.physics.groups.filter { it !in before.physics.groups }
         for (carrier in carriers) {
             assertTrue(before.deformers.none { it.id == carrier.id })
@@ -119,7 +124,11 @@ class RibbonsDsTool {
                     "Ribbons v5 requires mouth/fitted@6")
             }
         }
-        val version = if (layered) 6 else 5
+        val version = when {
+            !includePendant -> 2
+            layered -> 6
+            else -> 5
+        }
         val (candidate, selected) = select(version)
         val model = WorkspacePreviewBuilder().build(candidate)
         val actual = assertNotNull(model.modifierEvaluation)
@@ -146,7 +155,8 @@ class RibbonsDsTool {
             val worker = store.snapshot().single()
             val context = assertNotNull(actual.readAlgorithms[entry.id]).context
             assertEquals(includeSkirt, context.upstream.any { it.capability == "outfit.skirt" })
-            for ((type, required) in layeredPrefix) {
+            if (version == 2) assertEquals(setOf("source_meshes"), context.resources.keys)
+            for ((type, required) in layeredPrefix.filterKeys { version != 2 }) {
                 assertEquals(required, context.upstream.single { it.capability == type }.version)
             }
             assertEquals(after, ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(), before,
@@ -171,6 +181,7 @@ internal val layeredRibbonMouthVersions = mapOf("mouth/fitted" to 8, "mouth.outl
 internal fun ribbonDsDocument(
     artwork: SourceArt, config: PipelineConfig, layered: Boolean,
     extraOverrides: Map<String, LayerClassificationOverride> = emptyMap(),
+    includePendant: Boolean = true,
 ): WorkspaceDocument {
     fun layer(id: String, x: Int, y: Int, width: Int, height: Int) =
         WorkspaceSourceLayer(LayerId(id), id, "", SourceLayerKind.Raster, true, 0,
@@ -178,12 +189,14 @@ internal fun ribbonDsDocument(
             LayerRaster(width, height, ByteArray(width * height * 4) { -1 }), null, null, false)
     val ribbon = layer("ds-cloth-ribbon", 565, 455, 16, 63)
     val pendant = layer("ds-head-pendant", 674, 212, 13, 31)
+    val fixtures = listOf(ribbon to LayerClassificationOverride(LayerType.PRESET, SemanticTag.TOPWEAR, Side.NONE, role = PartRole.RIBBON)) +
+        listOfNotNull((pendant to LayerClassificationOverride(LayerType.PRESET, SemanticTag.HEADWEAR, Side.NONE, role = PartRole.PENDANT))
+            .takeIf { includePendant })
     val source = object : SourceArt by artwork {
-        override val layers = (listOf(ribbon, pendant) + artwork.layers)
+        override val layers = (fixtures.map { it.first } + artwork.layers)
             .mapIndexed { index, layer -> WorkspaceSourceLayer.copyOf(layer, index) }
     }
-    val overrides = mapOf(ribbon.id.raw to LayerClassificationOverride(LayerType.PRESET, SemanticTag.TOPWEAR, Side.NONE, role = PartRole.RIBBON),
-        pendant.id.raw to LayerClassificationOverride(LayerType.PRESET, SemanticTag.HEADWEAR, Side.NONE, role = PartRole.PENDANT)) + extraOverrides
+    val overrides = fixtures.associate { (layer, semantic) -> layer.id.raw to semantic } + extraOverrides
     return if (layered) {
         val lips = layeredMouthDocument(source, config)
         lips.copy(layerOverrides = lips.layerOverrides + overrides)
