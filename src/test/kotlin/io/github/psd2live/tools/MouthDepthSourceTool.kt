@@ -91,8 +91,9 @@ class MouthDepthSourceTool {
         } finally {
             RigBuildProfile.recording = recording
         }
-        assertTrue(RigBuildProfile.snapshot().keys.none { it.startsWith("modifier template consumer: mouth.interior-depth ->") })
-        if (!tongue) assertTrue(RigBuildProfile.snapshot().keys.none { it.startsWith("modifier template consumer: mouth.spring ->") })
+        val consumers = legacyTemplateConsumers()
+        assertTrue(depth.type !in consumers)
+        if (!tongue) assertTrue("mouth.spring" !in consumers)
         val actual = assertNotNull(preview.modifierEvaluation)
         assertEquals(version, actual.entries[index].instance.version)
         for (entry in actual.entries.filter { it.instance.type in versions }) {
@@ -108,6 +109,25 @@ class MouthDepthSourceTool {
         }
         for (stage in stack.instances.indices) equal(expected[stage], actual.outputs[stage], stack.instances[stage].type)
         equal(RigIrCompiler.compile(reference, tileArt = true), RigIrCompiler.compile(preview, tileArt = true), "compiled IR")
+        if (!tongue) {
+            val (recommendedDocument, recommended) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
+                WorkspaceInitialPreset(clothing = false))
+            val entries = assertNotNull(recommended.modifierEvaluation).entries
+            val interior = mapOf(depth.type to 6, "mouth.spring" to 9)
+            for ((type, version) in interior) {
+                val selected = entries.single { it.instance.type == type }
+                assertEquals(version, selected.instance.version, type)
+                assertEquals(ModifierStatus.ACTIVE, selected.status, type)
+            }
+            // Keep the actual recommended neck, body and outfit versions on both sides of this comparison.
+            val recommendedStack = RigModifierStack.fromJson(assertNotNull(recommendedDocument.rigEdits.modifierStack))
+            val legacyInterior = recommendedStack.copy(instances = recommendedStack.instances.map { entry ->
+                if (entry.type in interior) entry.copy(version = 1, plugin = BuiltinModifierPlugins.reference(entry.type, 1)) else entry
+            })
+            val expectedRecommended = WorkspacePreviewBuilder().build(recommendedDocument.copy(
+                rigEdits = recommendedDocument.rigEdits.copy(modifierStack = legacyInterior.toJson())))
+            equal(RigIrCompiler.compile(expectedRecommended, tileArt = true), RigIrCompiler.compile(recommended, tileArt = true), "recommended IR")
+        }
 
         val artifact = assertNotNull(BundledAlgorithmArtifacts.find(depth.type, version))
         val root = Files.createTempDirectory("mouth-depth-source-")

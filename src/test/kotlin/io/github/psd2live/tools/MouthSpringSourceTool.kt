@@ -78,10 +78,7 @@ class MouthSpringSourceTool {
         val sourceConsumers = if (sharedTongue) {
             setOf("mouth.tongue", "mouth.jaw", "mouth.cheek-lid", "mouth.interior-depth", "mouth.spring")
         } else setOf("mouth.spring")
-        val profile = RigBuildProfile.snapshot()
-        for (type in sourceConsumers) {
-            assertTrue(profile.keys.none { it.startsWith("modifier template consumer: $type ->") }, type)
-        }
+        assertEquals(emptySet(), legacyTemplateConsumers().intersect(sourceConsumers))
         val actual = assertNotNull(preview.modifierEvaluation)
         assertEquals(version, actual.entries[index].instance.version)
         for (entry in actual.entries.filter { it.instance.type in versions }) {
@@ -97,6 +94,21 @@ class MouthSpringSourceTool {
         }
         for (stage in stack.instances.indices) equal(expected[stage], actual.outputs[stage], stack.instances[stage].type)
         equal(RigIrCompiler.compile(reference, tileArt = true), RigIrCompiler.compile(preview, tileArt = true), "compiled IR")
+        if (sharedTongue) {
+            val (recommendedDocument, recommended) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
+                WorkspaceInitialPreset(clothing = false))
+            val selected = mapOf("mouth.tongue" to 6, "mouth.jaw" to 9, "mouth.cheek-lid" to 9, "mouth.interior-depth" to 7, "mouth.spring" to 10)
+            val entries = assertNotNull(recommended.modifierEvaluation).entries.filter { it.instance.type in selected }
+            assertEquals(selected, entries.associate { it.instance.type to it.instance.version })
+            assertTrue(entries.all { it.status == ModifierStatus.ACTIVE })
+            val recommendedStack = RigModifierStack.fromJson(assertNotNull(recommendedDocument.rigEdits.modifierStack))
+            val legacyInterior = recommendedStack.copy(instances = recommendedStack.instances.map { entry ->
+                if (entry.type in selected) entry.copy(version = 1, plugin = BuiltinModifierPlugins.reference(entry.type, 1)) else entry
+            })
+            val baseline = WorkspacePreviewBuilder().build(recommendedDocument.copy(
+                rigEdits = recommendedDocument.rigEdits.copy(modifierStack = legacyInterior.toJson())))
+            equal(RigIrCompiler.compile(baseline, tileArt = true), RigIrCompiler.compile(recommended, tileArt = true), "recommended IR")
+        }
 
         val artifact = assertNotNull(BundledAlgorithmArtifacts.find(spring.type, version))
         val root = Files.createTempDirectory("mouth-spring-source-")
