@@ -6,10 +6,12 @@ import io.github.psd2live.algorithms.binding.MouthFittedV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV6Algorithm
+import io.github.psd2live.algorithms.binding.MouthFittedV7Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
 import io.github.psd2live.algorithms.binding.ScaffoldMesh
 import io.github.psd2live.algorithms.binding.ScaffoldMeshContext
 import io.github.psd2live.core.*
+import io.github.psd2live.core.recipe.RecipeSubject
 import io.github.psd2live.core.recipe.BaseChoice
 import io.github.psd2live.core.recipe.ModuleChoice
 import io.github.psd2live.core.recipe.RigModules
@@ -79,7 +81,18 @@ internal object RigFittedMouthDefinition {
             authorContext = { requireNotNull(source).captureSharedFrames(it) })
     }
 
-    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance): ModifierAlgorithmContext {
+    fun fallbackFrameDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val shared = sharedFrameDefinition(source)
+        val plugin = object : ChangingModifierAlgorithmPlugin by MouthFittedV7Algorithm, ModifierOptionalUpstream, ModifierVersionSelection {
+            override val optionalUpstream = shared.optionalUpstream
+            override val canonicalOptInType = TYPE
+        }
+        return shared.copy(version = MouthFittedV7Algorithm.VERSION, plugin = plugin,
+            changeWrites = MouthFittedV7Algorithm.WRITES, composableKinds = MouthFittedV7Algorithm.WRITES - "restPose" + "relations",
+            authorContext = { requireNotNull(source).captureSharedFrames(it, fallback = true) })
+    }
+
+    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance, fallback: Boolean = false): ModifierAlgorithmContext {
         val scaffold = provider(instance)
         val preceding = bindingPredecessors(instance, scaffold)
         require(scaffold.version == 2 && preceding.all { entry ->
@@ -87,13 +100,22 @@ internal object RigFittedMouthDefinition {
         }) { "Fitted mouth v6 requires a shared source head" }
         val head = preceding.single { it.type == "face/fitted" && it.version == 3 }
         val eye = preceding.single { it.type == "eye/fitted" && it.version == 5 }
-        val brow = preceding.single { it.type == "brow/fitted" && it.version == 4 }
+        val browVersion = if (fallback) 3 else 4
+        val brow = preceding.single { it.type == "brow/fitted" && it.version == browVersion }
         val (old, before) = RigFittedMouthModuleSource.context(this, scaffold, preceding, null)
         val (next, after) = RigFittedMouthModuleSource.context(this, scaffold, preceding + instance, null)
+        if (fallback) {
+            val subject = RecipeSubject.of(after.analysis)
+            val eye = subject.sides(SemanticTag.EYEWHITE)
+            require(eye.size == 1 && subject.sides(SemanticTag.EYELASH) == eye && subject.sides(SemanticTag.EYEBROW) == eye) {
+                "Fitted mouth v7 requires one source eye with its lash and brow"
+            }
+        }
         val mouth = after.fittedMouth(next)
         require(mouth?.source != null && !mouth.closedLine && !mouth.layered && mouth.rig?.fit?.layered == null &&
-            before.faceTurn(old) != null && after.faceTurn(next) != null) {
-            "Fitted mouth v6 requires an open source drawing and fitted head frames"
+            (before.faceTurn(old) != null) != fallback && (after.faceTurn(next) != null) != fallback) {
+            if (fallback) "Fitted mouth v7 requires an open source drawing and fallback head frames"
+            else "Fitted mouth v6 requires an open source drawing and fitted head frames"
         }
         fun headLayers(context: RigBuilder.RigContext, config: PipelineConfig): Map<String, ClassifiedLayer> {
             val parents = context.deformers.associate { it.id to it.parent }

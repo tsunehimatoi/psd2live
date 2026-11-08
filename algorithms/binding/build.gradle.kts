@@ -3889,6 +3889,33 @@ tasks.register("pluginMouthFittedV6") {
     }
 }
 
+val mouthFittedV7WorkerJar = registerIsolatedBindingWorker(
+    "mouthFittedV7", "mouth-fitted-v7", "worker-mouth-fitted-v7", "io.github.psd2live.algorithms.binding.MouthFittedV7Worker",
+)
+tasks.register("pluginMouthFittedV7") {
+    dependsOn(mouthFittedV7WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-fitted-v7")
+    inputs.file(mouthFittedV7WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", project.version.toString())
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthFittedV7WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682f666974746564.v7"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"${project.version}","name":"Fitted mouth in fallback head frames",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/binding","aliases":["mouth/fitted"],"version":7,"contextVersion":2,"name":"Fitted mouth in fallback head frames","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","face/fitted"],"exclusiveFamily":"base:mouth",
+               "reads":["*"],"writes":["mesh","parameter","deformer","part","hierarchy","rest_pose"],"composableKinds":["mesh","parameter","deformer","part","hierarchy","relations"],
+               "parameters":[{"id":"ParamMouthForm","name":"Mouth Form","min":-1,"max":1,"default":0},{"id":"ParamMouthOpenY","name":"Mouth Open","min":0,"max":1,"default":0}],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val mouthVowelV4WorkerJar = registerIsolatedBindingWorker(
     "mouthVowelV4", "mouth-vowel-v4", "worker-mouth-vowel-v4", "io.github.psd2live.algorithms.binding.MouthVowelV4Worker",
 )
