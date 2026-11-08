@@ -8,6 +8,8 @@
 
 应用为 49 种修改器各随附至少一个可独立执行的包。历史实例继续按锁定修订重放。部分推荐预设仍使用 v1，从宿主生成模板提取结果。
 
+Gradle 的 `processResources` 从 `bundledAlgorithm` 资源声明生成内置包索引。新增内置包时在构建中声明其任务和资源目录，应用从生成的索引读取包清单。已有包的清单和载荷仍按原始字节计算摘要。
+
 对于拟合眉会改变其他网格坐标框的双眼素材，新建现代预设时会为头部、眼部和眉部一起选择兼容版本。拟合眉、眉形、眉睑联动、眨眼带眉和回弹随共享框架组合求值。笑眼、睁大、视线、情绪、高光、余震和虹膜挤压也有对应版本。眼睑淡出沿用 v3。已保存的实例按工程内锁定的算法修订与包摘要重放。
 
 其中物理组实现已迁到 `:algorithms:physics`：`PendulumAlgorithm` 直接实现公共求值接口，配置解析、物理组转换和输出冲突检查均在该模块完成。算法仅使用 `algorithm-api`，应用注册入口只委托调用；普通物理导出和其他生成器复用同一转换实现。另由 `algorithm-worker` 提供工作进程入口，`./gradlew :algorithms:physics:pluginPackage` 在 `algorithms/physics/build/plugin` 生成独立安装目录（`plugin.json` 与携带依赖的 `algorithm.jar`），可交给 `plugin_install`。包 ID 为 `builtin.70687973696373.v1`，入口为该命名空间下的 `/pendulum`，`aliases: ["physics"]` 保留工程中的类型、算法修订和输出 ID。
