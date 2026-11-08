@@ -32,6 +32,64 @@ class LayeredMouthOutlineSourceTool {
 
     @Test fun compareLayeredJawWithSharedCapture(): Unit = runBlocking { compareLayered(Upgrade.JAW) }
 
+    @Test fun recommendedLayeredMouthUsesSharedSources(): Unit = runBlocking {
+        requireTools()
+        val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
+        val config = PipelineConfig(meshSpacing = 40, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val document = layeredDocument(source, config)
+        val versions = mapOf("mouth/fitted" to 8, "mouth.outline" to 11, "mouth.vowel" to 8, "mouth.capture" to 7, "mouth.jaw" to 10)
+        RigBuildProfile.reset()
+        val recording = RigBuildProfile.recording
+        val (planned, recommended) = try {
+            RigBuildProfile.recording = true
+            WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct, WorkspaceInitialPreset(clothing = false))
+        } finally {
+            RigBuildProfile.recording = recording
+        }
+        assertTrue(legacyTemplateConsumers().intersect(versions.keys).isEmpty())
+        val actual = assertNotNull(recommended.modifierEvaluation)
+        val selected = actual.entries.filter { it.instance.type in versions }
+        assertEquals(versions, selected.associate { it.instance.type to it.instance.version })
+        assertTrue(selected.all { it.status == ModifierStatus.ACTIVE })
+        val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
+        val legacy = stack.copy(instances = stack.instances.map { entry ->
+            if (entry.type in versions) entry.copy(version = 1, plugin = BuiltinModifierPlugins.reference(entry.type, 1))
+            else entry
+        })
+        val historical = WorkspacePreviewBuilder().build(planned.copy(rigEdits = planned.rigEdits.copy(modifierStack = legacy.toJson())))
+        val reference = assertNotNull(historical.modifierEvaluation)
+        for (index in stack.instances.indices) {
+            assertEquals(reference.outputs[index], actual.outputs[index], stack.instances[index].type)
+        }
+        assertEquals(RigIrCompiler.compile(historical, tileArt = true), RigIrCompiler.compile(recommended, tileArt = true))
+
+        val outline = selected.single { it.instance.type == "mouth.outline" }.instance
+        val index = stack.index(outline.id)
+        val definition = RigFittedMouthOutlineDefinition.layeredSourceDefinition(RigModifierSource.of(recommended))
+        val context = assertNotNull(actual.authorContexts[outline.id]).withUpstream(actual.entries.take(index)
+            .filter { it.status == ModifierStatus.ACTIVE && it.instance.type in definition.requires + definition.optionalUpstream }
+            .map { entry -> entry.instance.let {
+                ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+            } })
+        assertEquals(8, context.upstream.single { it.type == "mouth/fitted" }.version)
+        assertEquals(setOf("before", "after"), context.resources.keys)
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(outline.type, outline.version))
+        val root = Files.createTempDirectory("layered-mouth-shared-outline-")
+        val preferences = Preferences.userRoot().node("layered-mouth-outline/" + UUID.randomUUID())
+        val store = ModifierPluginStore(root.resolve("installed"), preferences)
+        try {
+            BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+            val worker = store.snapshot().single()
+            assertEquals(reference.outputs[index], ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(),
+                actual.outputs[index - 1], outline, {}, store, context = context,
+                declaredParameters = definition.parameters(outline)))
+        } finally {
+            ModifierPluginWorkers.stop(artifact.reference)
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(root)
+        }
+    }
+
     private suspend fun compareLayered(upgrade: Upgrade) {
         requireTools()
         val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)

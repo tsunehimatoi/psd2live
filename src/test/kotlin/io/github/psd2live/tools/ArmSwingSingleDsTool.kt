@@ -83,6 +83,20 @@ class ArmSwingSingleDsTool {
             return planned.copy(rigEdits = planned.rigEdits.copy(modifierStack = next.toJson())) to selected
         }
 
+        if (side == Side.LEFT) {
+            val (recommended, preview) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct, WorkspaceInitialPreset())
+            val selected = assertNotNull(preview.modifierEvaluation).entries.single { it.instance.type == entry.type }
+            assertEquals(4, selected.instance.version)
+            assertEquals(ModifierStatus.ACTIVE, selected.status)
+            val recommendedStack = RigModifierStack.fromJson(assertNotNull(recommended.rigEdits.modifierStack))
+            val historicalStack = recommendedStack.copy(instances = recommendedStack.instances.map {
+                if (it.id == selected.instance.id) it.copy(version = 1, plugin = BuiltinModifierPlugins.reference(it.type, 1)) else it
+            })
+            val historicalPreview = WorkspacePreviewBuilder().build(recommended.copy(
+                rigEdits = recommended.rigEdits.copy(modifierStack = historicalStack.toJson())))
+            assertEquals(RigIrCompiler.compile(historicalPreview, tileArt = true), RigIrCompiler.compile(preview, tileArt = true))
+        }
+
         for (version in listOf(3, 4)) {
             val (candidate, selected) = select(version)
             val model = WorkspacePreviewBuilder().build(candidate)
