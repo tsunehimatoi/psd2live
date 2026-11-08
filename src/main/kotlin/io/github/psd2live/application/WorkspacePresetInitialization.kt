@@ -393,8 +393,8 @@ internal object WorkspacePresetInitialization {
                         val mouth = upstream.singleOrNull { it.type == RigModules.MOUTH_FITTED.id }?.version
                         val kinds = model.analysis.layers.filter { it.opaquePixels > 0 }.mapNotNull { HairKind.partOf(it) }.toSet()
                         when {
-                            mouth == MouthFittedV8Algorithm.VERSION && HairKind.WING !in kinds &&
-                                (HairKind.EAR in kinds || kinds == setOf(HairKind.ANIMAL_TAIL)) -> {
+                            mouth == MouthFittedV8Algorithm.VERSION && kinds.isNotEmpty() &&
+                                (HairKind.WING !in kinds || HairKind.ANIMAL_TAIL !in kinds) -> {
                                 val version = if (HairKind.EAR in kinds) CreatureV6Algorithm.VERSION else CreatureAlgorithm.VERSION
                                 version to buildMap {
                                     putAll(layeredAttachments)

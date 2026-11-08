@@ -184,7 +184,7 @@ class CreatureDsTool {
             return planned.copy(rigEdits = planned.rigEdits.copy(modifierStack = next.toJson())) to selected
         }
 
-        if (!includeSkirt && version == 5 || layered && version == 6 && !includeRibbons) {
+        if ((!includeSkirt && version == 5) || (layered && (version == 6 || SemanticTag.WINGS in fixtures))) {
             val (recommended, preview) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct, WorkspaceInitialPreset())
             val selected = assertNotNull(preview.modifierEvaluation).entries.single { it.instance.type == entry.type }
             assertEquals(version, selected.instance.version)
