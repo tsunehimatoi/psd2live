@@ -51,7 +51,11 @@ class LayeredMouthOutlineSourceTool {
         compareRecommendedLayered(includeSkirt = false)
     }
 
-    @Test fun appendLayeredCaptureUsesStandalonePlugin(): Unit = runBlocking {
+    @Test fun appendLayeredCaptureUsesStandalonePlugin(): Unit = runBlocking { compareLayeredAppend("mouth.capture", 7) }
+
+    @Test fun appendLayeredJawUsesStandalonePlugin(): Unit = runBlocking { compareLayeredAppend("mouth.jaw", 10) }
+
+    private suspend fun compareLayeredAppend(type: String, version: Int) {
         requireTools()
         val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
         val config = PipelineConfig(meshSpacing = 40, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
@@ -59,22 +63,22 @@ class LayeredMouthOutlineSourceTool {
         val planned = WorkspacePresetInitialization.create(document, WorkspaceRasterWork.Direct,
             WorkspaceInitialPreset(clothing = false))
         val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
-        val capture = stack.instances.single { it.type == "mouth.capture" }
-        val index = stack.index(capture.id)
+        val previous = stack.instances.single { it.type == type }
+        val index = stack.index(previous.id)
         val prefix = stack.copy(instances = stack.instances.take(index))
         val before = planned.copy(rigEdits = planned.rigEdits.copy(modifierStack = prefix.toJson()))
         val preview = WorkspacePreviewBuilder().build(before)
         val request = buildJsonObject {
-            put("type", capture.type)
-            putJsonArray("targets") { capture.targets.forEach { target -> add(buildJsonObject {
+            put("type", type)
+            putJsonArray("targets") { previous.targets.forEach { target -> add(buildJsonObject {
                 put("kind", target.kind)
                 put("id", target.id)
             }) } }
         }
         val (proposed, plan) = WorkspaceModifierPlan.plan(preview, prefix, request)
         val addition = proposed.instances.last()
-        assertEquals(7, addition.version)
-        assertEquals(BuiltinModifierPlugins.reference(capture.type, 7), addition.plugin)
+        assertEquals(version, addition.version)
+        assertEquals(BuiltinModifierPlugins.reference(type, version), addition.plugin)
         val additionRequest = plan.getValue("entries").jsonArray.single().jsonObject
         val appended = WorkspaceModifierEdits.apply(WorkspaceDocumentOperation("modifier_add",
             JsonObject(additionRequest - "version" - "plugin")), before, preview)
@@ -86,7 +90,7 @@ class LayeredMouthOutlineSourceTool {
         val legacy = WorkspaceModifierEdits.apply(WorkspaceDocumentOperation("modifier_add", legacyRequest), before, preview)
         val historical = WorkspacePreviewBuilder().build(legacy)
         val expected = assertNotNull(historical.modifierEvaluation).outputs.last()
-        assertTrue(expected == evaluated.outputs.last(), "Independent capture differs from v1 with the same instance ID")
+        assertTrue(expected == evaluated.outputs.last(), "Independent $type differs from v1 with the same instance ID")
     }
 
     private suspend fun compareRecommendedLayered(interior: Interior = Interior.NONE, includeSkirt: Boolean = true) {

@@ -211,9 +211,10 @@ internal object WorkspaceModifierPlan {
                                targets: List<ModifierTarget>, configuration: JsonObject,
                                available: List<ModifierCapability>? = null): Int? {
         val legacyVersion = legacySourceBases[type]
-        val speech = type == "mouth.vowel" || type == "mouth.capture"
-        if (legacyVersion == null && !speech) return null
-        val keys = if (speech) setOf("scaffold", "base") else setOf("scaffold")
+        val mouthSpec = if (type in WorkspaceMouthProfiles.selectableAdditions) RigLegacyBindings.find(type) else null
+        if (legacyVersion == null && mouthSpec == null) return null
+        val keys = if (mouthSpec == null) setOf("scaffold") else
+            setOf("scaffold", "base") + if (mouthSpec.related.isEmpty()) emptySet() else setOf("dependencies")
         if (configuration.keys != keys || !WorkspacePresetInitialization.freshSource(model.config) ||
             stack.appliedCapabilities.isNotEmpty() || stack.overrides.values.any { it.isNotEmpty() }) return null
         val scoped = (available ?: activeCapabilities(model, stack)).filter { entry -> entry.targets.any(targets::contains) }
@@ -226,30 +227,29 @@ internal object WorkspaceModifierPlan {
             if (scoped.any { it != scaffold && (it.type !in earlier || it.version != legacySourceBases[it.type] ||
                     it.targets.toSet() != targets.toSet() || it.config["scaffold"] != configuration["scaffold"]) }) return null
             legacyVersion
-        } else speechSourceVersion(type, targets, configuration, scoped) ?: return null
+        } else {
+            val spec = requireNotNull(mouthSpec)
+            val subject = io.github.psd2live.core.recipe.RecipeSubject.of(model.analysis)
+            if (spec.module?.applies?.invoke(subject) != true) return null
+            mouthSourceVersion(spec, targets, configuration, scoped) ?: return null
+        }
         val reference = BuiltinModifierPlugins.reference(type, version) ?: return null
         return version.takeIf { ModifierPluginCatalog.available(type, it, reference) }
     }
 
-    private fun speechSourceVersion(type: String, targets: List<ModifierTarget>, configuration: JsonObject,
-                                    scoped: List<ModifierCapability>): Int? {
+    private fun mouthSourceVersion(spec: RigLegacyBindings.Spec, targets: List<ModifierTarget>, configuration: JsonObject,
+                                   scoped: List<ModifierCapability>): Int? {
         val prefix = scoped.filter { it.config["scaffold"] == configuration["scaffold"] }
         if (prefix.any { !it.targets.containsAll(targets) }) return null
         val mouth = prefix.singleOrNull { it.type == "mouth/fitted" && JsonPrimitive(it.id) == configuration["base"] } ?: return null
-        // Source profiles for shared open, single-eye open and authored layered mouths.
-        val (outline, vowel, capture) = when (mouth.version) {
-            6 -> Triple(8, 7, 6)
-            7 -> Triple(10, 9, 8)
-            8 -> Triple(11, 8, 7)
-            else -> return null
-        }
-        val stages = prefix.filter { it.type.startsWith("mouth.") }
-        val expected = if (type == "mouth.vowel") listOf("mouth.outline" to outline)
-            else listOf("mouth.outline" to outline, "mouth.vowel" to vowel)
-        if (stages.map { it.type to it.version } != expected || (stages + mouth).any {
-                it.plugin != BuiltinModifierPlugins.reference(it.type, it.version)
+        val dependencies = (configuration["dependencies"] as? JsonObject).orEmpty()
+        val registry = RigModifierAlgorithms.registry
+        if (dependencies.keys != spec.related || dependencies.any { (type, id) ->
+                prefix.none { JsonPrimitive(it.id) == id && registry.provides(it, type) }
             }) return null
-        return if (type == "mouth.vowel") vowel else capture
+        val stages = listOf(mouth) + prefix.filter { it.type.startsWith("mouth.") }
+        if (stages.any { it.plugin != BuiltinModifierPlugins.reference(it.type, it.version) }) return null
+        return WorkspaceMouthProfiles.next(spec.type, stages.map { it.type to it.version })
     }
 
     private fun activeCapabilities(model: RigPreviewModel, stack: RigModifierStack): List<ModifierCapability> {

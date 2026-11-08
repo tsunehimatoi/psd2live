@@ -46,66 +46,40 @@ import io.github.psd2live.algorithms.binding.LegacyFaceV2Algorithm
 import io.github.psd2live.algorithms.binding.LidFadeV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthCaptureV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthCaptureV5Algorithm
-import io.github.psd2live.algorithms.binding.MouthCaptureV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthCaptureV7Algorithm
-import io.github.psd2live.algorithms.binding.MouthCaptureV8Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV7Algorithm
-import io.github.psd2live.algorithms.binding.MouthCheekLidV8Algorithm
-import io.github.psd2live.algorithms.binding.MouthCheekLidV9Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV10Algorithm
-import io.github.psd2live.algorithms.binding.MouthCheekLidV11Algorithm
-import io.github.psd2live.algorithms.binding.MouthCheekLidV12Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV5Algorithm
-import io.github.psd2live.algorithms.binding.MouthDepthV6Algorithm
-import io.github.psd2live.algorithms.binding.MouthDepthV7Algorithm
-import io.github.psd2live.algorithms.binding.MouthDepthV8Algorithm
-import io.github.psd2live.algorithms.binding.MouthDepthV9Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV6Algorithm
-import io.github.psd2live.algorithms.binding.MouthFittedV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV8Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV7Algorithm
-import io.github.psd2live.algorithms.binding.MouthJawV8Algorithm
-import io.github.psd2live.algorithms.binding.MouthJawV9Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV10Algorithm
-import io.github.psd2live.algorithms.binding.MouthJawV11Algorithm
-import io.github.psd2live.algorithms.binding.MouthJawV12Algorithm
 import io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV7Algorithm
-import io.github.psd2live.algorithms.binding.MouthOutlineV8Algorithm
-import io.github.psd2live.algorithms.binding.MouthOutlineV10Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV11Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV8Algorithm
-import io.github.psd2live.algorithms.binding.MouthSpringV9Algorithm
-import io.github.psd2live.algorithms.binding.MouthSpringV10Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV11Algorithm
-import io.github.psd2live.algorithms.binding.MouthSpringV12Algorithm
-import io.github.psd2live.algorithms.binding.MouthSpringV13Algorithm
-import io.github.psd2live.algorithms.binding.MouthSpringV14Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthTongueV5Algorithm
-import io.github.psd2live.algorithms.binding.MouthTongueV6Algorithm
-import io.github.psd2live.algorithms.binding.MouthTongueV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV6Algorithm
-import io.github.psd2live.algorithms.binding.MouthVowelV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV8Algorithm
-import io.github.psd2live.algorithms.binding.MouthVowelV9Algorithm
 import io.github.psd2live.algorithms.binding.NeckV3Algorithm
 import io.github.psd2live.algorithms.binding.RibbonsResidualAlgorithm
 import io.github.psd2live.algorithms.binding.RibbonsV4Algorithm
@@ -317,21 +291,8 @@ internal object WorkspacePresetInitialization {
                             RigModules.BROW_BLINK.id to BrowBlinkV4Algorithm.VERSION,
                             RigModules.BROW_SPRING.id to BrowSpringV5Algorithm.VERSION,
                         ).filterKeys { it in plannedTypes }
-                        val face = packages(headVersions + eyes + brows + buildMap {
-                            put(RigModules.MOUTH_FITTED.id, MouthFittedV7Algorithm.VERSION)
-                            if (RigModules.MOUTH_OUTLINE.id !in plannedTypes) return@buildMap
-                            put(RigModules.MOUTH_OUTLINE.id, MouthOutlineV10Algorithm.VERSION)
-                            if (RigModules.MOUTH_VOWEL.id !in plannedTypes) return@buildMap
-                            put(RigModules.MOUTH_VOWEL.id, MouthVowelV9Algorithm.VERSION)
-                            if (RigModules.MOUTH_CAPTURE.id !in plannedTypes) return@buildMap
-                            put(RigModules.MOUTH_CAPTURE.id, MouthCaptureV8Algorithm.VERSION)
-                            if (RigModules.MOUTH_JAW.id !in plannedTypes || RigModules.MOUTH_TONGUE.id in plannedTypes) return@buildMap
-                            put(RigModules.MOUTH_JAW.id, MouthJawV11Algorithm.VERSION)
-                            if (RigModules.MOUTH_CHEEK_LID.id !in plannedTypes) return@buildMap
-                            put(RigModules.MOUTH_CHEEK_LID.id, MouthCheekLidV11Algorithm.VERSION)
-                            if (RigModules.MOUTH_SPRING.id in plannedTypes && RigModules.MOUTH_DEPTH.id !in plannedTypes)
-                                put(RigModules.MOUTH_SPRING.id, MouthSpringV12Algorithm.VERSION)
-                        })
+                        val mouthVersions = WorkspaceMouthProfiles.preset(WorkspaceMouthProfiles.Source.SINGLE_EYE, plannedTypes)
+                        val face = packages(headVersions + eyes + brows + mouthVersions)
                         if (face.isEmpty()) face else {
                             val arms = sourceArmVersion(model.analysis, allowSingle = false)
                                 ?.let { packages(mapOf(RigModules.BODY_ARMS.id to it)) }.orEmpty()
@@ -602,31 +563,7 @@ internal object WorkspacePresetInitialization {
         if (mouth.source == null || !singleEye && context.faceTurn(measurement) == null) return emptyMap()
         if (mouth.layered || mouth.rig?.fit?.layered != null) {
             if (!sharedBrow || mouth.closedLine || !mouth.layered || mouth.rig?.fit?.layered == null) return emptyMap()
-            return buildMap {
-                if (RigModules.MOUTH_FITTED.id !in types) return@buildMap
-                put(RigModules.MOUTH_FITTED.id, MouthFittedV8Algorithm.VERSION)
-                if (RigModules.MOUTH_OUTLINE.id !in types) return@buildMap
-                put(RigModules.MOUTH_OUTLINE.id, MouthOutlineV11Algorithm.VERSION)
-                if (RigModules.MOUTH_VOWEL.id !in types) return@buildMap
-                put(RigModules.MOUTH_VOWEL.id, MouthVowelV8Algorithm.VERSION)
-                if (RigModules.MOUTH_CAPTURE.id !in types) return@buildMap
-                put(RigModules.MOUTH_CAPTURE.id, MouthCaptureV7Algorithm.VERSION)
-                val tongue = RigModules.MOUTH_TONGUE.id in types
-                if (tongue) put(RigModules.MOUTH_TONGUE.id, MouthTongueV7Algorithm.VERSION)
-                if (RigModules.MOUTH_JAW.id !in types) return@buildMap
-                put(RigModules.MOUTH_JAW.id, if (tongue) MouthJawV12Algorithm.VERSION else MouthJawV10Algorithm.VERSION)
-                if (RigModules.MOUTH_CHEEK_LID.id !in types) return@buildMap
-                put(RigModules.MOUTH_CHEEK_LID.id, if (tongue) MouthCheekLidV12Algorithm.VERSION else MouthCheekLidV10Algorithm.VERSION)
-                val depth = RigModules.MOUTH_DEPTH.id in types
-                if (depth) put(RigModules.MOUTH_DEPTH.id, if (tongue) MouthDepthV8Algorithm.VERSION else MouthDepthV9Algorithm.VERSION)
-                val spring = when {
-                    tongue && depth -> MouthSpringV13Algorithm.VERSION
-                    depth -> MouthSpringV14Algorithm.VERSION
-                    !tongue -> MouthSpringV11Algorithm.VERSION
-                    else -> null
-                }
-                if (spring != null && RigModules.MOUTH_SPRING.id in types) put(RigModules.MOUTH_SPRING.id, spring)
-            }
+            return WorkspaceMouthProfiles.preset(WorkspaceMouthProfiles.Source.LAYERED, types)
         }
         if (config.mouthOutlineEnabled && !supportsClassicOutline(analysis, config)) return emptyMap()
         if (mouth.closedLine) return when {
@@ -636,26 +573,7 @@ internal object WorkspacePresetInitialization {
         }
         if (singleEye) return emptyMap()
         if (analysis.layers.any { it.semantic.tag == SemanticTag.MOUTH_CLOSE }) return emptyMap()
-        if (sharedBrow) return buildMap {
-            if (RigModules.MOUTH_FITTED.id !in types) return@buildMap
-            put(RigModules.MOUTH_FITTED.id, MouthFittedV6Algorithm.VERSION)
-            if (RigModules.MOUTH_OUTLINE.id !in types) return@buildMap
-            put(RigModules.MOUTH_OUTLINE.id, MouthOutlineV8Algorithm.VERSION)
-            if (RigModules.MOUTH_VOWEL.id !in types) return@buildMap
-            put(RigModules.MOUTH_VOWEL.id, MouthVowelV7Algorithm.VERSION)
-            if (RigModules.MOUTH_CAPTURE.id !in types) return@buildMap
-            put(RigModules.MOUTH_CAPTURE.id, MouthCaptureV6Algorithm.VERSION)
-            val tongue = RigModules.MOUTH_TONGUE.id in types
-            val depth = RigModules.MOUTH_DEPTH.id in types
-            if (tongue) put(RigModules.MOUTH_TONGUE.id, MouthTongueV6Algorithm.VERSION)
-            if (RigModules.MOUTH_JAW.id !in types) return@buildMap
-            put(RigModules.MOUTH_JAW.id, if (tongue) MouthJawV9Algorithm.VERSION else MouthJawV8Algorithm.VERSION)
-            if (RigModules.MOUTH_CHEEK_LID.id !in types) return@buildMap
-            put(RigModules.MOUTH_CHEEK_LID.id, if (tongue) MouthCheekLidV9Algorithm.VERSION else MouthCheekLidV8Algorithm.VERSION)
-            if (depth) put(RigModules.MOUTH_DEPTH.id, if (tongue) MouthDepthV7Algorithm.VERSION else MouthDepthV6Algorithm.VERSION)
-            if (RigModules.MOUTH_SPRING.id in types && (!tongue || depth))
-                put(RigModules.MOUTH_SPRING.id, if (tongue) MouthSpringV10Algorithm.VERSION else MouthSpringV9Algorithm.VERSION)
-        }
+        if (sharedBrow) return WorkspaceMouthProfiles.preset(WorkspaceMouthProfiles.Source.SHARED, types)
         val withInterior = RigModules.MOUTH_TONGUE.id in types || RigModules.MOUTH_DEPTH.id in types
         return mapOf(
             RigModules.MOUTH_FITTED.id to MouthFittedV3Algorithm.VERSION,
