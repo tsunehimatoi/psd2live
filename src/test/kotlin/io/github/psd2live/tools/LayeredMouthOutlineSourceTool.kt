@@ -37,7 +37,8 @@ class LayeredMouthOutlineSourceTool {
         val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
         val config = PipelineConfig(meshSpacing = 40, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val document = layeredMouthDocument(source, config)
-        val versions = mapOf("mouth/fitted" to 8, "mouth.outline" to 11, "mouth.vowel" to 8, "mouth.capture" to 7, "mouth.jaw" to 10)
+        val versions = mapOf("mouth/fitted" to 8, "mouth.outline" to 11, "mouth.vowel" to 8, "mouth.capture" to 7,
+            "mouth.jaw" to 10, "mouth.cheek-lid" to 10, "mouth.spring" to 11, "body.bust" to 3)
         RigBuildProfile.reset()
         val recording = RigBuildProfile.recording
         val (planned, recommended) = try {
