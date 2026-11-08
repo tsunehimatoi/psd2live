@@ -17,7 +17,15 @@ class CreatureDsTool {
     @Test fun compareWorkspaceAnimalEarAndWing(): Unit = runBlocking { compareCreature(4, SemanticTag.HEADWEAR, SemanticTag.WINGS) }
     @Test fun compareWorkspaceWing(): Unit = runBlocking { compareCreature(2, SemanticTag.WINGS) }
 
-    private suspend fun compareCreature(version: Int, vararg extras: SemanticTag) {
+    @Test fun compareWorkspaceAnimalEarWithoutTail(): Unit = runBlocking {
+        compareCreature(4, SemanticTag.HEADWEAR, includeTail = false)
+    }
+
+    @Test fun compareWorkspaceWingWithoutTail(): Unit = runBlocking {
+        compareCreature(2, SemanticTag.WINGS, includeTail = false)
+    }
+
+    private suspend fun compareCreature(version: Int, vararg extras: SemanticTag, includeTail: Boolean = true) {
         requireTools()
         val config = PipelineConfig(meshSpacing = 40)
         val artwork = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
@@ -30,9 +38,8 @@ class CreatureDsTool {
                 ChannelMask.ALL, raster, null, null, false)
         }
         val source = if (fixtures.isEmpty()) artwork else object : SourceArt by artwork {
-            override val layers = (fixtures.values + artwork.layers).mapIndexed { index, layer ->
-                WorkspaceSourceLayer.copyOf(layer, index)
-            }
+            override val layers = (fixtures.values + artwork.layers.filter { includeTail || it.name != "tail" })
+                .mapIndexed { index, layer -> WorkspaceSourceLayer.copyOf(layer, index) }
         }
         val overrides = fixtures.entries.associate { (tag, fixture) ->
             fixture.id.raw to LayerClassificationOverride(LayerType.PRESET, tag, Side.NONE,
@@ -67,7 +74,9 @@ class CreatureDsTool {
         val prior = before.meshes.associateBy { it.id }
         val changed = after.meshes.filter { it != prior[it.id] }
         val sourceView = RigModifierSource.of(historical)
-        val expected = setOf("ArtMeshTail") + fixtures.values.map { fixture ->
+        val tail = setOf("ArtMeshTail").takeIf { includeTail }.orEmpty()
+        assertEquals(includeTail, before.meshes.any { it.id == "ArtMeshTail" })
+        val expected = tail + fixtures.values.map { fixture ->
             sourceView.layersByMesh.entries.single { it.value == fixture.id.raw }.key
         }
         assertEquals(expected, changed.mapTo(hashSetOf()) { it.id })
