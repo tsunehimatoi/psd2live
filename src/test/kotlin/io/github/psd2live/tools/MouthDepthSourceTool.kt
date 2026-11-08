@@ -19,7 +19,11 @@ class MouthDepthSourceTool {
 
     @Test fun compareDsWorkspaceTongueDepth(): Unit = runBlocking { compareDepth(tongue = true) }
 
-    private suspend fun compareDepth(tongue: Boolean) {
+    @Test fun compareDsWorkspaceSharedTongueDepth(): Unit = runBlocking {
+        compareDepth(tongue = true, sharedTongue = true)
+    }
+
+    private suspend fun compareDepth(tongue: Boolean, sharedTongue: Boolean = false) {
         requireTools()
         val artwork = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
         val config = PipelineConfig(meshSpacing = 40, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
@@ -28,8 +32,11 @@ class MouthDepthSourceTool {
             "eye.smile" to 4, "eye.wide" to 4, "eye.gaze-lid" to 4, "eye.emotion" to 4, "eye.aftershock" to 5,
             "eye.squash" to 5, "brow.shape" to 5, "brow.lid-coupling" to 7, "brow.blink" to 5, "brow.spring" to 6,
             "mouth.outline" to 8,
-            "mouth.vowel" to 7, "mouth.capture" to 6, "mouth.jaw" to (if (tongue) 1 else 8), "mouth.cheek-lid" to (if (tongue) 1 else 8),
-            "mouth.interior-depth" to 1, "mouth.spring" to 1) + if (tongue) mapOf("mouth.tongue" to 1) else emptyMap()
+            "mouth.vowel" to 7, "mouth.capture" to 6,
+            "mouth.jaw" to (if (sharedTongue) 9 else if (tongue) 1 else 8),
+            "mouth.cheek-lid" to (if (sharedTongue) 9 else if (tongue) 1 else 8),
+            "mouth.interior-depth" to 1, "mouth.spring" to 1) +
+            if (tongue) mapOf("mouth.tongue" to if (sharedTongue) 6 else 1) else emptyMap()
         val (planned, reference) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
             WorkspaceInitialPreset(clothing = false), requestedVersions = versions)
         val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
@@ -37,6 +44,15 @@ class MouthDepthSourceTool {
         val depth = stack.instances.single { it.type == "mouth.interior-depth" }
         val index = stack.index(depth.id)
         val expected = assertNotNull(reference.modifierEvaluation).outputs
+        if (sharedTongue) {
+            var previous = 0
+            for (type in listOf("mouth.tongue", "mouth.jaw", "mouth.cheek-lid")) {
+                val stage = stack.index(stack.instances.single { it.type == type }.id)
+                assertTrue(stage in (previous + 1) until index, type)
+                assertNotEquals(expected[stage - 1], expected[stage], "$type must contribute motion")
+                previous = stage
+            }
+        }
         val old = expected[index - 1].meshes.associateBy { it.id }
         val changes = expected[index].meshes.filter { it != old[it.id] }
         assertEquals(if (tongue) setOf("ArtMeshToothT", "ArtMeshTongue") else setOf("ArtMeshToothT"),
@@ -51,29 +67,34 @@ class MouthDepthSourceTool {
             })
             return planned.copy(rigEdits = planned.rigEdits.copy(modifierStack = modified.toJson()))
         }
-        for (version in listOf(3, 5)) {
+        for (version in if (sharedTongue) emptyList() else listOf(3, 5)) {
             val rejected = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(candidate(depth.type to version)) }
             assertContains(rejected.message.orEmpty(), "requires a compatible fitted mouth")
         }
-        if (tongue) {
+        if (sharedTongue) {
+            val rejected = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(candidate(depth.type to 6)) }
+            assertContains(rejected.message.orEmpty(), "requires its captured mouth.jaw provider")
+        } else if (tongue) {
             val rejected = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(candidate("mouth.jaw" to 8)) }
             assertContains(rejected.message.orEmpty(), "requires the shared open-mouth outline, vowel and capture chain")
         } else {
             val rejected = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(candidate("mouth.spring" to 9)) }
             assertContains(rejected.message.orEmpty(), "requires the shared open-mouth source chain")
         }
+        val version = if (sharedTongue) 7 else 6
         RigBuildProfile.reset()
         val recording = RigBuildProfile.recording
         val preview = try {
             RigBuildProfile.recording = true
-            WorkspacePreviewBuilder().build(if (tongue) candidate(depth.type to 6)
-                else candidate(depth.type to 6, "mouth.spring" to 9))
+            WorkspacePreviewBuilder().build(if (tongue) candidate(depth.type to version)
+                else candidate(depth.type to version, "mouth.spring" to 9))
         } finally {
             RigBuildProfile.recording = recording
         }
         assertTrue(RigBuildProfile.snapshot().keys.none { it.startsWith("modifier template consumer: mouth.interior-depth ->") })
         if (!tongue) assertTrue(RigBuildProfile.snapshot().keys.none { it.startsWith("modifier template consumer: mouth.spring ->") })
         val actual = assertNotNull(preview.modifierEvaluation)
+        assertEquals(version, actual.entries[index].instance.version)
         for (entry in actual.entries.filter { it.instance.type in versions }) {
             assertEquals(ModifierStatus.ACTIVE, entry.status, entry.instance.type)
         }
@@ -88,7 +109,7 @@ class MouthDepthSourceTool {
         for (stage in stack.instances.indices) equal(expected[stage], actual.outputs[stage], stack.instances[stage].type)
         equal(RigIrCompiler.compile(reference, tileArt = true), RigIrCompiler.compile(preview, tileArt = true), "compiled IR")
 
-        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(depth.type, 6))
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(depth.type, version))
         val root = Files.createTempDirectory("mouth-depth-source-")
         val preferences = Preferences.userRoot().node("mouth-depth-source/" + UUID.randomUUID())
         val store = ModifierPluginStore(root.resolve("installed"), preferences)
@@ -96,7 +117,7 @@ class MouthDepthSourceTool {
             BundledAlgorithmArtifacts.retain(store, listOf(artifact))
             val worker = store.snapshot().single()
             val instance = actual.entries[index].instance
-            val definition = RigMouthDepthModifier.sharedFrameDefinition(RigModifierSource.of(preview))
+            val definition = RigMouthDepthModifier.sharedFrameDefinition(RigModifierSource.of(preview), withSharedTongue = sharedTongue)
             val context = definition.authorContext(instance).withUpstream(actual.entries.take(index)
                 .filter { it.status == ModifierStatus.ACTIVE && it.instance.type in definition.requires + definition.optionalUpstream }
                 .map { entry -> entry.instance.let {
@@ -107,7 +128,9 @@ class MouthDepthSourceTool {
             for (type in types) {
                 val provider = context.upstream.single { it.type == type }
                 assertEquals(versions.getValue(type), provider.version)
-                assertEquals(stack.instances.single { it.type == type }.plugin, provider.plugin)
+                val referencePlugin = stack.instances.single { it.type == type }.plugin
+                if (sharedTongue) assertNotNull(referencePlugin, type)
+                assertEquals(referencePlugin, provider.plugin)
             }
             equal(expected[index], ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(),
                 actual.outputs[index - 1], instance, {}, store, context = context), "installed depth JVM")

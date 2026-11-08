@@ -5,6 +5,7 @@ import io.github.psd2live.algorithms.binding.MouthDepthV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV6Algorithm
+import io.github.psd2live.algorithms.binding.MouthDepthV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthRig.Follow
 import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.RigModules
@@ -49,15 +50,17 @@ internal object RigMouthDepthModifier {
     fun closedShellDefinition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthDepthV5Algorithm.VERSION, closedShellAlgorithm)
 
-    fun sharedFrameDefinition(source: RigModifierSource?): RigModifierDefinition {
-        val projected = object : ChangingModifierAlgorithmPlugin by MouthDepthV6Algorithm,
+    fun sharedFrameDefinition(source: RigModifierSource?, withSharedTongue: Boolean = false): RigModifierDefinition {
+        val algorithm = if (withSharedTongue) MouthDepthV7Algorithm else MouthDepthV6Algorithm
+        val version = if (withSharedTongue) MouthDepthV7Algorithm.VERSION else MouthDepthV6Algorithm.VERSION
+        val projected = object : ChangingModifierAlgorithmPlugin by algorithm,
             ModifierOptionalUpstream, ModifierVersionSelection {
             override val canonicalOptInType = MouthDepthAlgorithm.TYPE
             override val optionalUpstream = RigLegacyBindings.specs.filter { !it.expressionToggles && !it.seeThrough }
                 .mapTo(linkedSetOf()) { it.type } - setOf(MouthDepthAlgorithm.TYPE, "mouth/fitted")
         }
-        return fittedDefinition(source).copy(version = MouthDepthV6Algorithm.VERSION, plugin = projected,
-            changeWrites = MouthDepthV6Algorithm.WRITES,
+        return fittedDefinition(source).copy(version = version, plugin = projected,
+            changeWrites = if (withSharedTongue) MouthDepthV7Algorithm.WRITES else MouthDepthV6Algorithm.WRITES,
             authorContext = { requireNotNull(source).captureSharedFrames(it) })
     }
 
@@ -65,11 +68,11 @@ internal object RigMouthDepthModifier {
         val scaffold = provider(instance)
         val prefix = bindingPredecessors(instance, scaffold)
         require(prefix.any { it.id == instance.config.getValue("base").jsonPrimitive.content &&
-            it.type == "mouth/fitted" && it.version == 6 }) { "Mouth interior depth v6 requires a shared fitted mouth v6" }
+            it.type == "mouth/fitted" && it.version == 6 }) { "Mouth interior depth v${instance.version} requires a shared fitted mouth v6" }
         val providers = setOf("mouth.outline", "mouth.vowel", "mouth.capture", "mouth.jaw", "mouth.cheek-lid") +
             prefix.filter { it.type == "mouth.tongue" }.map { it.type }
         require(prefix.none { it.type.startsWith("mouth.") && it.type !in providers }) {
-            "Mouth interior depth v6 requires the shared open-mouth source chain"
+            "Mouth interior depth v${instance.version} requires the shared open-mouth source chain"
         }
         val interior = setOf(SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE, SemanticTag.MOUTH_OPEN)
         return captureBindingTransition(instance, scaffold, prefix, CharacterAnalyzer.MOUTH_TAGS + SemanticTag.FACE + SemanticTag.NOSE,
