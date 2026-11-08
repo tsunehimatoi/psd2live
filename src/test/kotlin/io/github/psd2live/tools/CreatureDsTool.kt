@@ -35,6 +35,10 @@ class CreatureDsTool {
 
     @Test fun compareLayeredMouthTail(): Unit = runBlocking { compareCreature(2, layered = true) }
 
+    @Test fun compareLayeredMouthTailWithoutSkirt(): Unit = runBlocking {
+        compareCreature(2, includeSkirt = false, layered = true)
+    }
+
     private suspend fun compareCreature(
         version: Int, vararg extras: SemanticTag, includeTail: Boolean = true, includeSkirt: Boolean = true,
         layered: Boolean = false,
@@ -54,16 +58,14 @@ class CreatureDsTool {
             override val layers = (fixtures.values + artwork.layers.filter { includeTail || it.name != "tail" })
                 .mapIndexed { index, layer -> WorkspaceSourceLayer.copyOf(layer, index) }
         }
-        val skirtOverrides = if (includeSkirt) emptyMap() else {
-            val skirts = CharacterAnalyzer.analyze(artwork, config).layers.filter {
-                it.opaquePixels > 0 && it.semantic.role == PartRole.SKIRT
-            }
-            assertTrue(skirts.isNotEmpty())
-            skirts.associate { layer ->
-                val semantic = layer.semantic
-                layer.source.id.raw to LayerClassificationOverride(semantic.type, semantic.tag, semantic.side,
-                    semantic.parameter, semantic.switchId, PartRole.PLAIN)
-            }
+        val skirts = if (includeSkirt) emptyList() else CharacterAnalyzer.analyze(artwork, config).layers.filter {
+            it.opaquePixels > 0 && it.semantic.role == PartRole.SKIRT
+        }
+        if (!includeSkirt) assertTrue(skirts.isNotEmpty())
+        val skirtOverrides = skirts.associate { layer ->
+            val semantic = layer.semantic
+            layer.source.id.raw to LayerClassificationOverride(semantic.type, semantic.tag, semantic.side,
+                semantic.parameter, semantic.switchId, PartRole.PLAIN)
         }
         val overrides = fixtures.entries.associate { (tag, fixture) ->
             fixture.id.raw to LayerClassificationOverride(LayerType.PRESET, tag, Side.NONE,
@@ -83,6 +85,12 @@ class CreatureDsTool {
 
         assertEquals(includeSkirt, stack.instances.any { it.type == "outfit.skirt" })
         assertEquals(includeSkirt, historical.analysis.layers.any { it.opaquePixels > 0 && it.semantic.role == PartRole.SKIRT })
+        val analyzed = historical.analysis.layers.associateBy { it.source.id }
+        for (originalLayer in skirts) {
+            val retained = assertNotNull(analyzed[originalLayer.source.id])
+            assertNull(retained.semantic.role)
+            assertEquals(originalLayer.opaquePixels, retained.opaquePixels)
+        }
         val historicalEvaluation = assertNotNull(historical.modifierEvaluation)
         for ((type, version) in versions) {
             val provider = historicalEvaluation.entries.single { it.instance.type == type }
@@ -173,7 +181,7 @@ class CreatureDsTool {
                 if (mesh.id == earId) mesh.copy(offsets = earOffsets) else mesh
             }))
         }
-        if (!includeSkirt) {
+        if (!includeSkirt && !layered) {
             val v4 = assertFailsWith<IllegalArgumentException> { WorkspacePreviewBuilder().build(select(4).first) }
             assertContains(v4.message.orEmpty(), "Creature v4 requires outfit.skirt@2")
         }
