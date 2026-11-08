@@ -249,6 +249,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "mouthOutlineV7Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthOutlineV8Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthOutlineV9Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "mouthOutlineV10Elements"))
 	testImplementation(kotlin("test"))
 }
 
@@ -404,6 +405,8 @@ tasks.processResources {
     bundledAlgorithm("mouth-outline-v8")
     dependsOn(":algorithms:binding:pluginMouthOutlineV9")
     bundledAlgorithm("mouth-outline-v9")
+    dependsOn(":algorithms:binding:pluginMouthOutlineV10")
+    bundledAlgorithm("mouth-outline-v10")
     dependsOn(":algorithms:binding:pluginMouthOutlineV7")
     bundledAlgorithm("mouth-outline-v7")
     dependsOn(":algorithms:binding:pluginMouthOutlineV2")
