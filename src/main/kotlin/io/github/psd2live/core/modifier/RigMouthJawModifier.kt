@@ -8,6 +8,7 @@ import io.github.psd2live.algorithms.binding.MouthJawV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV8Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV9Algorithm
+import io.github.psd2live.algorithms.binding.MouthJawV10Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldMesh
 import io.github.psd2live.algorithms.binding.ScaffoldMeshContext
 import io.github.psd2live.core.*
@@ -68,9 +69,17 @@ internal object RigMouthJawModifier {
     fun definition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthJawAlgorithm.VERSION, algorithm)
 
-    fun sharedFrameDefinition(source: RigModifierSource?, withTongue: Boolean = false): RigModifierDefinition {
-        val algorithm = if (withTongue) MouthJawV9Algorithm else MouthJawV8Algorithm
-        val version = if (withTongue) MouthJawV9Algorithm.VERSION else MouthJawV8Algorithm.VERSION
+    fun sharedFrameDefinition(source: RigModifierSource?, withTongue: Boolean = false, layered: Boolean = false): RigModifierDefinition {
+        val algorithm = when {
+            layered -> MouthJawV10Algorithm
+            withTongue -> MouthJawV9Algorithm
+            else -> MouthJawV8Algorithm
+        }
+        val version = when {
+            layered -> MouthJawV10Algorithm.VERSION
+            withTongue -> MouthJawV9Algorithm.VERSION
+            else -> MouthJawV8Algorithm.VERSION
+        }
         val projected = object : ChangingModifierAlgorithmPlugin by algorithm,
             ModifierOptionalUpstream, ModifierVersionSelection {
             override val canonicalOptInType = MouthJawAlgorithm.TYPE
@@ -78,15 +87,16 @@ internal object RigMouthJawModifier {
                 .mapTo(linkedSetOf()) { it.type } - setOf(MouthJawAlgorithm.TYPE, "mouth/fitted")
         }
         return modernDefinition(source).copy(version = version, plugin = projected,
-            authorContext = { requireNotNull(source).captureSharedFrames(it, withTongue) })
+            authorContext = { requireNotNull(source).captureSharedFrames(it, withTongue, layered) })
     }
 
-    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance, withTongue: Boolean): ModifierAlgorithmContext {
+    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance, withTongue: Boolean, layered: Boolean): ModifierAlgorithmContext {
         val scaffold = provider(instance)
         val version = instance.version
         val prefix = bindingPredecessors(instance, scaffold)
+        val fittedVersion = if (layered) 8 else 6
         require(prefix.any { it.id == instance.config.getValue("base").jsonPrimitive.content &&
-            it.type == "mouth/fitted" && it.version == 6 }) { "Mouth jaw v$version requires a shared fitted mouth v6" }
+            it.type == "mouth/fitted" && it.version == fittedVersion }) { "Mouth jaw v$version requires a shared fitted mouth v$fittedVersion" }
         val baseProviders = setOf("mouth.outline", "mouth.vowel", "mouth.capture")
         val providers = if (withTongue) baseProviders + "mouth.tongue" else baseProviders
         require(prefix.none { it.type.startsWith("mouth.") && it.type !in providers }) {
@@ -94,8 +104,9 @@ internal object RigMouthJawModifier {
             else "Mouth jaw v$version requires the shared open-mouth outline, vowel and capture chain"
         }
         val face = setOf(SemanticTag.FACE, SemanticTag.NOSE, SemanticTag.FACE_DETAIL)
-        return captureBindingTransition(instance, scaffold, prefix, face + CharacterAnalyzer.MOUTH_TAGS,
-            projectedTags = face, values = buildJsonObject {
+        val captured = face + CharacterAnalyzer.MOUTH_TAGS
+        return captureBindingTransition(instance, scaffold, prefix, captured,
+            projectedTags = if (layered) captured else face, values = buildJsonObject {
                 putJsonObject("providers") {
                     providers.forEach { type -> put(type, prefix.single { it.type == type }.id) }
                 }
