@@ -12,6 +12,7 @@ import io.github.psd2live.application.WorkspacePresetInitialization
 import io.github.psd2live.application.WorkspaceRasterWork
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
+import io.github.psd2live.core.recipe.RigRecipe
 import io.github.psd2live.format.model.Mesh as RigIRMesh
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.history.WorkspaceHistoryTree
@@ -138,6 +139,33 @@ class CliPresetMigrationTool {
         } finally {
             ModifierPluginStore.deleteTree(target)
         }
+    }
+
+    @Test fun compareLegacyHairRawExport() {
+        requireTools()
+        val pipeline = PSD2LivePipeline().apply { deferRuntimeBundles = true }
+        val config = PipelineConfig(meshSpacing = 64, recipe = RigRecipe.Legacy)
+        val sample = Sample.fromEnvironment()
+        val source = pipeline.readPsd(sample.path)
+        val native = RigIrCompiler.compile(pipeline.buildPreview(source, config), tileArt = true)
+        RigBuildProfile.reset()
+        val recording = RigBuildProfile.recording
+        val preview = try {
+            RigBuildProfile.recording = true
+            pipeline.buildSourceExport(source, config)
+        } finally {
+            RigBuildProfile.recording = recording
+        }
+        val stack = RigModifierStack.fromJson(assertNotNull(preview.config.rigEdits.modifierStack))
+        val hair = stack.instances.single { it.type == "hair/legacy" }
+        assertEquals(2, hair.version)
+        assertEquals(BuiltinModifierPlugins.reference(hair.type, hair.version), hair.plugin)
+        assertTrue(hair.type !in legacyTemplateConsumers())
+        val actual = RigIrCompiler.compile(preview, tileArt = true)
+        assertTrue(actual.parameters.any { it.id in setOf("ParamHairFront", "ParamHairBack") })
+        val report = buildString { compare("legacy hair export layout", native, actual) }
+        output("cli-preset-migration").resolve("legacy-hair-raw.txt").writeText(report)
+        assertTrue(native == actual, report)
     }
 
     @Test fun compareRawPreset() = compareRawPreset(meshOnly = false, generateDeformers = true)
