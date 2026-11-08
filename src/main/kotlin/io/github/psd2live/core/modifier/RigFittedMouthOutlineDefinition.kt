@@ -10,6 +10,7 @@ import io.github.psd2live.algorithms.binding.MouthOutlineV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV8Algorithm
+import io.github.psd2live.algorithms.binding.MouthOutlineV9Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
 import io.github.psd2live.algorithms.binding.ScaffoldFramesContext
 import io.github.psd2live.algorithms.binding.ScaffoldMesh
@@ -76,30 +77,39 @@ internal object RigFittedMouthOutlineDefinition {
             authorContext = { requireNotNull(source).capture(it, orderedHair = true) })
     }
 
-    fun sharedFrameDefinition(source: RigModifierSource?): RigModifierDefinition {
-        val projected = object : ChangingModifierAlgorithmPlugin by MouthOutlineV8Algorithm,
+    fun sharedFrameDefinition(source: RigModifierSource?, layered: Boolean = false): RigModifierDefinition {
+        val algorithm = if (layered) MouthOutlineV9Algorithm else MouthOutlineV8Algorithm
+        val version = if (layered) MouthOutlineV9Algorithm.VERSION else MouthOutlineV8Algorithm.VERSION
+        val projected = object : ChangingModifierAlgorithmPlugin by algorithm,
             ModifierOptionalUpstream, ModifierVersionSelection {
             override val canonicalOptInType = TYPE
             override val optionalUpstream = RigLegacyBindings.specs.filter { !it.expressionToggles && !it.seeThrough }
                 .mapTo(linkedSetOf()) { it.type } - setOf(TYPE, "mouth/fitted")
         }
-        return definition(source).copy(version = MouthOutlineV8Algorithm.VERSION, plugin = projected,
-            changeWrites = MouthOutlineV8Algorithm.WRITES,
-            authorContext = { requireNotNull(source).captureSharedFrames(it) })
+        return definition(source).copy(version = version, plugin = projected,
+            changeWrites = if (layered) MouthOutlineV9Algorithm.WRITES else MouthOutlineV8Algorithm.WRITES,
+            authorContext = { requireNotNull(source).captureSharedFrames(it, layered) })
     }
 
-    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance): ModifierAlgorithmContext {
+    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance, layered: Boolean): ModifierAlgorithmContext {
         val scaffold = provider(instance)
         val prefix = bindingPredecessors(instance, scaffold)
-        val mouth = prefix.single { it.type == "mouth/fitted" && it.version == 6 }
+        val mouthVersion = if (layered) 1 else 6
+        val mouth = prefix.single { it.type == "mouth/fitted" && it.version == mouthVersion }
         val (before, old) = RigFittedMouthModuleSource.context(this, scaffold, prefix, null)
         val (nextConfig, _) = RigFittedMouthModuleSource.context(this, scaffold, prefix + instance, null)
         val after = nextConfig.copy(mouthThickness = RigLegacyBindings.values(instance)["thickness"] ?: 1.5f,
             mouthColor = RigLegacyBindings.outlineColor(instance))
         val next = RigBuilder.rigContext(analysis, after, meshCache)
         val fit = requireNotNull(next.fittedMouth(after))
-        require(fit.source != null && !fit.closedLine && !fit.layered && next.faceTurn(after) != null) {
-            "Mouth outline v8 requires an open source drawing and fitted head frames"
+        if (layered) {
+            require(fit.source != null && !fit.closedLine && fit.layered && fit.rig?.fit?.layered != null && next.faceTurn(after) != null) {
+                "Mouth outline v9 requires an open layered source drawing and fitted head frames"
+            }
+        } else {
+            require(fit.source != null && !fit.closedLine && !fit.layered && next.faceTurn(after) != null) {
+                "Mouth outline v8 requires an open source drawing and fitted head frames"
+            }
         }
         fun headLayers(context: RigBuilder.RigContext, settings: PipelineConfig): Map<String, ClassifiedLayer> {
             val parents = context.deformers.associate { it.id to it.parent }
@@ -128,6 +138,10 @@ internal object RigFittedMouthOutlineDefinition {
             chains = beforeChains, parameterAliases = aliases)
         val newResource = outlineShellSource(next, after, desired, axes, includeFaceLean = true,
             chains = afterChains, parameterAliases = aliases)
+        if (layered) return ModifierAlgorithmContext(buildJsonObject {
+            put("mouth", mouth.id)
+            put("hair", JsonObject(hair.mapValues { JsonPrimitive(it.value) }))
+        }, mapOf("before" to oldResource, "after" to newResource))
         val source = PuppetIr.toPuppet(RigIrBinary.decode(newResource.read()))
         val projectedOwners = source.drawables.associateBy { it.id.raw }
         val prepared = MouthLipLayers.prepare(analysis, after, meshCache)
