@@ -24,6 +24,58 @@ import java.util.prefs.Preferences
 import kotlin.test.*
 
 class SingleEyeOpenMouthSourceTool {
+    @Test fun compareTongue(): Unit = runBlocking {
+        requireTools()
+        val config = PipelineConfig(meshSpacing = 40)
+        val original = singleEyeOpenDocument(Sample.fromEnvironment())
+        val analysis = RigGenerationSource.analyze(original.source, config)
+        val document = if (analysis.layers.any { it.semantic.tag == SemanticTag.TONGUE && it.source.visible && it.opaquePixels > 0 }) {
+            original
+        } else {
+            val mouth = analysis.layers.filter { it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) &&
+                it.semantic.role == null && it.source.visible && !it.source.clipped }.maxBy { it.opaquePixels }
+            val owner = mouth.source
+            val bounds = owner.bounds
+            val width = (bounds.width / 3).coerceAtLeast(5)
+            val height = (bounds.height / 5).coerceAtLeast(4)
+            val tongueBounds = LayerBounds(bounds.left + (bounds.width - width) / 2, bounds.top + bounds.height / 2, width, height)
+            val id = LayerId("single-eye-source-tongue")
+            val color = byteArrayOf(182.toByte(), 78, 93, -1)
+            val raster = LayerRaster(width, height, ByteArray(width * height * 4) { color[it % 4] })
+            val tongue = WorkspaceSourceLayer(id, id.raw, owner.groupPath, SourceLayerKind.Raster, true, owner.order,
+                tongueBounds, 1f, true, LayerBlend.Normal, ChannelMask.ALL, raster, null, null, false)
+            val source = object : SourceArt by original.source {
+                override val layers = original.source.layers.flatMap { layer ->
+                    if (layer.id == owner.id) listOf(tongue, layer) else listOf(layer)
+                }.mapIndexed { index, layer -> WorkspaceSourceLayer.copyOf(layer, index) }
+            }
+            val classification = LayerClassificationOverride(LayerType.PRESET, SemanticTag.TONGUE, mouth.semantic.side)
+            println("Added a visible clipped tongue to ${owner.name}")
+            original.copy(source = source, layerOverrides = original.layerOverrides + (id.raw to classification))
+        }
+        val preceding = mapOf("eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3, "eye.emotion" to 3,
+            "eye.aftershock" to 4, "eye.squash" to 4, "brow.shape" to 4, "brow.lid-coupling" to 6,
+            "brow.blink" to 4, "brow.spring" to 5, "mouth.vowel" to 9, "mouth.capture" to 8)
+        val control = "ParamTongueOut"
+        compareShapeModule("mouth.tongue", 8, preceding, setOf(control), emptySet(),
+            RigMouthTongueModifier::fallbackFrameDefinition, document = document) { before, after ->
+            val tongue = after.meshes.single { it.id == "ArtMeshTongue" }
+            val previous = before.meshes.single { it.id == tongue.id }
+            assertTrue(tongue.visible && tongue.opacity > 0f)
+            assertTrue(tongue.maskedBy.any { id -> after.meshes.any { it.id == id && id.startsWith("ArtMeshMouth") } },
+                "Tongue needs the live mouth opening mask: ${tongue.maskedBy}")
+            val local = tongue.shapes.any { binding -> binding.parameter == control &&
+                binding.shapes.any { it?.deltas?.toArray()?.any { delta -> delta != 0f } == true } } ||
+                tongue.offsets?.let { grid -> grid.axes.any { it.parameter == control } &&
+                    grid.cells.map { it.form }.distinct().size > 1 } == true
+            val parent = after.deformers.singleOrNull { it.id == tongue.parent } as? Deformer.Warp
+            val inherited = parent?.lattice?.let { grid -> grid.axes.any { it.parameter == control } &&
+                grid.cells.map { it.form }.distinct().size > 1 } == true
+            assertTrue(tongue != previous && (local || inherited), "TongueOut must change the tongue shape")
+            println("Tongue mesh: ${tongue.id}; mask: ${tongue.maskedBy}; parent: ${tongue.parent}")
+        }
+    }
+
     @Test fun compareEyeHighlight(): Unit = runBlocking {
         requireTools()
         val (document, glintLayers) = withLeftHighlight(singleEyeOpenDocument(Sample.fromEnvironment()))
