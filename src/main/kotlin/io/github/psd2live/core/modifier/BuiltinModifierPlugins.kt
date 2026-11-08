@@ -152,6 +152,7 @@ internal object BuiltinModifierPlugins {
         RigMouthDepthModifier.sharedFrameDefinition(source, layered = true, withTeethOnly = true),
         RigMouthDepthModifier.fallbackTongueFrameDefinition(source),
         RigMouthDepthModifier.fallbackFrameDefinition(source),
+        RigMouthDepthModifier.fallbackMeasurementDefinition(source),
         RigBrowShapeModifier.definition(source),
         RigBrowShapeModifier.fittedDefinition(source),
         RigBrowShapeModifier.fallbackDefinition(source),

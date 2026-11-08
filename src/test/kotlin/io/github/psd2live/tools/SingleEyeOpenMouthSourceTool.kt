@@ -295,7 +295,23 @@ class SingleEyeOpenMouthSourceTool {
         val stage = stack.index(depth.id)
         val before = evaluated.outputs[stage - 1]
         val after = evaluated.outputs[stage]
-        val tooth = after.meshes.single { baseline.rig.layerIdByDrawableId[it.id] == "single-eye-source-tooth_t" }
+        baseline.verifyToothDepth(before, after)
+        compareShapeModule(type, 11, chain - type, emptySet(), emptySet(),
+            RigMouthDepthModifier::fallbackFrameDefinition, document = document)
+    }
+
+    @Test fun compareMeasuredDepthWithTeeth(): Unit = runBlocking {
+        requireTools()
+        val document = withInterior(singleEyeOpenDocument(Sample.fromEnvironment()), SemanticTag.TOOTH_T)
+        val chain = mapOf("mouth.vowel" to 9, "mouth.capture" to 8, "mouth.jaw" to 11, "mouth.cheek-lid" to 11)
+        compareShapeModule("mouth.interior-depth", 12, chain, emptySet(), emptySet(),
+            RigMouthDepthModifier::fallbackMeasurementDefinition, document = document) { before, after ->
+            verifyToothDepth(before, after)
+        }
+    }
+
+    private fun RigPreviewModel.verifyToothDepth(before: RigIR, after: RigIR) {
+        val tooth = after.meshes.single { rig.layerIdByDrawableId[it.id] == "single-eye-source-tooth_t" }
         val old = before.meshes.single { it.id == tooth.id }
         assertTrue(tooth.visible && tooth.opacity > 0f)
         assertEquals(listOf("ArtMeshMouth"), tooth.maskedBy)
@@ -318,8 +334,6 @@ class SingleEyeOpenMouthSourceTool {
                 lattice.cells.map { it.form }.distinct().size > 1
         }
         assertTrue(local || inherited, "The tooth must gain head-angle depth")
-        compareShapeModule(type, 11, chain - type, emptySet(), emptySet(),
-            RigMouthDepthModifier::fallbackFrameDefinition, document = document)
     }
 
     @Test fun compareDepthWithTongue(): Unit = runBlocking {

@@ -10,9 +10,11 @@ import io.github.psd2live.algorithms.binding.MouthDepthV8Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV9Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV10Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV11Algorithm
+import io.github.psd2live.algorithms.binding.MouthDepthV12Algorithm
 import io.github.psd2live.algorithms.binding.MouthRig.Follow
 import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.RigModules
+import io.github.psd2live.i18n.tr
 import kotlinx.serialization.json.*
 
 internal object RigMouthDepthModifier {
@@ -57,6 +59,9 @@ internal object RigMouthDepthModifier {
     fun fallbackFrameDefinition(source: RigModifierSource?): RigModifierDefinition =
         sourceFrameDefinition(source, MouthDepthV11Algorithm.VERSION, MouthDepthV11Algorithm, layered = false)
 
+    fun fallbackMeasurementDefinition(source: RigModifierSource?): RigModifierDefinition =
+        sourceFrameDefinition(source, MouthDepthV12Algorithm.VERSION, MouthDepthV12Algorithm, layered = false)
+
     fun fallbackTongueFrameDefinition(source: RigModifierSource?): RigModifierDefinition =
         sourceFrameDefinition(source, MouthDepthV10Algorithm.VERSION, MouthDepthV10Algorithm, layered = false)
 
@@ -90,10 +95,53 @@ internal object RigMouthDepthModifier {
                 MouthDepthV9Algorithm.VERSION -> MouthDepthV9Algorithm.WRITES
                 MouthDepthV10Algorithm.VERSION -> MouthDepthV10Algorithm.WRITES
                 MouthDepthV11Algorithm.VERSION -> MouthDepthV11Algorithm.WRITES
+                MouthDepthV12Algorithm.VERSION -> MouthDepthV12Algorithm.WRITES
                 MouthDepthV8Algorithm.VERSION -> MouthDepthV8Algorithm.WRITES
                 MouthDepthV7Algorithm.VERSION -> MouthDepthV7Algorithm.WRITES
                 else -> MouthDepthV6Algorithm.WRITES
-            }, authorContext = { requireNotNull(source).captureSharedFrames(it, layered) })
+            }, authorContext = { instance ->
+                val owner = requireNotNull(source)
+                if (version == MouthDepthV12Algorithm.VERSION) owner.captureFallbackMeasurements(instance)
+                else owner.captureSharedFrames(instance, layered)
+            })
+    }
+
+    private fun RigModifierSource.captureFallbackMeasurements(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val scaffold = provider(instance)
+        val prefix = bindingPredecessors(instance, scaffold)
+        val providers = setOf("mouth.outline", "mouth.vowel", "mouth.capture", "mouth.jaw", "mouth.cheek-lid")
+        require(prefix.none { it.type.startsWith("mouth.") && it.type !in providers })
+        val (native, context) = RigFittedMouthModuleSource.context(this, scaffold, prefix, null)
+        val fitted = requireNotNull(context.fittedMouth(native))
+        require(!fitted.closedLine && !fitted.layered)
+        val interior = setOf(SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.MOUTH_OPEN)
+        val shell = bindingSourceLayers(instance, context) {
+            it.semantic.tag in CharacterAnalyzer.MOUTH_TAGS || it.semantic.tag in setOf(SemanticTag.FACE, SemanticTag.NOSE)
+        }
+        val projected = shell.filterValues { it.semantic.tag in interior }
+        require(projected.isNotEmpty())
+        val measurement = RigFittedMouthModuleSource.measure(this, native, context, prefix, projected)
+        val axes = prefix.flatMapTo(linkedSetOf()) { RigLegacyBindings.spec(it.type).parameters }
+        return ModifierAlgorithmContext(buildJsonObject {
+            put("measurement", measurement.values)
+            put("drawnMouth", fitted.result.layers.any { it.semantic.tag == SemanticTag.MOUTH })
+            put("axes", JsonArray(axes.map { JsonPrimitive(it.raw) }))
+            put("shapeCarrier", tr("model.deformer.meshShape", "{meshName}"))
+            put("turnCarrier", tr("model.deformer.meshTurn", "{meshName}"))
+            putJsonObject("follows") {
+                projected.forEach { (id, layer) ->
+                    val measured = context.rigLayer(layer)
+                    if (fitted.covers(measured)) putJsonObject(id) {
+                        put("frame", fitted.follow(measured).name)
+                        put("art", fitted.follow(layer).name)
+                    }
+                }
+            }
+            putJsonObject("providers") {
+                providers.forEach { type -> put(type, prefix.single { it.type == type }.id) }
+            }
+        }, measurement.resources + ("shell" to outlineShellSource(context, native, shell, axes,
+            includeFaceLean = true, lowerShapes = false)))
     }
 
     private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance, layered: Boolean): ModifierAlgorithmContext {
