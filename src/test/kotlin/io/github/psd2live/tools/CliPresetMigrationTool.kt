@@ -91,6 +91,55 @@ class CliPresetMigrationTool {
         }
     }
 
+    @Test fun compareLayeredTongueRawExport() {
+        requireTools()
+        val pipeline = PSD2LivePipeline().apply { deferRuntimeBundles = true }
+        val config = PipelineConfig(meshSpacing = 64, exportMoc3 = false)
+        val fixture = layeredMouthDocument(pipeline.readPsd(Sample.fromEnvironment().path), config, withTongue = true)
+        val raw = config.copy(layerOverrides = fixture.layerOverrides)
+        val native = pipeline.buildPreview(fixture.source, raw)
+        val target = Files.createTempDirectory("layered-tongue-raw-export-")
+        try {
+            val preview = pipeline.run(fixture.source, "layered-tongue.psd", target, raw).previewModel
+            val expected = RigIrCompiler.compile(native, tileArt = true)
+            val actual = RigIrCompiler.compile(preview, tileArt = true)
+            val stack = RigModifierStack.fromJson(assertNotNull(preview.config.rigEdits.modifierStack))
+            val versions = mapOf("mouth/fitted" to 8, "mouth.outline" to 11, "mouth.vowel" to 8, "mouth.capture" to 7,
+                "mouth.tongue" to 7, "mouth.jaw" to 12, "mouth.cheek-lid" to 12, "mouth.interior-depth" to 8, "mouth.spring" to 13)
+            val selected = stack.instances.filter { it.type in versions }
+            val tongueLayer = "test-layered-tongue"
+            val sourceMesh = expected.meshes.single { it.maskedBy.isNotEmpty() && native.rig.layerIdByDrawableId[it.id] == tongueLayer }
+            val tongue = actual.meshes.singleOrNull { it.id == sourceMesh.id }
+            val report = buildString {
+                appendLine("Mouth stack: ${selected.associate { it.type to it.version }}")
+                appendLine("Source tongue ${sourceMesh.id} masks=${sourceMesh.maskedBy}; raw masks=${tongue?.maskedBy}")
+                compare("shared export layout", expected, actual)
+            }
+            output("cli-preset-migration").resolve("layered-tongue-v7-raw.txt").writeText(report)
+            assertEquals(versions, selected.associate { it.type to it.version }, report)
+            assertTrue(selected.all(BuiltinModifierPlugins::matches), report)
+            assertEquals(tongueLayer, preview.rig.layerIdByDrawableId[sourceMesh.id], report)
+            assertTrue(sourceMesh.maskedBy.isNotEmpty(), report)
+            assertEquals(sourceMesh, tongue, report)
+            val sourceTip = expected.meshes.single { it.id == "${sourceMesh.id}_Out" }
+            assertTrue(sourceTip.maskedBy.isEmpty(), report)
+            assertEquals(sourceTip, actual.meshes.singleOrNull { it.id == sourceTip.id }, report)
+
+            val source = RigGenerationSource.prepare(RigGenerationSource.analyze(fixture.source, raw), raw)
+            val bindings = CliPresetBindings(source, raw)
+            val edits = raw.rigEdits.copy(modifierStack = RigModifierStack().toJson())
+            val document = fixture.copy(rigEdits = edits, settings = JsonObject(emptyMap()))
+            val (_, evaluated) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
+                WorkspaceInitialPreset(clothing = false), cliBindings = bindings, restoreSourceRotations = true)
+            val active = assertNotNull(evaluated.modifierEvaluation).entries.filter { it.instance.type in versions }
+            assertEquals(selected, active.map { it.instance }, report)
+            assertTrue(active.all { it.status == ModifierStatus.ACTIVE }, report)
+            assertTrue(expected == actual, report)
+        } finally {
+            ModifierPluginStore.deleteTree(target)
+        }
+    }
+
     @Test fun compareRawPreset() = compareRawPreset(meshOnly = false, generateDeformers = true)
 
     @Test fun compareMeshOnly() = compareRawPreset(meshOnly = true, generateDeformers = true)

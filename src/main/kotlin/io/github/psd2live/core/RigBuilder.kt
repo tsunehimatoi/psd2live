@@ -1246,6 +1246,49 @@ object RigBuilder {
         }
     }
 
+    /** Rebuild the native export-only tongue tip from the evaluated source mesh and its fitted mouth. */
+    internal fun sourceTongueExport(rig: BuiltRig, analysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig): BuiltRig {
+        val cache = PreviewMeshCache()
+        val context = rigContext(analysis, config, cache)
+        val model = rig.puppet
+        val layers = context.analysis.layers.associateBy { it.source.id.raw }
+        val classified = model.drawables.mapNotNull { drawable ->
+            layers[rig.layerOf(drawable.id.raw)]?.let { drawable.id to it }
+        }.toMap().toMutableMap()
+        val sourceMeshes = model.drawables.mapNotNull { drawable ->
+            val layer = classified[drawable.id] ?: return@mapNotNull null
+            if (drawable.id.raw in rig.copiedDrawableIds) return@mapNotNull null
+            // The inner tongue may already sit under a lowered carrier. The tip starts in the source frame.
+            if (layer.semantic.tag == SemanticTag.TONGUE) meshLoweringSource(layer, context, config, atlas, cache, drawable)
+            else drawable
+        }
+        val tongues = protrudingTongues(sourceMeshes, classified, context, config, context.fittedMouth(config))
+        if (tongues.isEmpty()) return rig
+        val byOwner = tongues.toMap()
+        val copies = tongues.map { (owner, copy) ->
+            require(model.drawables.none { it.id == copy.id }) { "Generated tongue ID already exists: ${copy.id.raw}" }
+            classified[copy.id] = classified.getValue(owner)
+            copy
+        }
+        fun children(items: List<OrgChild>): List<OrgChild> = buildList {
+            for (item in items) {
+                add(item)
+                byOwner[(item as? OrgChild.Drawable)?.id]?.let { add(OrgChild.Drawable(it.id)) }
+            }
+        }
+        val placed = placeTongues(model.drawables, copies, classified, context, config)
+        val exported = model.copy(drawables = placed,
+            parts = model.parts.map { it.copy(children = children(it.children)) },
+            rootChildren = children(model.rootChildren)).withDerivedRenderRoot()
+        fun <T> withTongues(values: Map<String, T>) =
+            values + tongues.associate { (owner, copy) -> copy.id.raw to values.getValue(owner.raw) }
+        return rig.copy(puppet = CubismBlendShapes.lawful(exported),
+            layerIdByDrawableId = withTongues(rig.layerIdByDrawableId),
+            pageByDrawableId = withTongues(rig.pageByDrawableId),
+            sourceBoundsByDrawableId = withTongues(rig.sourceBoundsByDrawableId),
+            copiedDrawableIds = rig.copiedDrawableIds + copies.map { it.id.raw })
+    }
+
     private fun protrudingTongues(drawables: List<Drawable>, classified: Map<DrawableId, ClassifiedLayer>,
                                   context: RigContext, config: PipelineConfig, fittedMouth: io.github.psd2live.core.fit.FittedMouth?)
         : List<Pair<DrawableId, Drawable>> {
@@ -1285,7 +1328,7 @@ object RigBuilder {
         val threshold = tongues.minOfOrNull { it.drawOrder }?.minus(1f)
         val needsGap = threshold != null && drawables.any { it.drawOrder > threshold && it.drawOrder < threshold + 2f }
         val ordered = if (!needsGap) drawables else drawables.map { drawable ->
-            val layer = classified.getValue(drawable.id)
+            val layer = classified[drawable.id] ?: return@map drawable
             if (drawable.drawOrder > requireNotNull(threshold) &&
                 config.drawOrderOverrides[layer.source.id.raw] == null && config.drawOrderOverrides[drawable.id.raw] == null)
                 drawable.copy(drawOrder = drawable.drawOrder + 1f) else drawable

@@ -1,5 +1,8 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.algorithms.binding.MouthTongueV7Algorithm
+import io.github.psd2live.core.modifier.BuiltinModifierPlugins
+import io.github.psd2live.core.modifier.ModifierStatus
 import io.github.psd2live.core.modifier.RigModifierStack
 import org.umamo.runtime.model.DeformerId
 import org.umamo.runtime.model.ParameterId
@@ -23,7 +26,14 @@ internal object CliPresetPresentation {
         val mouth = CliMouthOutlinePresentation.apply(ordered, config)
         val brows = CliFaceSourcePresentation.restoreBrowForms(preview, mouth, config)
         val face = CliFaceSourcePresentation.restoreSingleEyeForms(preview, brows, source.geometry, config)
-        return CliHairChainsPresentation.apply(face, config)
+        val hasLayeredTongue = preview.modifierEvaluation?.entries.orEmpty().any {
+            it.status == ModifierStatus.ACTIVE && it.instance.type == "mouth.tongue" &&
+                it.instance.version == MouthTongueV7Algorithm.VERSION && BuiltinModifierPlugins.matches(it.instance)
+        }
+        val tongues = if (hasLayeredTongue)
+            face.copy(rig = RigBuilder.sourceTongueExport(face.rig, source.geometry, face.atlas, config))
+        else face
+        return CliHairChainsPresentation.apply(tongues, config)
     }
 
     private fun restoreGeneratedFrameIds(preview: RigPreviewModel): RigPreviewModel {
