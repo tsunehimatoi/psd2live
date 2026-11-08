@@ -8,6 +8,7 @@ import io.github.psd2live.algorithms.binding.MouthSpringV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV8Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV9Algorithm
+import io.github.psd2live.algorithms.binding.MouthSpringV10Algorithm
 import io.github.psd2live.core.CharacterAnalyzer
 import io.github.psd2live.core.PartRole
 import io.github.psd2live.core.PhysicsGenerator
@@ -115,8 +116,10 @@ internal object RigMouthSpringModifier {
             authorContext = ::capture)
     }
 
-    fun sharedFrameDefinition(source: RigModifierSource?): RigModifierDefinition {
-        val projected = object : ChangingModifierAlgorithmPlugin by MouthSpringV9Algorithm(),
+    fun sharedFrameDefinition(source: RigModifierSource?, withSharedTongue: Boolean = false): RigModifierDefinition {
+        val algorithm = if (withSharedTongue) MouthSpringV10Algorithm() else MouthSpringV9Algorithm()
+        val version = if (withSharedTongue) MouthSpringV10Algorithm.VERSION else MouthSpringV9Algorithm.VERSION
+        val projected = object : ChangingModifierAlgorithmPlugin by algorithm,
             ModifierOptionalUpstream, ModifierVersionSelection {
             override val canonicalOptInType = MouthSpringAlgorithm.TYPE
             override val optionalUpstream = RigLegacyBindings.specs.filter { !it.expressionToggles && !it.seeThrough }
@@ -124,7 +127,7 @@ internal object RigMouthSpringModifier {
         }
         val contexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
         fun capture(instance: RigModifierInstance) = contexts.getOrPut(instance) { requireNotNull(source).captureSharedFrames(instance) }
-        return definition(source).copy(version = MouthSpringV9Algorithm.VERSION, plugin = projected,
+        return definition(source).copy(version = version, plugin = projected,
             parameters = { instance -> RigIrBinary.decode(capture(instance).resources.getValue("after").read())
                 .parameters.filter { it.id == "ParamMouthSpring" } },
             changeWrites = setOf("mesh", "deformer", "part", "parameter", "hierarchy", "physics"),
@@ -135,14 +138,18 @@ internal object RigMouthSpringModifier {
         val scaffold = provider(instance)
         val prefix = bindingPredecessors(instance, scaffold)
         require(prefix.any { it.id == instance.config.getValue("base").jsonPrimitive.content &&
-            it.type == "mouth/fitted" && it.version == 6 }) { "Mouth spring v9 requires a shared fitted mouth v6" }
-        val providers = setOf("mouth.outline", "mouth.vowel", "mouth.capture", "mouth.jaw", "mouth.cheek-lid")
-        val interiorDepth = prefix.filter { it.type == "mouth.interior-depth" }
-        require(prefix.none { it.type.startsWith("mouth.") && it.type !in providers && it.type != "mouth.interior-depth" } &&
-            (interiorDepth.isEmpty() || interiorDepth.singleOrNull()?.let { depth ->
-                depth.version == 6 && depth.config["base"] == instance.config["base"] && depth.targets.containsAll(instance.targets)
+            it.type == "mouth/fitted" && it.version == 6 }) { "Mouth spring v${instance.version} requires a shared fitted mouth v6" }
+        val baseProviders = setOf("mouth.outline", "mouth.vowel", "mouth.capture", "mouth.jaw", "mouth.cheek-lid")
+        val providers = if (instance.version == MouthSpringV10Algorithm.VERSION) {
+            baseProviders + setOf("mouth.tongue", "mouth.interior-depth")
+        } else baseProviders
+        val extraMouth = prefix.filter { it.type.startsWith("mouth.") && it.type !in providers }
+        require(extraMouth.isEmpty() || (instance.version == MouthSpringV9Algorithm.VERSION &&
+            extraMouth.singleOrNull()?.let { depth ->
+                depth.type == "mouth.interior-depth" && depth.version == 6 &&
+                    depth.config["base"] == instance.config["base"] && depth.targets.containsAll(instance.targets)
             } == true)) {
-            "Mouth spring v9 requires the shared open-mouth source chain"
+            "Mouth spring v${instance.version} requires the shared open-mouth source chain"
         }
         val face = setOf(SemanticTag.FACE, SemanticTag.NOSE, SemanticTag.FACE_DETAIL)
         return captureBindingTransition(instance, scaffold, prefix, face + CharacterAnalyzer.MOUTH_TAGS,
