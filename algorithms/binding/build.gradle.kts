@@ -5530,6 +5530,41 @@ tasks.register("pluginMouthJawV14") {
     }
 }
 
+val mouthCheekLidV14WorkerJar = registerIsolatedBindingWorker(
+    "mouthCheekLidV14", "mouth-cheek-lid-v14", "worker-mouth-cheek-lid-v14", "io.github.psd2live.algorithms.binding.MouthCheekLidV14Worker",
+)
+
+kotlin.target.compilations.named("mouthCheekLidV14") {
+    associateWith(kotlin.target.compilations.getByName("mouthTongueV9"))
+    associateWith(kotlin.target.compilations.getByName("mouthJawV14"))
+}
+mouthCheekLidV14WorkerJar.configure { from(sourceSets["mouthTongueV9"].output, sourceSets["mouthJawV14"].output) }
+
+tasks.register("pluginMouthCheekLidV14") {
+    dependsOn(mouthCheekLidV14WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-cheek-lid-v14")
+    val packageVersion = project.version.toString()
+    inputs.file(mouthCheekLidV14WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthCheekLidV14WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682e636865656b2d6c6964.v14"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Layered cheek and lid coupling with tongue tip",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/coupling","aliases":["mouth.cheek-lid"],"version":14,"name":"Layered cheek and lid coupling with tongue tip","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","mouth/fitted","eye/fitted"],"contextVersion":2,
+               "reads":["*"],"writes":["mesh","deformer","part","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val mouthSpringV5WorkerJar = registerIsolatedBindingWorker(
     "mouthSpringV5", "mouth-spring-v5", "worker-mouth-spring-v5", "io.github.psd2live.algorithms.binding.MouthSpringV5Worker",
 )

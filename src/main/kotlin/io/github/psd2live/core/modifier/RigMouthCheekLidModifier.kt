@@ -12,6 +12,7 @@ import io.github.psd2live.algorithms.binding.MouthCheekLidV10Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV11Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV12Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV13Algorithm
+import io.github.psd2live.algorithms.binding.MouthCheekLidV14Algorithm
 import io.github.psd2live.core.CharacterAnalyzer
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.SemanticTag
@@ -117,6 +118,9 @@ internal object RigMouthCheekLidModifier {
     fun fallbackTongueFrameDefinition(source: RigModifierSource?): RigModifierDefinition =
         sourceFrameDefinition(source, MouthCheekLidV13Algorithm.VERSION, MouthCheekLidV13Algorithm, withTongue = true)
 
+    fun layeredTongueTipDefinition(source: RigModifierSource?): RigModifierDefinition =
+        sourceFrameDefinition(source, MouthCheekLidV14Algorithm.VERSION, MouthCheekLidV14Algorithm, withTongue = true)
+
     private fun sourceFrameDefinition(source: RigModifierSource?, version: Int, algorithm: ChangingModifierAlgorithmPlugin,
                                       withTongue: Boolean = false): RigModifierDefinition {
         val projected = object : ChangingModifierAlgorithmPlugin by algorithm, ModifierOptionalUpstream, ModifierVersionSelection {
@@ -130,6 +134,7 @@ internal object RigMouthCheekLidModifier {
                 MouthCheekLidV11Algorithm.VERSION -> MouthCheekLidV11Algorithm.WRITES
                 MouthCheekLidV12Algorithm.VERSION -> MouthCheekLidV12Algorithm.WRITES
                 MouthCheekLidV13Algorithm.VERSION -> MouthCheekLidV13Algorithm.WRITES
+                MouthCheekLidV14Algorithm.VERSION -> MouthCheekLidV14Algorithm.WRITES
                 else -> MouthCheekLidV8Algorithm.WRITES
             },
             authorContext = { requireNotNull(source).captureSharedFrames(it, withTongue) })
@@ -145,7 +150,7 @@ internal object RigMouthCheekLidModifier {
         val providers = if (withTongue) baseProviders + "mouth.tongue" else baseProviders
         val lids = setOf(SemanticTag.EYEWHITE, SemanticTag.EYELASH)
         return captureBindingTransition(instance, scaffold, prior, eyeBindingTags + CharacterAnalyzer.MOUTH_TAGS + SemanticTag.EYEBROW,
-            projectedTags = lids, includeLayeredTongueKeys = instance.version == MouthCheekLidV12Algorithm.VERSION,
+            projectedTags = lids, includeLayeredTongueKeys = instance.version in setOf(MouthCheekLidV12Algorithm.VERSION, MouthCheekLidV14Algorithm.VERSION),
             values = buildJsonObject {
                 putJsonObject("providers") { for (type in providers) put(type, prior.single { it.type == type }.id) }
             })

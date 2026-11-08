@@ -7,11 +7,11 @@ import io.github.psd2live.application.WorkspacePreviewBuilder
 import io.github.psd2live.application.WorkspaceRasterWork
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
+import io.github.psd2live.core.recipe.ModuleChoice
 import io.github.psd2live.format.model.ChildRef
 import io.github.psd2live.format.model.RenderGroup
 import io.github.psd2live.format.model.RenderMesh
 import io.github.psd2live.format.model.RigIR
-import io.github.psd2live.core.recipe.ModuleChoice
 import io.github.psd2live.history.WorkspaceHistoryTree
 import io.github.psd2live.project.*
 import kotlinx.coroutines.runBlocking
@@ -22,6 +22,117 @@ import java.util.prefs.Preferences
 import kotlin.test.*
 
 class LayeredTongueTipSourceTool {
+    private fun RenderGroup.withoutTip(tipId: String): RenderGroup = copy(children = children.mapNotNull { node ->
+        when (node) {
+            is RenderGroup -> node.withoutTip(tipId)
+            is RenderMesh -> node.takeUnless { it.id == tipId }
+        }
+    })
+
+    private fun RigIR.withoutTip(tipId: String): RigIR = copy(meshes = meshes.filterNot { it.id == tipId },
+        parts = parts.map { it.copy(children = it.children - ChildRef.MeshRef(tipId)) },
+        rootChildren = rootChildren - ChildRef.MeshRef(tipId), renderRoot = renderRoot.withoutTip(tipId),
+        textures = textures.copy(bindings = textures.bindings - tipId))
+
+    @Test fun compareLayeredCheekLidWithTongueTip(): Unit = runBlocking {
+        requireTools()
+        val artwork = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
+        val config = PipelineConfig(meshSpacing = 40, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val document = layeredMouthDocument(artwork, config, withTongue = true)
+        val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4, "mouth/fitted" to 8,
+            "mouth.outline" to 11, "mouth.vowel" to 8, "mouth.capture" to 7, "mouth.tongue" to 7,
+            "mouth.jaw" to 12, "mouth.cheek-lid" to 12)
+        val (planned, _) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
+            WorkspaceInitialPreset(clothing = false), requestedVersions = versions)
+        val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
+        val lid = stack.instances.single { it.type == "mouth.cheek-lid" }
+        val stage = stack.index(lid.id)
+        val changedVersions = mapOf("mouth.tongue" to 9, "mouth.jaw" to 14, "mouth.cheek-lid" to 14)
+        val packages = changedVersions.mapValues { (type, version) -> assertNotNull(BundledAlgorithmArtifacts.find(type, version)) }
+        val legacy = stack.copy(instances = stack.instances.take(stage + 1))
+        val upgraded = legacy.copy(instances = legacy.instances.map { instance ->
+            packages[instance.type]?.let { instance.copy(version = changedVersions.getValue(instance.type), plugin = it.reference) } ?: instance
+        })
+        suspend fun preview(withStack: RigModifierStack) = WorkspacePreviewBuilder().build(
+            planned.copy(rigEdits = planned.rigEdits.copy(modifierStack = withStack.toJson())))
+        val reference = preview(legacy)
+        val candidate = preview(upgraded)
+        val old = assertNotNull(reference.modifierEvaluation)
+        val actual = assertNotNull(candidate.modifierEvaluation)
+        val locked = versions + changedVersions
+        val entries = actual.entries.filter { it.instance.type in locked }
+        assertEquals(locked, entries.associate { it.instance.type to it.instance.version })
+        for (entry in entries) assertEquals(ModifierStatus.ACTIVE, entry.status, entry.instance.type)
+        val before = actual.outputs[stage - 1]
+        val after = actual.outputs[stage]
+        val owner = before.meshes.single { it.id == "ArtMeshTongue" }
+        val tongue = upgraded.instances.single { it.type == "mouth.tongue" }
+        val tipId = tongue.outputId(MouthTongueV9Algorithm.tipOutput(owner.id))
+        val tip = before.meshes.single { it.id == tipId }
+        assertEquals(tip, after.meshes.single { it.id == tipId })
+        assertEquals(owner, after.meshes.single { it.id == owner.id })
+        assertTrue(owner.maskedBy.isNotEmpty() && tip.maskedBy.isEmpty())
+        assertEquals(owner.id, tip.textureSource)
+        assertTrue(after.parts.any { ChildRef.MeshRef(owner.id) in it.children && ChildRef.MeshRef(tipId) in it.children })
+        val oldMeshes = before.meshes.associateBy { it.id }
+        val oldFrames = before.deformers.associateBy { it.id }
+        val frames = after.deformers.associateBy { it.id }
+        val moved = after.meshes.filter { it != oldMeshes[it.id] }
+        assertEquals(setOf("ArtMeshEyelashL", "ArtMeshEyelashR", "ArtMeshEyewhiteL", "ArtMeshEyewhiteR"), moved.map { it.id }.toSet())
+        val form = "ParamMouthForm"
+        fun <F> varies(grid: io.github.psd2live.format.model.KeyGrid<F>?): Boolean {
+            val axis = grid?.axes?.indexOfFirst { it.parameter == form } ?: return false
+            if (axis < 0) return false
+            return grid.cells.groupBy { cell -> cell.coordinate.toArray().filterIndexed { index, _ -> index != axis } }
+                .values.any { cells -> cells.map { it.form }.distinct().size > 1 }
+        }
+        for (mesh in moved) {
+            val previous = oldMeshes.getValue(mesh.id)
+            val local = (mesh.offsets != previous.offsets && varies(mesh.offsets)) ||
+                (mesh.shapes - previous.shapes.toSet()).any { binding -> binding.parameter == form &&
+                    binding.shapes.any { it?.deltas?.toArray()?.any { delta -> delta != 0f } == true } }
+            val inherited = generateSequence(mesh.parent) { frames[it]?.parent }.any { id ->
+                val frame = frames[id] as? io.github.psd2live.format.model.Deformer.Warp
+                frame != oldFrames[id] && varies(frame?.lattice)
+            }
+            assertTrue(local || inherited, "${mesh.id} must move with $form")
+        }
+        for (index in old.outputs.indices) {
+            assertTrue(old.outputs[index] == actual.outputs[index].withoutTip(tipId), "${legacy.instances[index].type} differs")
+        }
+        val compiled = RigIrCompiler.compile(candidate, tileArt = true)
+        assertEquals(compiled.textures.bindings[owner.id], compiled.textures.bindings[tipId])
+        assertTrue(RigIrCompiler.compile(reference, tileArt = true) == compiled.withoutTip(tipId), "Complete cheek and lid IR differs")
+
+        val root = Files.createTempDirectory("layered-cheek-lid-tip-")
+        val preferences = Preferences.userRoot().node("layered-cheek-lid-tip/" + UUID.randomUUID())
+        val store = ModifierPluginStore(root.resolve("installed"), preferences)
+        try {
+            BundledAlgorithmArtifacts.retain(store, listOf(packages.getValue(lid.type)))
+            val worker = store.snapshot().single()
+            val instance = upgraded.instances[stage]
+            val definition = RigMouthCheekLidModifier.layeredTongueTipDefinition(RigModifierSource.of(candidate))
+            val context = definition.authorContext(instance).withUpstream(actual.entries.take(stage)
+                .filter { it.status == ModifierStatus.ACTIVE && it.instance.type in definition.requires + definition.optionalUpstream }
+                .map { entry -> entry.instance.let {
+                    ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+                } })
+            for (type in listOf("mouth.tongue", "mouth.jaw")) {
+                val provider = context.upstream.single { it.type == type }
+                assertEquals(packages.getValue(type).reference, provider.plugin)
+                assertEquals(changedVersions.getValue(type), provider.version)
+            }
+            val replay = ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(), before, instance, {}, store,
+                context = context, declaredParameters = definition.parameters(instance))
+            assertTrue(after == replay, "Installed cheek and lid v14 differs")
+            println("Cheek and lid moves ${moved.map { it.id }}; retains ${tip.id} with ${tip.textureSource}")
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(root)
+        }
+    }
+
     @Test fun compareLayeredJawWithTongueTip(): Unit = runBlocking {
         requireTools()
         val pipeline = PSD2LivePipeline().apply { deferRuntimeBundles = true }
@@ -70,23 +181,13 @@ class LayeredTongueTipSourceTool {
         val part = after.parts.single { ChildRef.MeshRef(tipId) in it.children }
         assertTrue(ChildRef.MeshRef(owner.id) in part.children)
 
-        fun RenderGroup.withoutTip(): RenderGroup = copy(children = children.mapNotNull { node ->
-            when (node) {
-                is RenderGroup -> node.withoutTip()
-                is RenderMesh -> node.takeUnless { it.id == tipId }
-            }
-        })
-        fun RigIR.withoutTip(): RigIR = copy(meshes = meshes.filterNot { it.id == tipId },
-            parts = parts.map { it.copy(children = it.children - ChildRef.MeshRef(tipId)) },
-            rootChildren = rootChildren - ChildRef.MeshRef(tipId), renderRoot = renderRoot.withoutTip(),
-            textures = textures.copy(bindings = textures.bindings - tipId))
         for (stage in old.outputs.indices) {
-            assertTrue(old.outputs[stage] == actual.outputs[stage].withoutTip(), "${legacy.instances[stage].type} differs")
+            assertTrue(old.outputs[stage] == actual.outputs[stage].withoutTip(tipId), "${legacy.instances[stage].type} differs")
         }
         val oldFull = RigIrCompiler.compile(reference, tileArt = true)
         val newFull = RigIrCompiler.compile(candidate, tileArt = true)
         assertEquals(newFull.textures.bindings[owner.id], newFull.textures.bindings[tipId])
-        val stripped = newFull.withoutTip()
+        val stripped = newFull.withoutTip(tipId)
         val fields = RigIR::class.java.declaredFields.filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
             .filter { it.isAccessible = true; it.get(oldFull) != it.get(stripped) }.map { it.name }
         assertTrue(oldFull == stripped, "Complete jaw IR differs in $fields")
