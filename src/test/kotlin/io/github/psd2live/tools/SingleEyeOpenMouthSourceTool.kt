@@ -7,6 +7,7 @@ import io.github.psd2live.application.WorkspaceRasterWork
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.recipe.RecipeSubject
+import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.project.WorkspaceDocument
 import io.github.psd2live.project.WorkspaceSettingsCodec
 import kotlinx.coroutines.runBlocking
@@ -18,26 +19,39 @@ import kotlin.test.*
 
 class SingleEyeOpenMouthSourceTool {
     @Test fun compareVowel(): Unit = runBlocking {
+        val vowels = setOf("ParamA", "ParamI", "ParamU", "ParamE", "ParamO")
+        compareShapeModule("mouth.vowel", 9, emptyMap(), vowels, vowels, RigMouthVowelModifier::fallbackFrameDefinition)
+    }
+
+    @Test fun compareCapture(): Unit = runBlocking {
+        val controls = RigModules.MOUTH_CAPTURE.defines.mapTo(HashSet()) { it.id }
+        val moved = setOf("ParamMouthX", "ParamMouthPuckerWiden", "ParamMouthFunnel")
+        compareShapeModule("mouth.capture", 8, mapOf("mouth.vowel" to 9), controls, moved,
+            RigMouthCaptureModifier::fallbackFrameDefinition)
+    }
+
+    private suspend fun compareShapeModule(type: String, version: Int, predecessors: Map<String, Int>,
+                                           controls: Set<String>, moving: Set<String>,
+                                           sourceDefinition: (RigModifierSource) -> RigModifierDefinition) {
         requireTools()
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 3,
-            "mouth/fitted" to 7, "mouth.outline" to 10, "mouth.vowel" to 1)
+            "mouth/fitted" to 7, "mouth.outline" to 10, type to 1) + predecessors
         val (planned, baseline) = WorkspacePresetInitialization.prepare(singleEyeDocument(Sample.fromEnvironment()), WorkspaceRasterWork.Direct,
             WorkspaceInitialPreset(clothing = false), requestedVersions = versions)
         val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
         assertEquals(versions, stack.instances.filter { it.type in versions }.associate { it.type to it.version })
-        val vowel = stack.instances.single { it.type == "mouth.vowel" }
-        val stage = stack.index(vowel.id)
+        val module = stack.instances.single { it.type == type }
+        val stage = stack.index(module.id)
         val expected = assertNotNull(baseline.modifierEvaluation)
         assertEquals(ModifierStatus.ACTIVE, expected.entries[stage].status)
-        val ids = setOf("ParamA", "ParamI", "ParamU", "ParamE", "ParamO")
-        assertTrue(expected.outputs[stage - 1].parameters.none { it.id in ids })
-        assertEquals(ids, expected.outputs[stage].parameters.filter { it.id in ids }.mapTo(HashSet()) { it.id })
-        val voiced = expected.outputs[stage].meshes.flatMap { it.shapes }.filter { binding ->
-            binding.parameter in ids && binding.shapes.any { form -> form?.deltas?.toArray()?.any { it != 0f } == true }
+        assertTrue(expected.outputs[stage - 1].parameters.none { it.id in controls })
+        assertEquals(controls, expected.outputs[stage].parameters.filter { it.id in controls }.mapTo(HashSet()) { it.id })
+        val moved = expected.outputs[stage].meshes.flatMap { it.shapes }.filter { binding ->
+            binding.parameter in controls && binding.shapes.any { form -> form?.deltas?.toArray()?.any { it != 0f } == true }
         }.mapTo(HashSet()) { it.parameter }
-        assertEquals(ids, voiced, "Every vowel must contribute nonzero source geometry")
-        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(vowel.type, 9))
-        val selected = vowel.copy(version = 9, plugin = artifact.reference)
+        assertTrue(moved.containsAll(moving), "$type must contribute nonzero source geometry for ${moving - moved}")
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(type, version))
+        val selected = module.copy(version = version, plugin = artifact.reference)
         val modified = stack.copy(instances = stack.instances.map { if (it.id == selected.id) selected else it })
         val candidate = WorkspacePreviewBuilder().build(planned.copy(rigEdits = planned.rigEdits.copy(modifierStack = modified.toJson())))
         val actual = assertNotNull(candidate.modifierEvaluation)
@@ -50,24 +64,24 @@ class SingleEyeOpenMouthSourceTool {
             fail("${stack.instances[index].type} differs, meshes=${after.meshes.filter { it != meshes[it.id] }.map { it.id }}")
         }
         assertTrue(RigIrCompiler.compile(baseline, tileArt = true) == RigIrCompiler.compile(candidate, tileArt = true),
-            "Complete single-eye vowel IR differs")
+            "Complete single-eye $type IR differs")
 
         val instance = actual.entries[stage].instance
-        val definition = RigMouthVowelModifier.fallbackFrameDefinition(RigModifierSource.of(candidate))
+        val definition = sourceDefinition(RigModifierSource.of(candidate))
         val context = definition.authorContext(instance).withUpstream(actual.entries.take(stage)
             .filter { it.status == ModifierStatus.ACTIVE && it.instance.type in definition.requires + definition.optionalUpstream }
             .map { entry -> entry.instance.let {
                 ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
             } })
-        val root = Files.createTempDirectory("single-eye-open-vowel-package-")
-        val preferences = Preferences.userRoot().node("single-eye-open-vowel/" + UUID.randomUUID())
+        val root = Files.createTempDirectory("single-eye-open-package-")
+        val preferences = Preferences.userRoot().node("single-eye-open-package/" + UUID.randomUUID())
         val store = ModifierPluginStore(root.resolve("installed"), preferences)
         try {
             BundledAlgorithmArtifacts.retain(store, listOf(artifact))
             val worker = store.snapshot().single()
             val result = ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(), actual.outputs[stage - 1],
                 instance, {}, store, context = context, declaredParameters = definition.parameters(instance))
-            assertTrue(expected.outputs[stage] == result, "Installed vowel worker differs from v1")
+            assertTrue(expected.outputs[stage] == result, "Installed $type worker differs from v1")
         } finally {
             store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
             preferences.removeNode()

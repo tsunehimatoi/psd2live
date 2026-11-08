@@ -6,6 +6,7 @@ import io.github.psd2live.algorithms.binding.MouthCaptureV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthCaptureV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthCaptureV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthCaptureV7Algorithm
+import io.github.psd2live.algorithms.binding.MouthCaptureV8Algorithm
 import io.github.psd2live.format.compile.RigIrBinary
 import io.github.psd2live.algorithms.binding.MouthRig
 import io.github.psd2live.core.*
@@ -50,9 +51,23 @@ internal object RigMouthCaptureModifier {
     fun modernDefinition(source: RigModifierSource?): RigModifierDefinition =
         definition(source, MouthCaptureV5Algorithm.VERSION, modernAlgorithm)
 
-    fun sharedFrameDefinition(source: RigModifierSource?, layered: Boolean = false): RigModifierDefinition {
-        val projected = if (layered) MouthCaptureV7Algorithm() else MouthCaptureV6Algorithm()
-        val version = if (layered) MouthCaptureV7Algorithm.VERSION else MouthCaptureV6Algorithm.VERSION
+    private enum class FrameMode(val version: Int, val fitted: Int, val outlines: Set<Int>, val vowels: Set<Int>) {
+        FITTED(MouthCaptureV6Algorithm.VERSION, 6, setOf(1, 8), setOf(1, 7)),
+        LAYERED(MouthCaptureV7Algorithm.VERSION, 8, setOf(1, 11), setOf(8)),
+        FALLBACK(MouthCaptureV8Algorithm.VERSION, 7, setOf(10), setOf(9)),
+    }
+
+    fun sharedFrameDefinition(source: RigModifierSource?, layered: Boolean = false): RigModifierDefinition =
+        frameDefinition(source, if (layered) FrameMode.LAYERED else FrameMode.FITTED)
+
+    fun fallbackFrameDefinition(source: RigModifierSource?): RigModifierDefinition = frameDefinition(source, FrameMode.FALLBACK)
+
+    private fun frameDefinition(source: RigModifierSource?, mode: FrameMode): RigModifierDefinition {
+        val projected = when (mode) {
+            FrameMode.FITTED -> MouthCaptureV6Algorithm()
+            FrameMode.LAYERED -> MouthCaptureV7Algorithm()
+            FrameMode.FALLBACK -> MouthCaptureV8Algorithm()
+        }
         val algorithm = object : ChangingModifierAlgorithmPlugin by projected,
             ModifierOptionalUpstream, ModifierVersionSelection {
             override val optionalUpstream = RigLegacyBindings.specs.filter { !it.expressionToggles && !it.seeThrough }
@@ -60,10 +75,10 @@ internal object RigMouthCaptureModifier {
             override val canonicalOptInType = MouthCaptureAlgorithm.TYPE
         }
         val contexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
-        fun capture(instance: RigModifierInstance) = contexts.getOrPut(instance) { requireNotNull(source).captureSharedFrames(instance, layered) }
+        fun capture(instance: RigModifierInstance) = contexts.getOrPut(instance) { requireNotNull(source).captureSharedFrames(instance, mode) }
         val controls = RigModules.MOUTH_CAPTURE.defines.mapTo(hashSetOf()) { it.id }
         return RigLegacyBindings.definition(RigLegacyBindings.spec(MouthCaptureAlgorithm.TYPE), source).copy(
-            version = version, plugin = algorithm, upstreamInputs = true,
+            version = mode.version, plugin = algorithm, upstreamInputs = true,
             parameters = { instance ->
                 RigIrBinary.decode(capture(instance).resources.getValue("after").read()).parameters.filter { it.id in controls }
             },
@@ -72,21 +87,18 @@ internal object RigMouthCaptureModifier {
         )
     }
 
-    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance, layered: Boolean): ModifierAlgorithmContext {
+    private fun RigModifierSource.captureSharedFrames(instance: RigModifierInstance, mode: FrameMode): ModifierAlgorithmContext {
         val scaffold = provider(instance)
         val prefix = bindingPredecessors(instance, scaffold)
         val base = instance.config.getValue("base").jsonPrimitive.content
         require(scaffold.version == 2 && prefix.all { it.targets.containsAll(instance.targets) }) {
             "Mouth capture v${instance.version} requires a shared source stack"
         }
-        val fittedVersion = if (layered) 8 else 6
-        require(prefix.any { it.id == base && it.type == "mouth/fitted" && it.version == fittedVersion }) {
-            "Mouth capture v${instance.version} requires its fitted mouth v$fittedVersion"
+        require(prefix.any { it.id == base && it.type == "mouth/fitted" && it.version == mode.fitted }) {
+            "Mouth capture v${instance.version} requires its fitted mouth v${mode.fitted}"
         }
-        val outlineVersions = if (layered) setOf(1, 11) else setOf(1, 8)
-        val vowelVersions = if (layered) setOf(8) else setOf(1, 7)
-        val outline = prefix.single { it.type == "mouth.outline" && it.version in outlineVersions }
-        val vowel = prefix.single { it.type == "mouth.vowel" && it.version in vowelVersions }
+        val outline = prefix.single { it.type == "mouth.outline" && it.version in mode.outlines }
+        val vowel = prefix.single { it.type == "mouth.vowel" && it.version in mode.vowels }
         require(prefix.none { it.type.startsWith("mouth.") && it != outline && it != vowel })
         val tags = CharacterAnalyzer.MOUTH_COMPONENT_TAGS + setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN,
             SemanticTag.MOUTH_CLOSE, SemanticTag.FACE, SemanticTag.FACE_DETAIL, SemanticTag.NOSE)
