@@ -12,17 +12,25 @@ import java.util.prefs.Preferences
 import kotlin.test.*
 
 class ArmSwingDsTool {
-    @Test fun compareWorkspaceArms(): Unit = runBlocking {
+    @Test fun compareWorkspaceArms(): Unit = runBlocking { compareArms(layered = false) }
+
+    @Test fun compareLayeredMouthArms(): Unit = runBlocking { compareArms(layered = true) }
+
+    private suspend fun compareArms(layered: Boolean) {
         requireTools()
-        val config = PipelineConfig(meshSpacing = 40)
-        val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
         val overlay = RigEditOverlay(modifierStack = RigModifierStack().toJson())
-        val document = WorkspaceDocument(source, emptyMap(), emptySet(), emptyMap(), emptyMap(), overlay,
-            WorkspaceSettingsCodec.encode(config.copy(rigEdits = overlay)))
+        val config = PipelineConfig(meshSpacing = 40, rigEdits = overlay)
+        val source = PSD2LivePipeline().readPsd(Sample.fromEnvironment().path)
+        val document = if (layered) layeredMouthDocument(source, config) else
+            WorkspaceDocument(source, emptyMap(), emptySet(), emptyMap(), emptyMap(), overlay,
+                WorkspaceSettingsCodec.encode(config))
+        val layeredPrefix = if (layered) mapOf("mouth/fitted" to 8, "mouth.outline" to 11, "mouth.vowel" to 8,
+            "mouth.capture" to 7, "mouth.jaw" to 10) else emptyMap()
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4,
             "mouth/fitted" to 6, "mouth.outline" to 8, "mouth.vowel" to 7, "mouth.capture" to 6, "mouth.jaw" to 8, "mouth.cheek-lid" to 8, "body.arms" to 1,
             "eye.smile" to 4, "eye.wide" to 4, "eye.gaze-lid" to 4, "eye.emotion" to 4, "eye.aftershock" to 5, "eye.squash" to 5,
-            "brow.shape" to 5, "brow.lid-coupling" to 7, "brow.blink" to 5, "brow.spring" to 6)
+            "brow.shape" to 5, "brow.lid-coupling" to 7, "brow.blink" to 5, "brow.spring" to 6) +
+            if (layered) layeredPrefix + mapOf("mouth.cheek-lid" to 1, "mouth.spring" to 1, "body.bust" to 2) else emptyMap()
         val (planned, historical) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
             WorkspaceInitialPreset(), requestedVersions = versions)
         val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
@@ -33,6 +41,10 @@ class ArmSwingDsTool {
             assertEquals(version, provider.instance.version, type)
             assertEquals(ModifierStatus.ACTIVE, provider.status, type)
         }
+        if (layered) {
+            val fit = assertNotNull(RigBuilder.rigContext(historical.analysis, config).fittedMouth(config))
+            assertTrue(fit.layered && fit.rig?.fit?.layered != null)
+        }
         val arms = historical.analysis.layers.filter { it.semantic.tag == SemanticTag.HANDWEAR && it.opaquePixels > 0 }
         assertEquals(listOf(Side.LEFT, Side.RIGHT), arms.mapNotNull { it.semantic.side }.sortedBy { it.name })
         val entry = stack.instances.single { it.type == "body.arms" }
@@ -40,11 +52,17 @@ class ArmSwingDsTool {
         for (type in listOf("mouth/fitted", "mouth.outline", "mouth.vowel", "mouth.capture", "mouth.jaw", "mouth.cheek-lid")) {
             assertTrue(stack.index(stack.instances.single { it.type == type }.id) < index, type)
         }
+        for ((type, version) in layeredPrefix) {
+            assertEquals(assertNotNull(BundledAlgorithmArtifacts.find(type, version)).reference,
+                stack.instances.single { it.type == type }.plugin, type)
+        }
+        assertTrue(entry.outputAliases.isEmpty())
         val scaffold = stack.instances.single { it.type == "rig.scaffold" }
         val before = historicalEvaluation.outputs[index - 1]
         val after = historicalEvaluation.outputs[index]
         val oldWarps = before.deformers.associateBy { it.id }
         val changed = after.deformers.filter { it != oldWarps[it.id] }.map { it as Deformer.Warp }
+            .sortedBy { scaffold.localOutputName(it.id) }
         assertEquals(listOf("shared/deformer:DeformArmHang_L", "shared/deformer:DeformArmHang_R"),
             changed.map { scaffold.localOutputName(it.id) })
         val swing = listOf("ParamArmLSwing", "ParamArmRSwing")
@@ -53,11 +71,11 @@ class ArmSwingDsTool {
             assertEquals(original, warp.copy(shapes = warp.shapes.filterNot { it.parameter == parameter }))
             val shape = warp.shapes.single { it.parameter == parameter }
             assertTrue(shape.shapes.filterNotNull().any { it.points.shared().any { point -> point != 0f } })
-            assertTrue(after.meshes.any { it.parent == warp.id })
+            assertTrue(after.meshes.any { it.parent == warp.id && it.visible && it.opacity > 0f })
         }
         assertEquals(before.meshes, after.meshes)
         val additions = after.physics.groups.filter { it !in before.physics.groups }
-        assertEquals(swing, additions.flatMap { group -> group.outputs.map { it.parameter } })
+        assertEquals(swing, additions.flatMap { group -> group.outputs.map { it.parameter } }.sorted())
         assertTrue(additions.all { group -> group.inputs.any { it.weight > 0f } && group.outputs.single().weight > 0f })
 
         val artifact = assertNotNull(BundledAlgorithmArtifacts.find(entry.type, 3))
@@ -67,7 +85,7 @@ class ArmSwingDsTool {
         val actual = assertNotNull(model.modifierEvaluation)
         assertEquals(ModifierStatus.ACTIVE, actual.entries[index].status)
         for (stage in stack.instances.indices) {
-            assertEquals(historicalEvaluation.outputs[stage], actual.outputs[stage], stack.instances[stage].type)
+            assertTrue(historicalEvaluation.outputs[stage] == actual.outputs[stage], stack.instances[stage].type)
         }
         assertEquals(RigIrCompiler.compile(historical, tileArt = true), RigIrCompiler.compile(model, tileArt = true))
 
@@ -78,14 +96,7 @@ class ArmSwingDsTool {
             BundledAlgorithmArtifacts.retain(store, listOf(artifact))
             val worker = store.snapshot().single()
             val definition = RigArmSwingModifier.definition(RigModifierSource.of(model), modern = true)
-            val providers = RigLegacyBindings.providers(selected).map { (capability, id) ->
-                val provider = actual.entries.take(index).single { it.instance.id == id }
-                assertEquals(ModifierStatus.ACTIVE, provider.status)
-                val instance = provider.instance
-                ModifierUpstreamCapability(capability, instance.type, instance.version, instance.targets,
-                    instance.id, instance.config, instance.outputAliases, instance.plugin)
-            }
-            val context = definition.authorContext(selected).withUpstream(providers)
+            val context = assertNotNull(actual.readAlgorithms[entry.id]).context
             assertEquals(after, ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(), before,
                 selected, {}, store, context = context, declaredParameters = definition.parameters(selected)))
         } finally {
