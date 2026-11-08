@@ -70,6 +70,7 @@ class WorkspaceLegacyBindingTest {
                      config: JsonObject = if (type == RigSourceModifiers.SCAFFOLD) JsonObject(emptyMap()) else buildJsonObject { put("scaffold", "structure") }) = buildJsonObject {
             put("type", type); put("id", id); put("config", config)
             if (type == RigSourceModifiers.SCAFFOLD) put("version", scaffoldVersion)
+            if (type in setOf("body/legacy", "face/legacy", "eye/legacy", "brow/legacy")) put("version", 1)
             put("targets", JsonArray(targets.map { buildJsonObject { put("kind", it.kind); put("id", it.id) } }))
         }
         suspend fun group(types: List<String>) = edit("modifier_add_group", buildJsonObject {
@@ -8447,7 +8448,9 @@ class WorkspaceLegacyBindingTest {
 
     @Test fun canonicalLegacyAdditionsUseIndependentSourceBases(): Unit = runBlocking {
         val fixture = Fixture(document())
+        val direct = Fixture(fixture.document)
         fixture.install()
+        direct.install()
         val bases = listOf("body/legacy", "face/legacy", "eye/legacy", "brow/legacy")
         for (type in bases) {
             val request = buildJsonObject {
@@ -8463,9 +8466,17 @@ class WorkspaceLegacyBindingTest {
             fixture.edit("modifier_add_group", buildJsonObject {
                 put("group", plan.getValue("group")); put("entries", plan.getValue("entries"))
             })
+            for (addition in plan.getValue("entries").jsonArray.map { it.jsonObject }) {
+                val request = if (addition.getValue("type").jsonPrimitive.content == type)
+                    JsonObject(addition - "version" - "plugin") else addition
+                direct.edit("modifier_add", request)
+            }
             val evaluated = assertNotNull(fixture.now.model.modifierEvaluation).entries.last()
             assertEquals(reference, evaluated.instance.plugin)
             assertEquals(ModifierStatus.ACTIVE, evaluated.status, type)
+            val directEntry = assertNotNull(direct.now.model.modifierEvaluation).entries.last()
+            assertEquals(reference, directEntry.instance.plugin)
+            assertEquals(ModifierStatus.ACTIVE, directEntry.status, type)
         }
         val captured = fixture.now
         val stack = RigModifierStack.fromJson(requireNotNull(captured.document.rigEdits.modifierStack))
@@ -8474,6 +8485,7 @@ class WorkspaceLegacyBindingTest {
         })
         val baseline = fixture.builder.build(captured.document.copy(rigEdits = captured.document.rigEdits.copy(modifierStack = historical.toJson())))
         assertEquals(RigIrCompiler.compile(baseline, tileArt = true), RigIrCompiler.compile(captured.model, tileArt = true))
+        assertEquals(RigIrCompiler.compile(captured.model, tileArt = true), RigIrCompiler.compile(direct.now.model, tileArt = true))
     }
 
     @Test fun depthTurnPlanAddsTheLegacyFaceAndRejectsFittedFace(): Unit = runBlocking {

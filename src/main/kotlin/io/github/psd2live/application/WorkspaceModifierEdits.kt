@@ -115,12 +115,17 @@ internal object WorkspaceModifierEdits {
             "Select face.depth-turn v2 explicitly, or add face/fitted"
         }
         val registry = RigModifierAlgorithms.registry
-        val version = request["version"]?.jsonPrimitive?.int ?: registry.defaultDefinition(type)?.version
-            ?: error("Unknown modifier algorithm: $type")
         val stored = registry.storedType(type)
+        val config = request.getValue("config").jsonObject
+        val requestedVersion = request["version"]?.jsonPrimitive?.int
+        val sourceVersion = if (model != null && requestedVersion == null && request["plugin"] == null &&
+            request["index"] == null && stored == type) WorkspaceModifierPlan.legacySourceBaseVersion(model, stack, stored, targets, config)
+            else null
+        val version = requestedVersion ?: sourceVersion ?: registry.defaultDefinition(type)?.version
+            ?: error("Unknown modifier algorithm: $type")
         RigDepthTurnDefinition.requireCompatible(stored, version, targets, stack.appliedCapabilities.asSequence() +
             stack.instances.asSequence().filter { it.enabled }.map { it.capability() })
-        val candidate = stack.add(stored, version, targets, request.getValue("config").jsonObject,
+        val candidate = stack.add(stored, version, targets, config,
             request["group"]?.jsonPrimitive?.content, request["id"]?.jsonPrimitive?.content,
             plugin = request["plugin"]?.let { Json.decodeFromJsonElement(ModifierPluginReference.serializer(), it) } ?: ModifierPluginCatalog.algorithm(type, version)?.first?.reference)
         val instance = candidate.instances.last()

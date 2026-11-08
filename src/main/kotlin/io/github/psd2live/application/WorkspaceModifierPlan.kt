@@ -90,11 +90,7 @@ internal object WorkspaceModifierPlan {
             "Source binding configuration is resolved from its captured dependencies"
         }
         require(type == "swing" || ModifierPluginCatalog.algorithm(type.orEmpty())?.second?.targets?.let { kinds -> targets.all { it.kind in kinds } } == true || targets.all { it.kind == "mesh" }) { "This modifier needs captured mesh targets" }
-        val active = model.rig.modifierReport!!.getValue("entries").jsonArray.filter {
-            it.jsonObject.getValue("status").jsonPrimitive.content == "active"
-        }.mapTo(HashSet()) { it.jsonObject.getValue("id").jsonPrimitive.content }
-        val available = stack.appliedCapabilities.toMutableList()
-        available += stack.instances.filter { it.id in active }.map { it.capability() }
+        val available = activeCapabilities(model, stack).toMutableList()
         var candidate = stack
         val entries = ArrayList<JsonObject>()
         val planned = LinkedHashMap<String, JsonObject>()
@@ -211,13 +207,14 @@ internal object WorkspaceModifierPlan {
     }
 
     /** Use the independent legacy bases when the live prefix is a shared, unedited source frame. */
-    private fun legacySourceBaseVersion(model: RigPreviewModel, stack: RigModifierStack, type: String,
-                                        targets: List<ModifierTarget>, configuration: JsonObject,
-                                        available: List<ModifierCapability>): Int? {
+    fun legacySourceBaseVersion(model: RigPreviewModel, stack: RigModifierStack, type: String,
+                                targets: List<ModifierTarget>, configuration: JsonObject,
+                                available: List<ModifierCapability>? = null): Int? {
         val version = legacySourceBases[type] ?: return null
-        if (!WorkspacePresetInitialization.freshSource(model.config) || stack.appliedCapabilities.isNotEmpty() ||
+        if (configuration.keys != setOf("scaffold") || !WorkspacePresetInitialization.freshSource(model.config) ||
+            stack.appliedCapabilities.isNotEmpty() ||
             stack.overrides.values.any { it.isNotEmpty() }) return null
-        val scoped = available.filter { entry -> entry.targets.any(targets::contains) }
+        val scoped = (available ?: activeCapabilities(model, stack)).filter { entry -> entry.targets.any(targets::contains) }
         val scaffold = scoped.singleOrNull { it.type == RigSourceModifiers.SCAFFOLD && it.version == 2 &&
             JsonPrimitive(it.id) == configuration["scaffold"] && it.targets.toSet() == targets.toSet() } ?: return null
         if (scaffold.plugin != BuiltinModifierPlugins.reference(scaffold.type, scaffold.version) ||
@@ -226,6 +223,13 @@ internal object WorkspaceModifierPlan {
         if (scoped.any { it != scaffold && (it.type !in earlier || it.version != legacySourceBases[it.type] ||
                 it.targets.toSet() != targets.toSet() || it.config["scaffold"] != configuration["scaffold"]) }) return null
         return version.takeIf { ModifierPluginCatalog.available(type, it) }
+    }
+
+    private fun activeCapabilities(model: RigPreviewModel, stack: RigModifierStack): List<ModifierCapability> {
+        val active = model.rig.modifierReport?.getValue("entries")?.jsonArray.orEmpty().filter {
+            it.jsonObject.getValue("status").jsonPrimitive.content == "active"
+        }.mapTo(HashSet()) { it.jsonObject.getValue("id").jsonPrimitive.content }
+        return stack.appliedCapabilities + stack.instances.filter { it.id in active }.map { it.capability() }
     }
 
     fun physicsPresets(): List<RigPhysicsEdit> = PhysicsGenerator.presetRules(PhysicsGenerator.Presets.All)
