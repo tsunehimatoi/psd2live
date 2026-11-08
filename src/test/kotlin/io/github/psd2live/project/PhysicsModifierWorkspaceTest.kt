@@ -21,7 +21,31 @@ class PhysicsModifierWorkspaceTest {
         val (document, stack) = fixture(project)
         val instance = stack.instances.single()
         val unavailable = instance.copy(plugin = requireNotNull(instance.plugin).copy(version = "99.99.99", digest = "0".repeat(64)))
-        val missing = stack.copy(instances = listOf(unavailable))
+        verifyUnavailablePhysics(project, document, stack.copy(instances = listOf(unavailable)))
+    }
+
+    @Test fun missingUnpinnedVersionSurvivesReopenAndBlocksApplyAndExport(): Unit = runBlocking {
+        val project = SyntheticProject(temp, 1, 12, 1)
+        val (document, stack) = fixture(project)
+        val legacy = stack.instances.single().copy(plugin = null)
+        val unpinned = document.copy(rigEdits = document.rigEdits.copy(
+            modifierStack = stack.copy(instances = listOf(legacy)).toJson()))
+        val restored = WorkspacePreviewBuilder().build(unpinned)
+        assertEquals(ModifierStatus.ACTIVE, assertNotNull(restored.modifierEvaluation).entries.single().status)
+
+        val unavailable = legacy.copy(version = 99)
+        verifyUnavailablePhysics(project, document, stack.copy(instances = listOf(unavailable)))
+    }
+
+    @Test fun pinnedPackageWithoutAlgorithmVersionBlocksApplyAndExport(): Unit = runBlocking {
+        val project = SyntheticProject(temp, 1, 12, 1)
+        val (document, stack) = fixture(project)
+        val unavailable = stack.instances.single().copy(version = 99)
+        verifyUnavailablePhysics(project, document, stack.copy(instances = listOf(unavailable)))
+    }
+
+    private suspend fun verifyUnavailablePhysics(project: SyntheticProject, document: WorkspaceDocument, missing: RigModifierStack) {
+        val unavailable = missing.instances.single()
         val saved = document.copy(rigEdits = document.rigEdits.copy(modifierStack = missing.toJson()))
         val reopened = reopen(project, saved)
         val preview = WorkspacePreviewBuilder().build(reopened)
@@ -35,7 +59,8 @@ class PhysicsModifierWorkspaceTest {
             WorkspaceModifierEdits.apply(applyOperation(unavailable.id), reopened, preview)
         }
         val output = temp.resolve("missing-export")
-        assertFailsWith<IllegalArgumentException> { PSD2LivePipeline().export(preview, "test.psd", output) }
+        val failure = assertFailsWith<IllegalArgumentException> { PSD2LivePipeline().export(preview, "test.psd", output) }
+        assertContains(failure.message.orEmpty(), "${unavailable.type}@${unavailable.version}")
         assertFalse(Files.exists(output))
     }
 

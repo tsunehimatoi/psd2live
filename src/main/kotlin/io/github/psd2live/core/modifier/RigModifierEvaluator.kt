@@ -76,10 +76,12 @@ internal class RigModifierRegistry(definitions: List<RigModifierDefinition>) {
         known.forEach(::visit)
     }
 
-    fun definition(instance: RigModifierInstance): RigModifierDefinition = requireNotNull(
-        definition(instance.type, instance.version, instance.plugin)) {
+    fun definition(instance: RigModifierInstance): RigModifierDefinition = requireNotNull(definitionOrNull(instance)) {
         "Unsupported modifier algorithm: ${instance.type}@${instance.version}"
     }
+
+    fun definitionOrNull(instance: RigModifierInstance): RigModifierDefinition? =
+        definition(instance.type, instance.version, instance.plugin)
 
     private fun definition(type: String, version: Int, plugin: ModifierPluginReference?): RigModifierDefinition? =
         (if (plugin != null && plugin == BuiltinModifierPlugins.reference(type, version)) entries[Triple(type, version, null)] else null)
@@ -373,7 +375,7 @@ internal class RigModifierEvaluator(
     fun validateOrder(stack: RigModifierStack) = validateOrder(stack, resolveDefinitions(stack))
 
     private fun resolveDefinitions(stack: RigModifierStack) = stack.instances.map { instance ->
-        if (ModifierPluginCatalog.available(instance)) registry.definition(instance) else null
+        registry.definitionOrNull(instance)?.takeIf { ModifierPluginCatalog.available(instance) }
     }
 
     private fun validateOrder(stack: RigModifierStack, definitions: List<RigModifierDefinition?>) {
