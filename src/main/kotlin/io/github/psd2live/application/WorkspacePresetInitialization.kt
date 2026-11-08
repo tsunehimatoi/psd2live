@@ -62,6 +62,7 @@ import io.github.psd2live.algorithms.binding.MouthFittedV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV6Algorithm
+import io.github.psd2live.algorithms.binding.MouthFittedV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthFittedV8Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthJawV5Algorithm
@@ -76,6 +77,7 @@ import io.github.psd2live.algorithms.binding.MouthOutlineV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV8Algorithm
+import io.github.psd2live.algorithms.binding.MouthOutlineV10Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV11Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV6Algorithm
@@ -204,11 +206,11 @@ internal object WorkspacePresetInitialization {
         val eyeWhiteSides = subject.sides(SemanticTag.EYEWHITE)
         val lashSides = subject.sides(SemanticTag.EYELASH)
         val completeEyePair = eyeWhiteSides.size == 2 && lashSides.size == 2
-        val singleEyeClosedMouth = eyeWhiteSides.size == 1 && lashSides == eyeWhiteSides &&
-            subject.sides(SemanticTag.EYEBROW) == eyeWhiteSides && subject.has(SemanticTag.MOUTH_CLOSE)
+        val singleEye = eyeWhiteSides.size == 1 && lashSides == eyeWhiteSides &&
+            subject.sides(SemanticTag.EYEBROW) == eyeWhiteSides
         val fittedSources = if (scaffold != null && config.recipe == RigRecipe.Modern && fittedFace &&
             !config.featureDisplacementEnabled && config.rigTuning == RigTuning() && requestedVersions.isEmpty() && freshSource(config) &&
-            (!subject.has(SemanticTag.EYEBROW) || completeEyePair || singleEyeClosedMouth)) {
+            (!subject.has(SemanticTag.EYEBROW) || completeEyePair || singleEye)) {
             fun packages(versions: Map<String, Int>): Map<String, Pair<Int, ModifierPluginReference>> {
                 val selected = versions.mapNotNull { (type, version) ->
                     val entry = stack.instances.singleOrNull { it.type == type } ?: return@mapNotNull null
@@ -268,16 +270,28 @@ internal object WorkspacePresetInitialization {
                         frameBindings + mouth + moods + arms + neck
                     }
                 } else emptyMap()
-            } else if (singleEyeClosedMouth) {
-                val mouth = sourceMouthVersions(model.analysis, config, types, singleEye = true)
-                if (mouth.isEmpty()) emptyMap() else {
+            } else if (singleEye) {
+                val closedMouth = if (subject.has(SemanticTag.MOUTH_CLOSE))
+                    sourceMouthVersions(model.analysis, config, types, singleEye = true) else emptyMap()
+                if (closedMouth.isNotEmpty()) {
                     val brows = mapOf(RigModules.BROW_FITTED.id to BrowFittedV3Binding.VERSION,
                         RigModules.BROW_SHAPE.id to BrowShapeV4Algorithm.VERSION,
                         RigModules.BROW_LID.id to BrowLidV6Algorithm.VERSION,
                         RigModules.BROW_BLINK.id to BrowBlinkV4Algorithm.VERSION,
                         RigModules.BROW_SPRING.id to BrowSpringV5Algorithm.VERSION,
                         RigModules.EYE_LID_FADE.id to LidFadeV3Algorithm.VERSION).filterKeys { it in plannedTypes }
-                    packages(headVersions + plannedLids + brows + mouth + moodVersions)
+                    packages(headVersions + plannedLids + brows + closedMouth + moodVersions)
+                } else {
+                    val mouth = stack.instances.singleOrNull { it.type == RigModules.MOUTH_FITTED.id }
+                    val prefix = mouth?.let { instance -> stack.instances.take(stack.index(instance.id)).filter {
+                        it.config["scaffold"] == JsonPrimitive(scaffold.id)
+                    } }.orEmpty()
+                    val outlineSupported = RigModules.MOUTH_OUTLINE.id !in plannedTypes || supportsClassicOutline(model.analysis, config)
+                    if (mouth != null && outlineSupported && RigFittedMouthDefinition.supportsFallbackFrames(source, scaffold, prefix, mouth)) {
+                        packages(headVersions + mapOf(RigModules.BROW_FITTED.id to BrowFittedV3Binding.VERSION,
+                            RigModules.MOUTH_FITTED.id to MouthFittedV7Algorithm.VERSION,
+                            RigModules.MOUTH_OUTLINE.id to MouthOutlineV10Algorithm.VERSION).filterKeys { it in plannedTypes })
+                    } else emptyMap()
                 }
             } else {
                 val lids = packages(plannedLids)

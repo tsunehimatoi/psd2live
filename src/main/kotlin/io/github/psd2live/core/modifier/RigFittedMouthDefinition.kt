@@ -12,6 +12,7 @@ import io.github.psd2live.algorithms.binding.ScaffoldBinding
 import io.github.psd2live.algorithms.binding.ScaffoldMesh
 import io.github.psd2live.algorithms.binding.ScaffoldMeshContext
 import io.github.psd2live.core.*
+import io.github.psd2live.core.fit.FittedMouth
 import io.github.psd2live.core.recipe.RecipeSubject
 import io.github.psd2live.core.recipe.BaseChoice
 import io.github.psd2live.core.recipe.ModuleChoice
@@ -82,6 +83,17 @@ internal object RigFittedMouthDefinition {
 
     fun fallbackFrameDefinition(source: RigModifierSource?): RigModifierDefinition = frameDefinition(source, SourceFrame.FALLBACK)
 
+    fun supportsFallbackFrames(source: RigModifierSource, scaffold: RigModifierInstance,
+                               preceding: List<RigModifierInstance>, instance: RigModifierInstance): Boolean {
+        val (old, before) = RigFittedMouthModuleSource.context(source, scaffold, preceding, null)
+        if (before.faceTurn(old) != null) return false
+        val (next, after) = RigFittedMouthModuleSource.context(source, scaffold, preceding + instance, null)
+        return after.faceTurn(next) == null && matchesSourceMouth(after.fittedMouth(next), layered = false)
+    }
+
+    private fun matchesSourceMouth(mouth: FittedMouth?, layered: Boolean): Boolean =
+        mouth?.source != null && !mouth.closedLine && mouth.layered == layered && (mouth.rig?.fit?.layered != null) == layered
+
     private fun frameDefinition(source: RigModifierSource?, frame: SourceFrame): RigModifierDefinition {
         val modern = modernDefinition(source)
         val plugin = object : ChangingModifierAlgorithmPlugin by frame.algorithm, ModifierOptionalUpstream, ModifierVersionSelection {
@@ -114,9 +126,7 @@ internal object RigFittedMouthDefinition {
                 "Fitted mouth v7 requires one source eye with its lash and brow"
             }
         }
-        val mouth = after.fittedMouth(next)
-        val layeredFit = mouth?.rig?.fit?.layered != null
-        require(mouth?.source != null && !mouth.closedLine && mouth.layered == layered && layeredFit == layered &&
+        require(matchesSourceMouth(after.fittedMouth(next), layered) &&
             (before.faceTurn(old) != null) != fallback && (after.faceTurn(next) != null) != fallback) {
             when (frame) {
                 SourceFrame.OPEN -> "Fitted mouth v6 requires an open source drawing and fitted head frames"
