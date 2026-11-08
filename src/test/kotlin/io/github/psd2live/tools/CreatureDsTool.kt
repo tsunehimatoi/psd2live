@@ -48,6 +48,11 @@ class CreatureDsTool {
         compareCreature(6, SemanticTag.HEADWEAR, layered = true, includeRibbons = false)
     }
 
+    @Test fun compareLayeredMouthWings(): Unit = runBlocking {
+        compareCreature(2, SemanticTag.WINGS, includeTail = false, layered = true)
+        compareCreature(6, SemanticTag.HEADWEAR, SemanticTag.WINGS, includeTail = false, layered = true)
+    }
+
     private suspend fun compareCreature(
         version: Int, vararg extras: SemanticTag, includeTail: Boolean = true, includeSkirt: Boolean = true,
         layered: Boolean = false, includeRibbons: Boolean = layered,
@@ -126,7 +131,8 @@ class CreatureDsTool {
         if (layered) {
             val fit = assertNotNull(RigBuilder.rigContext(historical.analysis, config).fittedMouth(config))
             assertTrue(fit.layered && fit.rig?.fit?.layered != null)
-            assertEquals(setOf(SemanticTag.TAIL, *extras), historical.analysis.layers.filter {
+            val expectedCreatureTags = extras.toSet() + listOfNotNull(SemanticTag.TAIL.takeIf { includeTail })
+            assertEquals(expectedCreatureTags, historical.analysis.layers.filter {
                 it.opaquePixels > 0 && (it.semantic.role == PartRole.ANIMAL ||
                     it.semantic.tag in setOf(SemanticTag.TAIL, SemanticTag.WINGS))
             }.mapTo(hashSetOf()) { it.semantic.tag })
