@@ -134,7 +134,7 @@ class SingleEyeOpenMouthSourceTool {
         requireTools()
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 3,
             "mouth/fitted" to 7, "mouth.outline" to 10, type to 1) + predecessors
-        val (planned, baseline) = WorkspacePresetInitialization.prepare(singleEyeDocument(Sample.fromEnvironment()), WorkspaceRasterWork.Direct,
+        val (planned, baseline) = WorkspacePresetInitialization.prepare(singleEyeOpenDocument(Sample.fromEnvironment()), WorkspaceRasterWork.Direct,
             WorkspaceInitialPreset(clothing = false), requestedVersions = versions)
         val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
         assertEquals(versions, stack.instances.filter { it.type in versions }.associate { it.type to it.version })
@@ -252,7 +252,7 @@ class SingleEyeOpenMouthSourceTool {
     @Test fun compareFittedMouth(): Unit = runBlocking {
         requireTools()
         val sample = Sample.fromEnvironment()
-        val document = singleEyeDocument(sample)
+        val document = singleEyeOpenDocument(sample)
         val measured = RigGenerationSource.analyze(document.source, PipelineConfig(meshSpacing = 40))
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 3, "mouth/fitted" to 1)
         val (planned, baseline) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
@@ -320,7 +320,7 @@ class SingleEyeOpenMouthSourceTool {
         requireTools()
         val sample = Sample.fromEnvironment()
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 3, "mouth/fitted" to 7, "mouth.outline" to 1)
-        val (planned, baseline) = WorkspacePresetInitialization.prepare(singleEyeDocument(sample), WorkspaceRasterWork.Direct,
+        val (planned, baseline) = WorkspacePresetInitialization.prepare(singleEyeOpenDocument(sample), WorkspaceRasterWork.Direct,
             WorkspaceInitialPreset(clothing = false), requestedVersions = versions)
         val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
         assertEquals(versions, stack.instances.filter { it.type in versions }.associate { it.type to it.version })
@@ -375,31 +375,31 @@ class SingleEyeOpenMouthSourceTool {
             ModifierPluginStore.deleteTree(root)
         }
     }
+}
 
-    private fun singleEyeDocument(sample: Sample): WorkspaceDocument {
-        val artwork = PSD2LivePipeline().readPsd(sample.path)
-        val config = PipelineConfig(meshSpacing = 40, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
-        val singleEye = singleEyeArtwork(artwork, config)
-        val measured = RigGenerationSource.analyze(singleEye, config)
-        val subject = RecipeSubject.of(measured)
-        for (tag in listOf(SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYEBROW)) {
-            assertEquals(setOf(Side.LEFT), subject.sides(tag), tag.name)
-        }
-        val mouthFit = assertNotNull(RigBuilder.rigContext(measured, config, PreviewMeshCache()).fittedMouth(config))
-        assertNotNull(mouthFit.source)
-        assertFalse(mouthFit.closedLine || mouthFit.layered)
-        return WorkspaceDocument(singleEye, emptyMap(), emptySet(), emptyMap(), emptyMap(), config.rigEdits,
-            WorkspaceSettingsCodec.encode(config))
+internal fun singleEyeOpenDocument(sample: Sample, meshSpacing: Int = 40): WorkspaceDocument {
+    val artwork = PSD2LivePipeline().readPsd(sample.path)
+    val config = PipelineConfig(meshSpacing = meshSpacing, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+    val singleEye = singleEyeArtwork(artwork, config)
+    val measured = RigGenerationSource.analyze(singleEye, config)
+    val subject = RecipeSubject.of(measured)
+    for (tag in listOf(SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYEBROW)) {
+        assertEquals(setOf(Side.LEFT), subject.sides(tag), tag.name)
     }
+    val mouthFit = assertNotNull(RigBuilder.rigContext(measured, config, PreviewMeshCache()).fittedMouth(config))
+    assertNotNull(mouthFit.source)
+    assertFalse(mouthFit.closedLine || mouthFit.layered)
+    return WorkspaceDocument(singleEye, emptyMap(), emptySet(), emptyMap(), emptyMap(), config.rigEdits,
+        WorkspaceSettingsCodec.encode(config))
+}
 
-    private fun singleEyeArtwork(artwork: SourceArt, config: PipelineConfig): SourceArt {
-        val eyeTags = setOf(SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.IRIDES, SemanticTag.EYE_CLOSE, SemanticTag.EYEBROW)
-        val original = RigGenerationSource.analyze(artwork, config)
-        val removed = original.layers.filter { it.semantic.tag in eyeTags && it.semantic.side == Side.RIGHT }
-            .mapTo(HashSet()) { it.source.id }
-        assertTrue(removed.isNotEmpty())
-        return object : SourceArt by artwork {
-            override val layers = artwork.layers.filterNot { it.id in removed }
-        }
+private fun singleEyeArtwork(artwork: SourceArt, config: PipelineConfig): SourceArt {
+    val eyeTags = setOf(SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.IRIDES, SemanticTag.EYE_CLOSE, SemanticTag.EYEBROW)
+    val original = RigGenerationSource.analyze(artwork, config)
+    val removed = original.layers.filter { it.semantic.tag in eyeTags && it.semantic.side == Side.RIGHT }
+        .mapTo(HashSet()) { it.source.id }
+    assertTrue(removed.isNotEmpty())
+    return object : SourceArt by artwork {
+        override val layers = artwork.layers.filterNot { it.id in removed }
     }
 }

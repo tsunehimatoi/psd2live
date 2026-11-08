@@ -16,7 +16,7 @@ import java.util.UUID
 import java.util.prefs.Preferences
 import kotlin.test.*
 
-/** Compares the bilateral source shape after a fitted brow that changes shared head frames. */
+/** Compares brow shape after fitted bindings that change shared head frames. */
 class BrowShapeSourceTool {
     @Test fun compareSharedFrameShape(): Unit = runBlocking {
         requireTools()
@@ -81,6 +81,79 @@ class BrowShapeSourceTool {
                 result.outputs[index - 1], instance, {}, store, context = context, declaredParameters = definition.parameters(instance)), "installed JVM")
         } finally {
             store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(root)
+        }
+    }
+
+    @Test fun compareSingleEyeOpenWorkspace(): Unit = runBlocking { compareSingleEyeOpen(cli = false) }
+
+    @Test fun compareSingleEyeOpenRawCli(): Unit = runBlocking { compareSingleEyeOpen(cli = true) }
+
+    private suspend fun compareSingleEyeOpen(cli: Boolean) {
+        requireTools()
+        val document = singleEyeOpenDocument(Sample.fromEnvironment(), meshSpacing = if (cli) 64 else 40)
+        val config = PipelineConfig(meshSpacing = if (cli) 64 else 40)
+        val analyses = if (cli) RigGenerationSource.prepare(RigGenerationSource.analyze(document.source, config), config) else null
+        val aliases = analyses?.let { CliPresetBindings(it, config) }
+        val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 3, "mouth/fitted" to 7,
+            "mouth.outline" to 10, "mouth.vowel" to 9, "mouth.capture" to 8, "brow.shape" to 1)
+        val (planned, baseline) = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct,
+            WorkspaceInitialPreset(clothing = false), requestedVersions = versions, cliBindings = aliases, restoreSourceRotations = cli)
+        val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
+        val expected = assertNotNull(baseline.modifierEvaluation)
+        for ((type, version) in versions) {
+            val entry = expected.entries.single { it.instance.type == type }
+            assertEquals(version, entry.instance.version, type)
+            assertEquals(ModifierStatus.ACTIVE, entry.status, type)
+            if (type != "brow.shape") {
+                assertEquals(assertNotNull(BundledAlgorithmArtifacts.find(type, version)).reference, entry.instance.plugin, type)
+            }
+        }
+        assertEquals(cli, stack.instances.single { it.type == "rig.scaffold" }.outputAliases.isNotEmpty())
+        val shape = stack.instances.single { it.type == "brow.shape" }
+        val stage = stack.index(shape.id)
+        val before = expected.outputs[stage - 1]
+        val after = expected.outputs[stage]
+        val brow = after.meshes.single { it.id == "ArtMeshEyebrowL" }
+        assertTrue(brow.visible && brow.opacity > 0f)
+        assertNotEquals(before.meshes.single { it.id == brow.id }, brow)
+        assertTrue(after.parameters.any { it.id == "ParamBrowLForm" })
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(shape.type, 4))
+        val selected = shape.copy(version = 4, plugin = artifact.reference)
+        val modified = stack.copy(instances = stack.instances.map { if (it.id == selected.id) selected else it })
+        val candidate = planned.copy(rigEdits = planned.rigEdits.copy(modifierStack = modified.toJson()))
+        val preview = if (cli) PSD2LivePipeline().apply {
+            deferRuntimeBundles = true
+            rawSourceRotations = true
+        }.buildPreview(candidate.source, config.copy(rigEdits = candidate.rigEdits))
+        else WorkspacePreviewBuilder().build(candidate)
+        val actual = assertNotNull(preview.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, actual.entries[stage].status)
+        for (index in stack.instances.indices) {
+            assertTrue(expected.outputs[index] == actual.outputs[index], stack.instances[index].type)
+        }
+        fun exported(model: RigPreviewModel): RigIR {
+            val presented = if (aliases != null) CliPresetPresentation.apply(model, assertNotNull(analyses), aliases.moduleParameters, config)
+                else model
+            return RigIrCompiler.compile(presented, tileArt = true)
+        }
+        assertTrue(exported(baseline) == exported(preview), "final IR differs")
+
+        val root = Files.createTempDirectory("brow-shape-single-eye-")
+        val preferences = Preferences.userRoot().node("brow-shape-single-eye/" + UUID.randomUUID())
+        val store = ModifierPluginStore(root.resolve("installed"), preferences)
+        try {
+            BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+            val worker = store.snapshot().single()
+            val definition = RigBrowShapeModifier.fallbackDefinition(RigModifierSource.of(preview))
+            val context = assertNotNull(actual.readAlgorithms[shape.id]).context
+            assertTrue("brow_turn" in context.resources)
+            assertTrue(after == ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(),
+                before, selected, {}, store, context = context, declaredParameters = definition.parameters(selected)),
+                "installed JVM IR differs")
+        } finally {
+            ModifierPluginWorkers.stop(artifact.reference)
             preferences.removeNode()
             ModifierPluginStore.deleteTree(root)
         }
