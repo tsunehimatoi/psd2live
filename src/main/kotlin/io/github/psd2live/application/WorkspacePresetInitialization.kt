@@ -435,7 +435,7 @@ internal object WorkspacePresetInitialization {
         return current() to build("final preview").also { work.checkpoint(); it.runtimeBundle.materialize(); work.checkpoint() }
     }
 
-    private fun freshSource(config: PipelineConfig): Boolean =
+    fun freshSource(config: PipelineConfig): Boolean =
         config.rigEdits.copy(modifierStack = null) == RigEditOverlay.Empty &&
             config.meshOverrides.isEmpty() && config.parentOverrides.isEmpty() &&
             !config.deferRig && config.rigPendingLayerIds.isEmpty()

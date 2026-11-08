@@ -1,6 +1,10 @@
 package io.github.psd2live.application
 
+import io.github.psd2live.algorithms.binding.BrowLegacyV2Algorithm
 import io.github.psd2live.algorithms.binding.DepthTurnV2Algorithm
+import io.github.psd2live.algorithms.binding.EyeLegacySourceAlgorithm
+import io.github.psd2live.algorithms.binding.LegacyBodyV2Algorithm
+import io.github.psd2live.algorithms.binding.LegacyFaceV2Algorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.sim.*
@@ -12,6 +16,12 @@ internal object WorkspaceModifierPlan {
     const val NATURAL_MOTION_PREFIX = "natural:"
     val motionPresetIds = MotionClips.BUILTIN_NAMES + MotionClips.BASIC_NAMES.map { NATURAL_MOTION_PREFIX + it }
     val nativeTypes = listOf("swing", "physics", "motion", "simulation")
+    private val legacySourceBases = linkedMapOf(
+        LegacyBodyV2Algorithm.TYPE to LegacyBodyV2Algorithm.VERSION,
+        LegacyFaceV2Algorithm.TYPE to LegacyFaceV2Algorithm.VERSION,
+        EyeLegacySourceAlgorithm.TYPE to EyeLegacySourceAlgorithm.VERSION,
+        BrowLegacyV2Algorithm.TYPE to BrowLegacyV2Algorithm.VERSION,
+    )
     val types get() = (sourceTypes + nativeTypes).filter { ModifierPluginStore.shared.builtinsEnabled() } + ModifierPluginStore.shared.runnablePackages().filter { ModifierPluginStore.shared.resolution(it.reference).available }.flatMap { it.manifest.algorithms.map { it.type } }.distinct()
     const val RECOMMENDED_GROUP = "modern-standard"
     data class Group(val id: String, val algorithm: String, val richness: String, val types: List<String>)
@@ -185,13 +195,15 @@ internal object WorkspaceModifierPlan {
                     if (related.isNotEmpty()) put("dependencies", JsonObject(related.mapValues { JsonPrimitive(requireNotNull(it.value.id)) }))
                 }
             }
-            candidate = candidate.add(storedType, version, targets, configuration, group, plugin = packaged?.first?.reference)
+            val sourceVersion = if (requestedTypes == null && wanted == storedType && packaged == null)
+                legacySourceBaseVersion(model, candidate, storedType, targets, configuration, available) else null
+            candidate = candidate.add(storedType, sourceVersion ?: version, targets, configuration, group, plugin = packaged?.first?.reference)
             val instance = candidate.instances.last()
             val cap = instance.capability()
             available += cap
             entries += buildJsonObject {
                 instance.plugin?.let { put("plugin", Json.encodeToJsonElement(ModifierPluginReference.serializer(), it)) }
-                put("id", instance.id); put("type", storedType); put("version", version); put("config", configuration)
+                put("id", instance.id); put("type", storedType); put("version", instance.version); put("config", configuration)
                 put("targets", JsonArray(targets.map { buildJsonObject { put("kind", it.kind); put("id", it.id) } }))
             }
             planned[instance.id] = describe(cap, "added")
@@ -205,6 +217,24 @@ internal object WorkspaceModifierPlan {
             put("entries", JsonArray(entries)); put("plan", JsonArray(planned.values.toList()))
             put("group", group ?: "custom")
         }
+    }
+
+    /** Use the independent legacy bases when the live prefix is a shared, unedited source frame. */
+    private fun legacySourceBaseVersion(model: RigPreviewModel, stack: RigModifierStack, type: String,
+                                        targets: List<ModifierTarget>, configuration: JsonObject,
+                                        available: List<ModifierCapability>): Int? {
+        val version = legacySourceBases[type] ?: return null
+        if (!WorkspacePresetInitialization.freshSource(model.config) || stack.appliedCapabilities.isNotEmpty() ||
+            stack.overrides.values.any { it.isNotEmpty() }) return null
+        val scoped = available.filter { entry -> entry.targets.any(targets::contains) }
+        val scaffold = scoped.singleOrNull { it.type == RigSourceModifiers.SCAFFOLD && it.version == 2 &&
+            JsonPrimitive(it.id) == configuration["scaffold"] && it.targets.toSet() == targets.toSet() } ?: return null
+        if (scaffold.plugin != BuiltinModifierPlugins.reference(scaffold.type, scaffold.version) ||
+            scaffold.config["featureDisplacement"] == JsonPrimitive(true)) return null
+        val earlier = legacySourceBases.keys.takeWhile { it != type }
+        if (scoped.any { it != scaffold && (it.type !in earlier || it.version != legacySourceBases[it.type] ||
+                it.targets.toSet() != targets.toSet() || it.config["scaffold"] != configuration["scaffold"]) }) return null
+        return version.takeIf { ModifierPluginCatalog.available(type, it) }
     }
 
     fun physicsPresets(): List<RigPhysicsEdit> = PhysicsGenerator.presetRules(PhysicsGenerator.Presets.All)

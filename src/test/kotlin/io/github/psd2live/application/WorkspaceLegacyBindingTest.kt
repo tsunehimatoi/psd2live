@@ -8437,6 +8437,37 @@ class WorkspaceLegacyBindingTest {
             .jsonObject.getValue("status").jsonPrimitive.content)
     }
 
+    @Test fun canonicalLegacyAdditionsUseIndependentSourceBases(): Unit = runBlocking {
+        val fixture = Fixture(document())
+        fixture.install()
+        val bases = listOf("body/legacy", "face/legacy", "eye/legacy", "brow/legacy")
+        for (type in bases) {
+            val request = buildJsonObject {
+                put("type", type)
+                put("targets", fixture.addition(type, "unused").getValue("targets"))
+            }
+            val plan = WorkspaceModifierPlan.prepare(fixture.now, request)
+            val planned = plan.getValue("entries").jsonArray.last().jsonObject
+            assertEquals(type, planned.getValue("type").jsonPrimitive.content)
+            assertEquals(2, planned.getValue("version").jsonPrimitive.int, type)
+            val reference = Json.decodeFromJsonElement(ModifierPluginReference.serializer(), planned.getValue("plugin"))
+            assertEquals(BuiltinModifierPlugins.reference(type, 2), reference)
+            fixture.edit("modifier_add_group", buildJsonObject {
+                put("group", plan.getValue("group")); put("entries", plan.getValue("entries"))
+            })
+            val evaluated = assertNotNull(fixture.now.model.modifierEvaluation).entries.last()
+            assertEquals(reference, evaluated.instance.plugin)
+            assertEquals(ModifierStatus.ACTIVE, evaluated.status, type)
+        }
+        val captured = fixture.now
+        val stack = RigModifierStack.fromJson(requireNotNull(captured.document.rigEdits.modifierStack))
+        val historical = stack.copy(instances = stack.instances.map {
+            if (it.type in bases) it.copy(version = 1, plugin = BuiltinModifierPlugins.reference(it.type, 1)) else it
+        })
+        val baseline = fixture.builder.build(captured.document.copy(rigEdits = captured.document.rigEdits.copy(modifierStack = historical.toJson())))
+        assertEquals(RigIrCompiler.compile(baseline, tileArt = true), RigIrCompiler.compile(captured.model, tileArt = true))
+    }
+
     @Test fun depthTurnPlanAddsTheLegacyFaceAndRejectsFittedFace(): Unit = runBlocking {
         val fixture = Fixture(document())
         fixture.install()
