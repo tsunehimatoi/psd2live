@@ -33,6 +33,7 @@ internal object BuiltinModifierPlugins {
         RigCreatureModifier.residualDefinition(source),
         RigCreatureModifier.sharedFrameDefinition(source),
         RigCreatureModifier.optionalSkirtDefinition(source),
+        RigCreatureModifier.layeredMouthDefinition(source),
         RigNeckModifier.definition(source),
         RigNeckModifier.foldedDefinition(source),
         RigBustModifier.definition(source),
