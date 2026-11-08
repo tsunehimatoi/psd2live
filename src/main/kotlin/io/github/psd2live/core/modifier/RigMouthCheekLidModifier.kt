@@ -11,6 +11,7 @@ import io.github.psd2live.algorithms.binding.MouthCheekLidV9Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV10Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV11Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV12Algorithm
+import io.github.psd2live.algorithms.binding.MouthCheekLidV13Algorithm
 import io.github.psd2live.core.CharacterAnalyzer
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.SemanticTag
@@ -113,6 +114,9 @@ internal object RigMouthCheekLidModifier {
     fun fallbackFrameDefinition(source: RigModifierSource?): RigModifierDefinition =
         sourceFrameDefinition(source, MouthCheekLidV11Algorithm.VERSION, MouthCheekLidV11Algorithm)
 
+    fun fallbackTongueFrameDefinition(source: RigModifierSource?): RigModifierDefinition =
+        sourceFrameDefinition(source, MouthCheekLidV13Algorithm.VERSION, MouthCheekLidV13Algorithm, withTongue = true)
+
     private fun sourceFrameDefinition(source: RigModifierSource?, version: Int, algorithm: ChangingModifierAlgorithmPlugin,
                                       withTongue: Boolean = false): RigModifierDefinition {
         val projected = object : ChangingModifierAlgorithmPlugin by algorithm, ModifierOptionalUpstream, ModifierVersionSelection {
@@ -125,6 +129,7 @@ internal object RigMouthCheekLidModifier {
                 MouthCheekLidV10Algorithm.VERSION -> MouthCheekLidV10Algorithm.WRITES
                 MouthCheekLidV11Algorithm.VERSION -> MouthCheekLidV11Algorithm.WRITES
                 MouthCheekLidV12Algorithm.VERSION -> MouthCheekLidV12Algorithm.WRITES
+                MouthCheekLidV13Algorithm.VERSION -> MouthCheekLidV13Algorithm.WRITES
                 else -> MouthCheekLidV8Algorithm.WRITES
             },
             authorContext = { requireNotNull(source).captureSharedFrames(it, withTongue) })

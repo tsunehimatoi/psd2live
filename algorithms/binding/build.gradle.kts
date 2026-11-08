@@ -4806,6 +4806,35 @@ tasks.register("pluginMouthCheekLidV12") {
     }
 }
 
+val mouthCheekLidV13WorkerJar = registerIsolatedBindingWorker(
+    "mouthCheekLidV13", "mouth-cheek-lid-v13", "worker-mouth-cheek-lid-v13", "io.github.psd2live.algorithms.binding.MouthCheekLidV13Worker",
+)
+
+tasks.register("pluginMouthCheekLidV13") {
+    dependsOn(mouthCheekLidV13WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-cheek-lid-v13")
+    val packageVersion = project.version.toString()
+    inputs.file(mouthCheekLidV13WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthCheekLidV13WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682e636865656b2d6c6964.v13"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Single-eye cheek and lid coupling with tongue",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/coupling","aliases":["mouth.cheek-lid"],"version":13,"name":"Single-eye cheek and lid coupling with tongue","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","mouth/fitted","eye/fitted"],"contextVersion":2,
+               "reads":["*"],"writes":["mesh","deformer","part","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val mouthTongueV3WorkerJar = registerIsolatedBindingWorker(
     "mouthTongueV3", "mouth-tongue-v3", "worker-mouth-tongue-v3", "io.github.psd2live.algorithms.binding.MouthTongueV3Worker",
 )

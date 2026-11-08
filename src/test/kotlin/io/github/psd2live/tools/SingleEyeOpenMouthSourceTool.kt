@@ -230,6 +230,27 @@ class SingleEyeOpenMouthSourceTool {
             emptySet(), setOf("ParamMouthOpenY"), RigMouthJawModifier::fallbackFrameDefinition)
     }
 
+    @Test fun compareCheekLidWithTongue(): Unit = runBlocking {
+        requireTools()
+        val document = withTongue(singleEyeOpenDocument(Sample.fromEnvironment()))
+        val chain = mapOf("eye.smile" to 3, "eye.wide" to 3, "eye.gaze-lid" to 3, "eye.emotion" to 3,
+            "eye.aftershock" to 4, "eye.squash" to 4, "brow.shape" to 4, "brow.lid-coupling" to 6,
+            "brow.blink" to 4, "brow.spring" to 5,
+            "mouth.vowel" to 9, "mouth.capture" to 8, "mouth.tongue" to 8, "mouth.jaw" to 13)
+        compareShapeModule("mouth.cheek-lid", 13, chain, emptySet(), emptySet(),
+            RigMouthCheekLidModifier::fallbackTongueFrameDefinition, document = document) { before, after ->
+            verifyCheekLidContribution(before, after)
+            val tongue = after.meshes.single { it.id == "ArtMeshTongue" }
+            assertEquals(before.meshes.single { it.id == tongue.id }, tongue)
+            assertEquals(listOf("ArtMeshMouth"), tongue.maskedBy)
+            assertTrue(after.meshes.any { it.id == tongue.maskedBy.single() })
+            assertTrue(tongue.visible && tongue.opacity > 0f)
+            assertTrue(tongue.shapes.any { it.parameter == "ParamTongueOut" } ||
+                tongue.offsets?.axes.orEmpty().any { it.parameter == "ParamTongueOut" })
+            println("Cheek and lid moves ArtMeshEyelashL and ArtMeshEyewhiteL; retained tongue ${tongue.id} masked by ${tongue.maskedBy}")
+        }
+    }
+
     @Test fun compareCheekLid(): Unit = runBlocking {
         compareShapeModule("mouth.cheek-lid", 11, mapOf("mouth.vowel" to 9, "mouth.capture" to 8, "mouth.jaw" to 11),
             emptySet(), emptySet(), RigMouthCheekLidModifier::fallbackFrameDefinition) { before, after -> verifyCheekLidContribution(before, after) }
