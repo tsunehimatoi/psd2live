@@ -4601,6 +4601,35 @@ tasks.register("pluginMouthCheekLidV9") {
     }
 }
 
+val mouthCheekLidV10WorkerJar = registerIsolatedBindingWorker(
+    "mouthCheekLidV10", "mouth-cheek-lid-v10", "worker-mouth-cheek-lid-v10", "io.github.psd2live.algorithms.binding.MouthCheekLidV10Worker",
+)
+
+tasks.register("pluginMouthCheekLidV10") {
+    dependsOn(mouthCheekLidV10WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-cheek-lid-v10")
+    val packageVersion = project.version.toString()
+    inputs.file(mouthCheekLidV10WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthCheekLidV10WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682e636865656b2d6c6964.v10"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Cheeks lift lids",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/coupling","aliases":["mouth.cheek-lid"],"version":10,"name":"Cheeks lift lids","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","mouth/fitted","eye/fitted"],"contextVersion":2,
+               "reads":["*"],"writes":["mesh","deformer","part","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val mouthTongueV3WorkerJar = registerIsolatedBindingWorker(
     "mouthTongueV3", "mouth-tongue-v3", "worker-mouth-tongue-v3", "io.github.psd2live.algorithms.binding.MouthTongueV3Worker",
 )
