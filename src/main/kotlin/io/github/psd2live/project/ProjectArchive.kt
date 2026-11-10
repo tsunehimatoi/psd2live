@@ -343,7 +343,7 @@ internal object ProjectArchive {
                 // Declared sizes only pace the progress; the limit below counts the bytes actually written.
                 val declared = zip.entries().asSequence().sumOf { it.size.coerceAtLeast(0L) }.coerceAtLeast(1L).toDouble()
                 val names = mutableSetOf<String>()
-                val folded = HashSet<String>()
+                val destinations = HashSet<String>()
                 val files = ArrayList<String>()
                 zip.entries().asSequence().forEach { entry ->
                     val name = entry.name
@@ -352,10 +352,14 @@ internal object ProjectArchive {
                     // Windows drops a trailing dot or space and ignores case, so such names would land on one file
                     // and the last write would replace a digest already checked.
                     require(name.trimEnd('/').split('/').none { it.endsWith('.') || it.endsWith(' ') }) { "Invalid project entry: $name" }
-                    require(names.add(name) && folded.add(name.trimEnd('/').lowercase(java.util.Locale.ROOT))) { "Duplicate project entry: $name" }
+                    require(names.add(name)) { "Duplicate project entry: $name" }
                     require(names.size <= 1_000_000) { "Too many project entries" }
                     val path = root.resolve(name).normalize()
                     require(path.startsWith(root)) { "Project entry escapes archive" }
+                    // Normalize before case folding: different ZIP names can target one file
+                    // (e.g. assets/pose.png and ASSETS//POSE.PNG on Windows).
+                    val destination = root.relativize(path).toString().replace('\\', '/').lowercase(java.util.Locale.ROOT)
+                    require(destinations.add(destination)) { "Duplicate normalized project entry: $name" }
                     if (!entry.isDirectory) { Files.createDirectories(path.parent); files += name }
                 }
                 val total = java.util.concurrent.atomic.AtomicLong()
