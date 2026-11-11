@@ -2,10 +2,6 @@ package io.github.psd2live.core.modifier
 
 import io.github.psd2live.core.*
 import io.github.psd2live.core.sim.RigSimEdit
-import io.github.psd2live.core.sim.SimGenerator
-import io.github.psd2live.format.model.Clip
-import io.github.psd2live.format.model.ClipEvent
-import io.github.psd2live.format.model.PhysicsGroup
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.targets.cubism.PuppetIr
 import org.umamo.runtime.model.PuppetModel
@@ -102,9 +98,6 @@ internal object RigModifierAlgorithms {
 
     internal fun simulationOutputs(instance: RigModifierInstance, source: RigSimEdit): RigSimEdit =
         io.github.psd2live.algorithms.simulation.SimulationOutputs.outputs(instance, source)
-
-    internal fun addPhysics(rig: RigIR, groups: List<PhysicsGroup>): RigIR =
-        io.github.psd2live.algorithms.physics.PhysicsGroups.append(rig, groups)
 
 }
 
