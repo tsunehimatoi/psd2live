@@ -2,6 +2,8 @@ package io.github.psd2live.core
 
 import io.github.psd2live.core.modifier.RigModifierInstance
 import io.github.psd2live.core.modifier.RigModifierSource
+import io.github.psd2live.core.modifier.RigModifierStack
+import io.github.psd2live.core.modifier.ModifierTarget
 import io.github.psd2live.format.model.Canvas
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.project.rawConfig
@@ -55,9 +57,13 @@ class RigSourceIndexTest {
         val countedSource = object : SourceArt by analysis.source {
             override val layers get() = analysis.source.layers.also { sourceReads++ }
         }
+        val targets = listOf(ModifierTarget("mesh", "primary"))
+        val scaffold = RigModifierInstance("structure", "rig.scaffold", 2, targets)
+        val instance = RigModifierInstance("skin", "face.skin-clip", 1, targets,
+            config = buildJsonObject { put("scaffold", scaffold.id) })
+        val captured = config.copy(rigEdits = config.rigEdits.copy(modifierStack = RigModifierStack(instances = listOf(scaffold, instance)).toJson()))
         val source = RigModifierSource(analysis.copy(source = countedSource, layers = analysis.layers + replacement),
-            atlas, config, linkedMapOf("copy" to id, "primary" to id), copiedMeshes = setOf("copy"), materialBase = base)
-        val instance = RigModifierInstance("skin", "face.skin-clip", 1, emptyList())
+            atlas, captured, linkedMapOf("copy" to id, "primary" to id), copiedMeshes = setOf("copy"), materialBase = base)
         val first = source.skinClipContext(instance).values
         val initialReads = sourceReads
         assertTrue(initialReads > 0)
