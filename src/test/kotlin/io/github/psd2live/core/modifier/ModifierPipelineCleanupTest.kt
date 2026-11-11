@@ -44,6 +44,23 @@ class ModifierPipelineCleanupTest {
         assertSame(upstream.canvas, result.canvas)
     }
 
+    @Test fun patchDoesNotRescanEqualComponentsOnReplay() {
+        val values = List(32) { mesh("mesh-$it") }
+        var reads = 0
+        val counted = object : AbstractList<Mesh>() {
+            override val size get() = values.size
+            override fun get(index: Int): Mesh = values[index].also { reads++ }
+        }
+        val old = before.copy(meshes = counted)
+        val equal = old.copy(meshes = values.map { it.copy() })
+        val patch = ModifierInputCache.Patch(old, equal)
+        val capturedReads = reads
+        assertTrue(capturedReads > 0)
+        val upstream = before.copy(meshes = listOf(mesh("actual-upstream")))
+        repeat(20) { assertSame(upstream.meshes, patch.apply(upstream).meshes) }
+        assertEquals(capturedReads, reads, "Cache replay must not repeat component equality traversal")
+    }
+
     @Test fun contributionsPreserveMeshAndMaskOrdering() {
         val old = before.copy(meshes = listOf(mesh("removed").copy(maskedBy = listOf("source")),
             mesh("changed").copy(maskedBy = listOf("old-source")), mesh("inverted")))
