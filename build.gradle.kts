@@ -118,6 +118,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "browSpringV4Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browSpringV5Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browSpringV6Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "browSpringV7Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthSpringElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthSpringV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthSpringV4Elements"))
@@ -186,6 +187,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "browBlinkV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browBlinkV4Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browBlinkV5Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "browBlinkV6Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "neckV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLidElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLidV3Elements"))
@@ -623,6 +625,10 @@ tasks.processResources {
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-blink-v5")) {
         into("algorithm-plugins/brow-blink-v5")
     }
+    dependsOn(":algorithms:binding:pluginBrowBlinkV6")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-blink-v6")) {
+        into("algorithm-plugins/brow-blink-v6")
+    }
     dependsOn(":algorithms:binding:pluginBrowLidV3")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-lid-v3")) {
         into("algorithm-plugins/brow-lid-v3")
@@ -862,6 +868,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginBrowSpringV6")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-spring-v6")) {
         into("algorithm-plugins/brow-spring-v6")
+    }
+    dependsOn(":algorithms:binding:pluginBrowSpringV7")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-spring-v7")) {
+        into("algorithm-plugins/brow-spring-v7")
     }
     dependsOn(":algorithms:binding:pluginMouthSpring")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-spring")) {

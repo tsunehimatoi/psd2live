@@ -5,6 +5,7 @@ import io.github.psd2live.algorithms.binding.ArmSwingV4Algorithm
 import io.github.psd2live.algorithms.binding.BrowBlinkV3Algorithm
 import io.github.psd2live.algorithms.binding.BrowBlinkV4Algorithm
 import io.github.psd2live.algorithms.binding.BrowBlinkV5Algorithm
+import io.github.psd2live.algorithms.binding.BrowBlinkV6Algorithm
 import io.github.psd2live.algorithms.binding.BrowFittedV3Binding
 import io.github.psd2live.algorithms.binding.BrowFittedV4Binding
 import io.github.psd2live.algorithms.binding.BrowLegacyV2Algorithm
@@ -19,6 +20,7 @@ import io.github.psd2live.algorithms.binding.BrowShapeV6Algorithm
 import io.github.psd2live.algorithms.binding.BrowSpringV4Algorithm
 import io.github.psd2live.algorithms.binding.BrowSpringV5Algorithm
 import io.github.psd2live.algorithms.binding.BrowSpringV6Algorithm
+import io.github.psd2live.algorithms.binding.BrowSpringV7Algorithm
 import io.github.psd2live.algorithms.binding.BustBindingV3Algorithm
 import io.github.psd2live.algorithms.binding.CheekCarrierAlgorithm
 import io.github.psd2live.algorithms.binding.CreatureAlgorithm
@@ -276,12 +278,14 @@ internal object WorkspacePresetInitialization {
                     packages(headVersions + plannedLids + brows + mouth + moodVersions)
                 }
             } else if (singleEyeOpenMouth) {
-                // Migrate the verified head, eyes, mouth, brow shape and lid coupling together.
-                // Brow blink/spring and moods keep their existing default versions.
+                // Migrate the verified head, eyes, mouth and four brow add-ons together.
+                // Moods keep their existing default versions.
                 val mouth = sourceMouthVersions(model.analysis, config, types, singleEye = true)
                 val brows = mapOf(RigModules.BROW_FITTED.id to BrowFittedV4Binding.VERSION,
                     RigModules.BROW_SHAPE.id to BrowShapeV6Algorithm.VERSION,
-                    RigModules.BROW_LID.id to BrowLidV8Algorithm.VERSION).filterKeys { it in plannedTypes }
+                    RigModules.BROW_LID.id to BrowLidV8Algorithm.VERSION,
+                    RigModules.BROW_BLINK.id to BrowBlinkV6Algorithm.VERSION,
+                    RigModules.BROW_SPRING.id to BrowSpringV7Algorithm.VERSION).filterKeys { it in plannedTypes }
                 if (mouth.isEmpty()) emptyMap() else packages(headVersions + plannedLids + mouth + brows)
             } else {
                 val lids = packages(plannedLids)
