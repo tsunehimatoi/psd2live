@@ -28,6 +28,7 @@ internal class RigModifierSource(
         RigModifierRasterAssets.attach(input, outputs, config, checkpoint)
     val physicsOrder: List<String> get() = config.rigEdits.physicsOrder
     private val stack by lazy { RigModifierStack.fromJson(requireNotNull(config.rigEdits.modifierStack)) }
+    private val appliedCapabilityIds: Set<String> by lazy { stack.appliedCapabilities.mapNotNullTo(HashSet()) { it.id } }
     private val parameterDefinitions = java.util.IdentityHashMap<PuppetModel, List<io.github.psd2live.format.model.Parameter>>()
     internal val primaryByLayer = layersByMesh.entries.sortedBy { it.key in copiedMeshes }.groupBy { it.value }.mapValues { it.value.first().key }
     // Captured source inputs are immutable; keep these indexes local to this capture.
@@ -509,7 +510,7 @@ internal class RigModifierSource(
     private fun relevantBefore(instance: RigModifierInstance, target: ModifierTarget): List<RigModifierInstance> {
         val provider = provider(instance)
         val spec = RigLegacyBindings.spec(instance.type)
-        val appliedIds = stack.appliedCapabilities.mapNotNullTo(HashSet()) { it.id }
+        val appliedIds = appliedCapabilityIds
         val preceding = activeBefore(instance).filter { previous ->
             // Reapplying a base to materialized content treats the earlier base as authored residuals.
             !(spec.isBase && previous.id in appliedIds &&
