@@ -2060,11 +2060,23 @@ class WorkspaceLegacyBindingTest {
             }
         }
         val source = art.copy(source = stippled, settings = WorkspaceSettingsCodec.encode(config))
-        val (initialized, current) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
-        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
-        assertEquals(3, stack.instances.single { it.type == "face/fitted" }.version)
-        assertEquals(5, stack.instances.single { it.type == "eye/fitted" }.version)
-        assertEquals(3, stack.instances.single { it.type == "expression.gloom" }.version)
+        val (prepared, sourceMouth) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        val preset = RigModifierStack.fromJson(prepared.rigEdits.modifierStack!!)
+        assertEquals(3, preset.instances.single { it.type == "face/fitted" }.version)
+        assertEquals(5, preset.instances.single { it.type == "eye/fitted" }.version)
+        assertEquals(3, preset.instances.single { it.type == "expression.gloom" }.version)
+        assertEquals(3, preset.instances.single { it.type == "expression.cheek" }.version)
+        assertEquals(7, preset.instances.single { it.type == "mouth.outline" }.version)
+        val sourceEvaluation = assertNotNull(sourceMouth.modifierEvaluation)
+        assertTrue(sourceEvaluation.entries.all { it.status == ModifierStatus.ACTIVE })
+        // Cheek v1 rebuilds the blush with the native outline, which a source outline leaves to the fitted face. Compare
+        // the replay with the legacy mouth bindings, where both read the same blush.
+        val stack = preset.copy(instances = preset.instances.map { entry ->
+            if (entry.type != "mouth/fitted" && !entry.type.startsWith("mouth.")) entry
+            else entry.copy(version = 1, plugin = assertNotNull(BuiltinModifierPlugins.reference(entry.type, 1)))
+        })
+        val initialized = prepared.copy(rigEdits = prepared.rigEdits.copy(modifierStack = stack.toJson()))
+        val current = WorkspacePreviewBuilder().build(initialized)
         val instance = stack.instances.single { it.type == "expression.cheek" }
         val artifact = assertNotNull(BundledAlgorithmArtifacts.find(instance.type, 3))
         assertEquals(3, instance.version)
