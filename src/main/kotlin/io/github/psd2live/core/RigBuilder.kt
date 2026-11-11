@@ -3629,8 +3629,12 @@ object RigBuilder {
 	internal fun browTurnSourceBranch(context: RigContext, config: PipelineConfig, cache: PreviewMeshCache,
 	                                  parents: Set<DeformerId>): List<Deformer> {
 		val deformers = faceTurnAndLean(context, config, stagesOf(cache)).associateBy { it.id }
-		return parents.flatMap { parent -> generateSequence(parent) { deformers.getValue(it).parent }.toList() }
-			.distinct().map(deformers::getValue)
+		// Inferred frames may reference a synthetic parent not emitted into this context
+		// (for example the shared eye-shape frame when only left/right eye warps exist).
+		// Collect only actual deformers, stopping at the first absent ancestor.
+		return parents.flatMap { parent ->
+			generateSequence(deformers[parent]) { deformer -> deformer.parent?.let(deformers::get) }.toList()
+		}.distinctBy { it.id }
 	}
 
 	private fun turnLoweringSource(layer: ClassifiedLayer, context: RigContext, config: PipelineConfig,

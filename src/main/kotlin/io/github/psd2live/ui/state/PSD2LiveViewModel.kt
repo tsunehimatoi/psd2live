@@ -1105,6 +1105,7 @@ class PSD2LiveViewModel : AutoCloseable {
     private var meshSplitApplying = false
     /** Start presets being brought to the model: splits wait for them, since they replace the model. */
     private var presetsApplying = false
+    private val importPresetContinuation = ImportPresetContinuation()
     /** Model > Split Layers by Mesh asked for while a split or the presets were still being applied. */
     private var meshSplitScanQueued = false
     private val meshSplitsBlocked get() = meshSplitChecking || meshSplitApplying || presetsApplying ||
@@ -1141,6 +1142,7 @@ class PSD2LiveViewModel : AutoCloseable {
                     if (clips != next.rigEdits.motionClips) next = next.copy(rigEdits = next.rigEdits.copy(motionClips = clips))
                 }
                 if (next.projectOpenGeneration != current.projectOpenGeneration) {
+                    importPresetContinuation.clear()
                     meshSplitCheck.cancel()
                     pendingMeshSplit = null
                     pendingMeshSplitBatch = null
@@ -1205,6 +1207,7 @@ class PSD2LiveViewModel : AutoCloseable {
     private fun replaceState(next: PSD2LiveState) {
         synchronized(stateLock) {
             if (next.projectOpenGeneration != _state.value.projectOpenGeneration) {
+                importPresetContinuation.clear()
                 meshSplitCheck.cancel()
                 simulationEpoch++; simPreparing?.cancel(); simStepping?.cancel()
                 simulationSessionId = null; pendingSimulationDelta = 0f
@@ -1382,9 +1385,10 @@ class PSD2LiveViewModel : AutoCloseable {
                 if (_state.value.previewModel === preview) when {
                     offers.size == 1 -> pendingMeshSplit = offers.single()
                     offers.size > 1 -> pendingMeshSplitBatch = MeshSplitBatchOffer(preview, offers)
-                }
+                } else if (importPresetContinuation.waiting) meshSplitScanQueued = true
             },
             failed = { reportMeshSplitCheckFailure(it) },
+            finished = { resumeMeshSplits() },
         )
     }
 
@@ -1412,13 +1416,15 @@ class PSD2LiveViewModel : AutoCloseable {
                     offers.isEmpty() -> setStatusText(tr("start.splits.none"))
                     offers.size == 1 -> pendingMeshSplit = offers.single()
                     else -> pendingMeshSplitBatch = MeshSplitBatchOffer(preview, offers)
-                }
+                } else if (importPresetContinuation.waiting) meshSplitScanQueued = true
             },
             failed = { reportMeshSplitCheckFailure(it) },
+            finished = { resumeMeshSplits() },
         )
     }
 
     private fun reportMeshSplitCheckFailure(failure: Throwable) {
+        importPresetContinuation.clear()
         meshSplitQueue.clear()
         manualMeshSplitRequests.clear()
         val message = tr("error.meshSplitCheckFailed", workspaceFailureMessage(failure))
@@ -1447,12 +1453,13 @@ class PSD2LiveViewModel : AutoCloseable {
         meshSplitCheck.cancel()
         pendingMeshSplitBatch = null
         val valid = validSplitDecisions(decisions)
-        if (valid.isEmpty()) return
+        if (valid.isEmpty()) { resumeMeshSplits(); return }
         meshSplitApplying = true
         scope.launch {
             try {
                 applyMeshSplits(offer.preview, valid)
             } catch (failure: Throwable) {
+                importPresetContinuation.clear()
                 if (failure is kotlinx.coroutines.CancellationException) throw failure
                 setErrorMessage(workspaceFailureMessage(failure))
             } finally {
@@ -2140,11 +2147,27 @@ class PSD2LiveViewModel : AutoCloseable {
         meshSplitQueue.clear()
         manualMeshSplitRequests.clear()
         meshSplitScanQueued = false
+        resumeMeshSplits()
     }
 
     /** Runs what waited for a split or the presets to finish: a queued menu scan first, then queued layer checks. */
     private fun resumeMeshSplits() {
         if (meshSplitScanQueued) requestMeshSplitScan() else checkNextMeshSplit()
+        val choices = importPresetContinuation.take(_state.value.projectOpenGeneration,
+            meshSplitsBlocked || meshSplitScanQueued || meshSplitQueue.isNotEmpty()) ?: return
+        val expected = currentWorkspaceState() ?: return
+        presetsApplying = true
+        saveDocumentEdits(expected, tr("modifier.switch"), listOf(io.github.psd2live.application.WorkspaceDocumentOperation(
+            "modifier_initialize", kotlinx.serialization.json.buildJsonObject {
+                put("modifiers", choices.initialMode().name.lowercase())
+                if (choices.initialMode() == io.github.psd2live.application.WorkspaceInitialModifiers.CUSTOM)
+                    put("preset", kotlinx.serialization.json.Json.encodeToJsonElement(
+                        io.github.psd2live.application.WorkspaceInitialPreset.serializer(), choices.initialPreset()))
+            }))) { failure ->
+            presetsApplying = false
+            if (failure != null) setErrorMessage(failure)
+            resumeMeshSplits()
+        }
     }
 
     private fun checkNextMeshSplit() {
@@ -2180,6 +2203,7 @@ class PSD2LiveViewModel : AutoCloseable {
             try {
                 applyMeshSplits(offer.preview, valid)
             } catch (failure: Throwable) {
+                importPresetContinuation.clear()
                 if (failure is kotlinx.coroutines.CancellationException) throw failure
                 setErrorMessage(workspaceFailureMessage(failure))
             } finally {
@@ -7884,8 +7908,15 @@ class PSD2LiveViewModel : AutoCloseable {
         startWorkspaceImport(discardUnsaved, tr("status.analyzing"), afterImport = {
             leaveStartPage()
             openWorkspacePreset(if (layout) WorkspacePreset.LAYOUT else WorkspacePreset.EDIT)
-        }) { if (layout) it.importLayout(path, discardUnsaved) else it.importPsd(path, discardUnsaved, choices.initialMode(),
-            if (choices.initialMode() == io.github.psd2live.application.WorkspaceInitialModifiers.CUSTOM) choices.initialPreset() else null) }
+            if (!layout) {
+                if (choices.initialMode() != io.github.psd2live.application.WorkspaceInitialModifiers.EMPTY)
+                    importPresetContinuation.start(_state.value.projectOpenGeneration, choices)
+                // The unbound mesh is available to the existing naming dialogs before any preset captures it.
+                offerImportMeshSplit(_state.value.previewModel?.analysis?.source?.layers.orEmpty().map { it.id.raw })
+                resumeMeshSplits() // Also handles a muted import prompt.
+            }
+        }) { if (layout) it.importLayout(path, discardUnsaved) else it.importPsd(path, discardUnsaved,
+            io.github.psd2live.application.WorkspaceInitialModifiers.EMPTY) }
     }
 
     /** Both adapters invoke the same application source capability; only this entry owns GUI confirmation. */

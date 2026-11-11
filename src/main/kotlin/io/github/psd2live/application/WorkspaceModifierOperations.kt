@@ -12,6 +12,7 @@ internal fun registerModifierOperations(registry: WorkspaceOperationRegistry, wo
             "modifier_organize changes presentation folders and sibling order only; evaluation order is unchanged. " +
             "Apply materializes the complete prefix, preserves the suffix and verifies the final result before committing. " +
             "Convert explicitly migrates a legacy project and commits only if the complete result matches. Other operations require an explicit stack. " +
+            "modifier_initialize finishes source import after splitting/naming artwork. Requires a pristine empty modifier stack; modifiers selects the original import mode and preset supplies custom choices only. Existing/applied stacks are rejected. " +
             "modifier_switch replaces the entire preset using an ID from the preference preset library while preserving ordinary authored content; incompatible authored overrides block replacement. " +
             "Returns a process job; use job_wait/job_get for its committed state.",
         WorkspaceModifierSchemas.request(id), WorkspaceOperationKind.DOCUMENT, jobBacked = true, batchable = true,

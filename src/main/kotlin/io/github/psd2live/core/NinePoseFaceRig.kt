@@ -82,7 +82,7 @@ internal class NinePoseFaceRig(
 				it.semantic.tag in setOf(SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYE_CLOSE)
 			}
 			val eyeSeed = if (eyeBaseLayers.isNotEmpty()) eyeBaseLayers else irisLayers
-			val eyeRegions = eyeSeed.groupBy { it.semantic.side }.map { (side, grouped) ->
+			val baseEyeRegions = eyeSeed.groupBy { it.semantic.side }.map { (side, grouped) ->
 				val sameSideIris = irisLayers.filter { iris ->
 					iris.semantic.side == side || (side == Side.NONE && eyeSeed.none { it.semantic.side != Side.NONE })
 				}
@@ -90,6 +90,13 @@ internal class NinePoseFaceRig(
 				FaceRegion(FaceFeature.EYE, side, bounds.expanded(0.18f))
 			}
 			val irisRegions = groupedRegions(FaceFeature.IRIS, irisLayers, 0.28f)
+			// An unsided iris still needs a real eye frame if the user skips naming/splitting.
+			// regionFor() can synthesize this union, but a synthesized-only frame leaves the
+			// iris warp pointing at a deformer that neither the native nor shared scaffold emits.
+			val eyeRegions = if (irisRegions.any { it.side == Side.NONE } &&
+				baseEyeRegions.isNotEmpty() && baseEyeRegions.none { it.side == Side.NONE }) {
+				baseEyeRegions + FaceRegion(FaceFeature.EYE, Side.NONE, baseEyeRegions.map { it.bounds }.reduce(Bounds::union))
+			} else baseEyeRegions
 			val browRegions = groupedRegions(
 				FaceFeature.BROW,
 				nonEmpty.filter { it.semantic.tag == SemanticTag.EYEBROW },

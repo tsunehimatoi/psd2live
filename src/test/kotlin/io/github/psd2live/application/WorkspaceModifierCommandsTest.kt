@@ -32,6 +32,24 @@ class WorkspaceModifierCommandsTest {
         }
     }
 
+    @Test fun initializePresetsOnEmptyArtworkIsAtomicAndCannotBeRepeated(): Unit = runBlocking {
+        val f = fixture()
+        val before = f.now.document
+        f.edit("modifier_initialize", buildJsonObject { put("modifiers", "minimal") })
+        val initialized = f.now.document
+        val stack = RigModifierStack.fromJson(requireNotNull(initialized.rigEdits.modifierStack))
+        assertTrue(stack.instances.isNotEmpty())
+        assertEquals(before.source, initialized.source)
+        assertEquals(before.layerOverrides, initialized.layerOverrides)
+        assertEquals(before.rigEdits.parameterEdits, initialized.rigEdits.parameterEdits)
+        val state = f.now.state
+        assertFailsWith<IllegalArgumentException> {
+            f.edit("modifier_initialize", buildJsonObject { put("modifiers", "recommended") })
+        }
+        assertEquals(state, f.now.state)
+        assertEquals(initialized, f.now.document)
+    }
+
     @Test fun presetMotionEditsAndPlaybackUseTheOwningInstance(): Unit = runBlocking {
         val f = fixture()
         val clip = MotionClip("source", "Preset motion", duration = 1f, curves = listOf(MotionCurve("ParamInput", listOf(MotionKey(0f, 0f), MotionKey(1f, 1f)))))
