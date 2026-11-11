@@ -160,6 +160,8 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "mouthJawV9Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "cheekElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "cheekV3Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "skinReplayV1Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "cheekV4Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "gloomV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "gloomV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "gloomV4Elements"))
@@ -540,6 +542,10 @@ tasks.processResources {
     }
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-cheek-v3")) {
         into("algorithm-plugins/cheek-v3")
+    }
+    dependsOn(":algorithms:binding:pluginCheekV4")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-cheek-v4")) {
+        into("algorithm-plugins/cheek-v4")
     }
     dependsOn(":algorithms:binding:pluginGloomV2")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-gloom-v2")) {

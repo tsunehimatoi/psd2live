@@ -351,6 +351,9 @@ internal object WorkspacePresetInitialization {
                 independent.takeIf(ModifierPluginCatalog::available) ?: entry
             } else entry
         })
+        if (singleEyeOpenMouth && fittedSources[RigModules.MOUTH_CHEEK_LID.id]?.first == MouthCheekLidV9Algorithm.VERSION) {
+            stack = sourceSingleEyeCheekLidDefault(model, stack)
+        }
         if (fittedSources.isNotEmpty() && !singleEyeOpenMouth) {
             val fittedBody = mapOf(RigSourceModifiers.SCAFFOLD to 2, LegacyBodyV2Algorithm.TYPE to LegacyBodyV2Algorithm.VERSION,
                 RigLegacyBindings.FITTED_FACE to FittedFaceV3Algorithm.VERSION)
@@ -454,6 +457,37 @@ internal object WorkspacePresetInitialization {
             WorkspaceModifierSimulation.prepare(current(), stack, work, pipeline = pipeline)
         }
         return current() to build("final preview").also { work.checkpoint(); it.runtimeBundle.materialize(); work.checkpoint() }
+    }
+
+    private fun sourceSingleEyeCheekLidDefault(model: RigPreviewModel, stack: RigModifierStack): RigModifierStack {
+        val coupling = stack.instances.single { it.type == RigModules.MOUTH_CHEEK_LID.id }
+        val scaffold = stack.instances.single { it.id == coupling.config.getValue("scaffold").jsonPrimitive.content }
+        val preceding = stack.instances.take(stack.index(coupling.id)).filter { entry ->
+            entry.config["scaffold"] == JsonPrimitive(scaffold.id) && entry.targets.any(coupling.targets::contains) &&
+                RigLegacyBindings.find(entry.type)?.let { !it.expressionToggles && !it.seeThrough } == true
+        }
+        val source = RigModifierSource.of(model)
+        val native = RigFittedMouthModuleSource.nativeConfig(source, scaffold, preceding, null).copy(generateDeformers = false)
+        val eye = preceding.single { it.type == RigModules.EYE_FITTED.id }
+        val head = preceding.single { it.type == RigLegacyBindings.FITTED_FACE }
+        val depth = RigModules.FACE_DEPTH_TURN
+        // Brow/lid v8 measures its fallback head before source mouth outlining. Cheek/lid v9
+        // captures the full mouth prefix, whose outlined footprint can change the inferred head shell.
+        // Compare those source measurements, not the presence of optional nose or lid artwork.
+        val lidNative = native.copy(mouthOutlineEnabled = source.sourceConfig().mouthOutlineEnabled, recipe = native.recipe.copy(
+            bases = mapOf("eye" to BaseChoice(eye.type, eye.version)),
+            modules = RigModules.modules.associate { module ->
+                module.id to if (module == depth) ModuleChoice(true, depth.version, RigLegacyBindings.values(head))
+                else ModuleChoice(false)
+            },
+        ))
+        val mouthHead = RigBuilder.rigContext(source.analysis, native, source.meshCache).faceRig
+        val lidHead = RigBuilder.rigContext(source.analysis, lidNative, source.meshCache).faceRig
+        if (RigBuilder.headTurnMeasurements(mouthHead, native) == RigBuilder.headTurnMeasurements(lidHead, lidNative)) return stack
+        val legacy = requireNotNull(BuiltinModifierPlugins.reference(coupling.type, 1))
+        return stack.copy(instances = stack.instances.map {
+            if (it.id == coupling.id) it.copy(version = 1, plugin = legacy) else it
+        })
     }
 
     /** Only the verified fresh shared-frame cohort advances; persisted and explicit locks never pass here. */

@@ -3675,6 +3675,58 @@ tasks.register("pluginCheekV3") {
     }
 }
 
+// Immutable replay mechanics are opt-in, never part of main or historical worker bytes.
+val skinReplayV1Sources = sourceSets.create("skinReplayV1")
+kotlin.target.compilations.named("skinReplayV1") {
+    associateWith(kotlin.target.compilations.getByName("main"))
+}
+val skinReplayV1ClassesJar = tasks.register<Jar>("skinReplayV1ClassesJar") {
+    archiveClassifier.set("skin-replay-v1")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    from(skinReplayV1Sources.output)
+}
+val skinReplayV1Elements = configurations.create("skinReplayV1Elements") {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+}
+artifacts.add(skinReplayV1Elements.name, skinReplayV1ClassesJar)
+
+val cheekV4WorkerJar = registerIsolatedBindingWorker(
+    "cheekV4", "cheek-v4", "worker-cheek-v4", "io.github.psd2live.algorithms.binding.CheekV4Worker",
+)
+kotlin.target.compilations.named("cheekV4") {
+    associateWith(kotlin.target.compilations.getByName("skinReplayV1"))
+}
+cheekV4WorkerJar.configure { from(skinReplayV1Sources.output) }
+
+tasks.register("pluginCheekV4") {
+    dependsOn(cheekV4WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-cheek-v4")
+    val packageVersion = project.version.toString()
+    inputs.file(cheekV4WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        cheekV4WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.65787072657373696f6e2e636865656b.v4"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Cheek",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/color","aliases":["expression.cheek"],"version":4,"name":"Cheek","category":"expression",
+               "targets":["mesh"],"contextVersion":2,
+               "requires":["rig.scaffold","body/legacy","face/fitted","eye/fitted","brow/fitted","mouth/fitted","mouth.outline","mouth.vowel","mouth.capture","mouth.jaw","mouth.spring"],
+               "reads":["*"],"writes":["mesh","deformer","parameter","hierarchy"],
+               "parameters":[{"id":"ParamCheek","name":"Cheek","min":0,"max":1,"default":0}],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val gloomV2WorkerJar = registerIsolatedBindingWorker(
     "gloomV2", "gloom-v2", "worker-gloom-v2", "io.github.psd2live.algorithms.binding.GloomWorker",
 )

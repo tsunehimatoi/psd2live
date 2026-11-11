@@ -29,6 +29,42 @@ internal class RigModifierSource(
     val physicsOrder: List<String> get() = config.rigEdits.physicsOrder
     private val stack by lazy { RigModifierStack.fromJson(requireNotNull(config.rigEdits.modifierStack)) }
     private val appliedCapabilityIds: Set<String> by lazy { stack.appliedCapabilities.mapNotNullTo(HashSet()) { it.id } }
+    /**
+     * Legacy Cheek and Gloom still reconstruct before/after templates. Applied outline assets are render inputs,
+     * not authored mouth landmarks, even though restoration no longer retains MouthLipLayer's type.
+     * Scope this compatibility correction to those v1 consumers; independent source workers keep
+     * their own capture contracts, and neither authored geometry nor stored raster assets is changed.
+     */
+    private val legacyMoodSource: RigModifierSource by lazy {
+        val authoredIds = analysis.source.layers.mapTo(hashSetOf()) { it.id.raw }
+        val authoredLayers = analysis.layers.filter { it.source.id.raw in authoredIds }.associateBy { it.source.id.raw }
+        val currentOutline = BundledAlgorithmArtifacts.find("mouth.outline", 7)?.reference
+        // An unpinned legacy alias resolves to the current built-in. A pinned provider must match
+        // its complete package identity; the namespace alone does not establish an output contract.
+        val outlines = stack.appliedCapabilities.filter { it.type == "mouth.outline" && it.version == 7 &&
+            (it.plugin == null || it.plugin == currentOutline) && it.id != null }
+        val generated = outlines.flatMapTo(hashSetOf()) { owner ->
+            val instance = RigModifierInstance(requireNotNull(owner.id), owner.type, owner.version, owner.targets,
+                config = owner.config, outputAliases = owner.outputAliases, plugin = owner.plugin)
+            owner.targets.filter { target -> authoredLayers[layersByMesh[target.id]]?.let { layer ->
+                layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && layer.semantic.role == null
+            } == true }.flatMap { target -> (0..1).map { side -> instance.outputId("mouth-art:${target.id}:$side") } }
+        }
+        fun sourceOnly(input: PipelineAnalysis): PipelineAnalysis {
+            val original = input.source.layers.mapTo(hashSetOf()) { it.id.raw }
+            val layers = input.layers.filter { it.source.id.raw in original || it.source.id.raw !in generated }
+            val calibration = input.calibration?.let(::sourceOnly)
+            return if (layers.size == input.layers.size && calibration === input.calibration) input
+                else input.copy(layers = layers, calibration = calibration)
+        }
+        val source = sourceOnly(analysis)
+        if (source === analysis) this else RigModifierSource(source, atlas, config, layersByMesh, copiedMeshes,
+            materialBase, meshCache)
+    }
+
+    internal fun legacyBindingSource(instance: RigModifierInstance): RigModifierSource =
+        if (instance.version == 1 && instance.type in setOf("expression.cheek", "expression.gloom")) legacyMoodSource else this
+
     private val parameterDefinitions = java.util.IdentityHashMap<PuppetModel, List<io.github.psd2live.format.model.Parameter>>()
     internal val primaryByLayer = layersByMesh.entries.sortedBy { it.key in copiedMeshes }.groupBy { it.value }.mapValues { it.value.first().key }
     // Captured source inputs are immutable; keep these indexes local to this capture.
@@ -650,6 +686,8 @@ internal class RigModifierSource(
     }
 
     fun parameters(instance: RigModifierInstance): List<io.github.psd2live.format.model.Parameter> {
+        val source = legacyBindingSource(instance)
+        if (source !== this) return source.parameters(instance)
         val found = LinkedHashMap<String, io.github.psd2live.format.model.Parameter>()
         val definitions = instance.targets.flatMap { target ->
             val desired = transition(instance, target) {}.second

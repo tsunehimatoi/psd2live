@@ -8,7 +8,8 @@ import org.umamo.runtime.model.*
 
 /** Host adapter: captured binding inputs, parameter policy and physical outputs around the independent merge. */
 internal object RigSourceBinding {
-    fun apply(rig: RigIR, instance: RigModifierInstance, source: RigModifierSource, checkpoint: () -> Unit): RigIR {
+    fun apply(rig: RigIR, instance: RigModifierInstance, capturedSource: RigModifierSource, checkpoint: () -> Unit): RigIR {
+        val source = capturedSource.legacyBindingSource(instance)
         val inputs = object : BindingMerge.Source {
             override fun provider(instance: RigModifierInstance) = source.provider(instance)
             override fun transition(instance: RigModifierInstance, target: ModifierTarget, checkpoint: () -> Unit) = source.transition(instance, target, checkpoint)
