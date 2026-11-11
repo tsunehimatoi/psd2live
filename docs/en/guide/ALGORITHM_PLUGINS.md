@@ -70,6 +70,8 @@ Mouth cheek-lid coupling v4 supports fitted mouth v3 and fitted eyes v2. It comp
 
 Cheek-lid v9 is the default for eligible single-eye open-mouth source presets. It requires shared scaffold v2, fitted face v3, fitted eyes v5, fitted brows v4 and fitted mouth v3, and preserves the actual eyelid head-turn carriers. Separate closed-mouth drawings, bilateral eye artwork, and missing or incompatible face/brow providers are rejected. Other preset families and saved version locks retain their existing choices.
 
+Eligible single-eye open-mouth presets also select smile, widening, gaze-lid, emotion and highlight v3, plus aftershock and iris squash v4. Lid fade remains v3. Only modules supported by the artwork are selected; brow add-ons, moods and saved version locks keep their existing defaults. This extends the direct eye chain, not the migration of every modifier or preset.
+
 Mouth tongue v2 adds tongue-out forms to a fitted mouth with a tongue layer and a preceding capture modifier. V3 also supports fitted mouth v3 and capture v3. These versions use a single mouth drawing on the original source mesh. Use v1 for layered lips or a separate closed-mouth drawing.
 
 Mouth interior depth v2 adds parallax to teeth and other interior layers and shades the tongue and inner mouth as it opens. It uses the original source frame and adds a head-turn deformer when the mesh keyform grid exceeds its budget. Use v1 for reparented or recolored targets. v3 supports fitted mouth v3 and capture v3. Synthetic artwork with interior layers verifies the actual color and deformation output.
