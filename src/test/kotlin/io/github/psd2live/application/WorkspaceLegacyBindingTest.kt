@@ -998,9 +998,9 @@ class WorkspaceLegacyBindingTest {
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
         val (initialized, actual) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
-        val upgraded = mapOf("face/fitted" to 3, "eye/fitted" to 5, "mouth/fitted" to 3, "mouth.outline" to 7)
+        val upgraded = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4,
+            "mouth/fitted" to 3, "mouth.outline" to 7)
         assertEquals(upgraded, stack.instances.filter { it.type in upgraded }.associate { it.type to it.version })
-        assertEquals(1, stack.instances.single { it.type == "brow/fitted" }.version)
         // Unrelated modules keep their existing defaults (some already use independent versions).
         // The other mouth modules keep their historical source.
         val mouthVersions = stack.instances.filter { it.type == "mouth/fitted" || it.type.startsWith("mouth.") }
@@ -1009,11 +1009,13 @@ class WorkspaceLegacyBindingTest {
         assertEquals(7, mouthVersions.getValue("mouth.outline"))
         assertTrue(mouthVersions.filterKeys { it !in setOf("mouth/fitted", "mouth.outline") }.values.all { it == 1 })
 
+        // The reference explicitly locks the historical versions, including brow1, so the upgraded
+        // brow4 default is compared against the old chain and never against itself.
+        val historical = mapOf("face/fitted" to 1, "eye/fitted" to 2, "brow/fitted" to 1,
+            "mouth/fitted" to 1, "mouth.outline" to 1)
         val locked = stack.copy(instances = stack.instances.map { instance ->
-            if (instance.type in upgraded) {
-                val historical = if (instance.type == "eye/fitted") 2 else 1
-                instance.copy(version = historical, plugin = assertNotNull(BuiltinModifierPlugins.reference(instance.type, historical)))
-            } else instance
+            val version = historical[instance.type] ?: return@map instance
+            instance.copy(version = version, plugin = assertNotNull(BuiltinModifierPlugins.reference(instance.type, version)))
         })
         val reference = WorkspacePreviewBuilder().build(initialized.copy(
             rigEdits = initialized.rigEdits.copy(modifierStack = locked.toJson())))
@@ -1046,75 +1048,182 @@ class WorkspaceLegacyBindingTest {
         val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
-        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val (initialized, _) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        val candidate = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
 
-        // Current default single-eye open-mouth chain: fitted head/mouth upgraded and fitted brow still v1.
-        val upgraded = mapOf("face/fitted" to 3, "eye/fitted" to 5, "mouth/fitted" to 3, "mouth.outline" to 7)
-        assertEquals(upgraded, stack.instances.filter { it.type in upgraded }.associate { it.type to it.version })
-        assertEquals(2, stack.instances.single { it.type == RigSourceModifiers.SCAFFOLD }.version)
-        val brow = stack.instances.single { it.type == "brow/fitted" }
-        val browIndex = stack.index(brow.id)
-        assertEquals(1, brow.version)
-        val mouthVersions = stack.instances.filter { it.type == "mouth/fitted" || it.type.startsWith("mouth.") }
+        // Current default single-eye open-mouth chain: fitted head, brow and mouth upgraded.
+        val upgraded = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4,
+            "mouth/fitted" to 3, "mouth.outline" to 7)
+        assertEquals(upgraded, candidate.instances.filter { it.type in upgraded }.associate { it.type to it.version })
+        assertEquals(2, candidate.instances.single { it.type == RigSourceModifiers.SCAFFOLD }.version)
+        val brow = candidate.instances.single { it.type == "brow/fitted" }
+        val browIndex = candidate.index(brow.id)
+        assertEquals(4, brow.version)
+        val mouthVersions = candidate.instances.filter { it.type == "mouth/fitted" || it.type.startsWith("mouth.") }
             .associate { it.type to it.version }
         assertEquals(3, mouthVersions.getValue("mouth/fitted"))
         assertEquals(7, mouthVersions.getValue("mouth.outline"))
         assertTrue(mouthVersions.filterKeys { it !in setOf("mouth/fitted", "mouth.outline") }.values.all { it == 1 })
 
-        // Select only the packaged v4 brow reference; every other instance and version stays unchanged.
-        val version = 4
-        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(brow.type, version), "Missing packaged brow/fitted v$version")
-        val candidate = stack.copy(instances = stack.instances.map {
-            if (it.id == brow.id) it.copy(version = version, plugin = artifact.reference) else it
+        // Build the reference from a document that explicitly locks only the historical brow1.
+        // Every other current default stays untouched, and the new brow4 default must still change
+        // exactly that instance instead of being compared with itself.
+        val version = 1
+        val baseline = candidate.copy(instances = candidate.instances.map {
+            if (it.id == brow.id) it.copy(version = version,
+                plugin = assertNotNull(BuiltinModifierPlugins.reference(brow.type, version))) else it
         })
-        assertEquals(listOf(browIndex), stack.instances.indices.filter { stack.instances[it] != candidate.instances[it] })
-        assertEquals(version, candidate.instances[browIndex].version)
-        assertEquals(artifact.reference, candidate.instances[browIndex].plugin)
-        for (index in browIndex + 1 until stack.instances.size) {
-            assertEquals(stack.instances[index], candidate.instances[index],
-                "Downstream ${stack.instances[index].type} changed while replacing only brow/fitted")
+        assertEquals(listOf(browIndex), candidate.instances.indices.filter { candidate.instances[it] != baseline.instances[it] })
+        assertEquals(version, baseline.instances[browIndex].version)
+        assertEquals(4, candidate.instances[browIndex].version)
+        for (index in browIndex + 1 until candidate.instances.size) {
+            assertEquals(candidate.instances[index], baseline.instances[index],
+                "Downstream ${candidate.instances[index].type} changed while locking only brow/fitted")
         }
 
-        val baselineEvaluation = assertNotNull(baseline.modifierEvaluation)
+        val baselineModel = WorkspacePreviewBuilder().build(initialized.copy(
+            rigEdits = initialized.rigEdits.copy(modifierStack = baseline.toJson())))
+        val baselineEvaluation = assertNotNull(baselineModel.modifierEvaluation)
         val baselineOutputs = baselineEvaluation.outputs
-        val model = WorkspacePreviewBuilder().build(initialized.copy(
-            rigEdits = initialized.rigEdits.copy(modifierStack = candidate.toJson())))
+        val model = WorkspacePreviewBuilder().build(initialized)
         val evaluation = assertNotNull(model.modifierEvaluation)
         assertEquals(ModifierStatus.ACTIVE, evaluation.entries[browIndex].status)
-        for (index in stack.instances.indices) {
+        for (index in candidate.instances.indices) {
             val where = when {
                 index < browIndex -> "before"
                 index == browIndex -> "at"
                 else -> "after"
             }
             assertEquals(baselineEvaluation.entries[index].status, evaluation.entries[index].status,
-                "Fitted brow v4 changed $where ${stack.instances[index].type} status ($index)")
+                "Fitted brow v4 changed $where ${candidate.instances[index].type} status ($index)")
             assertTrue(baselineOutputs[index] == evaluation.outputs[index],
-                "Fitted brow v4 differs $where ${stack.instances[index].type} ($index)")
+                "Fitted brow v4 differs $where ${candidate.instances[index].type} ($index)")
         }
-        val compiled = RigIrCompiler.compile(baseline, tileArt = true)
+        val compiled = RigIrCompiler.compile(baselineModel, tileArt = true)
         assertFaceEquals(compiled, RigIrCompiler.compile(model, tileArt = true))
-        assertEquals(baseline.rig.modifierRasterAssets, model.rig.modifierRasterAssets)
+        assertEquals(baselineModel.rig.modifierRasterAssets, model.rig.modifierRasterAssets)
 
         val cache = RigStageCache.enabled
         val replayed = try {
             RigStageCache.enabled = false
-            WorkspacePreviewBuilder().build(initialized.copy(
-                rigEdits = initialized.rigEdits.copy(modifierStack = candidate.toJson())))
+            WorkspacePreviewBuilder().build(initialized)
         } finally {
             RigStageCache.enabled = cache
         }
         assertEquals(candidate, RigModifierStack.fromJson(replayed.config.rigEdits.modifierStack!!))
         val replay = assertNotNull(replayed.modifierEvaluation)
-        for (index in stack.instances.indices) {
+        for (index in candidate.instances.indices) {
             assertEquals(baselineEvaluation.entries[index].status, replay.entries[index].status,
-                "Fitted brow v4 cache-off replay changed ${stack.instances[index].type} status ($index)")
+                "Fitted brow v4 cache-off replay changed ${candidate.instances[index].type} status ($index)")
             assertTrue(baselineOutputs[index] == replay.outputs[index],
-                "Fitted brow v4 cache-off replay differs at ${stack.instances[index].type} ($index)")
+                "Fitted brow v4 cache-off replay differs at ${candidate.instances[index].type} ($index)")
         }
-        assertEquals(baseline.rig.modifierRasterAssets, replayed.rig.modifierRasterAssets)
+        assertEquals(baselineModel.rig.modifierRasterAssets, replayed.rig.modifierRasterAssets)
         assertFaceEquals(compiled, RigIrCompiler.compile(replayed, tileArt = true))
+    }
+
+    @Test fun singleEyeOpenMouthBrowFittedV4InstalledWorkerAndAppliedPrefixReplay(): Unit = runBlocking {
+        val art = singleEyeOpenMouthArt(emptySet())
+        val choices = WorkspaceInitialPreset(clothing = false)
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, _) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val brow = stack.instances.single { it.type == "brow/fitted" }
+        val browIndex = stack.index(brow.id)
+        assertEquals(4, brow.version)
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(brow.type, 4))
+        assertEquals(artifact.reference, brow.plugin)
+
+        // Historical brow1 reference with every other current default untouched.
+        val baseline = stack.copy(instances = stack.instances.map {
+            if (it.id == brow.id) it.copy(version = 1,
+                plugin = assertNotNull(BuiltinModifierPlugins.reference(brow.type, 1))) else it
+        })
+        assertEquals(listOf(browIndex), stack.instances.indices.filter { stack.instances[it] != baseline.instances[it] })
+        val baselineModel = WorkspacePreviewBuilder().build(initialized.copy(
+            rigEdits = initialized.rigEdits.copy(modifierStack = baseline.toJson())))
+        val expected = assertNotNull(baselineModel.modifierEvaluation).outputs
+        val input = expected[browIndex - 1]
+        assertNotEquals(input.meshes.single { it.name == "brow" }, expected[browIndex].meshes.single { it.name == "brow" })
+
+        val candidateModel = WorkspacePreviewBuilder().build(initialized)
+        val actual = assertNotNull(candidateModel.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, actual.entries[browIndex].status)
+        assertFaceEquals(expected[browIndex], actual.outputs[browIndex])
+        val compiled = RigIrCompiler.compile(baselineModel, tileArt = true)
+        assertFaceEquals(compiled, RigIrCompiler.compile(candidateModel, tileArt = true))
+        assertEquals(baselineModel.rig.modifierRasterAssets, candidateModel.rig.modifierRasterAssets)
+
+        val root = Files.createTempDirectory("single-eye-open-brow-v4-package-")
+        val preferences = Preferences.userRoot().node("single-eye-open-brow-v4/" + UUID.randomUUID())
+        val store = ModifierPluginStore(root.resolve("installed"), preferences)
+        try {
+            val staging = Files.createDirectory(root.resolve("package"))
+            Files.write(staging.resolve("plugin.json"), artifact.bytes)
+            for (name in artifact.manifest.files.keys) {
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
+            }
+            val definition = RigBrowFittedModifier.sharedFrameDefinition(RigModifierSource.of(candidateModel))
+            val upstream = actual.entries.take(browIndex)
+                .filter { it.status == ModifierStatus.ACTIVE && it.instance.type in definition.requires + definition.optionalUpstream }
+                .map { entry -> entry.instance.let {
+                    ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
+                } }
+            val context = definition.authorContext(brow).withUpstream(upstream)
+            // Real installed JVM worker: install, evaluate, uninstall and reinstall.
+            repeat(2) {
+                val installed = store.install(staging.toString())
+                assertEquals(artifact.reference, installed.reference)
+                assertFaceEquals(expected[browIndex], ModifierPluginWorkers.evaluate(installed,
+                    installed.manifest.algorithms.single(), input, brow, {}, store, context = context,
+                    declaredParameters = definition.parameters(brow)))
+                ModifierPluginWorkers.stop(installed.reference)
+                store.uninstall(installed.reference)
+            }
+
+            // The saved v4 stack persists and replays through a reopened archive.
+            val f = Fixture(initialized)
+            f.install()
+            val current = f.now
+            assertEquals(brow, RigModifierStack.fromJson(current.document.rigEdits.modifierStack!!)
+                .instances.single { it.id == brow.id })
+            assertEquals(compiled, RigIrCompiler.compile(current.model, tileArt = true))
+            val historyStore = WorkspaceStore(root.resolve("project"))
+            historyStore.persistHistory(current.projectId, f.runtime.history())
+            val archive = root.resolve("single-eye-open-brow.psd2live")
+            val repository = ProjectRepository(writeHeadCache = false)
+            repository.save(ProjectSaveCapture(current.projectId, f.runtime.history(), JsonObject(emptyMap()), null, historyStore), archive)
+            repository.open(archive).use { opened ->
+                val restored = opened.history.head().snapshot
+                assertEquals(brow, RigModifierStack.fromJson(restored.rigEdits.modifierStack!!).instances.single { it.id == brow.id })
+                assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(restored), tileArt = true))
+            }
+
+            // Applied prefix: the consumed v4 brow replays into the document and survives a save/reopen.
+            f.edit("modifier_apply", buildJsonObject { put("id", brow.id) })
+            val appliedStack = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
+            assertTrue(appliedStack.instances.none { it.id == brow.id })
+            val appliedBrow = appliedStack.appliedCapabilities.single { it.id == brow.id }
+            assertEquals(4, appliedBrow.version)
+            assertEquals(brow.plugin, appliedBrow.plugin)
+            assertEquals(compiled, RigIrCompiler.compile(f.now.model, tileArt = true))
+            assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(f.now.document), tileArt = true))
+            val applied = f.now
+            val appliedStore = WorkspaceStore(root.resolve("applied-project"))
+            appliedStore.persistHistory(applied.projectId, f.runtime.history())
+            val appliedArchive = root.resolve("single-eye-open-brow-applied.psd2live")
+            repository.save(ProjectSaveCapture(applied.projectId, f.runtime.history(), JsonObject(emptyMap()), null, appliedStore), appliedArchive)
+            repository.open(appliedArchive).use { opened ->
+                val restored = opened.history.head().snapshot
+                assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(restored), tileArt = true))
+            }
+        } finally {
+            store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+            preferences.removeNode()
+            ModifierPluginStore.deleteTree(root)
+        }
     }
 
     @Test fun singleEyeOpenMouthDefaultFallsBackWithoutOutline(): Unit = runBlocking {

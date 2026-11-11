@@ -273,10 +273,11 @@ internal object WorkspacePresetInitialization {
                     packages(headVersions + plannedLids + brows + mouth + moodVersions)
                 }
             } else if (singleEyeOpenMouth) {
-                // Migrate only the fitted/outline pair and its verified head providers. Brow bindings,
-                // eye add-ons and moods keep their historical versions until independently validated.
+                // Migrate the fitted/outline pair, its verified head providers and the fitted brow only.
+                // Brow add-ons, eye add-ons and moods keep their existing default versions.
                 val mouth = sourceMouthVersions(model.analysis, config, types, singleEye = true)
-                if (mouth.isEmpty()) emptyMap() else packages(headVersions + mouth)
+                if (mouth.isEmpty()) emptyMap() else packages(headVersions + mouth +
+                    mapOf(RigModules.BROW_FITTED.id to BrowFittedV4Binding.VERSION))
             } else {
                 val lids = packages(plannedLids)
                 val brows = if (lids.isNotEmpty() && subject.has(SemanticTag.EYEBROW)) {
