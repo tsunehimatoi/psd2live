@@ -378,6 +378,9 @@ internal class RigModifierEvaluator(
 
     private fun validateOrder(stack: RigModifierStack, definitions: List<RigModifierDefinition?>) {
         val instances = stack.instances
+        // Missing plugins still occupy an enabled position, so they count for explicit provider order.
+        val lastEnabled = HashMap<String, Int>(instances.size)
+        for ((index, instance) in instances.withIndex()) if (instance.enabled) lastEnabled[instance.id] = index
         val motionOutputs = HashMap<Int, Set<String>>()
         for ((index, instance) in instances.withIndex()) {
             val definition = definitions[index] ?: continue
@@ -392,24 +395,28 @@ internal class RigModifierEvaluator(
                 require(conflicts.isEmpty()) { "${instance.id} must follow ${later.id} for motions ${conflicts.joinToString()}" }
             }
             for ((parameter, provider) in instance.parameterProviders) {
-                require(provider != instance.id && stack.instances.drop(index + 1).none { it.id == provider && it.enabled }) {
+                require(provider != instance.id && (lastEnabled[provider] ?: -1) <= index) {
                     "${instance.id} must follow $provider for parameter $parameter"
                 }
             }
             for (command in stack.overrides[instance.id].orEmpty()) {
                 for (provider in command["providers"]?.jsonArray.orEmpty()) {
                     val id = provider.jsonPrimitive.content
-                    require(stack.instances.drop(index + 1).none { it.id == id && it.enabled }) {
+                    require((lastEnabled[id] ?: -1) <= index) {
                         "${instance.id} must follow $id for its generated-content override"
                     }
                 }
             }
-            for (type in definition.requires) for (target in instance.targets) {
-                val provider = definition.providers(instance)[type]
-                val earlier = stack.appliedCapabilities.any { registry.provides(it, type) && target in it.targets && (provider == null || it.id == provider) } ||
-                    stack.instances.take(index).any { it.enabled && registry.provides(it, type) && target in it.targets && (provider == null || it.id == provider) }
-                val later = stack.instances.drop(index + 1).any { it.enabled && registry.provides(it, type) && target in it.targets && (provider == null || it.id == provider) }
-                require(earlier || !later) { "${instance.id} must follow ${provider ?: type} ($type) on ${target.id}" }
+            if (definition.requires.isNotEmpty()) {
+                val prefix = instances.subList(0, index)
+                val suffix = instances.subList(index + 1, instances.size)
+                for (type in definition.requires) for (target in instance.targets) {
+                    val provider = definition.providers(instance)[type]
+                    val earlier = stack.appliedCapabilities.any { registry.provides(it, type) && target in it.targets && (provider == null || it.id == provider) } ||
+                        prefix.any { it.enabled && registry.provides(it, type) && target in it.targets && (provider == null || it.id == provider) }
+                    val later = suffix.any { it.enabled && registry.provides(it, type) && target in it.targets && (provider == null || it.id == provider) }
+                    require(earlier || !later) { "${instance.id} must follow ${provider ?: type} ($type) on ${target.id}" }
+                }
             }
         }
     }
