@@ -85,6 +85,16 @@ class MouthCheekLidV5Algorithm : ReadingModifierAlgorithmPlugin {
                     warp.lattice?.axes.orEmpty().any { it.parameter in ordinaryAxes }
                 }.map { it.copy(shapes = emptyList()) }
         }
+        // A preceding brow coupling only couples the lids on sides with a live brow; there the brow's Y axis is an
+        // ordinary grid on the lids. Replaying it on a side without one would turn that axis into a blend shape.
+        val coupledSides by lazy {
+            listOf(Side.LEFT to "ParamBrowLY", Side.RIGHT to "ParamBrowRY").mapNotNullTo(hashSetOf()) { (side, id) ->
+                side.takeIf {
+                    ordinaryMeshes.any { mesh -> mesh.offsets?.axes.orEmpty().any { it.parameter == id } } ||
+                        ordinaryWarps.any { warp -> warp.lattice?.axes.orEmpty().any { it.parameter == id } }
+                }
+            }
+        }
         val updates = instance.targets.mapNotNull { target ->
             checkpoint()
             val material = materials.targets[target.id] ?: return@mapNotNull null
@@ -119,7 +129,8 @@ class MouthCheekLidV5Algorithm : ReadingModifierAlgorithmPlugin {
                 motion.sideAt(layer.id, positions[i * 2], positions[i * 2 + 1])
             } else emptyList()
             fun shapes(options: EyeOptions) = motion.rigs.filterKeys { side == Side.NONE || side == it }.flatMap { (owner, rig) ->
-                val local = EyeModules.lidShapes(lid, owner, positions, frame, rig, options, layer.id)
+                val settings = if (owner in coupledSides) options else options.copy(browCoupling = false)
+                val local = EyeModules.lidShapes(lid, owner, positions, frame, rig, settings, layer.id)
                 if (side != Side.NONE) local else local.map { shape -> shape.copy(forms = shape.forms.map { form ->
                     form?.let { MeshForm(FloatArray(positions.size) { i -> if (vertexOwners[i / 2] == owner) it.positionDeltas[i] else 0f }) }
                 }) }
