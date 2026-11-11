@@ -11,9 +11,11 @@ import io.github.psd2live.algorithms.binding.BrowLegacyV2Algorithm
 import io.github.psd2live.algorithms.binding.BrowLidV5Algorithm
 import io.github.psd2live.algorithms.binding.BrowLidV6Algorithm
 import io.github.psd2live.algorithms.binding.BrowLidV7Algorithm
+import io.github.psd2live.algorithms.binding.BrowLidV8Algorithm
 import io.github.psd2live.algorithms.binding.BrowShapeV3Algorithm
 import io.github.psd2live.algorithms.binding.BrowShapeV4Algorithm
 import io.github.psd2live.algorithms.binding.BrowShapeV5Algorithm
+import io.github.psd2live.algorithms.binding.BrowShapeV6Algorithm
 import io.github.psd2live.algorithms.binding.BrowSpringV4Algorithm
 import io.github.psd2live.algorithms.binding.BrowSpringV5Algorithm
 import io.github.psd2live.algorithms.binding.BrowSpringV6Algorithm
@@ -274,11 +276,13 @@ internal object WorkspacePresetInitialization {
                     packages(headVersions + plannedLids + brows + mouth + moodVersions)
                 }
             } else if (singleEyeOpenMouth) {
-                // Migrate the verified head/brow, direct eye and mouth chains together.
-                // Brow add-ons and moods keep their existing default versions.
+                // Migrate the verified head, eyes, mouth, brow shape and lid coupling together.
+                // Brow blink/spring and moods keep their existing default versions.
                 val mouth = sourceMouthVersions(model.analysis, config, types, singleEye = true)
-                if (mouth.isEmpty()) emptyMap() else packages(headVersions + plannedLids + mouth +
-                    mapOf(RigModules.BROW_FITTED.id to BrowFittedV4Binding.VERSION))
+                val brows = mapOf(RigModules.BROW_FITTED.id to BrowFittedV4Binding.VERSION,
+                    RigModules.BROW_SHAPE.id to BrowShapeV6Algorithm.VERSION,
+                    RigModules.BROW_LID.id to BrowLidV8Algorithm.VERSION).filterKeys { it in plannedTypes }
+                if (mouth.isEmpty()) emptyMap() else packages(headVersions + plannedLids + mouth + brows)
             } else {
                 val lids = packages(plannedLids)
                 val brows = if (lids.isNotEmpty() && subject.has(SemanticTag.EYEBROW)) {

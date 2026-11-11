@@ -410,8 +410,9 @@ internal class RigModifierEvaluator(
             if (definition.requires.isNotEmpty()) {
                 val prefix = instances.subList(0, index)
                 val suffix = instances.subList(index + 1, instances.size)
+                val providers = definition.providers(instance)
                 for (type in definition.requires) for (target in instance.targets) {
-                    val provider = definition.providers(instance)[type]
+                    val provider = providers[type]
                     val earlier = stack.appliedCapabilities.any { registry.provides(it, type) && target in it.targets && (provider == null || it.id == provider) } ||
                         prefix.any { it.enabled && registry.provides(it, type) && target in it.targets && (provider == null || it.id == provider) }
                     val later = suffix.any { it.enabled && registry.provides(it, type) && target in it.targets && (provider == null || it.id == provider) }

@@ -181,6 +181,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "browShapeV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browShapeV4Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browShapeV5Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "browShapeV6Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browBlinkElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browBlinkV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browBlinkV4Elements"))
@@ -191,6 +192,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "browLidV4Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLidV5Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLidV6Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "browLidV8Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLidV7Elements"))
 	implementation(platform("io.ktor:ktor-bom:3.5.1"))
 	// Engine ported from Umamo (format, runtime, interop, render, edit); it brings its own libraries.
@@ -637,6 +639,10 @@ tasks.processResources {
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-lid-v6")) {
         into("algorithm-plugins/brow-lid-v6")
     }
+    dependsOn(":algorithms:binding:pluginBrowLidV8")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-lid-v8")) {
+        into("algorithm-plugins/brow-lid-v8")
+    }
     dependsOn(":algorithms:binding:pluginBrowLidV7")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-lid-v7")) {
         into("algorithm-plugins/brow-lid-v7")
@@ -652,6 +658,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginBrowShapeV3")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-shape-v3")) {
         into("algorithm-plugins/brow-shape-v3")
+    }
+    dependsOn(":algorithms:binding:pluginBrowShapeV6")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-shape-v6")) {
+        into("algorithm-plugins/brow-shape-v6")
     }
     dependsOn(":algorithms:binding:pluginBrowShapeV5")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-shape-v5")) {

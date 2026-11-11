@@ -5,6 +5,7 @@ import io.github.psd2live.algorithms.binding.BrowLidV3Algorithm
 import io.github.psd2live.algorithms.binding.BrowLidV4Algorithm
 import io.github.psd2live.algorithms.binding.BrowLidV5Algorithm
 import io.github.psd2live.algorithms.binding.BrowLidV6Algorithm
+import io.github.psd2live.algorithms.binding.BrowLidV8Algorithm
 import io.github.psd2live.algorithms.binding.BrowLidV7Algorithm
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
 import io.github.psd2live.core.RigBuilder
@@ -78,6 +79,56 @@ internal object RigBrowLidModifier {
         version = BrowLidV6Algorithm.VERSION, plugin = fallbackAlgorithm, changeWrites = BrowLidV6Algorithm.WRITES,
         authorContext = { requireNotNull(source).captureFallback(it) },
     )
+
+    private val singleEyeAlgorithm = object : ReadingModifierAlgorithmPlugin by BrowLidV8Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = BrowLidV8Algorithm.optionalUpstream
+        override val canonicalOptInType = BrowLidV8Algorithm.TYPE
+    }
+
+    /** Explicit candidate. The host captures only source measurements, never this modifier's motion. */
+    fun singleEyeDefinition(source: RigModifierSource?): RigModifierDefinition = definition(source).copy(
+        version = BrowLidV8Algorithm.VERSION, plugin = singleEyeAlgorithm, changeWrites = BrowLidV8Algorithm.WRITES,
+        requires = definition(source).requires + setOf("face/fitted", "brow.shape"),
+        authorContext = { requireNotNull(source).captureSingleEye(it) },
+    )
+
+    private fun RigModifierSource.captureSingleEye(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val scaffold = provider(instance)
+        val prior = activeBefore(instance).filter {
+            it.config["scaffold"] == JsonPrimitive(scaffold.id) && it.targets.any(instance.targets::contains)
+        }
+        require(scaffold.version == 2)
+        require(prior.none { it.type in setOf(BrowLidV8Algorithm.TYPE, "face.depth-turn", "mouth.cheek-lid") })
+        val eye = prior.single { it.id == instance.config.getValue("dependencies").jsonObject.getValue("eye/fitted").jsonPrimitive.content }
+        val brow = prior.single { it.id == instance.config.getValue("base").jsonPrimitive.content }
+        val face = prior.single { it.type == "face/fitted" }
+        val shape = prior.single { it.type == "brow.shape" }
+        require(eye.type == "eye/fitted" && eye.version == 5 && brow.type == "brow/fitted" && brow.version == 4 &&
+            face.version == 3 && shape.version in setOf(1, 6) && shape.config["base"] == JsonPrimitive(brow.id) &&
+            shape.targets.toSet() == instance.targets.toSet() && brow.targets.toSet() == instance.targets.toSet() &&
+            listOf(eye, brow, face, shape).all { it.targets.containsAll(instance.targets) }) {
+            "Brow and lid v8 requires shared scaffold2/face3/eye5/brow4 with shape1 or shape6 on the same targets"
+        }
+        val corrections = WorkspaceSettingsCodec.decodeRecipe(scaffold.config["corrections"])
+        val recipe = RigRecipe(true, bases = mapOf("eye" to BaseChoice(eye.type, eye.version)),
+            modules = RigModules.modules.associate { it.id to ModuleChoice(false) },
+            moves = corrections.moves, eyeParts = corrections.eyeParts)
+        val native = sourceConfig().copy(recipe = recipe, rigTuning = RigLegacyBindings.tuning(eye, RigTuning()),
+            headTurnStrength = 1f, bodyStrength = 1f,
+            featureDisplacementEnabled = scaffold.config["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
+            hairSimulationFront = !(scaffold.config["frontHairSway"]?.jsonPrimitive?.boolean ?: true),
+            hairSimulationBack = !(scaffold.config["backHairSway"]?.jsonPrimitive?.boolean ?: true))
+        val captured = capture(instance)
+        val brows = analysis.layers.filter { it.semantic.tag == SemanticTag.EYEBROW && it.semantic.role == null }
+        val sides = instance.targets.mapNotNull { target ->
+            val layer = brows.singleOrNull { it.source.id.raw == layersByMesh[target.id] } ?: return@mapNotNull null
+            target.id to JsonPrimitive(layer.semantic.side.name)
+        }.toMap()
+        val source = ModifierAlgorithmContext(JsonObject(captured.values + mapOf(
+            "shape" to JsonPrimitive(shape.id), "brow_sides" to JsonObject(sides))), captured.resources)
+        return captureLidHeadSource(instance, scaffold, eye, native, source)
+    }
 
     fun sharedFrameDefinition(source: RigModifierSource?): RigModifierDefinition {
         val implementation = object : ChangingModifierAlgorithmPlugin by BrowLidV7Algorithm, ModifierOptionalUpstream, ModifierVersionSelection {

@@ -93,6 +93,63 @@ class ModifierOrderValidationTest {
             ModifierCapability("retired", 1, listOf(target), provides = setOf("feature")))))
     }
 
+    @Test fun providersResolveOncePerValidationAcrossRequirementsAndTargets() {
+        var calls = 0
+        val requirements = setOf("feature", "detail")
+        val targets = listOf(target, other, ModifierTarget("part", "third"))
+        val selected = definition("consumer", requires = requirements, providers = {
+            calls++
+            requirements.associateWith { "source" }
+        })
+        val scoped = RigModifierEvaluator(RigModifierRegistry(listOf(selected,
+            definition("provider", provides = requirements))))
+        val stack = RigModifierStack(listOf(
+            entry("source", "provider", targets = targets),
+            entry("a", "consumer", targets = targets),
+        ))
+
+        scoped.validateOrder(stack)
+        assertEquals(1, calls)
+        scoped.validateOrder(stack)
+        assertEquals(2, calls)
+    }
+
+    @Test fun providerSelectionRefreshesForTheSameInstanceIdAfterConfigChanges() {
+        var calls = 0
+        val selected = definition("consumer", requires = setOf("feature"), providers = { instance ->
+            calls++
+            mapOf("feature" to instance.config.getValue("provider").jsonPrimitive.content)
+        })
+        val scoped = RigModifierEvaluator(RigModifierRegistry(listOf(selected,
+            definition("provider", provides = setOf("feature")))))
+        val consumer = entry("a", "consumer").copy(config = buildJsonObject { put("provider", "earlier") })
+        val earlier = entry("earlier", "provider")
+        val later = entry("later", "provider")
+        val stack = RigModifierStack(listOf(earlier, consumer, later))
+
+        scoped.validateOrder(stack)
+        assertEquals(1, calls)
+        val changed = consumer.copy(config = buildJsonObject { put("provider", "later") })
+        assertEquals("a must follow later (feature) on body", assertFailsWith<IllegalArgumentException> {
+            scoped.validateOrder(stack.copy(instances = listOf(earlier, changed, later)))
+        }.message)
+        assertEquals(2, calls)
+        scoped.validateOrder(stack)
+        assertEquals(3, calls)
+    }
+
+    @Test fun disabledAndRequirementFreeInstancesDoNotResolveProviders() {
+        val selected = definition("consumer", requires = setOf("feature"), providers = {
+            error("Disabled consumers must not resolve providers")
+        })
+        val provider = definition("provider", provides = setOf("feature"), providers = {
+            error("Instances without requirements must not resolve providers")
+        })
+        val scoped = RigModifierEvaluator(RigModifierRegistry(listOf(selected, provider)))
+
+        scoped.validateOrder(RigModifierStack(listOf(entry("a", "consumer", enabled = false), entry("source", "provider"))))
+    }
+
     @Test fun explicitProviderAndTargetScopeRestrictCapabilityOrderChecks() {
         val selected = definition("consumer", requires = setOf("feature"), providers = { mapOf("feature" to "source") })
         val scoped = RigModifierEvaluator(RigModifierRegistry(listOf(selected, definition("provider", provides = setOf("feature")))))
