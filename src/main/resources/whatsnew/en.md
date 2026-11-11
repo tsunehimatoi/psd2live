@@ -1,3 +1,10 @@
+## v3.7.1 · 2026-11-11
+
+### New
+
+- **macOS app**: PSD2Live ships as a Mac app in a DMG for Apple silicon (arm64) and Intel (x86_64), with the system menu bar and window buttons and its own Java runtime. It is not notarized: right-click it in Applications and choose Open the first time.
+- **Side marks in layer names**: ">" marks the character's left and "<" the character's right, wherever the other side words go (full-width ＞ / ＜ too).
+
 ## v3.7.0 · 2026-10-27
 
 ### New
