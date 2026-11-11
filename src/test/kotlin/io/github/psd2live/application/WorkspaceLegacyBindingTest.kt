@@ -947,8 +947,32 @@ class WorkspaceLegacyBindingTest {
         compareSingleEyeOpenMouthDefault(emptySet(), outfits = true)
     }
 
-    private suspend fun compareSingleEyeOpenMouthDefault(removed: Set<String>, mirror: Boolean = false,
-                                                        expressions: Boolean = false, outfits: Boolean = false) {
+    @Test fun singleEyeOpenMouthBrowFittedV4MatchesDefaultWithoutInterior(): Unit = runBlocking {
+        compareSingleEyeOpenMouthBrowV4(setOf("teeth-top", "teeth-bottom", "tongue"))
+    }
+
+    @Test fun singleEyeOpenMouthBrowFittedV4MatchesDefaultWithTeethOnly(): Unit = runBlocking {
+        compareSingleEyeOpenMouthBrowV4(setOf("tongue"))
+    }
+
+    @Test fun singleEyeOpenMouthBrowFittedV4MatchesDefaultWithTeethAndTongue(): Unit = runBlocking {
+        compareSingleEyeOpenMouthBrowV4(emptySet())
+    }
+
+    @Test fun singleEyeOpenMouthBrowFittedV4MatchesDefaultMirroredRightWithoutInterior(): Unit = runBlocking {
+        compareSingleEyeOpenMouthBrowV4(setOf("teeth-top", "teeth-bottom", "tongue"), mirror = true)
+    }
+
+    @Test fun singleEyeOpenMouthBrowFittedV4MatchesDefaultMirroredRightWithTeethOnly(): Unit = runBlocking {
+        compareSingleEyeOpenMouthBrowV4(setOf("tongue"), mirror = true)
+    }
+
+    @Test fun singleEyeOpenMouthBrowFittedV4MatchesDefaultMirroredRightWithTeethAndTongue(): Unit = runBlocking {
+        compareSingleEyeOpenMouthBrowV4(emptySet(), mirror = true)
+    }
+
+    private fun singleEyeOpenMouthArt(removed: Set<String>, mirror: Boolean = false,
+                                      expressions: Boolean = false, outfits: Boolean = false): WorkspaceDocument {
         var original = document(eyeDetails = true, mouthDetails = true, expressionDetails = expressions, outfitDetails = outfits)
         if (mirror) {
             val art = original.source as WorkspaceSourceArt
@@ -962,7 +986,12 @@ class WorkspaceLegacyBindingTest {
         val artwork = object : SourceArt by original.source {
             override val layers = original.source.layers.filterNot { it.id.raw in removed }
         }
-        val art = original.copy(source = artwork, layerOverrides = original.layerOverrides - removed)
+        return original.copy(source = artwork, layerOverrides = original.layerOverrides - removed)
+    }
+
+    private suspend fun compareSingleEyeOpenMouthDefault(removed: Set<String>, mirror: Boolean = false,
+                                                        expressions: Boolean = false, outfits: Boolean = false) {
+        val art = singleEyeOpenMouthArt(removed, mirror, expressions, outfits)
         val choices = WorkspaceInitialPreset(clothing = outfits)
         val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
@@ -1008,6 +1037,83 @@ class WorkspaceLegacyBindingTest {
         assertEquals(stack, RigModifierStack.fromJson(replayed.config.rigEdits.modifierStack!!))
         assertEquals(result, assertNotNull(replayed.modifierEvaluation).outputs)
         assertEquals(actual.rig.modifierRasterAssets, replayed.rig.modifierRasterAssets)
+        assertFaceEquals(compiled, RigIrCompiler.compile(replayed, tileArt = true))
+    }
+
+    private suspend fun compareSingleEyeOpenMouthBrowV4(removed: Set<String>, mirror: Boolean = false) {
+        val art = singleEyeOpenMouthArt(removed, mirror)
+        val choices = WorkspaceInitialPreset(clothing = false)
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, baseline) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+
+        // Current default single-eye open-mouth chain: fitted head/mouth upgraded and fitted brow still v1.
+        val upgraded = mapOf("face/fitted" to 3, "eye/fitted" to 5, "mouth/fitted" to 3, "mouth.outline" to 7)
+        assertEquals(upgraded, stack.instances.filter { it.type in upgraded }.associate { it.type to it.version })
+        assertEquals(2, stack.instances.single { it.type == RigSourceModifiers.SCAFFOLD }.version)
+        val brow = stack.instances.single { it.type == "brow/fitted" }
+        val browIndex = stack.index(brow.id)
+        assertEquals(1, brow.version)
+        val mouthVersions = stack.instances.filter { it.type == "mouth/fitted" || it.type.startsWith("mouth.") }
+            .associate { it.type to it.version }
+        assertEquals(3, mouthVersions.getValue("mouth/fitted"))
+        assertEquals(7, mouthVersions.getValue("mouth.outline"))
+        assertTrue(mouthVersions.filterKeys { it !in setOf("mouth/fitted", "mouth.outline") }.values.all { it == 1 })
+
+        // Select only the packaged v4 brow reference; every other instance and version stays unchanged.
+        val version = 4
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find(brow.type, version), "Missing packaged brow/fitted v$version")
+        val candidate = stack.copy(instances = stack.instances.map {
+            if (it.id == brow.id) it.copy(version = version, plugin = artifact.reference) else it
+        })
+        assertEquals(listOf(browIndex), stack.instances.indices.filter { stack.instances[it] != candidate.instances[it] })
+        assertEquals(version, candidate.instances[browIndex].version)
+        assertEquals(artifact.reference, candidate.instances[browIndex].plugin)
+        for (index in browIndex + 1 until stack.instances.size) {
+            assertEquals(stack.instances[index], candidate.instances[index],
+                "Downstream ${stack.instances[index].type} changed while replacing only brow/fitted")
+        }
+
+        val baselineEvaluation = assertNotNull(baseline.modifierEvaluation)
+        val baselineOutputs = baselineEvaluation.outputs
+        val model = WorkspacePreviewBuilder().build(initialized.copy(
+            rigEdits = initialized.rigEdits.copy(modifierStack = candidate.toJson())))
+        val evaluation = assertNotNull(model.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, evaluation.entries[browIndex].status)
+        for (index in stack.instances.indices) {
+            val where = when {
+                index < browIndex -> "before"
+                index == browIndex -> "at"
+                else -> "after"
+            }
+            assertEquals(baselineEvaluation.entries[index].status, evaluation.entries[index].status,
+                "Fitted brow v4 changed $where ${stack.instances[index].type} status ($index)")
+            assertTrue(baselineOutputs[index] == evaluation.outputs[index],
+                "Fitted brow v4 differs $where ${stack.instances[index].type} ($index)")
+        }
+        val compiled = RigIrCompiler.compile(baseline, tileArt = true)
+        assertFaceEquals(compiled, RigIrCompiler.compile(model, tileArt = true))
+        assertEquals(baseline.rig.modifierRasterAssets, model.rig.modifierRasterAssets)
+
+        val cache = RigStageCache.enabled
+        val replayed = try {
+            RigStageCache.enabled = false
+            WorkspacePreviewBuilder().build(initialized.copy(
+                rigEdits = initialized.rigEdits.copy(modifierStack = candidate.toJson())))
+        } finally {
+            RigStageCache.enabled = cache
+        }
+        assertEquals(candidate, RigModifierStack.fromJson(replayed.config.rigEdits.modifierStack!!))
+        val replay = assertNotNull(replayed.modifierEvaluation)
+        for (index in stack.instances.indices) {
+            assertEquals(baselineEvaluation.entries[index].status, replay.entries[index].status,
+                "Fitted brow v4 cache-off replay changed ${stack.instances[index].type} status ($index)")
+            assertTrue(baselineOutputs[index] == replay.outputs[index],
+                "Fitted brow v4 cache-off replay differs at ${stack.instances[index].type} ($index)")
+        }
+        assertEquals(baseline.rig.modifierRasterAssets, replayed.rig.modifierRasterAssets)
         assertFaceEquals(compiled, RigIrCompiler.compile(replayed, tileArt = true))
     }
 
