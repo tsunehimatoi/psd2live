@@ -4937,9 +4937,13 @@ class WorkspaceLegacyBindingTest {
         val left = actual.rig.ownLayerIdByDrawableId.entries.single { it.value == "lash" }.key
         assertNotEquals(before.meshes.single { it.id == left }, after.meshes.single { it.id == left })
 
-        val (historical, legacyBrows) = prepare(versions + ("brow.lid-coupling" to 5))
+        // Keep every other default binding and let only the brow motions fall back to their historical versions.
+        val legacyBrowTypes = browVersions.keys - "brow/fitted"
+        val pinned = stack.instances.groupBy { it.type }.filterValues { it.size == 1 }.mapValues { it.value.single().version }
+            .filter { (type, version) -> version > 1 && type !in legacyBrowTypes }
+        val (historical, legacyBrows) = prepare(pinned)
         val legacyStack = RigModifierStack.fromJson(historical.rigEdits.modifierStack!!)
-        assertEquals(1, legacyStack.instances.single { it.type == "brow.blink" }.version)
+        assertEquals(legacyBrowTypes.associateWith { 1 }, legacyStack.instances.filter { it.type in legacyBrowTypes }.associate { it.type to it.version })
         assertFaceEquals(RigIrCompiler.compile(legacyBrows), RigIrCompiler.compile(actual))
 
         val artifact = assertNotNull(BundledAlgorithmArtifacts.find(instance.type, 5))
