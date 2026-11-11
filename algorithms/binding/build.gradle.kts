@@ -1,10 +1,19 @@
+import java.util.jar.Attributes
+import java.util.jar.JarFile
+import java.util.jar.Manifest
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
+import java.io.ByteArrayOutputStream
+import java.util.Calendar
+import java.util.GregorianCalendar
 import java.util.HexFormat
 import java.security.MessageDigest
 
 // Binding kernels use the GPL engine; they are separate from the MIT API/format modules.
 plugins { `java-library`; kotlin("jvm"); kotlin("plugin.serialization") }
 group = "io.github.psd2live.algorithms"
-version = "1.0.63"
+version = "1.0.64"
 kotlin { jvmToolchain(21) }
 dependencies {
     api(project(":umamo"))
@@ -4821,5 +4830,57 @@ tasks.register("pluginEyeAftershockV5") {
                "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter","physics"],
                "configSchema":{"type":"object"},"defaults":{}}]}
         """.trimIndent())
+    }
+}
+
+// Every binding package above runs on the same worker runtime. Shipping a copy of it inside each package made the app
+// ~2 GB, so each package keeps only the classes that differ from the runtime and names a shared runtime.jar on its
+// Class-Path; the app bundles that runtime once (see processResources in the root build).
+val sharedRuntimeName = "runtime.jar"
+val sharedRuntimeTime = GregorianCalendar(1980, Calendar.FEBRUARY, 1).timeInMillis
+
+fun shareWorkerRuntime(directory: File, runtime: File) {
+    val payload = directory.resolve("algorithm.jar")
+    val manifestFile = directory.resolve("plugin.json")
+    if (!payload.isFile || !manifestFile.isFile) return
+    val shared = ZipFile(runtime).use { zip ->
+        zip.entries().asSequence().filterNot { it.isDirectory }.associate { it.name to zip.getInputStream(it).readBytes() }
+    }
+    val (manifest, kept) = JarFile(payload).use { jar ->
+        val manifest = Manifest(jar.manifest ?: Manifest())
+        manifest.mainAttributes.putIfAbsent(Attributes.Name.MANIFEST_VERSION, "1.0")
+        manifest.mainAttributes[Attributes.Name.CLASS_PATH] = sharedRuntimeName
+        manifest to jar.entries().asSequence()
+            .filter { !it.isDirectory && it.name != JarFile.MANIFEST_NAME }
+            .map { it.name to jar.getInputStream(it).readBytes() }
+            .filterNot { (name, bytes) -> shared[name]?.contentEquals(bytes) == true }
+            .toList()
+    }
+    val thin = ByteArrayOutputStream()
+    ZipOutputStream(thin).use { out ->
+        fun put(name: String, bytes: ByteArray) {
+            out.putNextEntry(ZipEntry(name).apply { time = sharedRuntimeTime })
+            out.write(bytes)
+            out.closeEntry()
+        }
+        put(JarFile.MANIFEST_NAME, ByteArrayOutputStream().also(manifest::write).toByteArray())
+        kept.forEach { (name, bytes) -> put(name, bytes) }
+    }
+    payload.writeBytes(thin.toByteArray())
+    runtime.copyTo(directory.resolve(sharedRuntimeName), overwrite = true)
+    fun digest(file: File) = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(file.readBytes()))
+    val files = Regex(""""files":\{"algorithm\.jar":"[0-9a-f]{64}"}""")
+    val text = manifestFile.readText()
+    require(files.findAll(text).count() == 1) { "Unexpected plugin manifest in $directory" }
+    manifestFile.writeText(text.replace(files,
+        """"files":{"algorithm.jar":"${digest(payload)}","$sharedRuntimeName":"${digest(directory.resolve(sharedRuntimeName))}"}"""))
+}
+
+tasks.matching { it.name.startsWith("plugin") }.configureEach {
+    dependsOn(workerJar)
+    inputs.file(workerJar.flatMap { it.archiveFile })
+    doLast {
+        val runtime = workerJar.get().archiveFile.get().asFile
+        outputs.files.files.filter { it.isDirectory }.forEach { shareWorkerRuntime(it, runtime) }
     }
 }

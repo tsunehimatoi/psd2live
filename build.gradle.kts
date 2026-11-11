@@ -351,6 +351,15 @@ tasks.register<Test>("testFittedFaceLatticesPackage") {
 
 // Keep Cubism out of classpath resources unless explicitly opted in.
 tasks.processResources {
+    // The binding packages share one worker runtime: bundle it once and let BundledAlgorithmArtifacts copy it into
+    // each package it retains.
+    from(project(":algorithms:binding").layout.buildDirectory.file("plugin/runtime.jar")) {
+        into("algorithm-plugins/shared")
+    }
+    eachFile {
+        val segments = relativePath.segments
+        if (segments.size == 3 && segments[0] == "algorithm-plugins" && segments[1] != "shared" && segments[2] == "runtime.jar") exclude()
+    }
     dependsOn(":algorithms:binding:pluginMouthLegacy")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-legacy")) {
         into("algorithm-plugins/mouth-legacy")
