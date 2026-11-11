@@ -49,6 +49,7 @@ import io.github.psd2live.algorithms.binding.MouthCheekLidV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV8Algorithm
+import io.github.psd2live.algorithms.binding.MouthCheekLidV9Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV5Algorithm
@@ -493,6 +494,7 @@ internal object WorkspacePresetInitialization {
             if (RigModules.MOUTH_CAPTURE.id in types) put(RigModules.MOUTH_CAPTURE.id, MouthCaptureV5Algorithm.VERSION)
             if (RigModules.MOUTH_TONGUE.id in types) put(RigModules.MOUTH_TONGUE.id, MouthTongueV5Algorithm.VERSION)
             if (RigModules.MOUTH_JAW.id in types) put(RigModules.MOUTH_JAW.id, MouthJawV7Algorithm.VERSION)
+            if (RigModules.MOUTH_CHEEK_LID.id in types) put(RigModules.MOUTH_CHEEK_LID.id, MouthCheekLidV9Algorithm.VERSION)
             if (RigModules.MOUTH_DEPTH.id in types) put(RigModules.MOUTH_DEPTH.id, MouthDepthV3Algorithm.VERSION)
             if (RigModules.MOUTH_SPRING.id in types) put(RigModules.MOUTH_SPRING.id, MouthSpringV8Algorithm.VERSION)
         }

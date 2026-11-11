@@ -950,35 +950,35 @@ class WorkspaceLegacyBindingTest {
         compareSingleEyeOpenMouthDefault(emptySet(), outfits = true)
     }
 
-    @Test fun singleEyeOpenMouthBrowFittedV4MatchesDefaultWithoutInterior(): Unit = runBlocking {
+    @Test fun singleEyeOpenMouthBrowFittedV4MatchesWithHistoricalCheekWithoutInterior(): Unit = runBlocking {
         compareSingleEyeOpenMouthBrowV4(setOf("teeth-top", "teeth-bottom", "tongue"))
     }
 
-    @Test fun singleEyeOpenMouthBrowFittedV4MatchesDefaultWithTeethOnly(): Unit = runBlocking {
+    @Test fun singleEyeOpenMouthBrowFittedV4MatchesWithHistoricalCheekWithTeethOnly(): Unit = runBlocking {
         compareSingleEyeOpenMouthBrowV4(setOf("tongue"))
     }
 
-    @Test fun singleEyeOpenMouthBrowFittedV4MatchesDefaultWithTeethAndTongue(): Unit = runBlocking {
+    @Test fun singleEyeOpenMouthBrowFittedV4MatchesWithHistoricalCheekWithTeethAndTongue(): Unit = runBlocking {
         compareSingleEyeOpenMouthBrowV4(emptySet())
     }
 
-    @Test fun singleEyeOpenMouthBrowFittedV4MatchesDefaultMirroredRightWithoutInterior(): Unit = runBlocking {
+    @Test fun singleEyeOpenMouthBrowFittedV4MatchesWithHistoricalCheekMirroredRightWithoutInterior(): Unit = runBlocking {
         compareSingleEyeOpenMouthBrowV4(setOf("teeth-top", "teeth-bottom", "tongue"), mirror = true)
     }
 
-    @Test fun singleEyeOpenMouthBrowFittedV4MatchesDefaultMirroredRightWithTeethOnly(): Unit = runBlocking {
+    @Test fun singleEyeOpenMouthBrowFittedV4MatchesWithHistoricalCheekMirroredRightWithTeethOnly(): Unit = runBlocking {
         compareSingleEyeOpenMouthBrowV4(setOf("tongue"), mirror = true)
     }
 
-    @Test fun singleEyeOpenMouthBrowFittedV4MatchesDefaultMirroredRightWithTeethAndTongue(): Unit = runBlocking {
+    @Test fun singleEyeOpenMouthBrowFittedV4MatchesWithHistoricalCheekMirroredRightWithTeethAndTongue(): Unit = runBlocking {
         compareSingleEyeOpenMouthBrowV4(emptySet(), mirror = true)
     }
 
     private val singleEyeOpenMouthMotionVersions = mapOf("mouth.vowel" to 6, "mouth.capture" to 5,
-        "mouth.tongue" to 5, "mouth.jaw" to 7, "mouth.interior-depth" to 3, "mouth.spring" to 8)
+        "mouth.tongue" to 5, "mouth.jaw" to 7, "mouth.cheek-lid" to 9, "mouth.interior-depth" to 3, "mouth.spring" to 8)
 
     private fun assertSingleEyeOpenMouthDefaults(stack: RigModifierStack, removed: Set<String>): List<RigModifierInstance> {
-        val expected = mapOf("mouth/fitted" to 3, "mouth.outline" to 7, "mouth.cheek-lid" to 1) +
+        val expected = mapOf("mouth/fitted" to 3, "mouth.outline" to 7) +
             singleEyeOpenMouthMotionVersions.filterKeys { type -> when (type) {
                 "mouth.tongue" -> "tongue" !in removed
                 "mouth.interior-depth" -> !removed.containsAll(setOf("teeth-top", "teeth-bottom", "tongue"))
@@ -1020,7 +1020,7 @@ class WorkspaceLegacyBindingTest {
             "mouth/fitted" to 3, "mouth.outline" to 7)
         assertEquals(upgraded, stack.instances.filter { it.type in upgraded }.associate { it.type to it.version })
         // Unrelated modules keep their existing defaults (some already use independent versions).
-        // Only the verified mouth motion chain moves with the fitted/outline pair; cheek/lid stays historical.
+        // Mouth add-ons move with the fitted/outline pair; eye/brow add-ons retain their existing defaults.
         assertSingleEyeOpenMouthDefaults(stack, removed)
 
         // Lock all migrated mouth stages as well as brow1, so no new downstream algorithm is
@@ -1056,16 +1056,32 @@ class WorkspaceLegacyBindingTest {
         assertFaceEquals(compiled, RigIrCompiler.compile(replayed, tileArt = true))
     }
 
+    private fun lockSingleEyeOpenMouthCheekForBrow(document: WorkspaceDocument): WorkspaceDocument {
+        val stack = RigModifierStack.fromJson(document.rigEdits.modifierStack!!)
+        val cheek = stack.instances.single { it.type == "mouth.cheek-lid" }
+        assertEquals(9, cheek.version)
+        val locked = stack.copy(instances = stack.instances.map {
+            if (it.id == cheek.id) it.copy(version = 1,
+                plugin = assertNotNull(BuiltinModifierPlugins.reference(cheek.type, 1))) else it
+        })
+        assertEquals(listOf(stack.index(cheek.id)), stack.instances.indices.filter { stack.instances[it] != locked.instances[it] })
+        return document.copy(rigEdits = document.rigEdits.copy(modifierStack = locked.toJson()))
+    }
+
     private suspend fun compareSingleEyeOpenMouthBrowV4(removed: Set<String>, mirror: Boolean = false) {
         val art = singleEyeOpenMouthArt(removed, mirror)
         val choices = WorkspaceInitialPreset(clothing = false)
         val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, _) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        val (prepared, _) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        assertSingleEyeOpenMouthDefaults(RigModifierStack.fromJson(prepared.rigEdits.modifierStack!!), removed)
+        // Jaw/depth/spring retain their current versions, but both sides explicitly lock cheek1:
+        // cheek9 requires brow4 and cannot be part of an isolated brow1-versus-brow4 comparison.
+        val initialized = lockSingleEyeOpenMouthCheekForBrow(prepared)
         val candidate = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
 
-        // Current default single-eye open-mouth chain: fitted head, brow and mouth upgraded.
+        // Isolate the fitted brow on the historical-compatible downstream cheek chain.
         val upgraded = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4,
             "mouth/fitted" to 3, "mouth.outline" to 7)
         assertEquals(upgraded, candidate.instances.filter { it.type in upgraded }.associate { it.type to it.version })
@@ -1073,11 +1089,9 @@ class WorkspaceLegacyBindingTest {
         val brow = candidate.instances.single { it.type == "brow/fitted" }
         val browIndex = candidate.index(brow.id)
         assertEquals(4, brow.version)
-        assertSingleEyeOpenMouthDefaults(candidate, removed)
 
         // Build the reference from a document that explicitly locks only the historical brow1.
-        // Every other current default stays untouched, and the new brow4 default must still change
-        // exactly that instance instead of being compared with itself.
+        // The shared cheek1 lock is identical on both sides; exactly the brow instance changes.
         val version = 1
         val baseline = candidate.copy(instances = candidate.instances.map {
             if (it.id == brow.id) it.copy(version = version,
@@ -1132,13 +1146,16 @@ class WorkspaceLegacyBindingTest {
         assertFaceEquals(compiled, RigIrCompiler.compile(replayed, tileArt = true))
     }
 
-    @Test fun singleEyeOpenMouthBrowFittedV4InstalledWorkerAndAppliedPrefixReplay(): Unit = runBlocking {
+    @Test fun singleEyeOpenMouthBrowFittedV4InstalledWorkerAndAppliedPrefixReplayWithHistoricalCheek(): Unit = runBlocking {
         val art = singleEyeOpenMouthArt(emptySet())
         val choices = WorkspaceInitialPreset(clothing = false)
         val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (initialized, _) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        val (prepared, _) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        assertSingleEyeOpenMouthDefaults(RigModifierStack.fromJson(prepared.rigEdits.modifierStack!!), emptySet())
+        // Keep cheek1 on both sides of this brow-only worker, archive and applied-prefix regression.
+        val initialized = lockSingleEyeOpenMouthCheekForBrow(prepared)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         val brow = stack.instances.single { it.type == "brow/fitted" }
         val browIndex = stack.index(brow.id)
@@ -1146,7 +1163,7 @@ class WorkspaceLegacyBindingTest {
         val artifact = assertNotNull(BundledAlgorithmArtifacts.find(brow.type, 4))
         assertEquals(artifact.reference, brow.plugin)
 
-        // Historical brow1 reference with every other current default untouched.
+        // Historical brow1 reference with the same explicit cheek1 lock and other defaults untouched.
         val baseline = stack.copy(instances = stack.instances.map {
             if (it.id == brow.id) it.copy(version = 1,
                 plugin = assertNotNull(BuiltinModifierPlugins.reference(brow.type, 1))) else it
@@ -4845,6 +4862,103 @@ class WorkspaceLegacyBindingTest {
         assertEquals(expected.deformers.map { it.id }, actual.deformers.map { it.id })
         for ((before, after) in expected.meshes.zip(actual.meshes)) assertEquals(before, after, before.id)
         assertEquals(expected, actual)
+    }
+
+    @Test fun singleEyeOpenMouthCheekLidV9RejectsClosedMouthSource(): Unit = runBlocking {
+        assertOpenMouthCheekLidV9RejectsSource(document(eyeDetails = true, mouthDetails = true, closedMouth = true),
+            "Cheek and lid v9 does not support a separate closed-mouth drawing")
+    }
+
+    @Test fun singleEyeOpenMouthCheekLidV9RejectsBilateralEyeSource(): Unit = runBlocking {
+        assertOpenMouthCheekLidV9RejectsSource(document(eyeDetails = true, mouthDetails = true, bilateralEyes = true),
+            "Cheek and lid v9 requires exactly one readable fitted eye")
+    }
+
+    private fun assertOpenMouthCheekLidV9RejectsSource(art: WorkspaceDocument, expectedMessage: String) {
+        val choices = WorkspaceInitialPreset(clothing = false)
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, model) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val cheek = stack.instances.single { it.type == "mouth.cheek-lid" }
+        // Closed and bilateral presets keep their existing choices; only single-eye open art selects v9.
+        assertNotEquals(9, cheek.version, "Cheek-lid v9 must not be selected for closed or bilateral artwork")
+        val candidate = cheek.copy(version = 9, plugin = assertNotNull(BundledAlgorithmArtifacts.find(cheek.type, 9)).reference)
+        // Reject while authoring context, before any candidate output can modify the input model.
+        // Pin only the context's provider chain. The historical baseline remains untouched and
+        // no incompatible closed/bilateral candidate is evaluated before the source guard.
+        val versions = mapOf("rig.scaffold" to 2, "mouth/fitted" to 3, "eye/fitted" to 5,
+            "face/fitted" to 3, "brow/fitted" to 4)
+        val contextStack = stack.copy(instances = stack.instances.map { entry ->
+            val version = versions[entry.type] ?: return@map entry
+            entry.copy(version = version, plugin = assertNotNull(BuiltinModifierPlugins.reference(entry.type, version)))
+        })
+        assertEquals(versions, contextStack.instances.filter { it.type in versions }.associate { it.type to it.version })
+        val contextModel = model.copy(config = model.config.copy(rigEdits = model.config.rigEdits.copy(modifierStack = contextStack.toJson())))
+        val definition = RigMouthCheekLidModifier.openShellDefinition(RigModifierSource.of(contextModel))
+        val before = model.rig.modifierOutput
+        val failure = assertFailsWith<IllegalArgumentException> { definition.authorContext(candidate) }
+        assertEquals(expectedMessage, failure.message)
+        assertEquals(before, model.rig.modifierOutput)
+        assertEquals(stack, RigModifierStack.fromJson(model.config.rigEdits.modifierStack!!))
+    }
+
+    @Test fun singleEyeOpenMouthCheekLidV9RejectsIncompleteOrIncompatibleInputs(): Unit = runBlocking {
+        val art = singleEyeOpenMouthArt(emptySet())
+        val choices = WorkspaceInitialPreset(clothing = false)
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, model) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        assertSingleEyeOpenMouthDefaults(stack, emptySet())
+        val cheek = stack.instances.single { it.type == "mouth.cheek-lid" }
+        val index = stack.index(cheek.id)
+        val evaluation = assertNotNull(model.modifierEvaluation)
+        assertEquals(ModifierStatus.ACTIVE, evaluation.entries[index].status)
+        val context = assertNotNull(evaluation.readAlgorithms[cheek.id]).context
+        val definition = RigMouthCheekLidModifier.openShellDefinition(RigModifierSource.of(model))
+        val algorithm = definition.plugin as ReadingModifierAlgorithmPlugin
+        assertEquals(emptyList(), definition.parameters(cheek))
+        assertNotNull(context.resources["lid_turn"])
+        val supported = mapOf("rig.scaffold" to 2, "mouth/fitted" to 3, "eye/fitted" to 5,
+            "face/fitted" to 3, "brow/fitted" to 4)
+        for ((type, version) in supported) {
+            val provider = context.upstream.single { it.capability == type }
+            assertEquals(type, provider.type)
+            assertEquals(version, provider.version)
+            assertEquals(stack.instances.single { it.id == provider.instanceId }.plugin, provider.plugin)
+            val incompatible = context.withUpstream(context.upstream.map {
+                if (it.instanceId == provider.instanceId) it.copy(version = version - 1) else it
+            })
+            assertFailsWith<IllegalArgumentException>("Cheek-lid v9 must reject $type v${version - 1}") {
+                algorithm.evaluate(evaluation.outputs[index - 1], cheek, incompatible, {})
+            }
+        }
+        val prior = ModifierEvaluationInput(evaluation.outputs[index - 1])
+        val owners = stack.instances.take(index)
+        val observedCarriers = context.values.getValue("carriers").jsonObject.flatMap { (target, carrier) ->
+            val nativeId = carrier.jsonObject.getValue("id").jsonPrimitive.content
+            prior.parentsOfMesh(target).filter { parent ->
+                owners.any { owner -> owner.localOutputName(parent.id)?.contains(nativeId) == true }
+            }
+        }.distinctBy { it.id }
+        assertTrue(observedCarriers.isNotEmpty())
+        assertTrue(observedCarriers.filterIsInstance<io.github.psd2live.format.model.Deformer.Warp>().any { carrier ->
+            carrier.lattice?.axes.orEmpty().any { it.parameter.startsWith("ParamAngle") }
+        }, "The source must exercise a real prior head-turn carrier")
+        val emptyTurns = ModifierAlgorithmResource(RigIrBinary.encode(
+            io.github.psd2live.format.model.RigIR(io.github.psd2live.format.model.Canvas(1f, 1f), emptyList())))
+        val missingTurns = ModifierAlgorithmContext(context.values, context.resources + ("lid_turn" to emptyTurns), context.upstream)
+        val failure = assertFailsWith<IllegalArgumentException> {
+            algorithm.evaluate(evaluation.outputs[index - 1], cheek, missingTurns, {})
+        }
+        val message = failure.message.orEmpty()
+        if (message.startsWith("Cannot resolve prior lid carrier")) {
+            for (detail in listOf("matching IDs", "candidates=", "branch=", "ParamAngle")) assertContains(message, detail)
+        }
+        assertEquals(stack, RigModifierStack.fromJson(model.config.rigEdits.modifierStack!!))
     }
 
     @Test fun independentMouthCheekLidMatchesLockedVersionAndInstalledWorker(): Unit = runBlocking {
@@ -10647,7 +10761,7 @@ class WorkspaceLegacyBindingTest {
             }.message)
         }
 
-        // Lock all six motion add-ons to v1; fitted mouth, outline, head/brow and unrelated defaults stay unchanged.
+        // Lock all seven motion add-ons, including cheek-lid, to v1; fitted mouth, outline, head/brow and unrelated defaults stay unchanged.
         val locked = stack.copy(instances = stack.instances.map { instance ->
             if (instance.type !in singleEyeOpenMouthMotionVersions) instance else instance.copy(version = 1,
                 plugin = assertNotNull(BuiltinModifierPlugins.reference(instance.type, 1)))
@@ -10677,7 +10791,8 @@ class WorkspaceLegacyBindingTest {
                     "Single-eye open motion differs at ${entry.type}, mirror=$mirror, removed=$removed")
             }
             assertEquals(reference.rig.modifierRasterAssets, model.rig.modifierRasterAssets)
-            assertFaceEquals(compiled, RigIrCompiler.compile(model, tileArt = true))
+            assertTrue(reference.rig.modifierOutput == model.rig.modifierOutput, "Single-eye open final IR differs")
+            assertTrue(compiled == RigIrCompiler.compile(model, tileArt = true), "Single-eye open compiled IR differs")
         }
         verify(actual)
         val cache = RigStageCache.enabled
@@ -10687,8 +10802,9 @@ class WorkspaceLegacyBindingTest {
         } finally {
             RigStageCache.enabled = cache
         }
-        if (!installedWorkers) return
-
+        // Cheek9 crosses the real JVM boundary in every side/interior profile; the dedicated worker
+        // test additionally exercises all other selected mouth packages on both sides.
+        val workerEntries = if (installedWorkers) selected else selected.filter { it.type == "mouth.cheek-lid" }
         val evaluation = assertNotNull(actual.modifierEvaluation)
         val captured = RigModifierSource.of(actual)
         val definitions = mapOf(
@@ -10696,9 +10812,10 @@ class WorkspaceLegacyBindingTest {
             "mouth.capture" to RigMouthCaptureModifier.modernDefinition(captured),
             "mouth.tongue" to RigMouthTongueModifier.modernDefinition(captured),
             "mouth.jaw" to RigMouthJawModifier.modernDefinition(captured),
+            "mouth.cheek-lid" to RigMouthCheekLidModifier.openShellDefinition(captured),
             "mouth.interior-depth" to RigMouthDepthModifier.fittedDefinition(captured),
             "mouth.spring" to RigMouthSpringModifier.modernDefinition(captured))
-        val artifacts = selected.map { entry ->
+        val artifacts = workerEntries.map { entry ->
             assertNotNull(BundledAlgorithmArtifacts.find(entry.type, entry.version)).also { assertEquals(it.reference, entry.plugin) }
         }
         val root = Files.createTempDirectory("single-eye-open-mouth-motion-worker-")
@@ -10706,7 +10823,7 @@ class WorkspaceLegacyBindingTest {
         val store = ModifierPluginStore(root.resolve("installed"), preferences)
         try {
             BundledAlgorithmArtifacts.retain(store, artifacts)
-            for ((entry, artifact) in selected.zip(artifacts)) {
+            for ((entry, artifact) in workerEntries.zip(artifacts)) {
                 val worker = store.snapshot().single { it.reference == artifact.reference }
                 val index = stack.index(entry.id)
                 val context = assertNotNull(evaluation.readAlgorithms[entry.id]).context
@@ -10715,9 +10832,11 @@ class WorkspaceLegacyBindingTest {
                     assertEquals(preceding.version, provider.version)
                     assertEquals(preceding.plugin, provider.plugin)
                 }
-                assertFaceEquals(expected.outputs[index], ModifierPluginWorkers.evaluate(worker,
-                    worker.manifest.algorithms.single(), evaluation.outputs[index - 1], entry, {}, store,
-                    context = context, declaredParameters = definitions.getValue(entry.type).parameters(entry)))
+                val output = ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(),
+                    evaluation.outputs[index - 1], entry, {}, store, context = context,
+                    declaredParameters = definitions.getValue(entry.type).parameters(entry))
+                assertTrue(expected.outputs[index] == output,
+                    "${entry.type} installed worker exact IR differs, mirror=$mirror, removed=$removed")
             }
         } finally {
             store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }

@@ -105,6 +105,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "mouthCheekLidV6Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthCheekLidV7Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthCheekLidV8Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "mouthCheekLidV9Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "skirtElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "ribbonsElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "ribbonsV3Elements"))
@@ -789,6 +790,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginMouthCheekLidV8")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-cheek-lid-v8")) {
         into("algorithm-plugins/mouth-cheek-lid-v8")
+    }
+    dependsOn(":algorithms:binding:pluginMouthCheekLidV9")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-cheek-lid-v9")) {
+        into("algorithm-plugins/mouth-cheek-lid-v9")
     }
     dependsOn(":algorithms:binding:pluginEyeSquashV4")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-eye-squash-v4")) {

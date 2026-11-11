@@ -7,6 +7,7 @@ import io.github.psd2live.algorithms.binding.MouthCheekLidV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV8Algorithm
+import io.github.psd2live.algorithms.binding.MouthCheekLidV9Algorithm
 import io.github.psd2live.core.CharacterAnalyzer
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.SemanticTag
@@ -84,6 +85,55 @@ internal object RigMouthCheekLidModifier {
                         RigLegacyBindings.find(entry.type)?.let { !it.expressionToggles && !it.seeThrough } == true
                 }
                 val (native, measured) = RigFittedMouthModuleSource.context(capture, scaffold, prefix, null)
+                val layers = measured.analysis.layers.associateBy { it.source.id.raw }
+                val turns = instance.targets.mapNotNull { target ->
+                    val layer = layers[capture.layersByMesh[target.id]] ?: return@mapNotNull null
+                    if (layer.semantic.tag !in setOf(SemanticTag.EYELASH, SemanticTag.EYEWHITE)) return@mapNotNull null
+                    val channels = Drawable(DrawableId(target.id), layer.source.name, null, BlendMode.Normal, emptyList(), null, null)
+                    val raw = RigBuilder.lidTurnLoweringSource(layer, measured, native, capture.atlas, capture.meshCache, channels)
+                    PuppetIr.meshToIr(raw).takeIf { it.shapes.isNotEmpty() }
+                }
+                val resource = ModifierAlgorithmResource(RigIrBinary.encode(RigIR(Canvas(1f, 1f), emptyList(), meshes = turns)))
+                ModifierAlgorithmContext(JsonObject(context.values + ("turnName" to JsonPrimitive(tr("model.deformer.meshTurn", "{meshName}")))),
+                    context.resources + ("lid_turn" to resource))
+            })
+    }
+
+    private val openShellAlgorithm = object : ReadingModifierAlgorithmPlugin by MouthCheekLidV9Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = MouthCheekLidV9Algorithm.optionalUpstream
+        override val canonicalOptInType = MouthCheekLidV9Algorithm.TYPE
+    }
+
+    /** Single-eye open-mouth source contract; closed and bilateral variants retain their own definitions. */
+    fun openShellDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val fitted = fittedDefinition(source)
+        return fitted.copy(version = MouthCheekLidV9Algorithm.VERSION, plugin = openShellAlgorithm,
+            requires = fitted.requires + setOf("face/fitted", "brow/fitted"),
+            authorContext = { instance ->
+                val capture = requireNotNull(source)
+                val scaffold = capture.provider(instance)
+                require(scaffold.version == 2) { "Cheek and lid v9 requires a shared v2 scaffold" }
+                val prefix = capture.activeBefore(instance).filter { entry ->
+                    entry.config["scaffold"] == JsonPrimitive(scaffold.id) && entry.targets.any(instance.targets::contains) &&
+                        RigLegacyBindings.find(entry.type)?.let { !it.expressionToggles && !it.seeThrough } == true
+                }
+                val mouthId = instance.config.getValue("base").jsonPrimitive.content
+                val eyeId = instance.config.getValue("dependencies").jsonObject.getValue("eye/fitted").jsonPrimitive.content
+                for ((type, version) in mapOf("mouth/fitted" to 3, "eye/fitted" to 5, "face/fitted" to 3, "brow/fitted" to 4)) {
+                    val provider = prefix.singleOrNull { it.type == type }
+                    require(provider != null && provider.version == version && provider.targets.containsAll(instance.targets) &&
+                        (type != "mouth/fitted" || provider.id == mouthId) && (type != "eye/fitted" || provider.id == eyeId)) {
+                        "Cheek and lid v9 requires $type v$version on the same shared scaffold"
+                    }
+                }
+                val (native, measured) = RigFittedMouthModuleSource.context(capture, scaffold, prefix, null)
+                val mouth = requireNotNull(measured.fittedMouth(native)?.takeIf { it.source != null }) {
+                    "Cheek and lid v9 requires readable fitted open-mouth source artwork"
+                }
+                require(!mouth.closedLine) { "Cheek and lid v9 does not support a separate closed-mouth drawing" }
+                require(measured.fittedEyes(native)?.rigs?.size == 1) { "Cheek and lid v9 requires exactly one readable fitted eye" }
+                val context = fitted.authorContext(instance)
                 val layers = measured.analysis.layers.associateBy { it.source.id.raw }
                 val turns = instance.targets.mapNotNull { target ->
                     val layer = layers[capture.layersByMesh[target.id]] ?: return@mapNotNull null
