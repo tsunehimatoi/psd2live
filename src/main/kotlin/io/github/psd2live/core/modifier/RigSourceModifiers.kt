@@ -363,8 +363,8 @@ internal class RigModifierSource(
 
     private fun template(instances: List<RigModifierInstance>, scaffold: JsonObject): Template {
         RigBuildProfile.count("modifier legacy template requests")
-        val state = instances.associateBy { it.type }
-        val key = templateKey(state, scaffold)
+        val state = RigSourceBindingState(instances)
+        val key = templateKey(state.byType, scaffold)
         return templates.getOrPut(key) {
             // Preview bitmaps and encoded atlas pages are presentation objects recreated on rebuild.
             // Geometry reads classified source pixels and atlas placement, not those objects' identity.
@@ -376,35 +376,32 @@ internal class RigModifierSource(
         }
     }
 
-    private fun buildTemplate(instances: List<RigModifierInstance>, scaffold: JsonObject, state: Map<String, RigModifierInstance>): Template {
-        val kept = state.keys.flatMapTo(HashSet()) { RigLegacyBindings.spec(it).parameters }
-        val byArea = instances.filter { RigLegacyBindings.spec(it.type).isBase }.associateBy { RigLegacyBindings.spec(it.type).area }
+    private fun buildTemplate(instances: List<RigModifierInstance>, scaffold: JsonObject, state: RigSourceBindingState): Template {
+        val kept = state.byType.keys.flatMapTo(HashSet()) { RigLegacyBindings.spec(it).parameters }
         val native = RigBuildProfile.stage("modifier legacy template: ${instances.last().type}") {
-            generated(nativeBindingConfig(instances, scaffold, state, byArea))
+            generated(nativeBindingConfig(instances, scaffold, state))
         }
         val chains = native.generatedChains.filter { chain -> instances.any { chain.kind in RigModifierChains.kinds(it.type) } }
             .map { RigModifierChains.Binding(it) }
-        return finishTemplate(native.puppet, chains, kept, byArea.keys)
+        return finishTemplate(native.puppet, chains, kept, state.byArea.keys)
     }
 
     private fun nativeBindingConfig(instances: List<RigModifierInstance>, scaffold: JsonObject,
-                                    state: Map<String, RigModifierInstance> = instances.associateBy { it.type },
-                                    byArea: Map<String, RigModifierInstance> = instances.filter { RigLegacyBindings.spec(it.type).isBase }
-                                        .associateBy { RigLegacyBindings.spec(it.type).area }): PipelineConfig {
-        var tuning = RigTuning()
-        for (spec in RigLegacyBindings.specs) state[spec.type]?.let { tuning = RigLegacyBindings.tuning(it, tuning) }
-        val bodyStrength = state["body/legacy"]?.let(RigLegacyBindings::strength) ?: 1f
-        val headStrength = (state[RigLegacyBindings.FITTED_FACE] ?: state["face/legacy"])?.let(RigLegacyBindings::strength) ?: 1f
+                                    state: RigSourceBindingState = RigSourceBindingState(instances)): PipelineConfig {
+        val byArea = state.byArea
+        val tuning = state.tuning
+        val bodyStrength = state.bodyStrength
+        val headStrength = state.headStrength
         val recipe = if (instances.none { !it.type.endsWith("/legacy") }) RigRecipe.Legacy else RigRecipe(true,
             bases = RigModules.areas.associate { area ->
                 val chosen = byArea[area.id]
                 val base = chosen?.type?.takeUnless { it == RigLegacyBindings.FITTED_FACE } ?: area.legacy.id
                 area.id to BaseChoice(base, chosen?.version ?: area.legacy.version, chosen?.let(RigLegacyBindings::values).orEmpty())
             }, modules = RigModules.modules.associate { module ->
-                val chosen = state[module.id] ?: state[RigLegacyBindings.FITTED_FACE]?.takeIf { module.id == RigModules.FACE_DEPTH_TURN.id }
+                val chosen = state.byType[module.id] ?: state.byType[RigLegacyBindings.FITTED_FACE]?.takeIf { module.id == RigModules.FACE_DEPTH_TURN.id }
                 module.id to ModuleChoice(chosen != null, chosen?.version ?: module.version, chosen?.let(RigLegacyBindings::values).orEmpty())
             })
-        val outline = state[RigModules.MOUTH_OUTLINE.id]
+        val outline = state.byType[RigModules.MOUTH_OUTLINE.id]
         val corrections = io.github.psd2live.project.WorkspaceSettingsCodec.decodeRecipe(scaffold["corrections"])
         val correctedRecipe = recipe.copy(moves = corrections.moves, eyeParts = corrections.eyeParts)
         return generationConfig(bodyStrength, tuning, headStrength, correctedRecipe, outline,
