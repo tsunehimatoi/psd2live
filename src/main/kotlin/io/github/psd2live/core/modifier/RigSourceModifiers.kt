@@ -587,9 +587,18 @@ internal class RigModifierSource(
 
     private val partOrigins = HashMap<Pair<String, String>, Map<PartId, PartId>>()
 
+    private data class PartHierarchyIndex(val parents: Map<PartId, PartId>, val deformers: Map<DeformerId, Deformer>)
+    // Source-owned scaffold and template topology is replaced by model copies, never edited in place.
+    private val partHierarchyIndexes = java.util.IdentityHashMap<PuppetModel, PartHierarchyIndex>()
+
     fun requiredParts(model: PuppetModel, target: ModifierTarget): Set<PartId> {
-        val parents = model.parts.flatMap { part -> part.children.filterIsInstance<OrgChild.Part>().map { it.id to part.id } }.toMap()
-        val deformers = model.deformers.associateBy { it.id }
+        val hierarchy = partHierarchyIndexes.getOrPut(model) {
+            PartHierarchyIndex(
+                model.parts.flatMap { part -> part.children.filterIsInstance<OrgChild.Part>().map { it.id to part.id } }.toMap(),
+                model.deformers.associateBy { it.id })
+        }
+        val parents = hierarchy.parents
+        val deformers = hierarchy.deformers
         val seeds = ArrayList<PartId>()
         model.parts.singleOrNull { OrgChild.Drawable(DrawableId(target.id)) in it.children }?.id?.let(seeds::add)
         var parent = model.drawables.single { it.id.raw == target.id }.parentDeformerId

@@ -273,7 +273,7 @@ internal object WorkspacePresetInitialization {
                     packages(headVersions + plannedLids + brows + mouth + moodVersions)
                 }
             } else if (singleEyeOpenMouth) {
-                // Migrate the fitted/outline pair, vowel/capture add-ons and verified head/brow providers.
+                // Migrate the fitted/outline pair, mouth motion chain and verified head/brow providers.
                 // Brow add-ons, eye add-ons and moods keep their existing default versions.
                 val mouth = sourceMouthVersions(model.analysis, config, types, singleEye = true)
                 if (mouth.isEmpty()) emptyMap() else packages(headVersions + mouth +
@@ -491,6 +491,10 @@ internal object WorkspacePresetInitialization {
             put(RigModules.MOUTH_OUTLINE.id, MouthOutlineV7Algorithm.VERSION)
             if (RigModules.MOUTH_VOWEL.id in types) put(RigModules.MOUTH_VOWEL.id, MouthVowelV6Algorithm.VERSION)
             if (RigModules.MOUTH_CAPTURE.id in types) put(RigModules.MOUTH_CAPTURE.id, MouthCaptureV5Algorithm.VERSION)
+            if (RigModules.MOUTH_TONGUE.id in types) put(RigModules.MOUTH_TONGUE.id, MouthTongueV5Algorithm.VERSION)
+            if (RigModules.MOUTH_JAW.id in types) put(RigModules.MOUTH_JAW.id, MouthJawV7Algorithm.VERSION)
+            if (RigModules.MOUTH_DEPTH.id in types) put(RigModules.MOUTH_DEPTH.id, MouthDepthV3Algorithm.VERSION)
+            if (RigModules.MOUTH_SPRING.id in types) put(RigModules.MOUTH_SPRING.id, MouthSpringV8Algorithm.VERSION)
         }
     }
 
