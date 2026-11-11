@@ -220,12 +220,22 @@ object FaceLandmarking {
 			chin?.let { c -> out.firstOrNull { it.id == "mouth.lowerMid" }?.let { m -> add("face.chinCentre", "face", (c.x + m.x) / 2 to (c.y * 2 + m.y) / 3, later = true) } }
 		}
 
-		// Ears.
-		for (ear in layers.filter { it.opaquePixels > 0 && it.semantic.tag == SemanticTag.EARS }) {
-			val p = pixels(ear); if (p.isEmpty()) continue
+		// Each ear may be split into front, fur and back layers. Measure one silhouette per side and kind,
+		// not one landmark set per layer (the depth-turn input requires unique semantic IDs).
+		val ears = layers.filter { it.opaquePixels > 0 && it.semantic.tag == SemanticTag.EARS }.groupBy { ear ->
 			val side = if (ear.semantic.side != Side.NONE) ear.semantic.side else sideOf(ear.centroidX)
 			// An ear on top of the head (an animal's) stands on its base; one at the side of the face hangs from its root by the cheek.
 			val onTop = ear.semantic.role == PartRole.ANIMAL || eyeY != null && eyeGap != null && ear.centroidY < eyeY - eyeGap
+			side to onTop
+		}
+		for ((key, parts) in ears) {
+			val (side, onTop) = key
+			// Count overlapping pixels once, and use canvas scan order to break extrema ties independently
+			// of layer stacking order, just as for a single raster.
+			val silhouette = parts.flatMap { ear -> pixels(ear).let { p -> (0 until p.size).map { p.xs[it] to p.ys[it] } } }
+				.distinct().sortedWith(compareBy<Pair<Float, Float>> { it.second }.thenBy { it.first })
+			if (silhouette.isEmpty()) continue
+			val p = Pixels(FloatArray(silhouette.size) { silhouette[it].first }, FloatArray(silhouette.size) { silhouette[it].second })
 			val s = "ear.${sideName(side)}${if (onTop) ".animal" else ""}"
 			val top = (0 until p.size).minBy { p.ys[it] }; val bottom = (0 until p.size).maxBy { p.ys[it] }
 			val inner = (0 until p.size).minBy { abs(p.xs[it] - faceCenterX) }; val outer = (0 until p.size).maxBy { abs(p.xs[it] - faceCenterX) }

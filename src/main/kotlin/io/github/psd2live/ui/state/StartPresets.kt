@@ -27,7 +27,7 @@ internal data class PresetParts(val frontHair: Boolean, val backHair: Boolean, v
 
 /**
  * The model presets the start page sets: rig strength and facial switches, motion groups, physics and simulation.
- * A PSD import applies them as soon as the model is built.
+ * A new PSD import applies them after its mesh split/naming offers have finished.
  */
 @Serializable
 internal data class StartPresetChoices(

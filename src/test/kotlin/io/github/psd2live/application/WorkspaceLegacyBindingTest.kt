@@ -176,6 +176,32 @@ class WorkspaceLegacyBindingTest {
         bases = RigModules.areas.associate { it.id to (choices[it.id] ?: BaseChoice(it.legacy.id, it.legacy.version)) },
         modules = RigModules.modules.associate { it.id to ModuleChoice(false, it.version) })
 
+    @Test fun recommendedPresetAcceptsUnsidedIrisesWithPairedEyes(): Unit = runBlocking {
+        val art = document(pairedBrows = true, bilateralEyes = true)
+        val unsided = art.copy(layerOverrides = art.layerOverrides.mapValues { (_, value) ->
+            if (value.tag == SemanticTag.IRIDES) value.copy(side = Side.NONE) else value
+        })
+        val choices = WorkspaceInitialPreset()
+        val baseline = choices.configure(WorkspacePresetBaseline.configure(unsided.config(), "modern"))
+        val config = baseline.copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = unsided.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, preview) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        val stack = RigModifierStack.fromJson(assertNotNull(initialized.rigEdits.modifierStack))
+        assertEquals(3, stack.instances.single { it.type == "face/fitted" }.version)
+        assertEquals(5, stack.instances.single { it.type == "eye/fitted" }.version)
+        assertTrue(stack.instances.any { it.type == "brow/fitted" })
+        assertEquals(setOf("iris", "iris-right"), preview.rig.layerIdByDrawableId.values.filter { it.startsWith("iris") }.toSet())
+        assertTrue(preview.rig.puppet.drawables.isNotEmpty())
+        for (model in listOf(preview, native(source, source.config().recipe))) {
+            val puppet = model.rig.puppet
+            val ids = puppet.deformers.mapTo(hashSetOf()) { it.id }
+            assertTrue(puppet.deformers.all { it.parent == null || it.parent in ids })
+            assertTrue(puppet.drawables.all { it.parentDeformerId == null || it.parentDeformerId in ids })
+        }
+        val rebuilt = WorkspacePreviewBuilder().build(initialized)
+        assertEquals(RigIrCompiler.compile(preview, tileArt = true), RigIrCompiler.compile(rebuilt, tileArt = true))
+    }
+
     @Test fun fittedBrowWorkerMatchesNativeHeightAndHeadMotion(): Unit = runBlocking {
         val document = document()
         val artifact = requireNotNull(BundledAlgorithmArtifacts.find("brow/fitted", 2))

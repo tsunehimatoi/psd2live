@@ -176,7 +176,7 @@ object LayerClassifier {
 		}
 		return ClassifiedLayer(
 			source = layer,
-			semantic = classify(layer.name),
+			semantic = IrisGroupSide.inherit(layer, classify(layer.name), alphaThreshold, count),
 			bounds = bounds,
 			centroidX = if (count == 0) bounds.centerX else layer.bounds.left + sumX.toFloat() / count,
 			centroidY = if (count == 0) bounds.centerY else layer.bounds.top + sumY.toFloat() / count,

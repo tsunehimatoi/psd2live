@@ -10,10 +10,11 @@ import kotlinx.serialization.json.*
 /** Pure candidates shared by GUI commands, MCP jobs and atomic document batches. */
 internal object WorkspaceModifierEdits {
     val supported = setOf("modifier_add", "modifier_add_group", "modifier_update", "modifier_enable",
-        "modifier_remove", "modifier_move", "modifier_organize", "modifier_apply", "modifier_convert", "modifier_switch")
+        "modifier_remove", "modifier_move", "modifier_organize", "modifier_apply", "modifier_convert", "modifier_switch", "modifier_initialize")
 
     fun apply(operation: WorkspaceDocumentOperation, document: WorkspaceDocument, model: RigPreviewModel,
               work: WorkspaceRasterWork = WorkspaceRasterWork.Direct, draftInputs: WorkspaceModifierDraftInputs? = null): WorkspaceDocument {
+        if (operation.operation == "modifier_initialize") return WorkspacePresetInitialize.apply(document, operation.request, work)
         if (operation.operation == "modifier_convert") return WorkspaceModifierConversion.convert(document, model, work)
         if (operation.operation == "modifier_switch") return WorkspacePresetSwitch.apply(document,
             operation.request.getValue("group").jsonPrimitive.content, work, model)

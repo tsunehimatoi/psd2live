@@ -83,7 +83,11 @@ internal object RigRegenerationCheckpoint {
 		val earlier = current.config.rigEdits.authoringJournal
 		val journal = next.rigEdits.authoringJournal
 		require(next.rigEdits.continues(current.config.rigEdits)) { "A split appends to the journal" }
-		val (base, bindingKey) = pipeline.generatedBaseOf(source, next)
+		// Explicit modifiers bind ordinary canvas-space material. Regenerating their split with the raw
+		// recipe would introduce legacy parent warps into the checkpoint before the scaffold is applied.
+		val generation = if (next.rigEdits.modifierStack != null)
+			io.github.psd2live.core.modifier.RigModifierPipeline.ordinaryConfig(next).copy(meshOnly = true) else next
+		val (base, bindingKey) = pipeline.generatedBaseOf(source, generation)
 		checkpoint()
 		val atlas = base.puppet.atlas; val sources = base.puppet.sources
 		val (previous, seen) = ArtPrimitiveReplay.withVersion1Parts(current.baseRig.resolvedPuppet().reboundTo(atlas, sources), current.baseRig.primitiveSkins,

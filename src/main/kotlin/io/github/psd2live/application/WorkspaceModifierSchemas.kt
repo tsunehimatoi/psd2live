@@ -77,6 +77,10 @@ internal object WorkspaceModifierSchemas {
     private val pluginAddition get() = s.obj(pluginFields + mapOf("id" to s.handle(), "version" to s.integer(1), "targets" to s.array(target, 1, 4096), "group" to s.handle(), "index" to s.integer(0)), setOf("type", "config", "targets"))
     val addition: JsonObject get() = s.union(types.map(::addition) + pluginAddition)
     val organization = s.array(s.obj(mapOf("id" to s.handle(), "parent" to s.nullable(s.handle()), "name" to s.nullable(s.handle()))), 0, 8192)
+    private val initialPreset = s.obj(
+        listOf("headStrength", "bodyStrength").associateWith { s.number(0, 4) } +
+            listOf("featureDisplacement", "mouthOutline", "motionBasic", "motionSkeleton", "clothing", "eyeJelly").associateWith { s.boolean() } +
+            listOf("frontHair", "backHair").associateWith { s.choices("CLASSIC", "SIMULATION", "OFF") }, emptySet())
     fun request(id: String): JsonObject {
         val business = when (id) {
             "modifier_add" -> addition
@@ -86,6 +90,9 @@ internal object WorkspaceModifierSchemas {
             "modifier_organize" -> s.obj(mapOf("nodes" to organization))
             "modifier_move" -> s.obj(mapOf("id" to s.handle(), "index" to s.integer(0)))
             "modifier_convert" -> s.obj(emptyMap())
+            "modifier_initialize" -> s.obj(mapOf(
+                "modifiers" to s.choices(*WorkspaceInitialModifiers.entries.map { it.name.lowercase() }.toTypedArray()),
+                "preset" to initialPreset), setOf("modifiers"))
             "modifier_switch" -> s.obj(mapOf("group" to s.handle()))
             "modifier_remove", "modifier_apply" -> s.obj(mapOf("id" to s.handle()))
             else -> error("Unknown modifier operation $id")
