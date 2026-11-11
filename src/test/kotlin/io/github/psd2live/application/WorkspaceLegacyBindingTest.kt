@@ -14,6 +14,8 @@ import io.github.psd2live.algorithms.binding.EyeHighlightAlgorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV2Algorithm
 import io.github.psd2live.algorithms.binding.LegacyFaceV2Algorithm
 import io.github.psd2live.algorithms.binding.LegacyBodyMotion
+import io.github.psd2live.algorithms.binding.CreatureInputs
+import io.github.psd2live.algorithms.binding.RibbonsInputs
 import io.github.psd2live.core.*
 import io.github.psd2live.core.fit.FaceTurn
 import io.github.psd2live.core.modifier.*
@@ -30,6 +32,7 @@ import io.github.psd2live.format.model.KeyAxis
 import io.github.psd2live.format.model.KeyCell
 import io.github.psd2live.format.model.KeyGrid
 import io.github.psd2live.format.model.Rgb
+import io.github.psd2live.format.compile.RigIrBinary
 import io.github.psd2live.project.*
 import io.github.psd2live.scenario.Characters
 import io.github.psd2live.targets.cubism.PuppetIr
@@ -10486,6 +10489,108 @@ class WorkspaceLegacyBindingTest {
             val after = evaluator.evaluate(imported, pose)
             for (mesh in affected) assertEquals(before.opacity.getValue(mesh.id), after.opacity.getValue(mesh.id), .0001f, mesh.id.raw)
         }
+    }
+
+    private fun attachmentConfig(dependencies: Map<String, String> = emptyMap()) = buildJsonObject {
+        put("scaffold", "structure")
+        if (dependencies.isNotEmpty()) putJsonObject("dependencies") { dependencies.forEach { (type, id) -> put(type, id) } }
+    }
+
+    /** A source whose stack has two preceding modifier groups before the residual instance. */
+    private fun attachmentResidualSource(model: RigPreviewModel, preceding: List<RigModifierInstance>,
+                                         residual: RigModifierInstance): RigModifierSource {
+        val scaffold = RigModifierInstance("structure", RigSourceModifiers.SCAFFOLD, 1,
+            model.rig.puppet.drawables.map { ModifierTarget("mesh", it.id.raw) })
+        val stack = RigModifierStack(instances = listOf(scaffold) + preceding + residual)
+        val config = model.config.copy(rigEdits = model.config.rigEdits.copy(modifierStack = stack.toJson()))
+        return RigModifierSource.of(model.copy(config = config))
+    }
+
+    /**
+     * Both targets are separate relevantBefore groups. The first group carries a chain-providing preceding
+     * modifier, the second does not, so resource order and contents reveal grouping and both projection phases.
+     */
+    private fun assertAttachmentResidualGroups(source: RigModifierSource, base: ModifierAlgorithmContext,
+                                               baseOf: (RigModifierInstance) -> ModifierAlgorithmContext,
+                                               affectedOf: (ModifierAlgorithmContext) -> Set<String>,
+                                               instance: RigModifierInstance, namespace: String,
+                                               first: ModifierTarget, second: ModifierTarget) {
+        val affected = affectedOf(base)
+        assertEquals(setOf(first.id, second.id), affected)
+        val context = source.captureAttachmentResidual(instance, affected, namespace, base)
+        fun key(target: ModifierTarget, suffix: String, staticVariant: Boolean = false) =
+            "$namespace/${target.id}/$suffix" + if (staticVariant) "-static" else ""
+        fun expected(targets: List<ModifierTarget>) = listOf("source_meshes") + listOf("before", "after").flatMap { suffix ->
+            targets.flatMap { target -> listOf(key(target, suffix), key(target, suffix, true)) }
+        }
+        assertEquals(expected(listOf(first, second)), context.resources.keys.toList())
+        assertEquals(base.values, context.values)
+        assertEquals(base.resources.getValue("source_meshes"), context.resources.getValue("source_meshes"))
+
+        fun chains(name: String) = RigIrBinary.decode(context.resources.getValue(name).read())
+            .deformers.count { it.id.startsWith("SourceChain:") }
+        assertTrue(chains(key(first, "before")) > 0, "the first group keeps its preceding chain")
+        assertEquals(0, chains(key(second, "before")), "the second group must not inherit the first group's chain")
+        assertTrue(chains(key(second, "after")) > 0, "the applied instance is projected in the second generation")
+        assertNotEquals(context.resources.getValue(key(second, "before")), context.resources.getValue(key(second, "after")))
+
+        // Each reused group matches the same projection captured alone, in both phases.
+        for (target in listOf(first, second)) {
+            val one = instance.copy(targets = listOf(target))
+            val singleBase = baseOf(one)
+            val single = source.captureAttachmentResidual(one, affectedOf(singleBase), namespace, singleBase)
+            for (suffix in listOf("before", "after")) for (staticVariant in listOf(false, true)) {
+                val name = key(target, suffix, staticVariant)
+                assertEquals(context.resources.getValue(name), single.resources.getValue(name), name)
+            }
+        }
+
+        // Reversing target order reverses group order without changing either projection.
+        val reversed = source.captureAttachmentResidual(instance.copy(targets = listOf(second, first)), affected, namespace, base)
+        assertEquals(expected(listOf(second, first)), reversed.resources.keys.toList())
+        assertEquals(context.resources, reversed.resources)
+    }
+
+    @Test fun ribbonsAttachmentResidualReusesPrecedingGroupsAcrossProjections(): Unit = runBlocking<Unit> {
+        val f = Fixture(document(outfitDetails = true)); f.install()
+        val model = f.now.model
+        val ribbon = ModifierTarget("mesh", mesh(f, "ribbon").id.raw)
+        val pendant = ModifierTarget("mesh", mesh(f, "pendant").id.raw)
+        val both = listOf(ribbon, pendant)
+        val body = RigModifierInstance("body", "body/legacy", 1, both, config = attachmentConfig())
+        val face = RigModifierInstance("face", "face/legacy", 1, both, config = attachmentConfig())
+        val ribbonGroup = RigModifierInstance("ribbon-module", "outfit.ribbons", 1, listOf(ribbon),
+            config = attachmentConfig(mapOf("body/legacy" to "body", "face/legacy" to "face")))
+        val pendantGroup = RigModifierInstance("pendant-module", "face.neck", 1, listOf(pendant),
+            config = attachmentConfig(mapOf("face/legacy" to "face")))
+        val residual = RigModifierInstance("ribbons-residual", "outfit.ribbons", 2, both,
+            config = attachmentConfig(mapOf("body/legacy" to "body", "face/legacy" to "face")))
+        val source = attachmentResidualSource(model, listOf(body, face, ribbonGroup, pendantGroup), residual)
+        val baseOf = { instance: RigModifierInstance -> RigRibbonsModifier.definition(source).authorContext(instance) }
+        assertAttachmentResidualGroups(source, baseOf(residual), baseOf,
+            { context -> RibbonsInputs.decode(context).layers.flatMap { it.meshes }.toSet() },
+            residual, "ribbon", ribbon, pendant)
+    }
+
+    @Test fun creatureAttachmentResidualReusesPrecedingGroupsAcrossProjections(): Unit = runBlocking<Unit> {
+        val f = Fixture(document(outfitDetails = true, creatureDetails = true)); f.install()
+        val model = f.now.model
+        val ear = ModifierTarget("mesh", mesh(f, "head-animal-ear").id.raw)
+        val tail = ModifierTarget("mesh", mesh(f, "tail").id.raw)
+        val both = listOf(ear, tail)
+        val body = RigModifierInstance("body", "body/legacy", 1, both, config = attachmentConfig())
+        val face = RigModifierInstance("face", "face/legacy", 1, both, config = attachmentConfig())
+        val earGroup = RigModifierInstance("ear-module", "outfit.creature", 1, listOf(ear),
+            config = attachmentConfig(mapOf("body/legacy" to "body", "face/legacy" to "face")))
+        val tailGroup = RigModifierInstance("tail-module", "face.neck", 1, listOf(tail),
+            config = attachmentConfig(mapOf("face/legacy" to "face")))
+        val residual = RigModifierInstance("creature-residual", "outfit.creature", 2, both,
+            config = attachmentConfig(mapOf("body/legacy" to "body", "face/legacy" to "face")))
+        val source = attachmentResidualSource(model, listOf(body, face, earGroup, tailGroup), residual)
+        val baseOf = { instance: RigModifierInstance -> RigCreatureModifier.definition(source).authorContext(instance) }
+        assertAttachmentResidualGroups(source, baseOf(residual), baseOf,
+            { context -> CreatureInputs.decode(context).layers.flatMap { it.meshes }.toSet() },
+            residual, "creature", ear, tail)
     }
 
 }

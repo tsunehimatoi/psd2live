@@ -412,9 +412,10 @@ internal class RigModifierSource(
     fun captureAttachmentResidual(instance: RigModifierInstance, affected: Set<String>, namespace: String,
                                   base: ModifierAlgorithmContext): ModifierAlgorithmContext {
         val targets = instance.targets.filter { it.id in affected }
+        val grouped = targets.groupBy { relevantBefore(instance, it) }
         val resources = base.resources.toMutableMap()
         for ((suffix, active) in listOf("before" to false, "after" to true)) {
-            for ((native, static) in attachmentProjection(instance, targets, active)) {
+            for ((native, static) in attachmentProjection(instance, grouped, active)) {
                 val id = native.drawables.single().id.raw
                 resources["$namespace/$id/$suffix"] = ModifierAlgorithmResource(RigIrBinary.encode(PuppetIr.toIr(native)))
                 resources["$namespace/$id/$suffix-static"] = ModifierAlgorithmResource(RigIrBinary.encode(PuppetIr.toIr(static)))
@@ -423,9 +424,11 @@ internal class RigModifierSource(
         return ModifierAlgorithmContext(base.values, resources)
     }
 
-    private fun attachmentProjection(instance: RigModifierInstance, targets: List<ModifierTarget>, active: Boolean): List<Pair<PuppetModel, PuppetModel>> {
+    private fun attachmentProjection(instance: RigModifierInstance,
+                                     grouped: Map<List<RigModifierInstance>, List<ModifierTarget>>,
+                                     active: Boolean): List<Pair<PuppetModel, PuppetModel>> {
         val scaffold = provider(instance)
-        return targets.groupBy { relevantBefore(instance, it) }.flatMap { (preceding, selected) ->
+        return grouped.flatMap { (preceding, selected) ->
             val items = if (active) preceding + instance else preceding
             val config = nativeBindingConfig(items, scaffold.config)
             val sources = selected.associate { target -> layersByMesh.getValue(target.id) to DrawableId(target.id) }
