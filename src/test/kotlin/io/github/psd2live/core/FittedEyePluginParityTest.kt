@@ -240,12 +240,14 @@ class FittedEyePluginParityTest {
             // Use a different package revision to exercise the installed worker rather than the bundled implementation.
             Files.writeString(staging.resolve("plugin.json"), JsonObject(manifest + ("version" to JsonPrimitive("0.9.0"))).toString())
             artifact.manifest.files.keys.forEach { name ->
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
-            JarFile(staging.resolve("algorithm.jar").toFile()).use { jar ->
-                assertNotNull(jar.getJarEntry("rig/eye-opening.bin"))
-                assertFalse(jar.entries().asSequence().any { it.name.startsWith("io/github/psd2live/core/RigBuilder") })
-            }
+            // The worker classpath is the package jar plus the shared binding runtime it names.
+            val classpath = artifact.manifest.files.keys.filter { it.endsWith(".jar") }.map { JarFile(staging.resolve(it).toFile()) }
+            try {
+                assertTrue(classpath.any { it.getJarEntry("rig/eye-opening.bin") != null })
+                assertFalse(classpath.any { jar -> jar.entries().asSequence().any { it.name.startsWith("io/github/psd2live/core/RigBuilder") } })
+            } finally { classpath.forEach { it.close() } }
             val definitions = BuiltinModifierPlugins.definitions(owner)
             repeat(2) {
                 val entry = store.install(staging.toString())

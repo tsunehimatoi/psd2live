@@ -302,7 +302,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val installed = store.install(staging.toString())
             assertEquals(artifact.reference, installed.reference)
@@ -397,7 +397,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val entry = store.install(staging.toString())
             val context = assertNotNull(evaluated.readAlgorithms[shape.id]).context
@@ -464,7 +464,7 @@ class WorkspaceLegacyBindingTest {
                 val staging = Files.createDirectory(directory.resolve("package"))
                 Files.write(staging.resolve("plugin.json"), artifact.bytes)
                 for (name in artifact.manifest.files.keys) {
-                    assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                    assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
                 }
                 val providers = stack.instances.dropLast(1).map { provider ->
                     ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
@@ -570,7 +570,7 @@ class WorkspaceLegacyBindingTest {
                     val staging = Files.createDirectory(directory.resolve("package"))
                     Files.write(staging.resolve("plugin.json"), artifact.bytes)
                     for (name in artifact.manifest.files.keys) {
-                        assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                        assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
                     }
                     val providers = stack.instances.dropLast(1).map { provider ->
                         ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
@@ -659,7 +659,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val entry = store.install(staging.toString())
             val context = assertNotNull(evaluated.readAlgorithms[blink.id]).context
@@ -722,7 +722,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val entry = store.install(staging.toString())
             val context = assertNotNull(evaluated.readAlgorithms[depth.id]).context
@@ -1003,7 +1003,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val worker = store.install(staging.toString())
             assertEquals(artifact.reference, worker.reference)
@@ -1170,7 +1170,7 @@ class WorkspaceLegacyBindingTest {
                     val staging = Files.createDirectory(directory.resolve("package"))
                     Files.write(staging.resolve("plugin.json"), artifact.bytes)
                     for (name in artifact.manifest.files.keys) {
-                        assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                        assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
                     }
                     val providers = stack.instances.dropLast(1).flatMap { provider ->
                         val capabilities = if (provider.type == "face/fitted") listOf(provider.type, "face/legacy") else listOf(provider.type)
@@ -1250,7 +1250,7 @@ class WorkspaceLegacyBindingTest {
                     val staging = Files.createDirectory(directory.resolve("package"))
                     Files.write(staging.resolve("plugin.json"), artifact.bytes)
                     for (name in artifact.manifest.files.keys) {
-                        assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                        assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
                     }
                     val providers = stack.instances.dropLast(1).map { provider ->
                         ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
@@ -1339,7 +1339,7 @@ class WorkspaceLegacyBindingTest {
                     val staging = Files.createDirectory(directory.resolve("package"))
                     Files.write(staging.resolve("plugin.json"), artifact.bytes)
                     for (name in artifact.manifest.files.keys) {
-                        assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                        assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
                     }
                     val providers = stack.instances.dropLast(1).map { provider ->
                         ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
@@ -1406,7 +1406,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val entry = store.install(staging.toString())
             val context = assertNotNull(evaluated.readAlgorithms[spring.id]).context
@@ -1463,7 +1463,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val installed = store.install(staging.toString())
             assertEquals(artifact.reference, installed.reference)
@@ -1546,7 +1546,7 @@ class WorkspaceLegacyBindingTest {
                     val staging = Files.createDirectory(directory.resolve("package"))
                     Files.write(staging.resolve("plugin.json"), artifact.bytes)
                     for (name in artifact.manifest.files.keys) {
-                        assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                        assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
                     }
                     val providers = stack.instances.dropLast(1).map { provider ->
                         ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
@@ -1665,7 +1665,7 @@ class WorkspaceLegacyBindingTest {
                 val staging = Files.createDirectory(directory.resolve("package"))
                 Files.write(staging.resolve("plugin.json"), artifact.bytes)
                 for (name in artifact.manifest.files.keys) {
-                    assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                    assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
                 }
                 val installed = store.install(staging.toString())
                 val index = stack.index(selected.id)
@@ -1809,7 +1809,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val installed = store.install(staging.toString())
             val instance = evaluation.entries[index].instance.copy(type = installed.manifest.algorithms.single().type)
@@ -1895,7 +1895,7 @@ class WorkspaceLegacyBindingTest {
                     val staging = Files.createDirectory(directory.resolve("package"))
                     Files.write(staging.resolve("plugin.json"), artifact.bytes)
                     for (name in artifact.manifest.files.keys) {
-                        assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                        assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
                     }
                     val providers = stack.instances.dropLast(1).map { provider ->
                         ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
@@ -1986,7 +1986,7 @@ class WorkspaceLegacyBindingTest {
                     val staging = Files.createDirectory(directory.resolve("package"))
                     Files.write(staging.resolve("plugin.json"), artifact.bytes)
                     for (name in artifact.manifest.files.keys) {
-                        assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                        assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
                     }
                     val providers = stack.instances.dropLast(1).map { provider ->
                         ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
@@ -2175,7 +2175,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val installed = store.install(staging.toString())
             assertEquals(instance.plugin, installed.reference)
@@ -2230,7 +2230,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val entry = store.install(staging.toString())
             val context = assertNotNull(evaluated.readAlgorithms[jaw.id]).context
@@ -2505,7 +2505,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val installed = store.install(staging.toString())
             assertEquals(after, ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(), before,
@@ -2514,7 +2514,7 @@ class WorkspaceLegacyBindingTest {
             val outlineStaging = Files.createDirectory(directory.resolve("outline-package"))
             Files.write(outlineStaging.resolve("plugin.json"), outlineArtifact.bytes)
             for (name in outlineArtifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(outlineArtifact.resource + name)).use { Files.copy(it, outlineStaging.resolve(name)) }
+                assertNotNull(outlineArtifact.open(name)).use { Files.copy(it, outlineStaging.resolve(name)) }
             }
             val outlineWorker = store.install(outlineStaging.toString())
             assertEquals(outlineArtifact.reference, outlineWorker.reference)
@@ -2526,7 +2526,7 @@ class WorkspaceLegacyBindingTest {
             val vowelStaging = Files.createDirectory(directory.resolve("vowel-package"))
             Files.write(vowelStaging.resolve("plugin.json"), vowelArtifact.bytes)
             for (name in vowelArtifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(vowelArtifact.resource + name)).use { Files.copy(it, vowelStaging.resolve(name)) }
+                assertNotNull(vowelArtifact.open(name)).use { Files.copy(it, vowelStaging.resolve(name)) }
             }
             val vowelWorker = store.install(vowelStaging.toString())
             assertEquals(vowelArtifact.reference, vowelWorker.reference)
@@ -2538,7 +2538,7 @@ class WorkspaceLegacyBindingTest {
             val captureStaging = Files.createDirectory(directory.resolve("capture-package"))
             Files.write(captureStaging.resolve("plugin.json"), captureArtifact.bytes)
             for (name in captureArtifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(captureArtifact.resource + name)).use { Files.copy(it, captureStaging.resolve(name)) }
+                assertNotNull(captureArtifact.open(name)).use { Files.copy(it, captureStaging.resolve(name)) }
             }
             val captureWorker = store.install(captureStaging.toString())
             assertEquals(captureArtifact.reference, captureWorker.reference)
@@ -2550,7 +2550,7 @@ class WorkspaceLegacyBindingTest {
             val jawStaging = Files.createDirectory(directory.resolve("jaw-package"))
             Files.write(jawStaging.resolve("plugin.json"), jawArtifact.bytes)
             for (name in jawArtifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(jawArtifact.resource + name)).use { Files.copy(it, jawStaging.resolve(name)) }
+                assertNotNull(jawArtifact.open(name)).use { Files.copy(it, jawStaging.resolve(name)) }
             }
             val jawWorker = store.install(jawStaging.toString())
             assertEquals(jawArtifact.reference, jawWorker.reference)
@@ -2561,7 +2561,7 @@ class WorkspaceLegacyBindingTest {
             val tongueStaging = Files.createDirectory(directory.resolve("tongue-package"))
             Files.write(tongueStaging.resolve("plugin.json"), tongueArtifact.bytes)
             for (name in tongueArtifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(tongueArtifact.resource + name)).use { Files.copy(it, tongueStaging.resolve(name)) }
+                assertNotNull(tongueArtifact.open(name)).use { Files.copy(it, tongueStaging.resolve(name)) }
             }
             val tongueWorker = store.install(tongueStaging.toString())
             assertEquals(tongueArtifact.reference, tongueWorker.reference)
@@ -2573,7 +2573,7 @@ class WorkspaceLegacyBindingTest {
             val jawTongueStaging = Files.createDirectory(directory.resolve("jaw-tongue-package"))
             Files.write(jawTongueStaging.resolve("plugin.json"), jawTongueArtifact.bytes)
             for (name in jawTongueArtifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(jawTongueArtifact.resource + name)).use { Files.copy(it, jawTongueStaging.resolve(name)) }
+                assertNotNull(jawTongueArtifact.open(name)).use { Files.copy(it, jawTongueStaging.resolve(name)) }
             }
             val jawTongueWorker = store.install(jawTongueStaging.toString())
             assertEquals(jawTongueArtifact.reference, jawTongueWorker.reference)
@@ -2594,7 +2594,7 @@ class WorkspaceLegacyBindingTest {
             val springStaging = Files.createDirectory(directory.resolve("spring-package"))
             Files.write(springStaging.resolve("plugin.json"), springArtifact.bytes)
             for (name in springArtifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(springArtifact.resource + name)).use { Files.copy(it, springStaging.resolve(name)) }
+                assertNotNull(springArtifact.open(name)).use { Files.copy(it, springStaging.resolve(name)) }
             }
             val springWorker = store.install(springStaging.toString())
             assertEquals(springArtifact.reference, springWorker.reference)
@@ -2792,7 +2792,7 @@ class WorkspaceLegacyBindingTest {
                 val staging = Files.createDirectory(directory.resolve("package"))
                 Files.write(staging.resolve("plugin.json"), artifact.bytes)
                 for (name in artifact.manifest.files.keys) {
-                    assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                    assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
                 }
                 val installed = store.install(staging.toString())
                 val entry = evaluated.entries[index].instance.copy(type = installed.manifest.algorithms.single().type)
@@ -3011,7 +3011,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             artifact.manifest.files.keys.forEach { name ->
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val installed = store.install(staging.toString())
             val worker = ModifierPluginCatalog.definitions(store, BuiltinModifierPlugins.definitions(owner))
@@ -3314,7 +3314,7 @@ class WorkspaceLegacyBindingTest {
                 val staging = Files.createDirectory(directory.resolve("package"))
                 Files.write(staging.resolve("plugin.json"), artifact.bytes)
                 for (name in artifact.manifest.files.keys) {
-                    assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                    assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
                 }
                 val providers = stack.instances.dropLast(1).map { provider ->
                     ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
@@ -3548,7 +3548,7 @@ class WorkspaceLegacyBindingTest {
                 val staging = Files.createDirectory(directory.resolve("package"))
                 Files.write(staging.resolve("plugin.json"), artifact.bytes)
                 for (name in artifact.manifest.files.keys) {
-                    assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                    assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
                 }
                 val providers = stack.instances.dropLast(1).map { provider ->
                     ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
@@ -3633,7 +3633,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val providers = stack.instances.dropLast(1).map { provider ->
                 ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
@@ -3926,7 +3926,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val installed = store.install(staging.toString())
             val index = stack.index(locked.id)
@@ -4012,7 +4012,7 @@ class WorkspaceLegacyBindingTest {
                 val staging = Files.createDirectory(directory.resolve("package"))
                 Files.write(staging.resolve("plugin.json"), artifact.bytes)
                 for (name in artifact.manifest.files.keys) {
-                    assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                    assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
                 }
                 val providers = stack.instances.dropLast(1).map { provider ->
                     ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
@@ -4332,7 +4332,7 @@ class WorkspaceLegacyBindingTest {
                     val staging = Files.createDirectory(directory.resolve("package"))
                     Files.write(staging.resolve("plugin.json"), artifact.bytes)
                     for (name in artifact.manifest.files.keys) {
-                        assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                        assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
                     }
                     val providers = stack.instances.dropLast(1).map { provider ->
                         ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
@@ -4411,7 +4411,7 @@ class WorkspaceLegacyBindingTest {
                 val staging = Files.createDirectory(directory.resolve("package"))
                 Files.write(staging.resolve("plugin.json"), artifact.bytes)
                 for (name in artifact.manifest.files.keys) {
-                    assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                    assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
                 }
                 val owner = RigModifierSource.of(actual)
                 val definition = when (version) {
@@ -4528,7 +4528,7 @@ class WorkspaceLegacyBindingTest {
                     val staging = Files.createDirectory(directory.resolve("package"))
                     Files.write(staging.resolve("plugin.json"), artifact.bytes)
                     for (name in artifact.manifest.files.keys) {
-                        assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                        assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
                     }
                     val upstream = stack.instances.dropLast(1).map {
                         ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
@@ -4602,7 +4602,7 @@ class WorkspaceLegacyBindingTest {
                 val staging = Files.createDirectory(directory.resolve("package"))
                 Files.write(staging.resolve("plugin.json"), artifact.bytes)
                 for (name in artifact.manifest.files.keys) {
-                    assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                    assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
                 }
                 val owner = RigModifierSource.of(actual)
                 val definition = when (version) {
@@ -5059,7 +5059,7 @@ class WorkspaceLegacyBindingTest {
                     val staging = Files.createDirectory(directory.resolve("package"))
                     Files.write(staging.resolve("plugin.json"), artifact.bytes)
                     for (name in artifact.manifest.files.keys) {
-                        assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                        assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
                     }
                     val upstream = stack.instances.dropLast(1).map {
                         ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
@@ -5313,7 +5313,7 @@ class WorkspaceLegacyBindingTest {
                 val staging = Files.createDirectory(directory.resolve("package"))
                 Files.write(staging.resolve("plugin.json"), artifact.bytes)
                 for (name in artifact.manifest.files.keys) {
-                    assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                    assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
                 }
                 val providers = stack.instances.dropLast(1).map { provider ->
                     ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
@@ -5625,7 +5625,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val providers = stack.instances.dropLast(1).map { provider ->
                 ModifierUpstreamCapability(provider.type, provider.type, provider.version, provider.targets,
@@ -5966,7 +5966,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val definition = RigBrowSpringModifier.composedDefinition(RigModifierSource.of(current))
             val providers = upgraded.instances.take(index).filter { it.type in definition.requires + definition.optionalUpstream }.map {
@@ -6029,7 +6029,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val definition = RigBrowSpringModifier.fittedDefinition(RigModifierSource.of(current))
             val providers = upgraded.instances.take(index).filter { it.type in definition.requires + definition.optionalUpstream }.map {
@@ -6071,7 +6071,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val providers = stack.instances.dropLast(1).map {
                 ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config, it.outputAliases, it.plugin)
@@ -6265,7 +6265,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val packageRef = store.install(staging.toString())
             assertEquals(artifact.reference, packageRef.reference)
@@ -6364,7 +6364,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val definition = RigGloomModifier.carrierDefinition(RigModifierSource.of(actualModel))
             val upstream = stack.instances.take(index).filter { it.type in definition.requires + definition.optionalUpstream }.map {
@@ -6722,7 +6722,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), armPackage.bytes)
             for (name in armPackage.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(armPackage.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(armPackage.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val instance = direct.instances[index]
             val definition = RigArmSwingModifier.definition(RigModifierSource.of(current))
@@ -6960,7 +6960,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             artifact.manifest.files.keys.forEach { name ->
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val providers = RigLegacyBindings.providers(instance).map { (capability, id) ->
                 val provider = snapshot.stack.instances.single { it.id == id }
@@ -7138,7 +7138,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             artifact.manifest.files.keys.forEach { name ->
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val providers = RigLegacyBindings.providers(instance).map { (capability, id) ->
                 val provider = snapshot.stack.instances.single { it.id == id }
@@ -7250,7 +7250,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             artifact.manifest.files.keys.forEach { name ->
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val providers = RigLegacyBindings.providers(instance).map { (capability, id) ->
                 val provider = snapshot.stack.instances.single { it.id == id }
@@ -7778,7 +7778,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             artifact.manifest.files.keys.forEach { name ->
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val entry = store.install(staging.toString())
             val owner = RigModifierSource.of(f.now.model)
@@ -7837,7 +7837,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(root.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             artifact.manifest.files.keys.forEach { name ->
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val installed = store.install(staging.toString())
             val workerType = artifact.manifest.algorithms.single().type
@@ -7901,7 +7901,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val installed = store.install(staging.toString())
             assertEquals(artifact.reference, installed.reference)
@@ -7945,7 +7945,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val installed = store.install(staging.toString())
             assertEquals(artifact.reference, installed.reference)
@@ -8031,7 +8031,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             artifact.manifest.files.keys.forEach { name ->
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val entry = store.install(staging.toString())
             val worker = ModifierPluginCatalog.definitions(store, BuiltinModifierPlugins.definitions(source))
@@ -8140,7 +8140,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             artifact.manifest.files.keys.forEach { name ->
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val entry = store.install(staging.toString())
             val algorithm = entry.manifest.algorithms.single()
@@ -8202,7 +8202,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val context = assertNotNull(evaluation.readAlgorithms[instance.id]).context
             val installed = store.install(staging.toString())
@@ -8257,7 +8257,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val installed = store.install(staging.toString())
             assertEquals(artifact.reference, installed.reference)
@@ -8387,7 +8387,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             artifact.manifest.files.keys.forEach { name ->
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val entry = store.install(staging.toString())
             val author = RigModifierSource.of(source.now.model)
@@ -8524,7 +8524,7 @@ class WorkspaceLegacyBindingTest {
                 val staging = Files.createDirectory(directory.resolve("package"))
                 Files.write(staging.resolve("plugin.json"), artifact.bytes)
                 artifact.manifest.files.keys.forEach { name ->
-                    assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                    assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
                 }
                 val installed = store.install(staging.toString())
                 val worker = ModifierPluginCatalog.definitions(store, BuiltinModifierPlugins.definitions(RigModifierSource.of(current.model)))
@@ -9302,7 +9302,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             artifact.manifest.files.keys.forEach { name ->
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val entry = store.install(staging.toString())
             assertEquals(expected, ModifierPluginWorkers.evaluate(entry, entry.manifest.algorithms.single(),
@@ -9946,7 +9946,7 @@ class WorkspaceLegacyBindingTest {
             val staging = Files.createDirectory(directory.resolve("package"))
             Files.write(staging.resolve("plugin.json"), artifact.bytes)
             for (name in artifact.manifest.files.keys) {
-                assertNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, staging.resolve(name)) }
+                assertNotNull(artifact.open(name)).use { Files.copy(it, staging.resolve(name)) }
             }
             val installed = store.install(staging.toString())
             val alias = instance.copy(type = installed.manifest.algorithms.single().type)

@@ -6,12 +6,17 @@ import java.nio.file.Files
 
 /** Full executable packages shipped with the app. Preserve exact payloads used by a project or worker. */
 internal object BundledAlgorithmArtifacts {
+    /** The binding worker runtime, bundled once for every package built on it instead of once per package. */
+    private const val SHARED_RUNTIME = "runtime.jar"
     data class Artifact(val resource: String, val bytes: ByteArray, val manifest: ModifierPluginManifest) {
         val reference = ModifierPluginReference(manifest.id, manifest.version, ModifierPluginStore.hash(
             buildString {
                 append(ModifierPluginStore.hash(bytes))
                 manifest.files.toSortedMap().forEach { (path, hash) -> append('\n').append(path).append(':').append(hash) }
             }.encodeToByteArray()))
+        /** Opens one bundled package file, using the shared runtime for the packages that ship without their copy. */
+        fun open(name: String): java.io.InputStream? = javaClass.getResourceAsStream(resource + name)
+            ?: if (name == SHARED_RUNTIME) javaClass.getResourceAsStream("/algorithm-plugins/shared/$SHARED_RUNTIME") else null
     }
     val artifacts: List<Artifact> by lazy {
         listOf("physics", "motion", "swing", "simulation", "binding", "expression-v2", "see-through-eye", "see-through-brow",
@@ -41,7 +46,7 @@ internal object BundledAlgorithmArtifacts {
                     for (name in artifact.manifest.files.keys) {
                         val path = ModifierPluginStore.inside(staging, name)
                         Files.createDirectories(path.parent)
-                        requireNotNull(javaClass.getResourceAsStream(artifact.resource + name)).use { Files.copy(it, path) }
+                        requireNotNull(artifact.open(name)) { "Missing bundled file ${artifact.resource}$name" }.use { Files.copy(it, path) }
                     }
                     store.installBundled(staging, artifact.reference)
                     RigBuildProfile.count("plugin load: bundled packages retained")
