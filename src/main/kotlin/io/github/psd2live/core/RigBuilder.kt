@@ -3660,6 +3660,7 @@ object RigBuilder {
     /** Source meshes and frames needed by clothing attachment residuals. */
     internal fun attachmentBindingSource(analysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig,
                                      cache: PreviewMeshCache, ids: Map<String, DrawableId>): Pair<PuppetModel, List<io.github.psd2live.core.fit.HairChain>> {
+        RigBuildProfile.count("modifier attachment source builds")
         val prepared = if (config.mouthOutlineEnabled) MouthLipLayers.prepare(analysis, config, cache) else analysis
         val context = rigContext(prepared, config, cache)
         val layers = context.analysis.layers.associateBy { it.source.id.raw }

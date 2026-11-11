@@ -1366,6 +1366,38 @@ tasks.register("pluginFaceNeckV3") {
     }
 }
 
+val neckV4WorkerJar = registerIsolatedBindingWorker(
+    "neckV4", "face-neck-v4", "worker-face-neck-v4", "io.github.psd2live.algorithms.binding.NeckV4Worker",
+)
+neckV4WorkerJar.configure {
+    // The historical shared worker deliberately excludes these independently packaged kernels.
+    from(sourceSets.main.get().output) { include("**/NeckAlgorithm*.class", "**/NeckInputs*.class") }
+}
+tasks.register("pluginFaceNeckV4") {
+    dependsOn(neckV4WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-face-neck-v4")
+    val packageVersion = project.version.toString()
+    inputs.file(neckV4WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        neckV4WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.666163652e6e65636b.v4"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Source neck tilt",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/tilt","aliases":["face.neck"],"version":4,"name":"Source neck tilt","category":"face",
+               "targets":["mesh"],"requires":["rig.scaffold","face/legacy"],"contextVersion":2,
+               "reads":["mesh","deformer","part","parameter","canvas","textures","authoring"],"writes":["mesh","relations"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val bodyLegacyV2WorkerJar = registerIsolatedBindingWorker(
     "bodyLegacyV2", "body-legacy-v2", "worker-body-legacy-v2", "io.github.psd2live.algorithms.binding.LegacyBodyV2Worker",
 )
@@ -3666,6 +3698,37 @@ tasks.register("pluginGloomV2") {
              "algorithms":[{"type":"$id/gloom","aliases":["expression.gloom"],"version":2,"name":"Gloom","category":"expression",
                "targets":["mesh"],"requires":["rig.scaffold"],"exclusiveFamily":"expression.gloom","contextVersion":2,
                "reads":["mesh","parameter","hierarchy"],"writes":["mesh","parameter","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
+val gloomV4WorkerJar = registerIsolatedBindingWorker(
+    "gloomV4", "gloom-v4", "worker-gloom-v4", "io.github.psd2live.algorithms.binding.GloomV4Worker",
+)
+
+tasks.register("pluginGloomV4") {
+    dependsOn(gloomV4WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-gloom-v4")
+    val packageVersion = project.version.toString()
+    inputs.file(gloomV4WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        gloomV4WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.65787072657373696f6e2e676c6f6f6d.v4"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Gloom",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/gloom","aliases":["expression.gloom"],"version":4,"name":"Gloom","category":"expression",
+               "targets":["mesh"],"contextVersion":2,
+               "requires":["rig.scaffold","body/legacy","face/fitted","eye/fitted","brow/fitted","mouth/fitted","mouth.outline","mouth.vowel","mouth.capture","mouth.jaw","mouth.spring","expression.cheek"],
+               "exclusiveFamily":"expression.gloom","reads":["*"],"writes":["mesh","deformer","parameter","hierarchy"],
+               "parameters":[{"id":"ParamGloom","name":"Gloom","min":0,"max":1,"default":0}],
                "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
                "configSchema":{"type":"object"},"defaults":{}}]}
         """.trimIndent())

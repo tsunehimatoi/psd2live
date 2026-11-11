@@ -70,6 +70,8 @@ The Physics panel shows evaluated stack groups with a Modifier badge. Edit gener
 
 Skin clipping adds face masks for blush, skin overlays and bangs shadows. Neck follow binds the neck to head tilt and clips its shadow; its addition plan includes a pinned face-binding prerequisite. Both use existing artwork. Contributions show the mask sources and inversion before and after the modifier; click the target or a source to locate it.
 
+Neck follow v4 is an explicit-only source candidate. It reconstructs ordinary neck tilt and neck-shadow turn motion from the current preceding configuration inside its worker. It currently requires the current bundled providers and supports unsided neck meshes directly below the shared body/breath branch, with unchanged source UVs and topology. Older provider package digests, paired necks, parent wrappers and transitions needing a private turn carrier are rejected. Existing neck versions, preset choices and saved v1–v3 package locks are unchanged.
+
 Segmented hair chains are an alternative to the legacy hair base on the same target. Skirts, ribbons and pendants, ears, tails and wings, chest follow and arm lag can also be added separately. The addition plan lists the required body and face bindings. Adjust swing, hair softness and the actual physics groups inside their modifier; moving other entries keeps the chain references intact.
 
 Fitted face turning is a face base, mutually exclusive with the legacy face base. Adjust turn, depth, and style inside the modifier. Choosing a new style resets the other values in that modifier to their defaults. Eligible side locks move behind the face at extreme turns.

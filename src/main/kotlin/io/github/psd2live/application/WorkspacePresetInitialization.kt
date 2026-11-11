@@ -83,6 +83,8 @@ import io.github.psd2live.algorithms.binding.MouthVowelV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV7Algorithm
 import io.github.psd2live.algorithms.binding.NeckV3Algorithm
+import io.github.psd2live.algorithms.binding.NeckV4Algorithm
+import io.github.psd2live.algorithms.binding.ScaffoldHead
 import io.github.psd2live.algorithms.binding.RibbonsResidualAlgorithm
 import io.github.psd2live.algorithms.binding.RibbonsV4Algorithm
 import io.github.psd2live.algorithms.binding.RibbonsV5Algorithm
@@ -392,6 +394,7 @@ internal object WorkspacePresetInitialization {
                 if (ModifierPluginCatalog.available(entry.type, version, plugin)) entry.copy(version = version, plugin = plugin) else entry
             })
         }
+        stack = sourceNeckDefault(model, config, stack, fittedSources[RigModules.FACE_NECK.id], requestedVersions, cliBindings)
         if (cliBindings != null) stack = cliBindings.bindings(model, stack)
         model = build("binding preview")
         val parameters = model.rig.puppet.parameters.associateBy { it.id.raw }
@@ -451,6 +454,59 @@ internal object WorkspacePresetInitialization {
             WorkspaceModifierSimulation.prepare(current(), stack, work, pipeline = pipeline)
         }
         return current() to build("final preview").also { work.checkpoint(); it.runtimeBundle.materialize(); work.checkpoint() }
+    }
+
+    /** Only the verified fresh shared-frame cohort advances; persisted and explicit locks never pass here. */
+    internal fun sourceNeckDefault(model: RigPreviewModel, config: PipelineConfig, stack: RigModifierStack,
+                                   automatic: Pair<Int, ModifierPluginReference>?, requestedVersions: Map<String, Int>,
+                                   cliBindings: CliPresetBindings?): RigModifierStack {
+        val type = RigModules.FACE_NECK.id
+        if (requestedVersions.isNotEmpty() || cliBindings != null || !freshSource(config) ||
+            config.generationSource != null || config.meshSource != null || automatic?.first != NeckV3Algorithm.VERSION) return stack
+        val neck = stack.instances.singleOrNull { it.type == type } ?: return stack
+        if (neck.version != automatic.first || neck.plugin != automatic.second || !neck.enabled ||
+            !BuiltinModifierPlugins.matches(neck)) return stack
+        val prefix = stack.instances.take(stack.index(neck.id))
+        val versions = mapOf(RigSourceModifiers.SCAFFOLD to 2, LegacyBodyV2Algorithm.TYPE to LegacyBodyV2Algorithm.VERSION,
+            RigLegacyBindings.FITTED_FACE to FittedFaceV3Algorithm.VERSION, RigModules.EYE_FITTED.id to EyeFittedV5Algorithm.VERSION,
+            RigModules.BROW_FITTED.id to BrowFittedV4Binding.VERSION, RigModules.MOUTH_FITTED.id to MouthFittedV6Algorithm.VERSION)
+        if (versions.any { (provider, version) -> prefix.singleOrNull { it.type == provider }?.version != version }) return stack
+        // Outline follows neck in the default plan. It identifies the verified final cohort, not an upstream input.
+        val outline = stack.instances.singleOrNull { it.type == RigModules.MOUTH_OUTLINE.id }
+            ?.takeIf { it.version == MouthOutlineV8Algorithm.VERSION } ?: return stack
+        val scaffold = prefix.single { it.type == RigSourceModifiers.SCAFFOLD }
+        val scaffoldId = JsonPrimitive(scaffold.id)
+        val targets = scaffold.targets.toSet()
+        if (targets.isEmpty() || targets.any { it.kind != "mesh" } || neck.targets.toSet() != targets ||
+            neck.config["scaffold"] != scaffoldId || neck.outputAliases.isNotEmpty() ||
+            (prefix + outline).any { !it.enabled || !BuiltinModifierPlugins.matches(it) || it.targets.toSet() != targets ||
+                it.outputAliases.isNotEmpty() || it != scaffold && it.config["scaffold"] != scaffoldId }) return stack
+        val face = prefix.single { it.type == RigLegacyBindings.FITTED_FACE }
+        if (RigLegacyBindings.providers(neck)["face/legacy"] != face.id) return stack
+        val source = RigModifierSource.of(model)
+        val layers = source.analysis.layers.filter { it.opaquePixels > 0 && it.semantic.tag == SemanticTag.NECK }
+        if (layers.isEmpty() || layers.any { it.semantic.side != Side.NONE || it.semantic.role != null }) return stack
+        val ids = layers.mapTo(hashSetOf()) { it.source.id.raw }
+        val meshes = source.layersByMesh.filterValues { it in ids }
+        // Each source neck must have exactly one ordinary mesh, not a copied or automatically paired artifact.
+        if (meshes.size != ids.size || meshes.values.toSet() != ids || meshes.any { (mesh, layer) ->
+                source.primaryByLayer[layer] != mesh || ModifierTarget("mesh", mesh) !in targets
+            }) return stack
+        // This is still the unbound author preview, not a generated prefix or a motion projection.
+        val raw = model.rig.puppet.drawables.associateBy { it.id.raw }
+        // Ordinary Z contributes three cells. Above 120,000 floats lowering inserts a private carrier.
+        if (meshes.keys.any { raw[it]?.mesh?.positions?.size?.let { size -> size in 1..40_000 } != true }) return stack
+        val preceding = prefix.filter { RigLegacyBindings.find(it.type)?.let { spec -> !spec.expressionToggles && !spec.seeThrough } == true }
+        val native = RigFittedMouthModuleSource.nativeConfig(source, scaffold, preceding, null).copy(generateDeformers = false)
+        val measured = RigBuilder.rigContext(source.analysis, native, source.meshCache)
+        if (layers.any { measured.parentAndFrame(it, native).let { (parent, frame) ->
+                parent?.raw != ScaffoldHead.breathId.raw || frame != measured.bodyFrame
+            } }) return stack
+        val plugin = BuiltinModifierPlugins.reference(type, NeckV4Algorithm.VERSION) ?: return stack
+        if (!ModifierPluginCatalog.available(type, NeckV4Algorithm.VERSION, plugin)) return stack
+        return stack.copy(instances = stack.instances.map {
+            if (it.id == neck.id) it.copy(version = NeckV4Algorithm.VERSION, plugin = plugin) else it
+        })
     }
 
     private fun freshSource(config: PipelineConfig): Boolean =

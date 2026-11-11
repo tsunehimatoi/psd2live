@@ -162,6 +162,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "cheekV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "gloomV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "gloomV3Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "gloomV4Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthTongueElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthTongueV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthTongueV4Elements"))
@@ -189,6 +190,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "browBlinkV5Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browBlinkV6Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "neckV3Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "neckV4Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLidElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLidV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLidV4Elements"))
@@ -411,6 +413,10 @@ tasks.processResources {
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-hair-chains")) {
         into("algorithm-plugins/hair-chains")
     }
+    dependsOn(":algorithms:binding:pluginFaceNeckV4")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-face-neck-v4")) {
+        into("algorithm-plugins/face-neck-v4")
+    }
     dependsOn(":algorithms:binding:pluginFaceNeckV3")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-face-neck-v3")) {
         into("algorithm-plugins/face-neck-v3")
@@ -538,6 +544,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginGloomV2")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-gloom-v2")) {
         into("algorithm-plugins/gloom-v2")
+    }
+    dependsOn(":algorithms:binding:pluginGloomV4")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-gloom-v4")) {
+        into("algorithm-plugins/gloom-v4")
     }
     dependsOn(":algorithms:binding:pluginGloomV3")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-gloom-v3")) {

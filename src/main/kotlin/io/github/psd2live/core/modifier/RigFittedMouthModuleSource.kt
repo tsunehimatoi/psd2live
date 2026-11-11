@@ -16,7 +16,7 @@ internal object RigFittedMouthModuleSource {
         return native to RigBuilder.rigContext(source.analysis, native, source.meshCache, neutralScaffold = neutralScaffold)
     }
 
-    private fun nativeConfig(source: RigModifierSource, scaffold: RigModifierInstance, preceding: List<RigModifierInstance>,
+    internal fun nativeConfig(source: RigModifierSource, scaffold: RigModifierInstance, preceding: List<RigModifierInstance>,
                              activeModule: RigModule?): PipelineConfig {
         val state = RigSourceBindingState(preceding)
         val bases = state.byArea

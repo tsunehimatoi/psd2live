@@ -7105,9 +7105,367 @@ class WorkspaceLegacyBindingTest {
         skinClippingAndNeckFollowSurvivePrefixApplication(3, artifact.manifest.algorithms.single().type)
     }
 
+    @Test fun skinClippingAndSourceNeckV4FollowSurvivePrefixApplication(): Unit = runBlocking {
+        val artifact = requireNotNull(BundledAlgorithmArtifacts.find("face.neck", 4))
+        skinClippingAndNeckFollowSurvivePrefixApplication(4, artifact.manifest.algorithms.single().type)
+    }
+
     @Test fun skinClippingAndPackagedNeckFollowSurvivePrefixApplication(): Unit = runBlocking {
         val artifact = requireNotNull(BundledAlgorithmArtifacts.find("face.neck", 2))
         skinClippingAndNeckFollowSurvivePrefixApplication(2, artifact.manifest.algorithms.single().type)
+    }
+
+    private fun sourceNeckDefaultArt(): WorkspaceDocument {
+        val art = document(skinDetails = true, pairedBrows = true, bilateralEyes = true)
+        val choices = WorkspaceInitialPreset(clothing = false)
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        return art.copy(source = (art.source as WorkspaceSourceArt).copy(
+            layers = art.source.layers.filterNot { it.id.raw in setOf("neck-shadow", "hair-shadow") }),
+            settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+    }
+
+    /** A selector fixture, not a claim that these rectangles exercise the DS shared-brow detection. */
+    private fun sourceNeckDefaultFixture(): Pair<RigPreviewModel, RigModifierStack> {
+        val document = sourceNeckDefaultArt()
+        val model = PSD2LivePipeline().apply { deferRuntimeBundles = true }.buildPreview(document.source, document.config())
+        val versions = linkedMapOf("rig.scaffold" to 2, "body/legacy" to 2, "face/fitted" to 3, "eye/fitted" to 5,
+            "brow/fitted" to 4, "mouth/fitted" to 6, "face.neck" to 3, "mouth.outline" to 8)
+        val targets = model.rig.puppet.drawables.filter { it.mesh != null && it.id.raw in model.rig.ownLayerIdByDrawableId }
+        val planned = WorkspaceModifierPlan.plan(model, RigModifierStack(), buildJsonObject {
+            put("group", "modern-standard")
+            putJsonArray("targets") { targets.forEach { addJsonObject { put("kind", "mesh"); put("id", it.id.raw) } } }
+        }, versions.keys.filterNot { it == "rig.scaffold" }).first
+        val selected = planned.copy(instances = planned.instances.map { entry ->
+            val version = versions.getValue(entry.type)
+            entry.copy(version = version, plugin = assertNotNull(BuiltinModifierPlugins.reference(entry.type, version)))
+        })
+        assertEquals(versions, selected.instances.associate { it.type to it.version })
+        assertTrue(selected.instances.indexOfFirst { it.type == "face.neck" } <
+            selected.instances.indexOfFirst { it.type == "mouth.outline" }, "Match the default plan's downstream outline order")
+        return model to selected
+    }
+
+    @Test fun sourceNeckDefaultPromotesOnlyVerifiedSourceCohort() {
+        val (model, stack) = sourceNeckDefaultFixture()
+        val neck = stack.instances.single { it.type == "face.neck" }
+        val recording = RigBuildProfile.recording
+        RigBuildProfile.reset()
+        val promoted = try {
+            RigBuildProfile.recording = true
+            WorkspacePresetInitialization.sourceNeckDefault(model, model.config, stack, 3 to neck.plugin!!, emptyMap(), null)
+        } finally { RigBuildProfile.recording = recording }
+        val profile = RigBuildProfile.snapshot()
+        RigBuildProfile.reset()
+        assertEquals(listOf(neck.id), stack.instances.zip(promoted.instances).filter { it.first != it.second }.map { it.first.id })
+        assertEquals(neck.copy(version = 4, plugin = assertNotNull(BuiltinModifierPlugins.reference(neck.type, 4))),
+            promoted.instances.single { it.id == neck.id })
+        for (key in listOf("modifier attachment source builds", "modifier legacy rig builds", "modifier legacy template requests"))
+            assertEquals(0L, profile[key]?.second ?: 0L, "$key must not run while selecting the default")
+    }
+
+    @Test fun sourceNeckDefaultPreservesLocksAndUnverifiedSources() {
+        val (model, stack) = sourceNeckDefaultFixture()
+        val neck = stack.instances.single { it.type == "face.neck" }
+        val automatic = 3 to assertNotNull(neck.plugin)
+        fun unchanged(candidate: RigModifierStack = stack, config: PipelineConfig = model.config,
+                      selected: Pair<Int, ModifierPluginReference>? = automatic, versions: Map<String, Int> = emptyMap(),
+                      cli: CliPresetBindings? = null) {
+            assertEquals(candidate, WorkspacePresetInitialization.sourceNeckDefault(model, config, candidate, selected, versions, cli))
+            assertEquals(candidate, RigModifierStack.fromJson(candidate.toJson()), "Saved version and package locks must round-trip unchanged")
+        }
+        unchanged(selected = null)
+        for (version in 1..3) {
+            val locked = stack.copy(instances = stack.instances.map { if (it.id != neck.id) it else it.copy(version = version,
+                plugin = assertNotNull(BuiltinModifierPlugins.reference(it.type, version))) })
+            unchanged(locked, versions = mapOf(neck.type to version))
+        }
+        unchanged(versions = mapOf("eye/fitted" to 5))
+        for (entry in stack.instances) for (reference in listOf<ModifierPluginReference?>(null,
+            assertNotNull(entry.plugin).copy(digest = "0".repeat(64)), assertNotNull(entry.plugin).copy(id = "external.provider"))) {
+            unchanged(stack.copy(instances = stack.instances.map { if (it.id == entry.id) it.copy(plugin = reference) else it }))
+        }
+        for ((type, version) in mapOf("rig.scaffold" to 1, "body/legacy" to 1, "face/fitted" to 1,
+            "eye/fitted" to 2, "brow/fitted" to 3, "mouth/fitted" to 3, "mouth.outline" to 7)) {
+            unchanged(stack.copy(instances = stack.instances.map { if (it.type == type) it.copy(version = version,
+                plugin = assertNotNull(BuiltinModifierPlugins.reference(type, version))) else it }))
+        }
+        for (type in listOf("face/fitted", "mouth.outline")) {
+            val provider = stack.instances.single { it.type == type }
+            unchanged(stack.copy(instances = stack.instances.filterNot { it.id == provider.id }))
+            for (entry in listOf(provider.copy(targets = provider.targets.drop(1)), provider.copy(enabled = false),
+                provider.copy(config = JsonObject(provider.config + ("scaffold" to JsonPrimitive("other-scaffold")))),
+                provider.copy(outputAliases = mapOf("shared/deformer:DeformBodyZBreath" to "custom-wrapper")))) {
+                unchanged(stack.copy(instances = stack.instances.map { if (it.id == provider.id) entry else it }))
+            }
+        }
+        unchanged(config = model.config.copy(parentOverrides = mapOf("neck" to "custom-parent")))
+        unchanged(config = model.config.copy(rigEdits = model.config.rigEdits.copy(skeleton = SkeletonSpec.Disabled)))
+        unchanged(config = model.config.copy(generationSource = model.analysis.source))
+        unchanged(config = model.config.copy(meshSource = model.analysis.source))
+        val analyses = RigGenerationSource.prepare(RigGenerationSource.analyze(model.analysis.source, model.config), model.config)
+        unchanged(cli = CliPresetBindings(analyses, model.config))
+        val reference = assertNotNull(BuiltinModifierPlugins.reference(neck.type, 4))
+        val store = ModifierPluginStore.shared
+        val enabled = store.builtinEnabled(reference.id)
+        try {
+            store.setBuiltinEnabled(reference, false)
+            unchanged()
+        } finally { store.setBuiltinEnabled(reference, enabled) }
+    }
+
+    @Test fun sourceNeckDefaultRejectsShadowSidedMissingAndDenseMeshes() {
+        val (model, stack) = sourceNeckDefaultFixture()
+        val neck = stack.instances.single { it.type == "face.neck" }
+        fun select(candidate: RigPreviewModel) = WorkspacePresetInitialization.sourceNeckDefault(candidate, model.config, stack,
+            3 to assertNotNull(neck.plugin), emptyMap(), null)
+        val analysis = model.modifierAuthorAnalysis ?: model.analysis
+        val layer = analysis.layers.single { it.semantic.tag == SemanticTag.NECK }
+        for (semantic in listOf(layer.semantic.copy(role = PartRole.SHADOW), layer.semantic.copy(side = Side.LEFT),
+            layer.semantic.copy(side = Side.RIGHT))) {
+            val changed = analysis.copy(layers = analysis.layers.map { if (it == layer) it.copy(semantic = semantic) else it })
+            assertEquals(stack, select(model.copy(modifierAuthorAnalysis = changed)))
+        }
+        val drawable = model.rig.puppet.drawables.single { model.rig.ownLayerIdByDrawableId[it.id.raw] == layer.source.id.raw }
+        fun mesh(points: Int?) = model.copy(rig = model.rig.copy(puppet = model.rig.puppet.copy(drawables =
+            model.rig.puppet.drawables.map { if (it.id != drawable.id) it else it.copy(mesh = points?.let {
+                DrawableMesh(FloatArray(it), FloatArray(it), intArrayOf(0, 1, 2))
+            }) })))
+        assertEquals(stack, select(mesh(null)), "An absent raw neck mesh must retain v3")
+        assertEquals(4, select(mesh(40_000)).instances.single { it.id == neck.id }.version)
+        assertEquals(stack, select(mesh(40_002)), "A fourth lowering carrier is outside the default cohort")
+    }
+
+    @Test fun ordinaryBilateralNeckDefaultStaysV3() {
+        val source = sourceNeckDefaultArt()
+        val (initialized, _) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, WorkspaceInitialPreset(clothing = false))
+        val stack = RigModifierStack.fromJson(assertNotNull(initialized.rigEdits.modifierStack))
+        assertEquals(3, stack.instances.single { it.type == "mouth/fitted" }.version)
+        assertEquals(3, stack.instances.single { it.type == "face.neck" }.version)
+    }
+
+    @Test fun sourceNeckV4MatchesOrdinaryAndShadowTransitions(): Unit = runBlocking {
+        compareSourceNeckV4(tuned = false)
+    }
+
+    @Test fun sourceNeckV4PreservesFittedPivotTiltAndBodyStrength(): Unit = runBlocking {
+        compareSourceNeckV4(tuned = true)
+    }
+
+    private suspend fun compareSourceNeckV4(tuned: Boolean) {
+        val art = document(mouthDetails = true, skinDetails = true, pairedBrows = true, bilateralEyes = true)
+        val angled = if (!tuned) art else art.copy(source = (art.source as WorkspaceSourceArt).copy(layers = art.source.layers.map { layer ->
+            if (!layer.id.raw.endsWith("-right")) layer else (layer as WorkspaceSourceLayer).copy(bounds = layer.bounds.copy(top = layer.bounds.top + 3))
+        }))
+        val fixture = Fixture(angled)
+        fixture.install()
+        fixture.group(listOf("body/legacy", "face/fitted", "eye/fitted", "brow/fitted", "mouth/fitted", "hair/legacy"))
+        fixture.edit("modifier_add", JsonObject(fixture.addition("face.neck", "neck-source", config = buildJsonObject {
+            put("scaffold", "structure"); putJsonObject("dependencies") { put("face/legacy", "face") }
+        }) + ("version" to JsonPrimitive(1))))
+        val original = RigModifierStack.fromJson(assertNotNull(fixture.now.document.rigEdits.modifierStack))
+        val stack = original.copy(instances = original.instances.map { entry ->
+            if (!tuned) entry else when (entry.type) {
+                "rig.scaffold" -> entry.copy(config = JsonObject(entry.config + ("corrections" to buildJsonObject {
+                    putJsonObject("moves") {
+                        putJsonObject("mouth") { putJsonArray("upper") { add(1f); add(-2f) } }
+                        putJsonObject("brow.L") { putJsonArray("arch") { add(.5f); add(-1f) } }
+                    }
+                })))
+                "body/legacy" -> entry.copy(config = JsonObject(entry.config + buildJsonObject {
+                    put("strength", 1.35f)
+                    putJsonObject("tuning") { put("bodyZDegrees", 4.5f); put("breathLift", 4f) }
+                }))
+                "brow/fitted" -> entry.copy(config = JsonObject(entry.config + ("values" to buildJsonObject { put("lift", 67f) })))
+                else -> entry
+            }
+        })
+        val document = fixture.now.document.copy(rigEdits = fixture.now.document.rigEdits.copy(modifierStack = stack.toJson()))
+        val reference = WorkspacePreviewBuilder().build(document)
+        val expected = assertNotNull(reference.modifierEvaluation)
+        val index = stack.index("neck-source")
+        suspend fun select(version: Int): Pair<WorkspaceDocument, RigPreviewModel> {
+            val selected = stack.copy(instances = stack.instances.map { entry ->
+                if (entry.id != "neck-source") entry else entry.copy(version = version,
+                    plugin = assertNotNull(BuiltinModifierPlugins.reference(entry.type, version)))
+            })
+            val doc = document.copy(rigEdits = document.rigEdits.copy(modifierStack = selected.toJson()))
+            return doc to WorkspacePreviewBuilder().build(doc)
+        }
+        val (_, folded) = select(3)
+        val (selectedDocument, actual) = select(4)
+        val compiled = RigIrCompiler.compile(reference, tileArt = true)
+        fun verify(model: RigPreviewModel) {
+            val evaluated = assertNotNull(model.modifierEvaluation)
+            assertEquals(ModifierStatus.ACTIVE, evaluated.entries[index].status)
+            assertEquals(expected.outputs, evaluated.outputs, "All neck stages must match v1; tuned=$tuned")
+            assertEquals(compiled, RigIrCompiler.compile(model, tileArt = true))
+        }
+        verify(folded); verify(actual)
+        compare(reference, actual, listOf(emptyMap(), mapOf(
+            ParameterId("ParamAngleX") to 35f, ParameterId("ParamAngleY") to -22f, ParameterId("ParamAngleZ") to 27f,
+            ParameterId("ParamBodyAngleX") to 6f, ParameterId("ParamBodyAngleY") to -4f,
+            ParameterId("ParamBodyAngleZ") to 8f, ParameterId("ParamBodyLean") to 5f,
+            ParameterId("ParamProportion") to -3f, ParameterId("ParamBreath") to .8f)))
+        val cache = RigStageCache.enabled
+        try { RigStageCache.enabled = false; verify(WorkspacePreviewBuilder().build(selectedDocument)) }
+        finally { RigStageCache.enabled = cache }
+        val evaluated = assertNotNull(actual.modifierEvaluation)
+        val candidate = evaluated.entries[index].instance
+        val before = evaluated.outputs[index - 1]
+        val after = evaluated.outputs[index]
+        val context = assertNotNull(evaluated.readAlgorithms[candidate.id]).context
+        val definition = RigNeckSourceModifier.definition(RigModifierSource.of(actual))
+        assertTrue(definition.explicitVersion)
+        assertEquals(setOf("source_meshes"), context.resources.keys)
+        val raw = RigIrBinary.decode(context.resources.getValue("source_meshes").read())
+        assertTrue(raw.deformers.isEmpty() && raw.parameters.isEmpty() && raw.meshes.all {
+            it.parent == null && it.offsets == null && it.shapes.isEmpty() && it.channels.isEmpty()
+        })
+        assertEquals(setOf("schema", "neck", "frames", "body", "shell", "providers", "materials"), context.values.keys)
+        assertEquals(if (tuned) 1.35f else 1f, context.values.getValue("body").jsonObject.getValue("strength").jsonPrimitive.float)
+        if (tuned) assertNotEquals(0f, context.values.getValue("frames").jsonObject.getValue("head")
+            .jsonObject.getValue("initial_angle").jsonPrimitive.float)
+        val recording = RigBuildProfile.recording
+        RigBuildProfile.reset()
+        val recaptured = try {
+            RigBuildProfile.recording = true
+            definition.authorContext(candidate)
+        } finally { RigBuildProfile.recording = recording }
+        val profile = RigBuildProfile.snapshot()
+        RigBuildProfile.reset()
+        assertEquals(1L, profile["modifier neck source measurements"]?.second)
+        for (key in listOf("modifier attachment source builds", "modifier legacy rig builds", "modifier legacy template requests"))
+            assertEquals(0L, profile[key]?.second ?: 0L, "$key must never run during neck v4 capture")
+        assertEquals(context.values, recaptured.values)
+        for ((name, resource) in context.resources) assertContentEquals(resource.read(), recaptured.resources.getValue(name).read())
+        val algorithm = definition.plugin as ReadingModifierAlgorithmPlugin
+        val observed = ModifierEvaluationInput(before, context)
+        val changes = algorithm.changes(observed, candidate, {})
+        changes.requireWrites(setOf("mesh", "relations"))
+        assertTrue(changes.deformers.isEmpty && changes.parts.isEmpty)
+        assertEquals(setOf("neck", "neck-shadow"), changes.meshes.updated.map { it.before.name }.toSet())
+        assertEquals(before.deformers, after.deformers)
+        for (update in changes.meshes.updated) assertEquals(update.before, update.after.copy(
+            geometry = update.before.geometry, offsets = update.before.offsets, shapes = update.before.shapes,
+            maskedBy = update.before.maskedBy))
+
+        val foldedContext = assertNotNull(assertNotNull(folded.modifierEvaluation).readAlgorithms[candidate.id]).context
+        val foldedInstance = assertNotNull(folded.modifierEvaluation).entries[index].instance
+        val foldedAlgorithm = RigNeckModifier.foldedDefinition(RigModifierSource.of(folded)).plugin as ReadingModifierAlgorithmPlugin
+        val neck = before.meshes.single { it.name == "neck" }
+        val shadow = before.meshes.single { it.name == "neck-shadow" }
+        val face = before.meshes.single { it.name == "face" }
+        fun matchesFolded(model: RigIR): RigIR {
+            val legacy = foldedAlgorithm.evaluate(model, foldedInstance, foldedContext, {})
+            return algorithm.evaluate(model, candidate, context, {}).also { assertEquals(legacy, it) }
+        }
+        for (inverted in listOf(false, true)) {
+            val custom = shadow.copy(maskedBy = if (inverted) emptyList() else listOf(face.id), invertMask = inverted)
+            val output = matchesFolded(before.copy(meshes = before.meshes.map { if (it.id == shadow.id) custom else it }))
+            assertEquals(custom.maskedBy, output.meshes.single { it.id == shadow.id }.maskedBy)
+            assertEquals(custom.invertMask, output.meshes.single { it.id == shadow.id }.invertMask)
+        }
+        val geometry = assertNotNull(neck.geometry)
+        val authored = neck.copy(geometry = geometry.copy(positions = Floats.wrap(geometry.positions.toArray().also { it[0] += .015f })),
+            opacity = .73f, drawOrder = 637f, multiply = Rgb(.8f, .9f, .7f),
+            channels = neck.channels + (Channel.OPACITY to KeyGrid<ChannelValue>(
+                listOf(KeyAxis("ParamAngleZ", Floats.values(-30f, 0f, 30f))),
+                listOf(.4f, .73f, .9f).mapIndexed { key, value -> KeyCell(Ints.values(key), ChannelValue.Scalar(value)) })))
+        matchesFolded(before.copy(meshes = before.meshes.map { if (it.id == neck.id) authored else it }))
+        val ownShape = io.github.psd2live.format.model.BlendBinding("AuthoredNeck", Floats.values(0f, 1f), 0,
+            listOf(null, io.github.psd2live.format.model.MeshShape(Floats.wrap(FloatArray(geometry.positions.size) { .002f }),
+                authored.drawOrder, authored.opacity, authored.multiply, authored.screen)))
+        matchesFolded(before.copy(parameters = before.parameters + io.github.psd2live.format.model.Parameter(
+            "AuthoredNeck", "Authored neck", 0f, 1f, 0f, blend = true),
+            meshes = before.meshes.map { if (it.id == neck.id) authored.copy(shapes = authored.shapes + ownShape) else it }))
+        // A changed source topology or parent must fail without publishing any partial change.
+        fun reject(model: RigIR = before, captured: ModifierAlgorithmContext = context) {
+            assertFailsWith<IllegalArgumentException> { algorithm.evaluate(model, candidate, captured, {}) }
+            assertEquals(before, evaluated.outputs[index - 1])
+        }
+        reject(before.copy(meshes = before.meshes.map { if (it.id != neck.id) it else it.copy(
+            geometry = geometry.copy(uvs = Floats.wrap(geometry.uvs.toArray().also { uv -> uv[0] += .01f }))) }))
+        reject(before.copy(meshes = before.meshes.map { if (it.id != neck.id) it else it.copy(
+            geometry = geometry.copy(indices = Ints.wrap(geometry.indices.toArray().reversedArray()))) }))
+        val wrapper = io.github.psd2live.format.model.Deformer.Rotation("neck-wrapper", "Authored wrapper", neck.parent,
+            null, 0f, null)
+        reject(before.copy(deformers = before.deformers + wrapper,
+            meshes = before.meshes.map { if (it.id == neck.id) it.copy(parent = wrapper.id) else it }))
+        for (provider in context.upstream) {
+            val changed = provider.copy(outputAliases = provider.outputAliases + ("shared/deformer:foreign" to "foreign"))
+            reject(captured = context.withUpstream(context.upstream.map { if (it == provider) changed else it }))
+            assertFalse(observed.reads().matches(before, context.withUpstream(context.upstream.filterNot { it == provider })))
+        }
+        val bodyWarp = before.deformers.filterIsInstance<io.github.psd2live.format.model.Deformer.Warp>()
+            .single { it.id == neck.parent }
+        val lattice = assertNotNull(bodyWarp.lattice)
+        val adjusted = bodyWarp.copy(lattice = lattice.copy(cells = lattice.cells.map { cell ->
+            cell.copy(form = cell.form.copy(points = Floats.wrap(cell.form.points.toArray().also { it[0] += .003f })))
+        }))
+        val changedBranch = before.copy(deformers = before.deformers.map { if (it.id == bodyWarp.id) adjusted else it })
+        val migrated = matchesFolded(changedBranch)
+        assertEquals(changedBranch.deformers, migrated.deformers)
+
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find("face.neck", 4))
+        val root = Files.createTempDirectory("neck-v4-package-")
+        val preferences = Preferences.userRoot().node("neck-v4-package/${UUID.randomUUID()}")
+        val store = ModifierPluginStore(root.resolve("installed"), preferences)
+        try {
+            repeat(2) {
+                BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+                val worker = store.snapshot().single()
+                assertEquals(artifact.reference, worker.reference)
+                assertEquals(after, ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(), before,
+                    candidate, {}, store, context = context))
+                store.uninstall(worker.reference)
+                assertTrue(store.snapshot().isEmpty())
+            }
+            val entries = java.util.zip.ZipInputStream(assertNotNull(artifact.open("algorithm.jar"))).use { zip ->
+                buildSet { while (true) { val entry = zip.nextEntry ?: break; add(entry.name) } }
+            }
+            for (name in listOf("NeckV4Algorithm", "NeckV4Inputs", "NeckAlgorithm", "NeckInputs"))
+                assertTrue(entries.any { it.endsWith("/$name.class") })
+            assertTrue(entries.none { it.endsWith("/RigBuilder.class") || it.endsWith("/NeckV3Algorithm.class") })
+        } finally {
+            ModifierPluginWorkers.stop(artifact.reference)
+            preferences.removeNode(); ModifierPluginStore.deleteTree(root)
+        }
+        if (tuned) return
+        // Earlier neck ownership survives apply and prevents a second copy of the tilt.
+        val replayFixture = Fixture(selectedDocument)
+        replayFixture.install()
+        replayFixture.edit("modifier_add", JsonObject(replayFixture.addition("face.neck", "neck-again", config = candidate.config) +
+            ("version" to JsonPrimitive(4))))
+        assertEquals(compiled, RigIrCompiler.compile(replayFixture.now.model, tileArt = true))
+        replayFixture.edit("modifier_apply", buildJsonObject { put("id", candidate.id) })
+        assertEquals(compiled, RigIrCompiler.compile(WorkspacePreviewBuilder().build(replayFixture.now.document), tileArt = true))
+
+        var captures = 0
+        val sentinel = "Reached source neck dependency capture"
+        val guarded = definition.copy(authorContext = { captures++; error(sentinel) })
+        val registry = RigModifierRegistry(BuiltinModifierPlugins.definitions(RigModifierSource.of(actual)).map {
+            if (it.type == candidate.type && it.version == candidate.version) guarded else it
+        })
+        val evaluator = RigModifierEvaluator(registry)
+        val prefix = evaluated.stack.instances.take(index)
+        val prefixIds = prefix.mapTo(hashSetOf()) { it.id }
+        val applied = prefix.map { it.capability(provides = registry.definition(it).provides) }
+        for ((required, owner) in mapOf("rig.scaffold" to "structure", "face/legacy" to "face")) {
+            val missing = RigModifierStack(instances = listOf(candidate), retiredIds = prefixIds,
+                appliedCapabilities = applied.filterNot { it.id == owner })
+            val result = evaluator.evaluate(before, missing)
+            assertEquals(ModifierStatus.MISSING_DEPENDENCY, result.entries.single().status)
+            assertEquals(setOf(required), result.entries.single().missingDependencies)
+            assertEquals(before, result.rig)
+            assertEquals(0, captures)
+        }
+        val reached = assertFailsWith<IllegalStateException> {
+            evaluator.evaluate(before, RigModifierStack(instances = listOf(candidate), retiredIds = prefixIds,
+                appliedCapabilities = applied))
+        }
+        assertEquals(sentinel, reached.message)
+        assertEquals(1, captures)
     }
 
     private suspend fun skinClippingAndNeckFollowSurvivePrefixApplication(neckVersion: Int, neckType: String = "face.neck") {
@@ -12171,6 +12529,397 @@ class WorkspaceLegacyBindingTest {
         val definition = RigModifierAlgorithms.registry.definition(candidate)
         assertTrue(definition.explicitVersion)
         assertEquals(expected, definition.providers(candidate), "Catalog validation and edit planning have no captured source")
+    }
+
+    @Test fun singleEyeOpenMouthGloomV4RejectsClosedAndBilateral(): Unit = runBlocking {
+        for (closed in listOf(false, true)) {
+            val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true,
+                closedMouth = closed, bilateralEyes = !closed)
+            val choices = WorkspaceInitialPreset(clothing = false)
+            val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+                .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+            val (initialized, model) = WorkspacePresetInitialization.prepare(
+                art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits), WorkspaceRasterWork.Direct, choices)
+            val defaults = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+            // Capture-only stack: unsupported artwork otherwise selects historical providers and
+            // would fail provider validation before reaching the specific artwork boundary.
+            val required = io.github.psd2live.algorithms.binding.GloomV4Algorithm.requiredVersions
+            val optional = io.github.psd2live.algorithms.binding.GloomV4Algorithm.optionalVersions
+            val stack = defaults.copy(instances = defaults.instances.map { entry ->
+                val version = if (entry.type == "expression.gloom") 4 else required[entry.type]
+                    ?: optional[entry.type]?.let { if (entry.version in it) entry.version else it.min() }
+                    ?: entry.version
+                if (version == entry.version) entry else entry.copy(version = version,
+                    plugin = assertNotNull(BuiltinModifierPlugins.reference(entry.type, version)))
+            })
+            val gloom = stack.instances.single { it.type == "expression.gloom" }
+            val captured = model.copy(config = model.config.copy(rigEdits = model.config.rigEdits.copy(modifierStack = stack.toJson())))
+            val failure = assertFailsWith<IllegalArgumentException> {
+                RigGloomV4Modifier.definition(RigModifierSource.of(captured)).authorContext(gloom)
+            }
+            assertEquals(if (closed) "Gloom v4 does not support a separate closed-mouth drawing"
+                else "Gloom v4 requires exactly one fitted eye with a same-side brow and eyelash", failure.message)
+        }
+    }
+
+    @Test fun singleEyeOpenMouthGloomV4CarrierScopeRejectsForeignDescendants() {
+        val shared = io.github.psd2live.format.model.Deformer.Rotation("gloom-shared", "Shared", null, null, 0f, null)
+        val carrier = shared.copy(id = "gloom-carrier", parent = shared.id)
+        val inner = carrier.copy(id = "gloom-inner", parent = carrier.id)
+        val skin = io.github.psd2live.format.model.Mesh("skin", "Skin", inner.id, geometry = null, offsets = null)
+        val sibling = skin.copy(id = "unchanged-sibling", parent = shared.id)
+        val before = RigIR(io.github.psd2live.format.model.Canvas(1f, 1f), emptyList(),
+            deformers = listOf(shared, carrier, inner), meshes = listOf(skin, sibling))
+        fun check(input: ModifierEvaluationInput) = io.github.psd2live.algorithms.binding.GloomV4CarrierScope.check(
+            input, carrier.id, skin.id, setOf(carrier.id, inner.id), {})
+        val observed = ModifierEvaluationInput(before)
+        check(observed)
+        val reads = observed.reads()
+        assertTrue(ModifierReadKey("mesh") in reads.keys)
+        assertTrue(ModifierReadKey("deformer") in reads.keys)
+        for (parent in listOf(carrier.id, inner.id)) {
+            val foreignMesh = before.copy(meshes = before.meshes + skin.copy(id = "foreign-mesh", parent = parent))
+            assertFalse(reads.matches(foreignMesh))
+            assertFailsWith<IllegalArgumentException> { check(ModifierEvaluationInput(foreignMesh)) }
+            val foreignDeformer = before.copy(deformers = before.deformers + inner.copy(id = "foreign-deformer", parent = parent))
+            assertFalse(reads.matches(foreignDeformer))
+            assertFailsWith<IllegalArgumentException> { check(ModifierEvaluationInput(foreignDeformer)) }
+        }
+    }
+
+    @Test fun singleEyeOpenMouthGloomV4CaptureDoesNotUseHostSkinOutputs() {
+        val path = java.nio.file.Path.of("src/main/kotlin/io/github/psd2live/core/modifier/RigGloomV4Modifier.kt")
+        val source = Files.readString(path)
+        for (forbidden in listOf("captureSkinLowering(", "SkinBinding(", "skinForms(",
+            "templateFor(", "scaffoldFor(", "gloomContext(", "carrierDefinition(",
+            "skin_forms", "source_branch", "neutral_channels"))
+            assertFalse(source.contains(forbidden), "Source capture must not use $forbidden")
+    }
+
+    @Test fun singleEyeOpenMouthGloomV4WithInterior(): Unit = runBlocking {
+        compareSingleEyeOpenMouthGloomV4(emptySet(), guards = true)
+    }
+
+    @Test fun singleEyeOpenMouthGloomV4WithTeethOnly(): Unit = runBlocking {
+        compareSingleEyeOpenMouthGloomV4(setOf("tongue"))
+    }
+
+    @Test fun singleEyeOpenMouthGloomV4WithoutInterior(): Unit = runBlocking {
+        compareSingleEyeOpenMouthGloomV4(setOf("teeth-top", "teeth-bottom", "tongue"))
+    }
+
+    @Test fun singleEyeOpenMouthGloomV4WithInteriorMirroredRight(): Unit = runBlocking {
+        compareSingleEyeOpenMouthGloomV4(emptySet(), mirror = true)
+    }
+
+    @Test fun singleEyeOpenMouthGloomV4WithTeethOnlyMirroredRight(): Unit = runBlocking {
+        compareSingleEyeOpenMouthGloomV4(setOf("tongue"), mirror = true)
+    }
+
+    @Test fun singleEyeOpenMouthGloomV4WithoutInteriorMirroredRight(): Unit = runBlocking {
+        compareSingleEyeOpenMouthGloomV4(setOf("teeth-top", "teeth-bottom", "tongue"), mirror = true)
+    }
+
+    private suspend fun compareSingleEyeOpenMouthGloomV4(removed: Set<String>, mirror: Boolean = false,
+                                                        guards: Boolean = false) {
+        val art = singleEyeOpenMouthArt(removed, mirror, expressions = true)
+        val choices = WorkspaceInitialPreset(clothing = false)
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val (initialized, _) = WorkspacePresetInitialization.prepare(
+            art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits), WorkspaceRasterWork.Direct, choices)
+        val defaults = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        assertSingleEyeOpenMouthDefaults(defaults, removed)
+        val requiredVersions = mapOf("rig.scaffold" to 2, "body/legacy" to 2, "face/fitted" to 3,
+            "eye/fitted" to 5, "brow/fitted" to 4, "mouth/fitted" to 3, "mouth.outline" to 7,
+            "mouth.vowel" to 6, "mouth.capture" to 5, "mouth.jaw" to 7, "mouth.spring" to 8,
+            "expression.cheek" to 1)
+        assertEquals(requiredVersions, defaults.instances.filter { it.type in requiredVersions }.associate { it.type to it.version })
+        assertEquals(1, defaults.instances.single { it.type == "expression.gloom" }.version)
+        val bust = defaults.instances.single { it.type == "body.bust" }
+        assertEquals(2, bust.version, "The single-eye preset retains source bust v2")
+        assertEquals(defaults.instances.single { it.type == "expression.gloom" }.targets.toSet(), bust.targets.toSet())
+        assertEquals(JsonPrimitive(defaults.instances.single { it.type == "body/legacy" }.id),
+            bust.config.getValue("dependencies").jsonObject["body/legacy"])
+        assertEquals(JsonPrimitive(defaults.instances.single { it.type == "face/fitted" }.id),
+            bust.config.getValue("dependencies").jsonObject["face/legacy"])
+        val side = if (mirror) "R" else "L"
+        val poses = listOf(
+            mapOf("ParamGloom" to 0f, "ParamCheek" to 0f, "ParamMouthOpenY" to 0f),
+            mapOf("ParamGloom" to 1f, "ParamCheek" to 1f, "ParamMouthOpenY" to .65f,
+                "ParamAngleX" to 18f, "ParamAngleY" to -12f, "ParamEye${side}Open" to .4f),
+            mapOf("ParamGloom" to .6f, "ParamCheek" to .3f, "ParamMouthOpenY" to 1f,
+                "ParamMouthForm" to -.6f, "ParamAngleX" to -17f, "ParamAngleY" to 14f,
+                "ParamEye${side}Open" to 1.5f),
+        )
+        for (strength in if (guards) listOf(0f, 80f, 100f, 200f) else listOf(100f)) {
+            val locked = defaults.copy(instances = defaults.instances.map { entry ->
+                if (entry.type != "expression.gloom") entry else entry.copy(config = JsonObject(entry.config +
+                    ("values" to JsonObject(entry.config["values"]?.jsonObject.orEmpty() + ("strength" to JsonPrimitive(strength))))))
+            })
+            val old = locked.instances.single { it.type == "expression.gloom" }
+            val artifact = assertNotNull(BundledAlgorithmArtifacts.find(old.type, 4))
+            val candidate = old.copy(version = 4, plugin = artifact.reference)
+            val stack = locked.copy(instances = locked.instances.map { if (it.id == old.id) candidate else it })
+            assertEquals(listOf(old.id), locked.instances.zip(stack.instances).filter { it.first != it.second }.map { it.first.id })
+            for ((before, after) in locked.instances.zip(stack.instances))
+                assertEquals(before, after.copy(version = before.version, plugin = before.plugin))
+            val index = stack.index(candidate.id)
+            val document = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = stack.toJson()))
+            val reference = WorkspacePreviewBuilder().build(initialized.copy(
+                rigEdits = initialized.rigEdits.copy(modifierStack = locked.toJson())))
+            val expected = assertNotNull(reference.modifierEvaluation)
+            val compiled = RigIrCompiler.compile(reference, tileArt = true)
+            fun verify(model: RigPreviewModel) {
+                val evaluation = assertNotNull(model.modifierEvaluation)
+                assertEquals(stack, RigModifierStack.fromJson(model.config.rigEdits.modifierStack!!))
+                assertEquals(ModifierStatus.ACTIVE, evaluation.entries[index].status)
+                assertNotNull(evaluation.readAlgorithms[candidate.id])
+                assertEquals(expected.outputs.size, evaluation.outputs.size)
+                for (stage in expected.outputs.indices) {
+                    assertEquals(expected.entries[stage].status, evaluation.entries[stage].status)
+                    assertEquals(expected.outputs[stage], evaluation.outputs[stage],
+                        "Gloom v4 stage ${stack.instances[stage].type}: strength=$strength, mirror=$mirror, removed=$removed")
+                }
+                assertEquals(reference.rig.modifierRasterAssets, model.rig.modifierRasterAssets)
+                assertEquals(reference.rig.modifierOutput, model.rig.modifierOutput)
+                assertEquals(compiled, RigIrCompiler.compile(model, tileArt = true))
+            }
+            val actual = WorkspacePreviewBuilder().build(document).also(::verify)
+            val oldRenderer = io.github.psd2live.tools.Renderer(reference, 128)
+            val newRenderer = io.github.psd2live.tools.Renderer(actual, 128)
+            for (pose in poses) {
+                val a = oldRenderer.render(pose)
+                val b = newRenderer.render(pose)
+                assertEquals(a.width, b.width); assertEquals(a.height, b.height)
+                assertContentEquals(a.getRGB(0, 0, a.width, a.height, null, 0, a.width),
+                    b.getRGB(0, 0, b.width, b.height, null, 0, b.width), "Gloom raster $pose, strength=$strength")
+            }
+            val evaluation = assertNotNull(actual.modifierEvaluation)
+            val before = evaluation.outputs[index - 1]
+            val after = evaluation.outputs[index]
+            val evaluator = CpuDeformationEvaluator()
+            val face = DrawableId(after.meshes.single { it.name == "face" }.id)
+            val highlight = DrawableId(after.meshes.single { it.name == "highlight" }.id)
+            val puppet = PuppetIr.toPuppet(after)
+            val open = ParameterId("ParamEye${side}Open")
+            val gloom = ParameterId("ParamGloom")
+            val neutral = evaluator.evaluate(puppet, mapOf(gloom to 0f, open to 1f))
+            val shaded = evaluator.evaluate(puppet, mapOf(gloom to 1f, open to 1f))
+            if (strength > 0f) {
+                // Evaluated colors are sparse: an absent multiply channel renders as white.
+                val neutralColor = neutral.multiplyColor[face] ?: ColorRgb.MultiplyIdentity
+                val shadedColor = assertNotNull(shaded.multiplyColor[face], "Gloom must evaluate a face multiply color")
+                assertNotEquals(neutralColor, shadedColor, "Gloom must write a real multiply-color change")
+            }
+            for (eyeOpen in listOf(0f, .4f, 1f, 2f)) {
+                val pose = mapOf(gloom to 1f, open to eyeOpen)
+                val prior = evaluator.evaluate(PuppetIr.toPuppet(before), pose)
+                val next = evaluator.evaluate(puppet, pose)
+                assertEquals(prior.opacity[highlight], next.opacity[highlight], "Gloom must preserve eye-highlight opacity at $eyeOpen")
+            }
+            val definition = RigGloomV4Modifier.definition(RigModifierSource.of(actual))
+            assertTrue(definition.explicitVersion)
+            assertEquals(requiredVersions.keys, definition.requires)
+            val context = assertNotNull(evaluation.readAlgorithms[candidate.id]).context
+            assertEquals("expression.gloom/4", context.values.getValue("schema").jsonPrimitive.content)
+            assertEquals(context.upstream.map { it.copy(capability = it.type) }.toSet(),
+                context.values.getValue("providers").jsonArray.map {
+                    Json.decodeFromJsonElement(ModifierUpstreamCapability.serializer(), it)
+                }.toSet())
+            assertTrue(context.values.getValue("groups").jsonArray.isNotEmpty())
+            val mouthArtwork = context.values.getValue("mouth_artwork").jsonArray
+            assertTrue(mouthArtwork.any { it.jsonObject["tag"] == JsonPrimitive("MOUTH") && it.jsonObject["role"] == JsonNull })
+            assertTrue(mouthArtwork.none { it.jsonObject["tag"] == JsonPrimitive("MOUTH_CLOSE") })
+            assertTrue(context.values.getValue("groups").jsonArray.all { it.jsonObject["closed"] == JsonPrimitive(true) },
+                "The shared closed flag means an opaque MOUTH layer, not a separate closed-mouth drawing")
+            assertTrue(context.resources.keys.none { it in setOf("skin_forms", "source_branch", "neutral_channels") })
+            for (provider in context.upstream) {
+                val owner = stack.instances.single { it.id == provider.instanceId }
+                assertEquals(ModifierUpstreamCapability(provider.capability, owner.type, owner.version, owner.targets,
+                    owner.id, owner.config, owner.outputAliases, owner.plugin), provider)
+            }
+            val cache = RigStageCache.enabled
+            try { RigStageCache.enabled = false; verify(WorkspacePreviewBuilder().build(document)) }
+            finally { RigStageCache.enabled = cache }
+            val root = Files.createTempDirectory("single-eye-gloom-v4-")
+            val preferences = Preferences.userRoot().node("single-eye-gloom-v4/" + UUID.randomUUID())
+            val store = ModifierPluginStore(root.resolve("installed"), preferences)
+            try {
+                BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+                val worker = store.snapshot().single()
+                assertEquals(definition.requires, worker.manifest.algorithms.single().requires)
+                assertEquals(after, ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(),
+                    before, candidate, {}, store, context = context, declaredParameters = definition.parameters(candidate)))
+            } finally {
+                store.snapshot().forEach { ModifierPluginWorkers.stop(it.reference) }
+                preferences.removeNode(); ModifierPluginStore.deleteTree(root)
+            }
+            if (!guards || strength != 100f) continue
+            val algorithm = definition.plugin as ReadingModifierAlgorithmPlugin
+            val sourceAnalysis = assertNotNull(actual.modifierAuthorAnalysis)
+            val originalMouth = sourceAnalysis.layers.single { it.source.id.raw == "mouth" }
+            val unrecognized = originalMouth.copy(source = object : SourceLayer by originalMouth.source {
+                override val id = LayerId("unrecognized-derived-mouth")
+            })
+            val unknownArtwork = actual.copy(modifierAuthorAnalysis = sourceAnalysis.copy(layers = sourceAnalysis.layers + unrecognized))
+            val unknownFailure = assertFailsWith<IllegalArgumentException> {
+                RigGloomV4Modifier.definition(RigModifierSource.of(unknownArtwork)).authorContext(candidate)
+            }
+            assertEquals("Gloom v4 cannot measure unrecognized generated artwork", unknownFailure.message)
+            val separateClosed = buildJsonObject {
+                put("id", "unexpected-closed-drawing"); put("tag", "MOUTH_CLOSE"); put("role", JsonNull)
+            }
+            val layered = buildJsonObject {
+                put("id", "unexpected-lip-layer"); put("tag", "MOUTH"); put("role", "UPPER_LIP")
+            }
+            for (extra in listOf(separateClosed, layered)) assertFailsWith<IllegalArgumentException> {
+                algorithm.evaluate(before, candidate, ModifierAlgorithmContext(JsonObject(context.values +
+                    ("mouth_artwork" to JsonArray(mouthArtwork + extra))), context.resources, context.upstream), {})
+            }
+            val wrongFlag = JsonArray(context.values.getValue("groups").jsonArray.map { group ->
+                JsonObject(group.jsonObject + ("closed" to JsonPrimitive(false)))
+            })
+            assertFailsWith<IllegalArgumentException> {
+                algorithm.evaluate(before, candidate, ModifierAlgorithmContext(JsonObject(context.values + ("groups" to wrongFlag)), context.resources, context.upstream), {})
+            }
+            val capturedProviders = context.values.getValue("providers").jsonArray.map {
+                Json.decodeFromJsonElement(ModifierUpstreamCapability.serializer(), it)
+            }
+            val capturedBust = capturedProviders.single { it.type == "body.bust" }
+            for (incompatible in listOf(capturedBust.copy(version = 1),
+                capturedBust.copy(targets = capturedBust.targets.take(1)))) assertFailsWith<IllegalArgumentException> {
+                io.github.psd2live.algorithms.binding.GloomV4Algorithm.validateProviders(
+                    capturedProviders.map { if (it.instanceId == capturedBust.instanceId) incompatible else it }, candidate)
+            }
+            val other = candidate.copy(config = JsonObject(candidate.config + ("values" to buildJsonObject { put("strength", 80f) })))
+            val recaptured = definition.authorContext(other)
+            assertEquals(context.values, recaptured.values, "Own strength must not affect captured source values")
+            assertEquals(context.resources.keys, recaptured.resources.keys)
+            for ((name, resource) in context.resources)
+                assertContentEquals(resource.read(), recaptured.resources.getValue(name).read(), name)
+            assertNotEquals(after, algorithm.evaluate(before, other, context, {}), "Worker must calculate strength")
+            val cancelled = java.util.concurrent.CancellationException("Stop Gloom v4")
+            assertSame(cancelled, assertFailsWith<java.util.concurrent.CancellationException> {
+                algorithm.evaluate(before, candidate, context) { throw cancelled }
+            })
+            val observed = ModifierEvaluationInput(before, context)
+            algorithm.changes(observed, candidate, {})
+            val reads = observed.reads()
+            assertTrue(reads.matches(before, context))
+            val skin = before.meshes.single { it.name == "face" }
+            val geometry = assertNotNull(skin.geometry)
+            val changedOffsets = KeyGrid(emptyList(), listOf(KeyCell(Ints.values(),
+                io.github.psd2live.format.model.MeshOffsets(Floats.wrap(FloatArray(geometry.positions.size).also { it[0] = .01f })))))
+            val changedChannel = KeyGrid<ChannelValue>(emptyList(), listOf(KeyCell(Ints.values(), ChannelValue.Scalar(.37f))))
+            val edits = mapOf(
+                "positions" to skin.copy(geometry = geometry.copy(positions = Floats.wrap(geometry.positions.toArray().also { it[0] += .01f }))),
+                "UVs" to skin.copy(geometry = geometry.copy(uvs = Floats.wrap(geometry.uvs.toArray().also { it[0] += .01f }))),
+                "topology" to skin.copy(geometry = geometry.copy(indices = Ints.wrap(geometry.indices.toArray().also { it[0] = it[1] }))),
+                "offsets" to skin.copy(offsets = changedOffsets),
+                "channels" to skin.copy(channels = skin.channels + (Channel.OPACITY to changedChannel)),
+            )
+            for ((label, edited) in edits) {
+                assertNotEquals(skin, edited, "Must actually edit skin $label")
+                val changed = before.copy(meshes = before.meshes.map { if (it.id == skin.id) edited else it })
+                assertFalse(reads.matches(changed, context), "Changed skin $label must invalidate captured reads")
+                assertFailsWith<IllegalArgumentException>("Changed skin $label must reject the captured before-state") {
+                    algorithm.evaluate(changed, candidate, context, {})
+                }
+            }
+            for (provider in context.upstream) {
+                val alternatives = listOf(provider.copy(instanceId = "wrong"), provider.copy(type = "wrong"),
+                    provider.copy(version = provider.version + 10), provider.copy(targets = listOf(ModifierTarget("mesh", "wrong"))),
+                    provider.copy(config = JsonObject(provider.config + ("unexpected" to JsonPrimitive(true)))),
+                    provider.copy(outputAliases = provider.outputAliases + ("shared/deformer:wrong" to "wrong")),
+                    provider.copy(plugin = null))
+                for (changed in alternatives) assertFailsWith<IllegalArgumentException>("Reject ${provider.capability} identity mismatch") {
+                    algorithm.evaluate(before, candidate, context.withUpstream(context.upstream.map { if (it == provider) changed else it }), {})
+                }
+                assertFailsWith<IllegalArgumentException>("Reject missing observed ${provider.capability}") {
+                    algorithm.evaluate(before, candidate, context.withUpstream(context.upstream.filterNot { it.instanceId == provider.instanceId }), {})
+                }
+            }
+            // Exercise this consumer's gate over the real prefix IR. Rebuilding the broken
+            // upstream chain would first fail fitted-face capture when its body is removed.
+            var dependencyCaptures = 0
+            val captureSentinel = "Reached Gloom v4 dependency-test capture"
+            val guarded = definition.copy(authorContext = {
+                dependencyCaptures++
+                error(captureSentinel)
+            })
+            val dependencyRegistry = RigModifierRegistry(BuiltinModifierPlugins.definitions(RigModifierSource.of(actual)).map {
+                if (it.type == candidate.type && it.version == candidate.version) guarded else it
+            })
+            val dependencyEvaluator = RigModifierEvaluator(dependencyRegistry)
+            val prefix = stack.instances.take(index)
+            val prefixIds = prefix.mapTo(hashSetOf()) { it.id }
+            val applied = prefix.filter { it.enabled }.map { owner ->
+                owner.capability(provides = dependencyRegistry.definition(owner).provides)
+            }
+            for (type in definition.requires) for (remove in listOf(false, true)) {
+                val unavailable = prefix.single { it.type == type }
+                val missing = RigModifierStack(
+                    instances = if (remove) listOf(candidate) else listOf(unavailable.copy(enabled = false), candidate),
+                    retiredIds = if (remove) prefixIds else prefixIds - unavailable.id,
+                    appliedCapabilities = applied.filterNot { it.id == unavailable.id },
+                )
+                val cacheState = RigModifierEvaluationCache()
+                val result = dependencyEvaluator.evaluate(before, missing, cacheState)
+                val consumer = result.entries.single { it.instance.id == candidate.id }
+                assertEquals(ModifierStatus.MISSING_DEPENDENCY, consumer.status)
+                assertEquals(setOf(type), consumer.missingDependencies)
+                if (!remove) assertEquals(ModifierStatus.DISABLED, result.entries.first().status)
+                assertEquals(before, result.rig)
+                assertEquals(0, dependencyCaptures, "Missing $type must suspend before source capture")
+                assertFalse(candidate.id in assertNotNull(cacheState.snapshot).readAlgorithms)
+            }
+            val reached = assertFailsWith<IllegalStateException> {
+                dependencyEvaluator.evaluate(before, RigModifierStack(instances = listOf(candidate),
+                    retiredIds = prefixIds, appliedCapabilities = applied))
+            }
+            assertEquals(captureSentinel, reached.message)
+            assertEquals(1, dependencyCaptures, "The complete provider set must reach capture")
+
+            val fixture = Fixture(document)
+            fixture.install()
+            val prior = RigIrCompiler.compile(fixture.now.model, tileArt = true)
+            // Freeze the complete upstream prefix while Gloom remains live, then recapture
+            // from a fresh preview with the stage cache disabled.
+            val lastProvider = prefix.last()
+            fixture.edit("modifier_apply", buildJsonObject { put("id", lastProvider.id) })
+            val appliedStack = RigModifierStack.fromJson(fixture.now.document.rigEdits.modifierStack!!)
+            assertEquals(candidate, appliedStack.instances.single { it.id == candidate.id })
+            assertTrue(appliedStack.instances.none { it.id in prefixIds })
+            RigModifierAlgorithms.evaluator().validateOrder(appliedStack)
+            for (owner in prefix.filter { it.enabled }) {
+                val materialized = appliedStack.appliedCapabilities.single { it.id == owner.id }
+                assertEquals(owner.capability(provides = dependencyRegistry.definition(owner).provides), materialized)
+            }
+            assertEquals(prior, RigIrCompiler.compile(fixture.now.model, tileArt = true))
+            val cacheEnabled = RigStageCache.enabled
+            val replayed = try {
+                RigStageCache.enabled = false
+                WorkspacePreviewBuilder().build(fixture.now.document)
+            } finally { RigStageCache.enabled = cacheEnabled }
+            assertEquals(prior, RigIrCompiler.compile(replayed, tileArt = true))
+            assertEquals(fixture.now.model.rig.modifierOutput, replayed.rig.modifierOutput)
+            val replay = assertNotNull(replayed.modifierEvaluation)
+            assertEquals(ModifierStatus.ACTIVE, replay.entries[appliedStack.index(candidate.id)].status)
+            val restoredAnalysis = assertNotNull(replayed.modifierAuthorAnalysis)
+            val authoredLayerIds = restoredAnalysis.source.layers.mapTo(hashSetOf()) { it.id.raw }
+            assertTrue(restoredAnalysis.layers.any { it.source.id.raw !in authoredLayerIds },
+                "The prefix replay must exercise restored outline raster assets")
+            val replayContext = assertNotNull(replay.readAlgorithms[candidate.id]).context
+            assertEquals(context.upstream, replayContext.upstream)
+            assertEquals(context.values, replayContext.values, "Applied outline rasters must not become source measurements")
+            assertEquals(context.resources.keys, replayContext.resources.keys)
+            for ((name, resource) in context.resources)
+                assertContentEquals(resource.read(), replayContext.resources.getValue(name).read(), name)
+            fixture.edit("modifier_apply", buildJsonObject { put("id", candidate.id) })
+            assertEquals(prior, RigIrCompiler.compile(fixture.now.model, tileArt = true), "Applying gloom prefix must preserve textured output")
+            assertEquals(prior, RigIrCompiler.compile(fixture.builder.build(fixture.now.document), tileArt = true))
+        }
     }
 
 }

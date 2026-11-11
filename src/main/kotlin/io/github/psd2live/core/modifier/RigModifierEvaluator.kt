@@ -461,11 +461,18 @@ internal class RigModifierEvaluator(
     }
 
     private fun validateTargets(rig: RigIR, instance: RigModifierInstance) {
+        val kindCounts = instance.targets.groupingBy { it.kind }.eachCount()
+        val idsByKind = HashMap<String, Set<String>>()
+        fun <T> contains(target: ModifierTarget, values: List<T>, id: (T) -> String): Boolean {
+            if (kindCounts.getValue(target.kind) == 1) return values.any { id(it) == target.id }
+            // Index only the current rig, and only when this kind is reached in target order.
+            return target.id in idsByKind.getOrPut(target.kind) { values.mapTo(HashSet(), id) }
+        }
         for (target in instance.targets) {
             val present = when (target.kind) {
-                "mesh" -> rig.meshes.any { it.id == target.id }
-                "deformer" -> rig.deformers.any { it.id == target.id }
-                "part" -> rig.parts.any { it.id == target.id }
+                "mesh" -> contains(target, rig.meshes) { it.id }
+                "deformer" -> contains(target, rig.deformers) { it.id }
+                "part" -> contains(target, rig.parts) { it.id }
                 "layer" -> sourceTargetExists(target)
                 else -> false
             }

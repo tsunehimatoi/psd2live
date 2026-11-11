@@ -23,9 +23,18 @@ class FaceNeckDsTool {
         val stack = RigModifierStack.fromJson(assertNotNull(planned.rigEdits.modifierStack))
         val entry = stack.instances.single { it.type == "face.neck" }
         val versions = stack.instances.associate { it.type to it.version }
-        assertTrue(entry.version in setOf(2, 3))
+        assertEquals(4, entry.version, "The verified fresh DS cohort must select source neck v4")
         assertEquals(6, versions["mouth/fitted"])
         assertEquals(8, versions["mouth.outline"])
+        assertEquals(BuiltinModifierPlugins.reference(entry.type, 4), entry.plugin)
+        val cache = RigStageCache.enabled
+        val cold = try {
+            RigStageCache.enabled = false
+            WorkspacePreviewBuilder().build(planned)
+        } finally { RigStageCache.enabled = cache }
+        assertEquals(stack, RigModifierStack.fromJson(assertNotNull(cold.config.rigEdits.modifierStack)))
+        assertEquals(assertNotNull(defaultModel.modifierEvaluation).outputs, assertNotNull(cold.modifierEvaluation).outputs)
+        assertEquals(RigIrCompiler.compile(defaultModel, tileArt = true), RigIrCompiler.compile(cold, tileArt = true))
         val index = stack.index(entry.id)
         suspend fun select(version: Int): RigPreviewModel {
             val reference = assertNotNull(BuiltinModifierPlugins.reference(entry.type, version))
@@ -51,10 +60,11 @@ class FaceNeckDsTool {
         val historical = select(1)
         val legacy = assertNotNull(historical.modifierEvaluation)
         val compiled = RigIrCompiler.compile(historical, tileArt = true)
-        for (version in listOf(2, 3)) {
-            val model = if (version == 2) v2Model else if (entry.version == 3) defaultModel else select(3)
+        for (version in listOf(2, 3, 4)) {
+            val model = if (version == 2) v2Model else if (entry.version == version) defaultModel else select(version)
             val evaluated = assertNotNull(model.modifierEvaluation)
             val selected = evaluated.entries[index].instance
+            assertEquals(version, selected.version)
             assertEquals(ModifierStatus.ACTIVE, evaluated.entries[index].status)
             val actual = evaluated.outputs[index]
             val stage = legacy.outputs.indices.firstOrNull { legacy.outputs[it] != evaluated.outputs[it] }
@@ -65,9 +75,9 @@ class FaceNeckDsTool {
             }
             val complete = compiled == RigIrCompiler.compile(model, tileArt = true)
             report.appendText("\nV$version vs v1: first difference=$stage meshes=$changes complete=$complete")
-            if (version == 3) {
-                assertNull(stage, "v3 differs at stage $stage: $changes")
-                assertTrue(complete, "v3 final IR differs")
+            if (version >= 3) {
+                assertNull(stage, "v$version differs at stage $stage: $changes")
+                assertTrue(complete, "v$version final IR differs")
             }
             val artifact = assertNotNull(BundledAlgorithmArtifacts.find(entry.type, version))
             val capture = assertNotNull(evaluated.readAlgorithms[entry.id]).context
@@ -79,7 +89,12 @@ class FaceNeckDsTool {
                 BundledAlgorithmArtifacts.retain(store, listOf(artifact))
                 val worker = store.snapshot().single()
                 val source = RigModifierSource.of(model)
-                val definition = if (version == 2) RigNeckModifier.definition(source) else RigNeckModifier.foldedDefinition(source)
+                val definition = when (version) {
+                    2 -> RigNeckModifier.definition(source)
+                    3 -> RigNeckModifier.foldedDefinition(source)
+                    else -> RigNeckSourceModifier.definition(source)
+                }
+                if (version == 4) assertEquals(setOf("source_meshes"), capture.resources.keys)
                 val replay = ModifierPluginWorkers.evaluate(worker, worker.manifest.algorithms.single(), evaluated.outputs[index - 1],
                     selected, {}, store, context = capture, declaredParameters = definition.parameters(selected))
                 assertTrue(actual == replay, "installed JVM v$version: IR differs")
