@@ -513,32 +513,40 @@ internal class RigModifierEvaluator(
 
     companion object {
     internal fun contributions(before: RigIR, after: RigIR): List<ModifierContribution> = buildList {
-        fun <T> compare(kind: String, left: List<T>, right: List<T>, key: (T) -> String) {
-            if (left === right) return
-            val a = left.associateBy(key); val b = right.associateBy(key)
-            require(a.size == left.size && b.size == right.size) { "Duplicate $kind IDs in modifier output" }
+        fun <T> compareIndexed(kind: String, a: Map<String, T>, b: Map<String, T>) {
             for ((id, value) in b) when {
                 id !in a -> add(ModifierContribution(kind, id, ModifierChange.ADDED))
                 a[id] != value -> add(ModifierContribution(kind, id, ModifierChange.MODIFIED))
             }
-            for (id in a.keys - b.keys) add(ModifierContribution(kind, id, ModifierChange.REMOVED))
+            for (id in a.keys) if (id !in b) add(ModifierContribution(kind, id, ModifierChange.REMOVED))
+        }
+        fun <T> compare(kind: String, left: List<T>, right: List<T>, key: (T) -> String) {
+            if (left === right) return
+            val a = left.associateBy(key); val b = right.associateBy(key)
+            require(a.size == left.size && b.size == right.size) { "Duplicate $kind IDs in modifier output" }
+            compareIndexed(kind, a, b)
         }
         compare("parameter", before.parameters, after.parameters) { it.id }
         compare("part", before.parts, after.parts) { it.id }
         compare("deformer", before.deformers, after.deformers) { it.id }
-        compare("mesh", before.meshes, after.meshes) { it.id }
-        val previousMeshes = before.meshes.associateBy { it.id }
-        val nextMeshes = after.meshes.associateBy { it.id }
-        for (id in previousMeshes.keys + nextMeshes.keys) {
-            val previous = previousMeshes[id]; val next = nextMeshes[id]
-            val oldMasks = previous?.maskedBy.orEmpty(); val newMasks = next?.maskedBy.orEmpty()
-            val oldInverted = previous?.invertMask == true; val newInverted = next?.invertMask == true
-            if (oldMasks != newMasks || oldInverted != newInverted) {
-                val change = when { oldMasks.isEmpty() && newMasks.isNotEmpty() -> ModifierChange.ADDED
-                    newMasks.isEmpty() && oldMasks.isNotEmpty() -> ModifierChange.REMOVED
-                    else -> ModifierChange.MODIFIED }
-                add(ModifierContribution("relations", "mask:$id", change,
-                    ModifierMaskRelation(id, oldMasks, newMasks, oldInverted, newInverted)))
+        if (before.meshes !== after.meshes) {
+            val previousMeshes = before.meshes.associateBy { it.id }
+            val nextMeshes = after.meshes.associateBy { it.id }
+            require(previousMeshes.size == before.meshes.size && nextMeshes.size == after.meshes.size) {
+                "Duplicate mesh IDs in modifier output"
+            }
+            compareIndexed("mesh", previousMeshes, nextMeshes)
+            for (id in previousMeshes.keys + nextMeshes.keys) {
+                val previous = previousMeshes[id]; val next = nextMeshes[id]
+                val oldMasks = previous?.maskedBy.orEmpty(); val newMasks = next?.maskedBy.orEmpty()
+                val oldInverted = previous?.invertMask == true; val newInverted = next?.invertMask == true
+                if (oldMasks != newMasks || oldInverted != newInverted) {
+                    val change = when { oldMasks.isEmpty() && newMasks.isNotEmpty() -> ModifierChange.ADDED
+                        newMasks.isEmpty() && oldMasks.isNotEmpty() -> ModifierChange.REMOVED
+                        else -> ModifierChange.MODIFIED }
+                    add(ModifierContribution("relations", "mask:$id", change,
+                        ModifierMaskRelation(id, oldMasks, newMasks, oldInverted, newInverted)))
+                }
             }
         }
         compare("glue", before.glues, after.glues) { it.id ?: "${it.meshA.length}:${it.meshA}${it.meshB}" }
