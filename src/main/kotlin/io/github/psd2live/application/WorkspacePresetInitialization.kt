@@ -189,11 +189,14 @@ internal object WorkspacePresetInitialization {
         val eyeWhiteSides = subject.sides(SemanticTag.EYEWHITE)
         val lashSides = subject.sides(SemanticTag.EYELASH)
         val completeEyePair = eyeWhiteSides.size == 2 && lashSides.size == 2
-        val singleEyeClosedMouth = eyeWhiteSides.size == 1 && lashSides == eyeWhiteSides &&
-            subject.sides(SemanticTag.EYEBROW) == eyeWhiteSides && subject.has(SemanticTag.MOUTH_CLOSE)
+        val singleEye = eyeWhiteSides.size == 1 && lashSides == eyeWhiteSides &&
+            subject.sides(SemanticTag.EYEBROW) == eyeWhiteSides
+        val singleEyeClosedMouth = singleEye && subject.has(SemanticTag.MOUTH_CLOSE)
+        val singleEyeOpenMouth = singleEye && !subject.has(SemanticTag.MOUTH_CLOSE) &&
+            (subject.has(SemanticTag.MOUTH) || subject.has(SemanticTag.MOUTH_OPEN))
         val fittedSources = if (scaffold != null && config.recipe == RigRecipe.Modern && fittedFace &&
             !config.featureDisplacementEnabled && config.rigTuning == RigTuning() && requestedVersions.isEmpty() && freshSource(config) &&
-            (!subject.has(SemanticTag.EYEBROW) || completeEyePair || singleEyeClosedMouth)) {
+            (!subject.has(SemanticTag.EYEBROW) || completeEyePair || singleEyeClosedMouth || singleEyeOpenMouth)) {
             fun packages(versions: Map<String, Int>): Map<String, Pair<Int, ModifierPluginReference>> {
                 val selected = versions.mapNotNull { (type, version) ->
                     val entry = stack.instances.singleOrNull { it.type == type } ?: return@mapNotNull null
@@ -269,6 +272,11 @@ internal object WorkspacePresetInitialization {
                         RigModules.EYE_LID_FADE.id to LidFadeV3Algorithm.VERSION).filterKeys { it in plannedTypes }
                     packages(headVersions + plannedLids + brows + mouth + moodVersions)
                 }
+            } else if (singleEyeOpenMouth) {
+                // Migrate only the fitted/outline pair and its verified head providers. Brow bindings,
+                // eye add-ons and moods keep their historical versions until independently validated.
+                val mouth = sourceMouthVersions(model.analysis, config, types, singleEye = true)
+                if (mouth.isEmpty()) emptyMap() else packages(headVersions + mouth)
             } else {
                 val lids = packages(plannedLids)
                 val brows = if (lids.isNotEmpty() && subject.has(SemanticTag.EYEBROW)) {
@@ -331,7 +339,7 @@ internal object WorkspacePresetInitialization {
                 independent.takeIf(ModifierPluginCatalog::available) ?: entry
             } else entry
         })
-        if (fittedSources.isNotEmpty()) {
+        if (fittedSources.isNotEmpty() && !singleEyeOpenMouth) {
             val fittedBody = mapOf(RigSourceModifiers.SCAFFOLD to 2, LegacyBodyV2Algorithm.TYPE to LegacyBodyV2Algorithm.VERSION,
                 RigLegacyBindings.FITTED_FACE to FittedFaceV3Algorithm.VERSION)
             stack = stack.copy(instances = stack.instances.mapIndexed { index, entry ->
@@ -475,6 +483,14 @@ internal object WorkspacePresetInitialization {
         RigModules.MOUTH_SPRING.id to MouthSpringV8Algorithm.VERSION,
     ).filterKeys { it in types }
 
+    private fun singleEyeOpenMouthVersions(types: List<String>): Map<String, Int> {
+        if (RigModules.MOUTH_FITTED.id !in types || RigModules.MOUTH_OUTLINE.id !in types) return emptyMap()
+        return mapOf(
+            RigModules.MOUTH_FITTED.id to MouthFittedV3Algorithm.VERSION,
+            RigModules.MOUTH_OUTLINE.id to MouthOutlineV7Algorithm.VERSION,
+        )
+    }
+
     private fun sourceMouthVersions(analysis: PipelineAnalysis, config: PipelineConfig, types: List<String>,
                                     singleEye: Boolean = false, sharedBrow: Boolean = false): Map<String, Int> {
         if (config.mouthOutlineEnabled && !supportsClassicOutline(analysis, config)) return emptyMap()
@@ -489,8 +505,8 @@ internal object WorkspacePresetInitialization {
             singleEye -> singleEyeMouthVersions(types)
             else -> closedMouthVersions(types)
         }
-        if (singleEye) return emptyMap()
         if (analysis.layers.any { it.semantic.tag == SemanticTag.MOUTH_CLOSE }) return emptyMap()
+        if (singleEye) return singleEyeOpenMouthVersions(types)
         if (sharedBrow) return buildMap {
             if (RigModules.MOUTH_FITTED.id !in types) return@buildMap
             put(RigModules.MOUTH_FITTED.id, MouthFittedV6Algorithm.VERSION)

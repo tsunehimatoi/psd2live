@@ -923,6 +923,139 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun modernPresetUsesIndependentSingleEyeOpenMouthBindings(): Unit = runBlocking {
+        compareSingleEyeOpenMouthDefault(emptySet())
+    }
+
+    @Test fun modernPresetUsesIndependentSingleEyeOpenMouthWithoutInterior(): Unit = runBlocking {
+        compareSingleEyeOpenMouthDefault(setOf("teeth-top", "teeth-bottom", "tongue"))
+    }
+
+    @Test fun modernPresetUsesIndependentSingleEyeOpenMouthWithTeethOnly(): Unit = runBlocking {
+        compareSingleEyeOpenMouthDefault(setOf("tongue"))
+    }
+
+    @Test fun modernPresetUsesIndependentSingleEyeOpenMouthMirroredRight(): Unit = runBlocking {
+        compareSingleEyeOpenMouthDefault(emptySet(), mirror = true)
+    }
+
+    @Test fun modernPresetUsesIndependentSingleEyeOpenMouthWithExpressions(): Unit = runBlocking {
+        compareSingleEyeOpenMouthDefault(emptySet(), expressions = true)
+    }
+
+    @Test fun modernPresetUsesIndependentSingleEyeOpenMouthWithAttachments(): Unit = runBlocking {
+        compareSingleEyeOpenMouthDefault(emptySet(), outfits = true)
+    }
+
+    private suspend fun compareSingleEyeOpenMouthDefault(removed: Set<String>, mirror: Boolean = false,
+                                                        expressions: Boolean = false, outfits: Boolean = false) {
+        var original = document(eyeDetails = true, mouthDetails = true, expressionDetails = expressions, outfitDetails = outfits)
+        if (mirror) {
+            val art = original.source as WorkspaceSourceArt
+            // This procedural fixture uses uniform raster colors, so reflecting bounds also reflects its pixels.
+            original = original.copy(source = art.copy(layers = art.layers.map { layer ->
+                (layer as WorkspaceSourceLayer).copy(bounds = layer.bounds.copy(left = art.widthPx - layer.bounds.left - layer.bounds.width))
+            }), layerOverrides = original.layerOverrides.mapValues { (_, value) ->
+                value.copy(side = when (value.side) { Side.LEFT -> Side.RIGHT; Side.RIGHT -> Side.LEFT; else -> value.side })
+            })
+        }
+        val artwork = object : SourceArt by original.source {
+            override val layers = original.source.layers.filterNot { it.id.raw in removed }
+        }
+        val art = original.copy(source = artwork, layerOverrides = original.layerOverrides - removed)
+        val choices = WorkspaceInitialPreset(clothing = outfits)
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, actual) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        val upgraded = mapOf("face/fitted" to 3, "eye/fitted" to 5, "mouth/fitted" to 3, "mouth.outline" to 7)
+        assertEquals(upgraded, stack.instances.filter { it.type in upgraded }.associate { it.type to it.version })
+        assertEquals(1, stack.instances.single { it.type == "brow/fitted" }.version)
+        // Unrelated modules keep their existing defaults (some already use independent versions).
+        // The other mouth modules keep their historical source.
+        val mouthVersions = stack.instances.filter { it.type == "mouth/fitted" || it.type.startsWith("mouth.") }
+            .associate { it.type to it.version }
+        assertEquals(3, mouthVersions.getValue("mouth/fitted"))
+        assertEquals(7, mouthVersions.getValue("mouth.outline"))
+        assertTrue(mouthVersions.filterKeys { it !in setOf("mouth/fitted", "mouth.outline") }.values.all { it == 1 })
+
+        val locked = stack.copy(instances = stack.instances.map { instance ->
+            if (instance.type in upgraded) {
+                val historical = if (instance.type == "eye/fitted") 2 else 1
+                instance.copy(version = historical, plugin = assertNotNull(BuiltinModifierPlugins.reference(instance.type, historical)))
+            } else instance
+        })
+        val reference = WorkspacePreviewBuilder().build(initialized.copy(
+            rigEdits = initialized.rigEdits.copy(modifierStack = locked.toJson())))
+        assertEquals(locked, RigModifierStack.fromJson(reference.config.rigEdits.modifierStack!!))
+        val expected = assertNotNull(reference.modifierEvaluation).outputs
+        val result = assertNotNull(actual.modifierEvaluation).outputs
+        for ((index, entry) in stack.instances.withIndex()) {
+            assertTrue(expected[index] == result[index], "Single-eye open default differs at ${entry.type}")
+        }
+        assertEquals(reference.rig.modifierRasterAssets, actual.rig.modifierRasterAssets)
+        val compiled = RigIrCompiler.compile(reference, tileArt = true)
+        assertFaceEquals(compiled, RigIrCompiler.compile(actual, tileArt = true))
+
+        val cache = RigStageCache.enabled
+        val replayed = try {
+            RigStageCache.enabled = false
+            WorkspacePreviewBuilder().build(initialized)
+        } finally {
+            RigStageCache.enabled = cache
+        }
+        assertEquals(stack, RigModifierStack.fromJson(replayed.config.rigEdits.modifierStack!!))
+        assertEquals(result, assertNotNull(replayed.modifierEvaluation).outputs)
+        assertEquals(actual.rig.modifierRasterAssets, replayed.rig.modifierRasterAssets)
+        assertFaceEquals(compiled, RigIrCompiler.compile(replayed, tileArt = true))
+    }
+
+    @Test fun singleEyeOpenMouthDefaultFallsBackWithoutOutline(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true)
+        val choices = WorkspaceInitialPreset(clothing = false, mouthOutline = false)
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, _) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        assertEquals(1, stack.instances.single { it.type == "mouth/fitted" }.version)
+        assertTrue(stack.instances.none { it.type == "mouth.outline" })
+    }
+
+    @Test fun singleEyeOpenMouthRejectsOppositeSideEyebrowLikeLockedBaseline(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true)
+        val crossed = art.copy(layerOverrides = art.layerOverrides.mapValues { (_, value) ->
+            if (value.tag == SemanticTag.EYEBROW) value.copy(side = Side.RIGHT) else value
+        })
+        val choices = WorkspaceInitialPreset(clothing = false)
+        val config = choices.configure(WorkspacePresetBaseline.configure(crossed.config(), "modern"))
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = crossed.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val actual = assertFailsWith<IllegalArgumentException> {
+            WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        }
+        val locked = assertFailsWith<IllegalArgumentException> {
+            WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
+                requestedVersions = mapOf("face/fitted" to 1, "eye/fitted" to 2, "mouth/fitted" to 1))
+        }
+        assertContains(locked.message.orEmpty(), "incompatible parameter ParamBrowLY")
+        assertEquals(locked.message, actual.message)
+    }
+
+    @Test fun singleEyeOpenMouthRequestedVersionsRemainLocked(): Unit = runBlocking {
+        val art = document(eyeDetails = true, mouthDetails = true)
+        val choices = WorkspaceInitialPreset(clothing = false)
+        val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
+            .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val (initialized, _) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
+            requestedVersions = mapOf("mouth/fitted" to 1))
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        assertEquals(1, stack.instances.single { it.type == "mouth/fitted" }.version)
+        assertEquals(1, stack.instances.single { it.type == "mouth.outline" }.version)
+    }
+
     @Test fun modernPresetUsesIndependentSingleEyeClosedMouthBindings(): Unit = runBlocking {
         val art = document(eyeDetails = true, mouthDetails = true, closedMouth = true)
         val choices = WorkspaceInitialPreset(clothing = false)
