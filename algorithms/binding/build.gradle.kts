@@ -1680,6 +1680,39 @@ tasks.register("pluginBrowFittedV4") {
     }
 }
 
+val browFittedV5WorkerJar = registerIsolatedBindingWorker(
+    "browFittedV5", "brow-fitted-v5", "worker-brow-fitted-v5", "io.github.psd2live.algorithms.binding.BrowFittedV5Worker",
+)
+browFittedV5WorkerJar.configure {
+    // The shared frozen runtime excludes HairLegacy*. Brow5 independently replays hair sway,
+    // so include its complete numeric kernel family only in this isolated candidate package.
+    from(sourceSets.main.get().output) { include("**/HairLegacyMotion*.class") }
+}
+tasks.register("pluginBrowFittedV5") {
+    dependsOn(browFittedV5WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-brow-fitted-v5")
+    val packageVersion = project.version.toString()
+    inputs.file(browFittedV5WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        browFittedV5WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.62726f772f666974746564.v5"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Fitted brows",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/binding","aliases":["brow/fitted"],"version":5,"name":"Fitted brows","category":"brow",
+               "targets":["mesh"],"requires":["rig.scaffold","body/legacy","face/fitted","eye/fitted"],"exclusiveFamily":"base:brow","contextVersion":2,
+               "reads":["*"],"writes":["mesh","deformer","part","parameter","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val eyeLegacyWorkerJar = registerIsolatedBindingWorker(
     "eyeLegacy", "eye-legacy", "worker-eye-legacy", "io.github.psd2live.algorithms.binding.EyeLegacyWorker",
 )
@@ -3727,6 +3760,41 @@ tasks.register("pluginCheekV4") {
     }
 }
 
+val cheekV5WorkerJar = registerIsolatedBindingWorker(
+    "cheekV5", "cheek-v5", "worker-cheek-v5", "io.github.psd2live.algorithms.binding.CheekV5Worker",
+)
+kotlin.target.compilations.named("cheekV5") {
+    associateWith(kotlin.target.compilations.getByName("skinReplayV1"))
+}
+cheekV5WorkerJar.configure { from(skinReplayV1Sources.output) }
+
+tasks.register("pluginCheekV5") {
+    dependsOn(cheekV5WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-cheek-v5")
+    val packageVersion = project.version.toString()
+    inputs.file(cheekV5WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        cheekV5WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.65787072657373696f6e2e636865656b.v5"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Cheek",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/color","aliases":["expression.cheek"],"version":5,"name":"Cheek","category":"expression",
+               "targets":["mesh"],"contextVersion":2,
+               "requires":["rig.scaffold","body/legacy","face/fitted","eye/fitted","brow/fitted","mouth/fitted","mouth.outline","mouth.vowel","mouth.capture","mouth.jaw","mouth.spring"],
+               "reads":["*"],"writes":["mesh","deformer","parameter","hierarchy"],
+               "parameters":[{"id":"ParamCheek","name":"Cheek","min":0,"max":1,"default":0}],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val gloomV2WorkerJar = registerIsolatedBindingWorker(
     "gloomV2", "gloom-v2", "worker-gloom-v2", "io.github.psd2live.algorithms.binding.GloomWorker",
 )
@@ -3777,6 +3845,41 @@ tasks.register("pluginGloomV4") {
             {"protocol":1,"id":"$id","version":"$packageVersion","name":"Gloom",
              "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
              "algorithms":[{"type":"$id/gloom","aliases":["expression.gloom"],"version":4,"name":"Gloom","category":"expression",
+               "targets":["mesh"],"contextVersion":2,
+               "requires":["rig.scaffold","body/legacy","face/fitted","eye/fitted","brow/fitted","mouth/fitted","mouth.outline","mouth.vowel","mouth.capture","mouth.jaw","mouth.spring","expression.cheek"],
+               "exclusiveFamily":"expression.gloom","reads":["*"],"writes":["mesh","deformer","parameter","hierarchy"],
+               "parameters":[{"id":"ParamGloom","name":"Gloom","min":0,"max":1,"default":0}],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
+val gloomV5WorkerJar = registerIsolatedBindingWorker(
+    "gloomV5", "gloom-v5", "worker-gloom-v5", "io.github.psd2live.algorithms.binding.GloomV5Worker",
+)
+kotlin.target.compilations.named("gloomV5") {
+    associateWith(kotlin.target.compilations.getByName("skinReplayV1"))
+}
+gloomV5WorkerJar.configure { from(skinReplayV1Sources.output) }
+
+tasks.register("pluginGloomV5") {
+    dependsOn(gloomV5WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-gloom-v5")
+    val packageVersion = project.version.toString()
+    inputs.file(gloomV5WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        gloomV5WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.65787072657373696f6e2e676c6f6f6d.v5"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Gloom",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/gloom","aliases":["expression.gloom"],"version":5,"name":"Gloom","category":"expression",
                "targets":["mesh"],"contextVersion":2,
                "requires":["rig.scaffold","body/legacy","face/fitted","eye/fitted","brow/fitted","mouth/fitted","mouth.outline","mouth.vowel","mouth.capture","mouth.jaw","mouth.spring","expression.cheek"],
                "exclusiveFamily":"expression.gloom","reads":["*"],"writes":["mesh","deformer","parameter","hierarchy"],
@@ -4992,6 +5095,36 @@ tasks.register("pluginMouthSpringV8") {
              "algorithms":[{"type":"$id/spring","aliases":["mouth.spring"],"version":8,"name":"Mouth spring","category":"mouth",
                "targets":["mesh"],"requires":["rig.scaffold","mouth/fitted","mouth.jaw"],"contextVersion":2,
                "reads":["mesh","deformer","parameter","hierarchy","physics"],"writes":["mesh","parameter","hierarchy","physics"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
+
+val mouthSpringV10WorkerJar = registerIsolatedBindingWorker(
+    "mouthSpringV10", "mouth-spring-v10", "worker-mouth-spring-v10", "io.github.psd2live.algorithms.binding.MouthSpringV10Worker",
+)
+
+tasks.register("pluginMouthSpringV10") {
+    dependsOn(mouthSpringV10WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-spring-v10")
+    val packageVersion = project.version.toString()
+    inputs.file(mouthSpringV10WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthSpringV10WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682e737072696e67.v10"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Mouth spring",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/spring","aliases":["mouth.spring"],"version":10,"name":"Mouth spring","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold","body/legacy","face/fitted","eye/fitted","brow/fitted","mouth/fitted","mouth.outline","mouth.vowel","mouth.capture","mouth.jaw"],"contextVersion":2,
+               "reads":["*"],"writes":["mesh","parameter","hierarchy","physics"],
                "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
                "configSchema":{"type":"object"},"defaults":{}}]}
         """.trimIndent())

@@ -127,6 +127,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "mouthSpringV7Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthSpringV8Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthSpringV9Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "mouthSpringV10Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "bodyLegacyV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "armSwingElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "armSwingV3Elements"))
@@ -162,9 +163,11 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "cheekV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "skinReplayV1Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "cheekV4Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "cheekV5Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "gloomV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "gloomV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "gloomV4Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "gloomV5Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthTongueElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthTongueV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthTongueV4Elements"))
@@ -180,6 +183,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "browFittedElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browFittedV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browFittedV4Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "browFittedV5Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "depthTurnV2Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browShapeElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browShapeV3Elements"))
@@ -547,6 +551,10 @@ tasks.processResources {
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-cheek-v4")) {
         into("algorithm-plugins/cheek-v4")
     }
+    dependsOn(":algorithms:binding:pluginCheekV5")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-cheek-v5")) {
+        into("algorithm-plugins/cheek-v5")
+    }
     dependsOn(":algorithms:binding:pluginGloomV2")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-gloom-v2")) {
         into("algorithm-plugins/gloom-v2")
@@ -554,6 +562,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginGloomV4")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-gloom-v4")) {
         into("algorithm-plugins/gloom-v4")
+    }
+    dependsOn(":algorithms:binding:pluginGloomV5")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-gloom-v5")) {
+        into("algorithm-plugins/gloom-v5")
     }
     dependsOn(":algorithms:binding:pluginGloomV3")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-gloom-v3")) {
@@ -612,6 +624,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginBrowFittedV4")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-fitted-v4")) {
         into("algorithm-plugins/brow-fitted-v4")
+    }
+    dependsOn(":algorithms:binding:pluginBrowFittedV5")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-fitted-v5")) {
+        into("algorithm-plugins/brow-fitted-v5")
     }
     dependsOn(":algorithms:binding:pluginArmSwingV3")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-arm-swing-v3")) {
@@ -913,6 +929,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginMouthSpringV7")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-spring-v7")) {
         into("algorithm-plugins/mouth-spring-v7")
+    }
+    dependsOn(":algorithms:binding:pluginMouthSpringV10")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-spring-v10")) {
+        into("algorithm-plugins/mouth-spring-v10")
     }
     dependsOn(":algorithms:binding:pluginMouthSpringV9")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-spring-v9")) {

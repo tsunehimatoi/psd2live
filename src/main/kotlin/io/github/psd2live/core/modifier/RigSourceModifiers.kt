@@ -28,6 +28,8 @@ internal class RigModifierSource(
         RigModifierRasterAssets.attach(input, outputs, config, checkpoint)
     val physicsOrder: List<String> get() = config.rigEdits.physicsOrder
     private val stack by lazy { RigModifierStack.fromJson(requireNotNull(config.rigEdits.modifierStack)) }
+    /** Raw persisted providers, including anonymous legacy records; source candidates decide their own eligibility. */
+    internal val appliedSourceCapabilities: List<ModifierCapability> get() = stack.appliedCapabilities.toList()
     private val appliedCapabilityIds: Set<String> by lazy { stack.appliedCapabilities.mapNotNullTo(HashSet()) { it.id } }
     /**
      * Legacy Cheek and Gloom still reconstruct before/after templates. Applied outline assets are render inputs,
