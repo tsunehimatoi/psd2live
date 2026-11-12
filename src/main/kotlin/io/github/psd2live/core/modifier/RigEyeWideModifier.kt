@@ -119,7 +119,7 @@ internal fun RigModifierSource.captureLidHeadSource(
         rigTuning = RigLegacyBindings.tuning(base,
             RigLegacyBindings.tuning(head, body?.let { RigLegacyBindings.tuning(it, RigTuning()) } ?: RigTuning())),
     )
-    val face = RigBuilder.rigContext(analysis, turning, meshCache).faceRig
+    val face = RigBuilder.rigContext(analysis, turning.copy(generateDeformers = false), meshCache).faceRig
     return ModifierAlgorithmContext(JsonObject(captured.values + ("head_turn" to buildJsonObject {
         put("provider", head.id)
         put("shell", JsonArray(RigBuilder.headTurnMeasurements(face, turning).map(::JsonPrimitive)))

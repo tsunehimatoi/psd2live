@@ -53,6 +53,27 @@ class WorkspaceLegacyBindingTest {
         WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices,
             requestedVersions = mapOf("face/fitted" to 1, "eye/fitted" to 2))
 
+    /** Freeze only intentional historical algorithm fixtures after genuine source admission.
+     * The returned model is freshly evaluated from source with 8/1/1, never relabelled output.
+     * Automatic default/fallback tests continue to call WorkspacePresetInitialization directly.
+     */
+    private suspend fun prepareHistoricalSingleEyeTrio(source: WorkspaceDocument, work: WorkspaceRasterWork,
+                                                choices: WorkspaceInitialPreset): Pair<WorkspaceDocument, RigPreviewModel> {
+        val prepared = WorkspacePresetInitialization.prepare(source, work, choices)
+        val stack = RigModifierStack.fromJson(prepared.first.rigEdits.modifierStack!!)
+        val promoted = mapOf("mouth.spring" to 10, "expression.cheek" to 5, "expression.gloom" to 5)
+        if (stack.instances.filter { it.type in promoted }.associate { it.type to it.version } != promoted) return prepared
+        val versions = mapOf("mouth.spring" to 8, "expression.cheek" to 1, "expression.gloom" to 1)
+        val locked = stack.copy(instances = stack.instances.map { owner ->
+            versions[owner.type]?.let { version -> owner.copy(version = version,
+                plugin = assertNotNull(BuiltinModifierPlugins.reference(owner.type, version))) } ?: owner
+        })
+        for ((before, after) in stack.instances.zip(locked.instances))
+            assertEquals(before, after.copy(version = before.version, plugin = before.plugin))
+        val historical = prepared.first.copy(rigEdits = prepared.first.rigEdits.copy(modifierStack = locked.toJson()))
+        return historical to WorkspacePreviewBuilder().build(historical)
+    }
+
     private class Fixture(val document: WorkspaceDocument, val scaffoldVersion: Int = 2) {
         val builder = WorkspacePreviewBuilder()
         val runtime = WorkspaceRuntime<RigPreviewModel>({ builder.build(it) }, rebuildFrom = { doc, previous -> builder.build(doc, previous) })
@@ -984,9 +1005,10 @@ class WorkspaceLegacyBindingTest {
     private val singleEyeOpenMouthMotionVersions = mapOf("mouth.vowel" to 6, "mouth.capture" to 5,
         "mouth.tongue" to 5, "mouth.jaw" to 7, "mouth.cheek-lid" to 9, "mouth.interior-depth" to 3, "mouth.spring" to 8)
 
-    private fun assertSingleEyeOpenMouthDefaults(stack: RigModifierStack, removed: Set<String>): List<RigModifierInstance> {
+    private fun assertSingleEyeOpenMouthDefaults(stack: RigModifierStack, removed: Set<String>,
+                                               springVersion: Int = 8): List<RigModifierInstance> {
         val expected = mapOf("mouth/fitted" to 3, "mouth.outline" to 7) +
-            singleEyeOpenMouthMotionVersions.filterKeys { type -> when (type) {
+            (singleEyeOpenMouthMotionVersions + ("mouth.spring" to springVersion)).filterKeys { type -> when (type) {
                 "mouth.tongue" -> "tongue" !in removed
                 "mouth.interior-depth" -> !removed.containsAll(setOf("teeth-top", "teeth-bottom", "tongue"))
                 else -> true
@@ -1035,13 +1057,15 @@ class WorkspaceLegacyBindingTest {
             "mouth/fitted" to 3, "mouth.outline" to 7)
         assertEquals(upgraded, stack.instances.filter { it.type in upgraded }.associate { it.type to it.version })
         // Unrelated modules keep their existing defaults (some already use independent versions).
-        // Mouth, eye and all four brow add-ons move together; moods retain their defaults.
-        assertSingleEyeOpenMouthDefaults(stack, removed)
+        // The fresh source trio moves atomically only without unsupported attachment predecessors.
+        assertSingleEyeOpenMouthDefaults(stack, removed, springVersion = if (outfits) 8 else 10)
+        assertEquals(if (outfits) 1 else 5, stack.instances.single { it.type == "expression.cheek" }.version)
+        assertEquals(if (outfits) 1 else 5, stack.instances.single { it.type == "expression.gloom" }.version)
 
         // Lock all migrated mouth, eye and brow add-ons as well as fitted brow1, so no new downstream algorithm is
         // accidentally paired with incompatible historical mouth providers in the reference.
         val historical = mapOf("face/fitted" to 1, "eye/fitted" to 2, "brow/fitted" to 1,
-            "mouth/fitted" to 1, "mouth.outline" to 1) +
+            "mouth/fitted" to 1, "mouth.outline" to 1, "expression.cheek" to 1, "expression.gloom" to 1) +
             (singleEyeOpenMouthMotionVersions + singleEyeOpenMouthEyeVersions + singleEyeOpenMouthBrowVersions).mapValues { 1 }
         val locked = stack.copy(instances = stack.instances.map { instance ->
             val version = historical[instance.type] ?: return@map instance
@@ -1092,7 +1116,7 @@ class WorkspaceLegacyBindingTest {
         val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (prepared, _) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        val (prepared, _) = prepareHistoricalSingleEyeTrio(source, WorkspaceRasterWork.Direct, choices)
         assertSingleEyeOpenMouthDefaults(RigModifierStack.fromJson(prepared.rigEdits.modifierStack!!), removed)
         // Prepare normally, then lock cheek and brow add-ons to v1 on both sides. Their new
         // versions require brow4 and cannot be part of an isolated brow1-versus-brow4 comparison.
@@ -1170,7 +1194,7 @@ class WorkspaceLegacyBindingTest {
         val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
-        val (prepared, _) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        val (prepared, _) = prepareHistoricalSingleEyeTrio(source, WorkspaceRasterWork.Direct, choices)
         assertSingleEyeOpenMouthDefaults(RigModifierStack.fromJson(prepared.rigEdits.modifierStack!!), emptySet())
         // Keep cheek1 and brow add-ons1 on both sides of this fitted-brow-only lifecycle regression.
         val initialized = lockSingleEyeOpenMouthCheekForBrow(prepared)
@@ -4933,7 +4957,7 @@ class WorkspaceLegacyBindingTest {
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
         val (initialized, model) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
-        assertSingleEyeOpenMouthDefaults(stack, emptySet())
+        assertSingleEyeOpenMouthDefaults(stack, emptySet(), springVersion = 10)
         val cheek = stack.instances.single { it.type == "mouth.cheek-lid" }
         val index = stack.index(cheek.id)
         val evaluation = assertNotNull(model.modifierEvaluation)
@@ -5320,7 +5344,7 @@ class WorkspaceLegacyBindingTest {
         val versions = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4,
             "brow.shape" to 1, "brow.lid-coupling" to 1, "brow.blink" to 1, "brow.spring" to 1,
             "mouth.cheek-lid" to 9) + if (directEyes) eyeVersions else eyeVersions.mapValues { 1 }
-        val (planned, _) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        val (planned, _) = prepareHistoricalSingleEyeTrio(source, WorkspaceRasterWork.Direct, choices)
         val preparedStack = RigModifierStack.fromJson(planned.rigEdits.modifierStack!!)
         assertSingleEyeOpenMouthDefaults(preparedStack, removed)
         // Lock eye history only after preparing the promoted mouth chain. A requestedVersions map
@@ -11352,7 +11376,7 @@ class WorkspaceLegacyBindingTest {
         val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
         val (prepared, preset) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
         val defaults = RigModifierStack.fromJson(prepared.rigEdits.modifierStack!!)
-        assertSingleEyeOpenMouthDefaults(defaults, removed)
+        assertSingleEyeOpenMouthDefaults(defaults, removed, springVersion = 10)
         // Untouched defaults and the original combined eye/brow-knob matrix use one harness.
         // The full worker runs also retain the paired shape/lid-strength witness.
         val tuned = installedWorkers || browSourceKnobs
@@ -11375,7 +11399,7 @@ class WorkspaceLegacyBindingTest {
         })
         val initialized = prepared.copy(rigEdits = prepared.rigEdits.copy(modifierStack = stack.toJson()))
         val actual = if (!tuned) preset else WorkspacePreviewBuilder().build(initialized)
-        val selected = assertSingleEyeOpenMouthDefaults(stack, removed)
+        val selected = assertSingleEyeOpenMouthDefaults(stack, removed, springVersion = 10)
         val upstream = mapOf("face/fitted" to 3, "eye/fitted" to 5, "brow/fitted" to 4,
             "mouth/fitted" to 3, "mouth.outline" to 7)
         assertEquals(upstream, stack.instances.filter { it.type in upstream }.associate { it.type to it.version })
@@ -11388,16 +11412,18 @@ class WorkspaceLegacyBindingTest {
             }.message)
         }
 
-        // Untouched/default-worker profiles lock all 18 add-ons to v1. The tuned combined
+        // Untouched/default-worker profiles lock all 18 add-ons and both dependent skin
+        // consumers to v1. The tuned combined
         // profile keeps its original two-lock reference, with direct eye/shape/lid providers.
         // Fitted mouth, outline, head/brow, fade3 and unrelated defaults stay unchanged.
         val versions = singleEyeOpenMouthMotionVersions + singleEyeOpenMouthEyeVersions + singleEyeOpenMouthBrowVersions
-        val historical = if (browSourceKnobs) setOf("brow.blink", "brow.spring") else versions.keys
+        val historical = if (browSourceKnobs) setOf("brow.blink", "brow.spring")
+            else versions.keys + setOf("expression.cheek", "expression.gloom")
         val locked = stack.copy(instances = stack.instances.map { instance ->
             if (instance.type !in historical) instance else instance.copy(version = 1,
                 plugin = assertNotNull(BuiltinModifierPlugins.reference(instance.type, 1)))
         })
-        assertEquals(selected.filter { it.type in historical }.map { it.id }.toSet(),
+        assertEquals(stack.instances.filter { it.type in historical }.map { it.id }.toSet(),
             stack.instances.zip(locked.instances).filter { (before, after) -> before != after }.map { it.first.id }.toSet())
         for ((before, after) in stack.instances.zip(locked.instances)) {
             assertEquals(before, after.copy(version = before.version, plugin = before.plugin))
@@ -11566,7 +11592,7 @@ class WorkspaceLegacyBindingTest {
             "mouth.jaw" to RigMouthJawModifier.modernDefinition(captured),
             "mouth.cheek-lid" to RigMouthCheekLidModifier.openShellDefinition(captured),
             "mouth.interior-depth" to RigMouthDepthModifier.fittedDefinition(captured),
-            "mouth.spring" to RigMouthSpringModifier.modernDefinition(captured),
+            "mouth.spring" to RigMouthSpringV10Modifier.definition(captured),
             "brow.shape" to RigBrowShapeModifier.openShellDefinition(captured),
             "brow.lid-coupling" to RigBrowLidModifier.singleEyeDefinition(captured),
             "brow.blink" to RigBrowBlinkModifier.singleEyeDefinition(captured),
@@ -11645,7 +11671,7 @@ class WorkspaceLegacyBindingTest {
         val choices = WorkspaceInitialPreset(clothing = false)
         val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
-        val (initialized, _) = WorkspacePresetInitialization.prepare(
+        val (initialized, _) = prepareHistoricalSingleEyeTrio(
             art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits), WorkspaceRasterWork.Direct, choices)
         val defaults = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         assertSingleEyeOpenMouthDefaults(defaults, removed)
@@ -11903,7 +11929,7 @@ class WorkspaceLegacyBindingTest {
         val choices = WorkspaceInitialPreset(clothing = false)
         val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
-        val (initialized, _) = WorkspacePresetInitialization.prepare(
+        val (initialized, _) = prepareHistoricalSingleEyeTrio(
             art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits), WorkspaceRasterWork.Direct, choices)
         val defaults = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         // All source providers and knobs are explicit. Only blink1 becomes blink6 in the candidate.
@@ -12274,7 +12300,7 @@ class WorkspaceLegacyBindingTest {
         val choices = WorkspaceInitialPreset(clothing = false)
         val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
-        val (initialized, _) = WorkspacePresetInitialization.prepare(
+        val (initialized, _) = prepareHistoricalSingleEyeTrio(
             art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits), WorkspaceRasterWork.Direct, choices)
         val defaults = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         assertSingleEyeOpenMouthDefaults(defaults, removed)
@@ -12840,12 +12866,12 @@ class WorkspaceLegacyBindingTest {
         assertEquals(reason, failure.message)
     }
 
-    private fun prepareSingleEyeGloom(art: WorkspaceDocument): Pair<WorkspaceDocument, RigPreviewModel> {
+    private suspend fun prepareSingleEyeGloom(art: WorkspaceDocument): Pair<WorkspaceDocument, RigPreviewModel> {
         val choices = WorkspaceInitialPreset(clothing = false)
         // Preserve authored source edits, particularly partition records, in fallback fixtures.
         val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
             .copy(rigEdits = art.rigEdits.copy(modifierStack = RigModifierStack().toJson()))
-        return WorkspacePresetInitialization.prepare(
+        return prepareHistoricalSingleEyeTrio(
             art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits), WorkspaceRasterWork.Direct, choices)
     }
 
@@ -13179,7 +13205,7 @@ class WorkspaceLegacyBindingTest {
         val choices = WorkspaceInitialPreset(clothing = false)
         val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
-        val (initialized, _) = WorkspacePresetInitialization.prepare(art.copy(
+        val (initialized, _) = prepareHistoricalSingleEyeTrio(art.copy(
             settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits), WorkspaceRasterWork.Direct, choices)
         val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         assertSingleEyeOpenMouthDefaults(stack, emptySet())
@@ -13333,7 +13359,7 @@ class WorkspaceLegacyBindingTest {
                 }
             }
         }
-        val (initialized, reference) = WorkspacePresetInitialization.prepare(art.copy(source = stippled,
+        val (initialized, reference) = prepareHistoricalSingleEyeTrio(art.copy(source = stippled,
             settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits), WorkspaceRasterWork.Direct, choices)
         val historical = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         assertSingleEyeOpenMouthDefaults(historical, emptySet())
@@ -13470,7 +13496,7 @@ class WorkspaceLegacyBindingTest {
         val choices = WorkspaceInitialPreset(clothing = false)
         val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
-        val (initialized, _) = WorkspacePresetInitialization.prepare(
+        val (initialized, _) = prepareHistoricalSingleEyeTrio(
             art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits), WorkspaceRasterWork.Direct, choices)
         val defaults = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         assertSingleEyeOpenMouthDefaults(defaults, removed)
@@ -13916,7 +13942,7 @@ class WorkspaceLegacyBindingTest {
         val choices = WorkspaceInitialPreset(clothing = false)
         val config = choices.configure(WorkspacePresetBaseline.configure(art.config(), "modern"))
             .copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
-        val (initialized, model) = WorkspacePresetInitialization.prepare(
+        val (initialized, model) = prepareHistoricalSingleEyeTrio(
             art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits), WorkspaceRasterWork.Direct, choices)
         val defaults = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
         assertSingleEyeOpenMouthDefaults(defaults, emptySet())
@@ -14013,7 +14039,7 @@ class WorkspaceLegacyBindingTest {
                 }
             }
         }, scale)
-        val (prepared, _) = WorkspacePresetInitialization.prepare(
+        val (prepared, _) = prepareHistoricalSingleEyeTrio(
             art.copy(source = source, settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits),
             WorkspaceRasterWork.Direct, choices)
         // Fresh-source selection intentionally stays conservative when mesh overrides exist.

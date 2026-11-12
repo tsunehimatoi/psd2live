@@ -23,8 +23,16 @@ internal object RigGloomV5Modifier {
             providers = { instance -> source?.providers(instance) ?: RigLegacyBindings.providers(instance) },
             parameters = { emptyList() }, resolveParameter = { _, _, _ -> null },
             changeWrites = GloomV5Algorithm.writes, upstreamInputs = true,
-            authorContext = { requireNotNull(source).capture(it) },
+            authorContext = { requireNotNull(source).capture(it, sourceMeasurements = true) },
         )
+
+    /** Explicit source-measurement entry point, identical to the registered capture. */
+    internal fun sourceMeasurementDefinition(source: RigModifierSource): RigModifierDefinition =
+        definition(source)
+
+    /** Native reference for exact capture comparisons, never a runtime fallback. */
+    internal fun nativeCaptureDefinition(source: RigModifierSource): RigModifierDefinition =
+        definition(source).copy(authorContext = { source.capture(it, sourceMeasurements = false) })
 
     /** Missing, disabled, ambiguous and incompatible required providers suspend before capture. */
     private fun RigModifierSource.providers(instance: RigModifierInstance): Map<String, String> {
@@ -58,7 +66,7 @@ internal object RigGloomV5Modifier {
         }) { "Gloom v5 requires identifiable applied source providers" }
     }
 
-    private fun RigModifierSource.capture(instance: RigModifierInstance): ModifierAlgorithmContext {
+    private fun RigModifierSource.capture(instance: RigModifierInstance, sourceMeasurements: Boolean): ModifierAlgorithmContext {
         requireIdentifiableAppliedProviders(instance)
         val scaffold = provider(instance)
         require(scaffold.version == 2 && scaffold.targets.toSet() == instance.targets.toSet()) {
@@ -82,8 +90,9 @@ internal object RigGloomV5Modifier {
         GloomV5Algorithm.validateProviders(capabilities, instance)
         val sourceAnalysis = measurementAnalysis(prefix)
         fun measurements(framing: List<RigModifierInstance>) =
-            RigFittedMouthModuleSource.context(this, scaffold, framing, null).let { (native, context) ->
-                native to if (sourceAnalysis === analysis) context else RigBuilder.rigContext(sourceAnalysis, native, meshCache)
+            RigFittedMouthModuleSource.nativeConfig(this, scaffold, framing, null).let { native ->
+                native to if (sourceMeasurements) RigBuilder.sourceSkinMeasurementContext(sourceAnalysis, native, meshCache)
+                    else RigBuilder.rigContext(sourceAnalysis, native, meshCache)
             }
         val (native, measured) = measurements(prefix)
         require(measured.analysis.layers.none { it.semantic.tag == SemanticTag.MOUTH_CLOSE && it.opaquePixels > 0 }) {

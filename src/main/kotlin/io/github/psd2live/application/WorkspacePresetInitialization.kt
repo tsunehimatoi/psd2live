@@ -113,6 +113,8 @@ internal object WorkspacePresetInitialization {
         val config = document.config()
         var stack = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack))
         require(stack.instances.isEmpty()) { "Initialize presets only into an empty stack" }
+        // A cleared preset still has retired identities. It is not a new source import.
+        val pristineSourceStack = stack == RigModifierStack()
         val pipeline = PSD2LivePipeline().apply {
             deferRuntimeBundles = true
             rawSourceRotations = restoreSourceRotations && cliBindings != null && freshSource(config)
@@ -354,6 +356,8 @@ internal object WorkspacePresetInitialization {
         if (singleEyeOpenMouth && fittedSources[RigModules.MOUTH_CHEEK_LID.id]?.first == MouthCheekLidV9Algorithm.VERSION) {
             stack = sourceSingleEyeCheekLidDefault(model, stack)
         }
+        stack = sourceSingleEyeSkinDefault(model, config, stack, requestedVersions, cliBindings, pristineSourceStack,
+            singleEyeOpenMouth && fittedSources[RigModules.MOUTH_CHEEK_LID.id]?.first == MouthCheekLidV9Algorithm.VERSION)
         if (fittedSources.isNotEmpty() && !singleEyeOpenMouth) {
             val fittedBody = mapOf(RigSourceModifiers.SCAFFOLD to 2, LegacyBodyV2Algorithm.TYPE to LegacyBodyV2Algorithm.VERSION,
                 RigLegacyBindings.FITTED_FACE to FittedFaceV3Algorithm.VERSION)
@@ -489,6 +493,13 @@ internal object WorkspacePresetInitialization {
             if (it.id == coupling.id) it.copy(version = 1, plugin = legacy) else it
         })
     }
+
+    /** Fresh initialization only. Published versions and existing instances keep their locked identities. */
+    internal fun sourceSingleEyeSkinDefault(model: RigPreviewModel, config: PipelineConfig, stack: RigModifierStack,
+                                           requestedVersions: Map<String, Int>, cliBindings: CliPresetBindings?,
+                                           pristineSourceStack: Boolean, automaticSingleEyeOpenMouth: Boolean): RigModifierStack =
+        if (!freshSource(config)) stack else WorkspaceSourceSkinDefaults.select(model, config, stack,
+            requestedVersions, cliBindings, pristineSourceStack, automaticSingleEyeOpenMouth)
 
     /** Only the verified fresh shared-frame cohort advances; persisted and explicit locks never pass here. */
     internal fun sourceNeckDefault(model: RigPreviewModel, config: PipelineConfig, stack: RigModifierStack,

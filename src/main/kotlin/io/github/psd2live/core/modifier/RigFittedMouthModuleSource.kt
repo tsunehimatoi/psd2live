@@ -44,6 +44,9 @@ internal object RigFittedMouthModuleSource {
 
     fun measure(source: RigModifierSource, native: PipelineConfig, context: RigBuilder.RigContext,
                 preceding: List<RigModifierInstance>, layers: Map<String, ClassifiedLayer>): ModifierAlgorithmContext {
+        if (context.sourceMeasurementsOnly) require(context.fittedEyes(native)?.rigs?.size == 1 && context.faceTurn(native) == null) {
+            "Source skin measurements require the single-eye shell without generated face ancestry"
+        }
         val frames = layers.mapValues { (_, layer) -> context.parentAndFrame(layer, native) }
         val parents = frames.mapValues { it.value.first?.raw }
         val headProvider = preceding.lastOrNull { it.type in setOf("face.depth-turn", RigLegacyBindings.FITTED_FACE) }
