@@ -407,21 +407,38 @@ object RigBuilder {
 		fun fittedEyes(config: PipelineConfig): io.github.psd2live.core.fit.FittedEyes? {
 			if (config.recipe.base("eye") !== io.github.psd2live.core.recipe.RigModules.EYE_FITTED) return null
 			return fittedEyes.getOrPut(Identity(config)) {
-				val values = io.github.psd2live.core.recipe.RigModules.EYE_FITTED.knobs.map { config.recipe.baseValue("eye", it.id) }
-				val options = eyeOptions(config)
 				val space = analysis.layers.firstOrNull { it.semantic.tag == SemanticTag.EYEWHITE && it.opaquePixels > 0 }?.let { headSpaceFor(it, config) }
-				val toRig = { x: Float, y: Float -> space?.toAligned(x, y) ?: (x to y) }
-				val result = sourceEyes(space)
-				val fits = result.fits.mapValues { (side, drawn) -> drawn.moved(rigMoves(config, if (side == Side.LEFT) "eye.L" else "eye.R", toRig)) }
-				val artwork = sourceFit("eye artwork", listOf(analysis.layers, fits, config.recipe.eyeParts, space)) {
-                    io.github.psd2live.core.fit.EyeArtworkFitting.fit(analysis.layers, fits, config.recipe.eyeParts, toRig)
-                }
-				io.github.psd2live.core.fit.FittedEyes(result, fits.mapValues { (side, drawn) ->
-					val fit = drawn.copy(artwork = artwork[side])
-					io.github.psd2live.algorithms.binding.EyeRig(fit, values[0] / 100f, values[1] / 100f, values[2] / 100f,
-						smileArc = options.smileArc, smilePush = options.smilePush, wideLift = options.wideLift)
-				}, options)
+				fitEyes(config, space)
 			}
+		}
+
+		/** Source lid fade needs the same numeric fit, but no generated parent hierarchy or cached native fit. */
+		internal fun fittedEyesForSourceLidFade(config: PipelineConfig): io.github.psd2live.core.fit.FittedEyes? {
+			check(!deformersEnabled && deformers.isEmpty() && !sourceMeasurementsOnly && !skeletonEnabled)
+			require(config.parentOverrides.isEmpty() && config.rigEdits.skeleton?.enabled != true) {
+				"Source lid fade measurements require inferred parents without a skeleton"
+			}
+			if (config.recipe.base("eye") !== io.github.psd2live.core.recipe.RigModules.EYE_FITTED) return null
+			val firstWhite = analysis.layers.firstOrNull { it.semantic.tag == SemanticTag.EYEWHITE && it.opaquePixels > 0 }
+			val space = headSpace.takeIf { config.generateDeformers && !config.meshOnly && firstWhite != null &&
+				inferredGroup(firstWhite, analysis.anchors) == LayerGroup.HEAD }
+			return fitEyes(config, space)
+		}
+
+		private fun fitEyes(config: PipelineConfig, space: HeadCoordinateSpace?): io.github.psd2live.core.fit.FittedEyes {
+			val values = io.github.psd2live.core.recipe.RigModules.EYE_FITTED.knobs.map { config.recipe.baseValue("eye", it.id) }
+			val options = eyeOptions(config)
+			val toRig = { x: Float, y: Float -> space?.toAligned(x, y) ?: (x to y) }
+			val result = sourceEyes(space)
+			val fits = result.fits.mapValues { (side, drawn) -> drawn.moved(rigMoves(config, if (side == Side.LEFT) "eye.L" else "eye.R", toRig)) }
+			val artwork = sourceFit("eye artwork", listOf(analysis.layers, fits, config.recipe.eyeParts, space)) {
+				io.github.psd2live.core.fit.EyeArtworkFitting.fit(analysis.layers, fits, config.recipe.eyeParts, toRig)
+			}
+			return io.github.psd2live.core.fit.FittedEyes(result, fits.mapValues { (side, drawn) ->
+				val fit = drawn.copy(artwork = artwork[side])
+				io.github.psd2live.algorithms.binding.EyeRig(fit, values[0] / 100f, values[1] / 100f, values[2] / 100f,
+					smileArc = options.smileArc, smilePush = options.smilePush, wideLift = options.wideLift)
+			}, options)
 		}
 
 		/** [feature]'s handle moves in [config], carried from canvas pixels into the rig's space by [toRig]. */
@@ -1459,8 +1476,8 @@ object RigBuilder {
     /** Capture the source eye fit and the opacity beneath the generated fade. */
     internal fun lidFadeSourceInputs(analysis: PipelineAnalysis, config: PipelineConfig, cache: PreviewMeshCache,
                                      targetLayers: Map<String, String>): io.github.psd2live.core.modifier.ModifierAlgorithmContext {
-        val context = rigContext(analysis, config, cache)
-        val eyes = context.fittedEyes(config)?.rigs.orEmpty()
+        val context = rigContext(analysis, config.copy(generateDeformers = false), cache)
+        val eyes = context.fittedEyesForSourceLidFade(config)?.rigs.orEmpty()
         val layers = context.analysis.layers.associateBy { it.source.id.raw }
         val targets = targetLayers.mapNotNull { (id, layerId) ->
             val layer = layers[layerId] ?: return@mapNotNull null

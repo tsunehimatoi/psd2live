@@ -103,7 +103,9 @@ jobs:
             arch: x86_64
             # Cold Intel builds assemble the isolated workers before the full JVM suite.
             # Leave time for that suite, DMG packaging, and the mounted-package smoke test.
-            timeout_minutes: 90
+            # A cold run spent 27 minutes compiling, then hit 90 minutes during tests.
+            # Keep the complete suite and packaging checks; allow their measured cold-build cost.
+            timeout_minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/package-macos

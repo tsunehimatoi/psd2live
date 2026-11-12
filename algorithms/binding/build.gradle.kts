@@ -2351,6 +2351,145 @@ tasks.register("pluginBrowSpringV7") {
     }
 }
 
+// Frozen source ancestry is explicitly opt-in and absent from main/historical worker closures.
+val browSourceAncestryV1Sources = sourceSets.create("browSourceAncestryV1")
+kotlin.target.compilations.named("browSourceAncestryV1") {
+    associateWith(kotlin.target.compilations.getByName("main"))
+    associateWith(kotlin.target.compilations.getByName("browShapeV6"))
+    associateWith(kotlin.target.compilations.getByName("browShape"))
+}
+val browSourceAncestryV1ClassesJar = tasks.register<Jar>("browSourceAncestryV1ClassesJar") {
+    archiveClassifier.set("brow-source-ancestry-v1")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    from(browSourceAncestryV1Sources.output)
+}
+val browSourceAncestryV1Elements = configurations.create("browSourceAncestryV1Elements") {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+}
+artifacts.add(browSourceAncestryV1Elements.name, browSourceAncestryV1ClassesJar)
+
+val browShapeV7WorkerJar = registerIsolatedBindingWorker(
+    "browShapeV7", "brow-shape-v7", "worker-brow-shape-v7", "io.github.psd2live.algorithms.binding.BrowShapeV7Worker",
+)
+
+kotlin.target.compilations.named("browShapeV7") {
+    associateWith(kotlin.target.compilations.getByName("browShape"))
+    associateWith(kotlin.target.compilations.getByName("browSourceAncestryV1"))
+}
+browShapeV7WorkerJar.configure {
+    from(browSourceAncestryV1Sources.output)
+    from(sourceSets["browShapeV6"].output) { include("**/BrowShapeCarrierScope*.class") }
+    from(sourceSets["browShape"].output) { include("**/BrowShapeInputs*.class") }
+}
+
+tasks.register("pluginBrowShapeV7") {
+    dependsOn(browShapeV7WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-brow-shape-v7")
+    val packageVersion = project.version.toString()
+    inputs.file(browShapeV7WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        browShapeV7WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.62726f772e7368617065.v7"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Brow shapes",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/shape","aliases":["brow.shape"],"version":7,"name":"Brow shapes","category":"brow",
+               "targets":["mesh"],"requires":["rig.scaffold","body/legacy","face/fitted","eye/fitted","brow/fitted"],"contextVersion":2,
+               "reads":["mesh","deformer","part","parameter","hierarchy","canvas","textures","authoring"],"writes":["mesh","deformer","parameter","hierarchy"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
+val browBlinkV7WorkerJar = registerIsolatedBindingWorker(
+    "browBlinkV7", "brow-blink-v7", "worker-brow-blink-v7", "io.github.psd2live.algorithms.binding.BrowBlinkV7Worker",
+)
+kotlin.target.compilations.named("browBlinkV7") {
+    associateWith(kotlin.target.compilations.getByName("browShape"))
+    associateWith(kotlin.target.compilations.getByName("browSourceAncestryV1"))
+    associateWith(kotlin.target.compilations.getByName("browBlinkV6"))
+    associateWith(kotlin.target.compilations.getByName("browShapeV6"))
+}
+browBlinkV7WorkerJar.configure {
+    from(browSourceAncestryV1Sources.output)
+    from(sourceSets["browBlinkV6"].output) { include("**/BrowBlinkV6Witnesses*.class") }
+    from(sourceSets["browShape"].output) { include("**/BrowShapeInputs*.class") }
+    from(sourceSets["browShapeV6"].output) { include("**/BrowShapeCarrierScope*.class") }
+}
+tasks.register("pluginBrowBlinkV7") {
+    dependsOn(browBlinkV7WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-brow-blink-v7")
+    val packageVersion = project.version.toString()
+    inputs.file(browBlinkV7WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        browBlinkV7WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.62726f772e626c696e6b.v7"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Brow blink",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/blink","aliases":["brow.blink"],"version":7,"name":"Brow blink","category":"brow",
+               "targets":["mesh"],"requires":["rig.scaffold","body/legacy","face/fitted","eye/fitted","brow/fitted","brow.shape","brow.lid-coupling"],"contextVersion":2,
+               "reads":["mesh","deformer","part","parameter","canvas","textures","authoring"],"writes":["mesh","deformer"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
+
+val browSpringV8WorkerJar = registerIsolatedBindingWorker(
+    "browSpringV8", "brow-spring-v8", "worker-brow-spring-v8", "io.github.psd2live.algorithms.binding.BrowSpringV8Worker",
+)
+
+kotlin.target.compilations.named("browSpringV8") {
+    associateWith(kotlin.target.compilations.getByName("browSourceAncestryV1"))
+    associateWith(kotlin.target.compilations.getByName("browSpring"))
+    associateWith(kotlin.target.compilations.getByName("browShape"))
+}
+browSpringV8WorkerJar.configure {
+    from(browSourceAncestryV1Sources.output) { exclude("**/BrowSourceTransitionV1*.class") }
+    from(sourceSets["browSpring"].output) { include("**/BrowSpringPhysics*.class") }
+    from(sourceSets["browShape"].output) { include("**/BrowShapeInputs*.class") }
+}
+
+tasks.register("pluginBrowSpringV8") {
+    dependsOn(browSpringV8WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-brow-spring-v8")
+    val packageVersion = project.version.toString()
+    inputs.file(browSpringV8WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        browSpringV8WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.62726f772e737072696e67.v8"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Brow spring",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/spring","aliases":["brow.spring"],"version":8,"name":"Brow spring","category":"brow",
+               "targets":["mesh"],"requires":["rig.scaffold","body/legacy","face/fitted","eye/fitted","brow/fitted","brow.shape","brow.lid-coupling","brow.blink"],"contextVersion":2,
+               "reads":["canvas","mesh","deformer","parameter","hierarchy","physics"],"writes":["mesh","parameter","hierarchy","physics"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
 val eyeAftershockWorkerJar = registerIsolatedBindingWorker(
     "eyeAftershock", "eye-aftershock", "worker-eye-aftershock", "io.github.psd2live.algorithms.binding.EyeAftershockWorker",
 )
@@ -2714,6 +2853,44 @@ tasks.register("pluginBrowLidV8") {
              "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
              "algorithms":[{"type":"$id/coupling","aliases":["brow.lid-coupling"],"version":8,"name":"Brow and lid together","category":"brow",
                "targets":["mesh"],"requires":["rig.scaffold","face/fitted","brow/fitted","eye/fitted","brow.shape"],"contextVersion":2,
+               "reads":["mesh","parameter","canvas","deformer"],"writes":["mesh","deformer"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
+val browLidV9WorkerJar = registerIsolatedBindingWorker(
+    "browLidV9", "brow-lid-v9", "worker-brow-lid-v9", "io.github.psd2live.algorithms.binding.BrowLidV9Worker",
+)
+
+kotlin.target.compilations.named("browLidV9") {
+    associateWith(kotlin.target.compilations.getByName("eyeWide"))
+    associateWith(kotlin.target.compilations.getByName("browSourceAncestryV1"))
+}
+browLidV9WorkerJar.configure {
+    from(browSourceAncestryV1Sources.output) { include("**/BrowSourceProvidersV1*.class") }
+    from(sourceSets["eyeWide"].output) { include("**/EyeWideInputs*.class") }
+}
+
+tasks.register("pluginBrowLidV9") {
+    dependsOn(browLidV9WorkerJar)
+    val output = layout.buildDirectory.dir("plugin-brow-lid-v9")
+    val packageVersion = project.version.toString()
+    inputs.file(browLidV9WorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", packageVersion)
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        browLidV9WorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.62726f772e6c69642d636f75706c696e67.v9"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"$packageVersion","name":"Brow and lid together",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/coupling","aliases":["brow.lid-coupling"],"version":9,"name":"Brow and lid together","category":"brow",
+               "targets":["mesh"],"requires":["rig.scaffold","body/legacy","face/fitted","eye/fitted","brow/fitted","brow.shape"],"contextVersion":2,
                "reads":["mesh","parameter","canvas","deformer"],"writes":["mesh","deformer"],
                "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
                "configSchema":{"type":"object"},"defaults":{}}]}

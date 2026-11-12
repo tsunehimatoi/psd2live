@@ -179,7 +179,8 @@ internal object RigMouthCheekLidModifier {
             val capture = requireNotNull(source)
             val (measurements, carriers) = inputs(capture, instance)
             val browCover = if (capture.activeBefore(instance).any { it.type == "brow.lid-coupling" }) {
-                RigBuilder.rigContext(capture.analysis, capture.sourceConfig(), capture.meshCache, neutralScaffold = true).browCover
+                RigBuilder.rigContext(capture.analysis, capture.sourceConfig().copy(generateDeformers = false),
+                    capture.meshCache, neutralScaffold = true).browCover
             } else 0f
             MouthCheekLidV3Algorithm.context(measurements, carriers, browCover)
         },

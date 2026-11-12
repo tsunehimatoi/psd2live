@@ -119,6 +119,8 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "browSpringV5Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browSpringV6Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browSpringV7Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "browSourceAncestryV1Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "browSpringV8Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthSpringElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthSpringV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "mouthSpringV4Elements"))
@@ -190,11 +192,13 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "browShapeV4Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browShapeV5Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browShapeV6Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "browShapeV7Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browBlinkElements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browBlinkV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browBlinkV4Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browBlinkV5Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browBlinkV6Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "browBlinkV7Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "neckV3Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "neckV4Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLidElements"))
@@ -203,6 +207,7 @@ dependencies {
 	implementation(project(path = ":algorithms:binding", configuration = "browLidV5Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLidV6Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLidV8Elements"))
+	implementation(project(path = ":algorithms:binding", configuration = "browLidV9Elements"))
 	implementation(project(path = ":algorithms:binding", configuration = "browLidV7Elements"))
 	implementation(platform("io.ktor:ktor-bom:3.5.1"))
 	// Engine ported from Umamo (format, runtime, interop, render, edit); it brings its own libraries.
@@ -661,6 +666,10 @@ tasks.processResources {
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-blink-v6")) {
         into("algorithm-plugins/brow-blink-v6")
     }
+    dependsOn(":algorithms:binding:pluginBrowBlinkV7")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-blink-v7")) {
+        into("algorithm-plugins/brow-blink-v7")
+    }
     dependsOn(":algorithms:binding:pluginBrowLidV3")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-lid-v3")) {
         into("algorithm-plugins/brow-lid-v3")
@@ -681,6 +690,10 @@ tasks.processResources {
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-lid-v8")) {
         into("algorithm-plugins/brow-lid-v8")
     }
+    dependsOn(":algorithms:binding:pluginBrowLidV9")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-lid-v9")) {
+        into("algorithm-plugins/brow-lid-v9")
+    }
     dependsOn(":algorithms:binding:pluginBrowLidV7")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-lid-v7")) {
         into("algorithm-plugins/brow-lid-v7")
@@ -700,6 +713,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginBrowShapeV6")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-shape-v6")) {
         into("algorithm-plugins/brow-shape-v6")
+    }
+    dependsOn(":algorithms:binding:pluginBrowShapeV7")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-shape-v7")) {
+        into("algorithm-plugins/brow-shape-v7")
     }
     dependsOn(":algorithms:binding:pluginBrowShapeV5")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-shape-v5")) {
@@ -904,6 +921,10 @@ tasks.processResources {
     dependsOn(":algorithms:binding:pluginBrowSpringV7")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-spring-v7")) {
         into("algorithm-plugins/brow-spring-v7")
+    }
+    dependsOn(":algorithms:binding:pluginBrowSpringV8")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-brow-spring-v8")) {
+        into("algorithm-plugins/brow-spring-v8")
     }
     dependsOn(":algorithms:binding:pluginMouthSpring")
     from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-spring")) {

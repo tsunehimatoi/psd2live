@@ -87,6 +87,12 @@ internal class RigModifierSource(
         return RigBuilder.build(prepared, packed, native, meshCache)
     }
     val skeletonEnabled: Boolean get() = config.rigEdits.skeleton?.enabled == true
+    private val hasCopiedSourceMeshes = copiedMeshes.isNotEmpty()
+    /** Source-only opt-ins must check the author configuration before sourceConfig removes edited structure. */
+    internal val hasCustomSourceStructure: Boolean get() = config.parentOverrides.isNotEmpty() ||
+        config.rigEdits.warpEdits.isNotEmpty() || config.rigEdits.importedCmo3 != null ||
+        config.rigEdits.splitBaselineLayerIds.isNotEmpty() || config.rigEdits.calibrationLayerIds.isNotEmpty() ||
+        hasCopiedSourceMeshes || PrimitiveResolution.of(config.rigEdits).active
     private fun generationConfig(strength: Float, tuning: RigTuning, headStrength: Float, recipe: RigRecipe,
                                  outline: RigModifierInstance?, featureDisplacement: Boolean,
                                  frontHairSway: Boolean, backHairSway: Boolean) = sourceConfig().copy(
