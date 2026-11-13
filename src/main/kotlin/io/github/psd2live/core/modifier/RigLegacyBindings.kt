@@ -140,7 +140,11 @@ internal object RigLegacyBindings {
 
     fun definition(spec: Spec, source: RigModifierSource?): RigModifierDefinition =
         RigModifierDefinition(spec.type, spec.version,
-        requires = spec.requires, provides = if (spec.type == FITTED_FACE) setOf("face/legacy") else emptySet(), exclusiveFamily = if (spec.isBase) "base:${spec.area}" else if (spec.chainKinds.isNotEmpty()) "chain:${spec.type}" else if (spec.expressionToggles || spec.mouthOutline) spec.type else null,
+        requires = spec.requires, provides = when (spec.type) {
+            FITTED_FACE -> setOf("face/legacy")
+            "mouth/fitted" -> setOf("mouth/legacy")
+            else -> emptySet()
+        }, exclusiveFamily = if (spec.isBase) "base:${spec.area}" else if (spec.chainKinds.isNotEmpty()) "chain:${spec.type}" else if (spec.expressionToggles || spec.mouthOutline) spec.type else null,
         providers = { instance -> providers(instance) },
         appliedConfig = { it.config }, resolveParameter = { instance, before, declared -> requireNotNull(source).resolveParameter(instance, before, declared) },
         references = if (spec.seeThrough) SeeThroughContributions::references else RigModifierPhysics::references,

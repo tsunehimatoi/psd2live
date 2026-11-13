@@ -232,4 +232,11 @@ class WorkspacePresetInitializeTest {
         )
         assertTrue(RigModifierStack.fromJson(requireNotNull(noDepthInit.rigEdits.modifierStack)).instances.isNotEmpty())
     }
+
+    @Test fun mouthFittedProvidesMouthLegacyInRegistryAndBundledManifest() {
+        val def = assertNotNull(RigModifierAlgorithms.registry.defaultDefinition("mouth/fitted"))
+        assertTrue("mouth/legacy" in def.provides, "mouth/fitted must provide mouth/legacy")
+        val bundled = assertNotNull(BundledAlgorithmArtifacts.find("mouth/fitted", 1))
+        assertTrue("mouth/legacy" in bundled.manifest.algorithms.single().provides)
+    }
 }
