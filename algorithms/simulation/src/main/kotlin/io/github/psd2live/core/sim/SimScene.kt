@@ -34,7 +34,7 @@ class SimScene private constructor(
     /** Why a part of the setup was skipped; shown in the panel. */
     val notes: List<String>,
     /** Per stretch edge, how much it runs along the grain, 0..1: for measuring how the body bunches up. */
-    internal val edgeAlong: FloatArray,
+    val edgeAlong: FloatArray,
 ) {
     private val evaluator = CpuDeformationEvaluator()
     private var posedModel: PuppetModel? = null
@@ -54,9 +54,9 @@ class SimScene private constructor(
     private var frameRest = FloatArray(0)
 
     val state: SimState get() = solver.state
-    internal class Snapshot(val particles: SimState.Snapshot, val frameRest: FloatArray)
-    internal fun snapshot() = Snapshot(state.snapshot(), frameRest.copyOf())
-    internal fun restore(snapshot: Snapshot) { state.restore(snapshot.particles); frameRest = snapshot.frameRest.copyOf() }
+    class Snapshot(val particles: SimState.Snapshot, val frameRest: FloatArray)
+    fun snapshot() = Snapshot(state.snapshot(), frameRest.copyOf())
+    fun restore(snapshot: Snapshot) { state.restore(snapshot.particles); frameRest = snapshot.frameRest.copyOf() }
 
     /**
      * Moves the rig to [pose] and advances [dt] seconds. Returns false when a target mesh is hidden at this
@@ -197,7 +197,7 @@ class SimScene private constructor(
     }
 
     /** The mesh and vertex particle [i]'s pin follows, or null for its own position. */
-    internal fun anchorOf(i: Int): Pair<DrawableId, Int>? = anchors[i]?.let { it.drawable to it.vertex }
+    fun anchorOf(i: Int): Pair<DrawableId, Int>? = anchors[i]?.let { it.drawable to it.vertex }
 
     /** The simulated vertices of [id], world space. */
     fun positions(id: DrawableId): FloatArray? {

@@ -55,6 +55,80 @@ internal object WorkspaceModifierSchemas {
         "motion" -> WorkspaceAnimationResultSchemas.motion
         "swing" -> WorkspaceInspectionResultSchemas.swing
         "simulation" -> if (summary) s.obj(simFields, simRequired) else simulation
+        "eye" -> s.obj(mapOf(
+            "scaffold" to s.handle(),
+            "mode" to s.choices("fitted", "legacy"),
+            "wide" to s.boolean(),
+            "smile" to s.boolean(),
+            "emotion" to s.boolean(),
+            "gazeLid" to s.boolean(),
+            "highlight" to s.boolean(),
+            "lidFade" to s.boolean(),
+            "squash" to s.boolean(),
+            "aftershock" to s.boolean(),
+            "tuning" to s.dictionary(s.number()),
+            "values" to s.dictionary(s.number()),
+        ), setOf("scaffold"))
+        "face" -> s.obj(mapOf(
+            "scaffold" to s.handle(),
+            "mode" to s.choices("fitted", "legacy"),
+            "depthTurn" to s.boolean(),
+            "neck" to s.boolean(),
+            "strength" to s.number(0, 4),
+            "tuning" to s.dictionary(s.number()),
+            "values" to s.dictionary(s.number()),
+        ), setOf("scaffold"))
+        "body" -> s.obj(mapOf(
+            "scaffold" to s.handle(),
+            "bust" to s.boolean(),
+            "arms" to s.boolean(),
+            "strength" to s.number(0, 4),
+            "tuning" to s.dictionary(s.number()),
+            "values" to s.dictionary(s.number()),
+        ), setOf("scaffold"))
+        "hair" -> s.obj(mapOf(
+            "scaffold" to s.handle(),
+            "mode" to s.choices("chains", "legacy"),
+            "tuning" to s.dictionary(s.number()),
+            "values" to s.dictionary(s.number()),
+            "physicsEnabled" to s.boolean(),
+            "physics" to s.dictionary(physics),
+        ), setOf("scaffold"))
+        "brow" -> s.obj(mapOf(
+            "scaffold" to s.handle(),
+            "mode" to s.choices("fitted", "legacy"),
+            "shape" to s.boolean(),
+            "spring" to s.boolean(),
+            "blink" to s.boolean(),
+            "lidCoupling" to s.boolean(),
+            "tuning" to s.dictionary(s.number()),
+            "values" to s.dictionary(s.number()),
+        ), setOf("scaffold"))
+        "face" -> s.obj(mapOf(
+            "scaffold" to s.handle(),
+            "mode" to s.choices("fitted", "legacy"),
+            "depthTurn" to s.boolean(),
+            "neck" to s.boolean(),
+            "strength" to s.number(0, 4),
+            "tuning" to s.dictionary(s.number()),
+            "values" to s.dictionary(s.number()),
+        ), setOf("scaffold"))
+        "body" -> s.obj(mapOf(
+            "scaffold" to s.handle(),
+            "bust" to s.boolean(),
+            "arms" to s.boolean(),
+            "strength" to s.number(0, 4),
+            "tuning" to s.dictionary(s.number()),
+            "values" to s.dictionary(s.number()),
+        ), setOf("scaffold"))
+        "hair" -> s.obj(mapOf(
+            "scaffold" to s.handle(),
+            "mode" to s.choices("chains", "legacy"),
+            "tuning" to s.dictionary(s.number()),
+            "values" to s.dictionary(s.number()),
+            "physicsEnabled" to s.boolean(),
+            "physics" to s.dictionary(physics),
+        ), setOf("scaffold"))
         else -> RigLegacyBindings.find(type)?.let { spec -> s.obj(mapOf("scaffold" to s.handle(),
             "tuning" to s.obj(spec.fields.associate { it.id to s.number(it.range.start, it.range.endInclusive) }, emptySet())) +
             (if (spec.module?.base != null) mapOf("base" to s.handle()) else emptyMap()) +

@@ -165,6 +165,9 @@ internal object RigLegacyBindings {
             spec.eyeLidFade -> setOf("mesh")
             spec.browShape -> setOf("mesh", "parameter", "hierarchy")
             spec.browSpring -> setOf("mesh", "parameter", "hierarchy", "physics")
+            spec.type == "outfit.skirt" -> io.github.psd2live.algorithms.binding.SkirtAlgorithm.WRITES
+            spec.type == "outfit.ribbons" || spec.type == "outfit.creature" ->
+                setOf("mesh", "part", "deformer", "parameter", "hierarchy", "physics")
             else -> null
         },
         plugin = when {
@@ -178,6 +181,12 @@ internal object RigLegacyBindings {
             }
             spec.seeThrough -> seeThrough
             spec.skinClip -> io.github.psd2live.algorithms.binding.SkinClipAlgorithm()
+            spec.type == "outfit.skirt" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.SkirtAlgorithm(), io.github.psd2live.algorithms.binding.SkirtAlgorithm.VERSION)
+            spec.type == "outfit.ribbons" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.RibbonsAlgorithm(), io.github.psd2live.algorithms.binding.RibbonsAlgorithm.VERSION)
+            spec.type == "outfit.creature" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.CreatureAlgorithm(), io.github.psd2live.algorithms.binding.CreatureAlgorithm.VERSION)
             else -> object : ContextualModifierAlgorithmPlugin, ModifierOptionalUpstream {
                 private val transition = io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm()
                 override val optionalUpstream = when {
@@ -203,6 +212,9 @@ internal object RigLegacyBindings {
             spec.eyeLidFade -> requireNotNull(source).lidFadeContext(it)
             spec.seeThrough -> requireNotNull(source).seeThroughContext(it)
             spec.skinClip -> requireNotNull(source).skinClipContext(it)
+            spec.type == "outfit.skirt" -> requireNotNull(source).skirtContext(it)
+            spec.type == "outfit.ribbons" -> requireNotNull(source).ribbonsContext(it)
+            spec.type == "outfit.creature" -> requireNotNull(source).creatureContext(it)
             else -> ModifierAlgorithmContext.Empty
         } },
         workerAuthorContext = { requireNotNull(source).workerBindingContext(it) },

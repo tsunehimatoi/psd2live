@@ -20,13 +20,16 @@ object ExpressionWorker {
         register("rig.scaffold", "structure", scaffold, version = 1)
         register("rig.scaffold", "structure", scaffold, version = 2)
 
+        register("body", "part", BodyPartAlgorithm())
         register("body/legacy", "motion", BindingTransitionAlgorithm(LegacyBodyAlgorithm(), 1))
-        register("face/legacy", "binding", BindingTransitionAlgorithm())
+        register("face", "part", FacePartAlgorithm())
+        register("face/legacy", "binding", LegacyFaceAlgorithm())
         register("face/fitted", "binding", BindingTransitionAlgorithm(FittedFaceBindingAlgorithm))
         register("face.depth-turn", "turn", BindingTransitionAlgorithm(DepthTurnAlgorithm(), 1))
         register("face.neck", "tilt", BindingTransitionAlgorithm(NeckAlgorithm(), NeckAlgorithm.VERSION))
         register("face.skin-clip", "clip", BindingTransitionAlgorithm(SkinClipAlgorithm(), 1))
 
+        register("eye", "part", EyePartAlgorithm())
         register("eye/legacy", "legacy", BindingTransitionAlgorithm(EyeLegacySourceAlgorithm(), EyeLegacySourceAlgorithm.VERSION))
         register("eye/fitted", "fitted", BindingTransitionAlgorithm(EyeFittedSourceAlgorithm(), EyeFittedAlgorithm.VERSION))
         register("eye.wide", "wide", BindingTransitionAlgorithm(EyeWideAlgorithm(), EyeWideAlgorithm.VERSION))
@@ -39,6 +42,7 @@ object ExpressionWorker {
         register("eye.aftershock", "aftershock", BindingTransitionAlgorithm(EyeAftershockAlgorithm(), EyeAftershockAlgorithm.VERSION))
         register("eye.see-through", "visibility", SeeThroughAlgorithm())
 
+        register("brow", "part", BrowPartAlgorithm())
         register("brow/legacy", "binding", BindingTransitionAlgorithm(BrowLegacyAlgorithm(), 1))
         register("brow/fitted", "binding", BindingTransitionAlgorithm(BrowFittedAlgorithm(), 1))
         register("brow.lid-coupling", "coupling", BindingTransitionAlgorithm(BrowLidAlgorithm(), BrowLidAlgorithm.VERSION))
@@ -60,6 +64,7 @@ object ExpressionWorker {
         register("mouth.interior-depth", "depth", BindingTransitionAlgorithm(MouthDepthAlgorithm(), MouthDepthAlgorithm.VERSION))
         register("mouth.spring", "spring", BindingTransitionAlgorithm(MouthSpringAlgorithm(), MouthSpringAlgorithm.VERSION))
 
+        register("hair", "part", HairPartAlgorithm())
         register("hair/legacy", "legacy", BindingTransitionAlgorithm(HairLegacyAlgorithm(), 1))
         register("hair/chains", "chains", BindingTransitionAlgorithm(HairChainsAlgorithm(), 1))
         register("body.bust", "bust", BindingTransitionAlgorithm(BustBindingAlgorithm(), BustBindingAlgorithm.VERSION))

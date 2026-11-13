@@ -13,7 +13,7 @@ import kotlin.math.sqrt
  * the difference of two library atan2s, which are most of a frame's time; the engine's atan2 is the JVM's, not
  * Cubism's atan2f, so it is no closer to the exported model than that.
  */
-class PhysicsKernel(settings: List<RigPhysicsEdit>, ranges: Map<String, PhysicsEngine.Range>, val fps: Float? = RigEditOverlay.DEFAULT_PHYSICS_FPS.toFloat(),
+class PhysicsKernel(settings: List<RigPhysicsEdit>, ranges: Map<String, PhysicsEngine.Range>, val fps: Float? = 60f,
 	private val exact: Boolean = true) {
 	/** The value layout of [step]: every parameter the settings touch that has a range, in the engine's order. */
 	val parameters: List<String> = settings.flatMap { it.parameters }.distinct().filter { it in ranges }
@@ -208,7 +208,7 @@ class PhysicsKernel(settings: List<RigPhysicsEdit>, ranges: Map<String, PhysicsE
 
 	/** The angle from direction ([fromX], [fromY]) to ([toX], [toY]), within ±π. */
 	private fun direction(fromX: Float, fromY: Float, toX: Float, toY: Float): Float =
-		if (exact) PhysicsEngine.directionToRadian(fromX, fromY, toX, toY) else fastAtan2(fromX * toY - fromY * toX, fromX * toX + fromY * toY)
+		if (exact) PhysicsEngine.directionToRadian(fromX, fromY, toX, toY) else kotlin.math.atan2(fromX * toY - fromY * toX, fromX * toX + fromY * toY)
 
 	private fun blend(current: Float, raw: Float, o: PhysicsOutput, range: PhysicsEngine.Range): Float {
 		val value = (raw * PhysicsEngine.scaleOf(o)).coerceIn(minOf(range.min, range.max), maxOf(range.min, range.max))

@@ -22,8 +22,29 @@ fun interface ModifierAlgorithmPlugin {
 }
 
 @Serializable
-data class ModifierPluginParameter(val id: String, val name: String, val min: Float, val max: Float, val default: Float) {
-    fun definition() = io.github.psd2live.format.model.Parameter(id, name, min, max, default)
+data class ModifierPluginParameter(
+    val id: String,
+    val name: String,
+    val min: Float,
+    val max: Float,
+    val default: Float,
+    val group: String? = null,
+    val blend: Boolean = false,
+    val repeat: Boolean = false,
+) {
+    fun definition(i18n: ModifierParameterI18n = ModifierParameterI18n.Empty) =
+        io.github.psd2live.format.model.Parameter(
+            id = id,
+            name = i18n.resolveName(id, name),
+            min = min,
+            max = max,
+            default = default,
+            blend = blend,
+            repeat = repeat,
+        )
+
+    fun resolvedGroup(i18n: ModifierParameterI18n = ModifierParameterI18n.Empty): String? =
+        group?.let { i18n.resolveGroup(it) }
 }
 
 @Serializable
@@ -37,6 +58,10 @@ data class ModifierPluginAlgorithm(
     val exclusiveFamily: String? = null,
     val reads: Set<String> = setOf("*"),
     val writes: Set<String> = setOf("mesh"),
+    /** Explicit owned object kinds created by this algorithm (e.g. parameters, warpDeformers, physicsGroups, derivedMeshes). */
+    val creates: Set<String> = emptySet(),
+    /** Explicit target channels modified by this algorithm (e.g. mesh.offsets, mesh.opacity, deformer.keyforms). */
+    val modifies: Set<String> = emptySet(),
     val composableKinds: Set<String> = emptySet(),
     val configSchema: JsonObject,
     val defaults: JsonObject,

@@ -13,14 +13,19 @@ class SimulationAlgorithm : ModifierAlgorithmPlugin {
         require(instance.targets.all { it.kind == "mesh" }) { "A simulation modifier targets meshes" }
         checkpoint()
         val source = RigSimEdit.fromJson(instance.config)
-        require(source.enabled && source.bake != null) { "A simulation modifier needs an enabled, valid bake" }
+        require(source.enabled) { "A simulation modifier must be enabled" }
         require(source.targets == instance.targets.map { it.id }) { "Simulation targets changed; bake again before adding the modifier" }
         val weighted = RigSimulationWeights.apply(PuppetIr.toPuppet(rig), instance.config)
-        require(!io.github.psd2live.core.sim.SimBake.stale(weighted, source)) { "Simulation inputs changed; bake again before adding the modifier" }
-        require(SimulationInput.simulationMatches(rig, io.github.psd2live.core.sim.RigSimEdit.fromJson(instance.config), instance.inputFingerprint)) {
-            "${instance.id}: upstream modifier input changed; bake the simulation again"
+        val bakedSource = if (source.bake == null || (source.autoBake && SimBake.stale(weighted, source))) {
+            source.copy(bake = SimBaker.bake(weighted, source.copy(bake = null), SimBaker.Options(cancelled = { checkpoint(); false })))
+        } else {
+            require(!SimBake.stale(weighted, source)) { "Simulation inputs changed; bake again before adding the modifier" }
+            require(SimulationInput.simulationMatches(rig, source, instance.inputFingerprint)) {
+                "${instance.id}: upstream modifier input changed; bake the simulation again"
+            }
+            source
         }
-        val edit = SimulationOutputs.outputs(instance, source)
+        val edit = SimulationOutputs.outputs(instance, bakedSource)
         val (model, issues) = SimGenerator.applyOne(weighted, edit)
         require(issues.isEmpty()) { issues.joinToString("; ") }
         checkpoint()

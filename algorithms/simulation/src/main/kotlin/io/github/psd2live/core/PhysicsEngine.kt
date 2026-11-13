@@ -11,7 +11,7 @@ import kotlin.math.sqrt
  * simulations move the way the exported model does in a Cubism runtime. [fps] is the file's `Fps`: steps
  * of that length with inputs interpolated between frames, or one step per frame when null.
  */
-class PhysicsEngine(settings: List<RigPhysicsEdit>, ranges: Map<String, Range>, val fps: Float? = RigEditOverlay.DEFAULT_PHYSICS_FPS.toFloat()) {
+class PhysicsEngine(settings: List<RigPhysicsEdit>, ranges: Map<String, Range>, val fps: Float? = 60f) {
 	/** A parameter's span; inputs normalize against its midpoint and outputs clamp to it. */
 	data class Range(val min: Float, val max: Float, val default: Float)
 

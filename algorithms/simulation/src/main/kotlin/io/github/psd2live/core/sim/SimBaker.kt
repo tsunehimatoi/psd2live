@@ -1,7 +1,6 @@
 package io.github.psd2live.core.sim
 
 import io.github.psd2live.core.PhysicsEngine
-import io.github.psd2live.core.RigEditOverlay
 import org.umamo.runtime.model.Parameter
 import org.umamo.runtime.model.ParameterId
 import org.umamo.runtime.model.ParameterKind
@@ -40,8 +39,8 @@ import kotlin.math.sqrt
 object SimBaker {
     class Options(
         val fps: Int = 60,
-        /** The rate the exported pendulum steps at (physics3.json `Fps`); [RigEditOverlay.UNLIMITED_FPS] steps once per frame. */
-        val physicsFps: Int = RigEditOverlay.DEFAULT_PHYSICS_FPS,
+        /** The rate the exported pendulum steps at (physics3.json `Fps`); `-1` steps once per frame. */
+        val physicsFps: Int = 60,
         /** Scales every phase of the training run; tests shorten it. */
         val duration: Float = 1f,
         /** Runs the pieces of the training on several cores. */
@@ -453,7 +452,7 @@ object SimBaker {
      * The low end, rest and high end [parameter] trains between: [range] within the parameter's own, which
      * always keeps the default. Without a range, the whole parameter.
      */
-    internal fun trainingSpan(parameter: Parameter, range: SimInputRange?): Triple<Float, Float, Float> {
+    fun trainingSpan(parameter: Parameter, range: SimInputRange?): Triple<Float, Float, Float> {
         val low = (range?.min ?: parameter.min).coerceIn(parameter.min, parameter.default)
         val high = (range?.max ?: parameter.max).coerceIn(parameter.default, parameter.max)
         return Triple(low, parameter.default, high)

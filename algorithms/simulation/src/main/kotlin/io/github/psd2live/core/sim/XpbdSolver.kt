@@ -1,7 +1,7 @@
 package io.github.psd2live.core.sim
 
-import io.github.psd2live.core.fastAtan2
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.max
@@ -38,7 +38,7 @@ class PlacedCollider(val ax: Float, val ay: Float, val bx: Float, val by: Float,
 
 /** Particle state. Positions are world px (y up); [invMass] 0 is kinematic. */
 class SimState(val count: Int) {
-    internal class Snapshot(val arrays: List<FloatArray>, val angle: Float, val lastAngle: Float,
+    class Snapshot(val arrays: List<FloatArray>, val angle: Float, val lastAngle: Float,
                             val colliders: List<PlacedCollider>, val lastColliders: List<PlacedCollider>)
     private fun arrays() = listOf(x, y, vx, vy, invMass, damping, windFactor, anchorX, anchorY, goalX, goalY,
         goalOffsetX, goalOffsetY, px, py, lastAnchorX, lastAnchorY, lastGoalX, lastGoalY, stepAnchorX, stepAnchorY, stepGoalX, stepGoalY)
@@ -493,7 +493,7 @@ class XpbdSolver(
             accumulateBend(k, 3, -1f)
             // The first rotation less the second, within ±π: one atan2 of the two (cos, sin) pairs' product
             // instead of one per triangle; the library's atan2 was most of a step's time.
-            val constraint = fastAtan2(s1 * turnCos - c1 * turnSin, c1 * turnCos + s1 * turnSin)
+            val constraint = atan2(s1 * turnCos - c1 * turnSin, c1 * turnCos + s1 * turnSin)
             var w = 0f
             for (j in 0 until count) w += mobility(bendIndex[j]) * (bendGx[j] * bendGx[j] + bendGy[j] * bendGy[j])
             if (w < 1e-12f) continue
@@ -664,5 +664,5 @@ class XpbdSolver(
     }
 
     /** Triangle [k]'s turn from rest and its gradient over corners a, b, c; for tests. */
-    internal fun turnOf(k: Int): Pair<Float, FloatArray> { measureRest(); val angle = if (turn(k)) fastAtan2(turnSin, turnCos) else Float.NaN; return angle to turnGrad.copyOf() }
+    internal fun turnOf(k: Int): Pair<Float, FloatArray> { measureRest(); val angle = if (turn(k)) atan2(turnSin, turnCos) else Float.NaN; return angle to turnGrad.copyOf() }
 }

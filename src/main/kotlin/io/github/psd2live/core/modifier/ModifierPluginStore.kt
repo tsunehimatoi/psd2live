@@ -402,6 +402,10 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
             require(it.type.startsWith("${manifest.id}/") && it.version > 0 && it.name.isNotBlank()) { "Algorithm type must belong to its plugin namespace" }
             require(it.targets.isNotEmpty() && it.targets.all { kind -> kind in setOf("mesh", "deformer", "part", "layer") }) { "Invalid algorithm targets" }
             require((it.reads + it.writes + it.composableKinds).all { kind -> kind in ModifierPluginOutput.components }) { "Unknown plugin model component" }
+            require("*" !in it.creates && "*" !in it.modifies) { "Wildcard '*' is forbidden in creates/modifies declarations" }
+            require((it.creates + it.modifies).all { token ->
+                token.isNotBlank() && token.length <= 128 && token.none(Char::isISOControl)
+            }) { "Invalid plugin creates/modifies declaration" }
             require(it.derivedOutputs.size <= 128 && it.derivedOutputs.distinct().size == it.derivedOutputs.size &&
                 it.derivedOutputs.all { rule -> rule.kind in setOf("mesh", "deformer", "part", "parameter", "physics", "motion", "glue") &&
                     (rule.kind in it.writes || "*" in it.writes) }) { "Invalid derived output rules" }

@@ -14,7 +14,7 @@ import kotlin.math.sin
  * The targets' keyform spaces: residuals in local coordinates, and the default-pose Jacobian that
  * turns them into px so modes are measured the same way everywhere on the body.
  */
-internal class SimSpace(val model: PuppetModel, scene: SimScene) {
+class SimSpace(val model: PuppetModel, scene: SimScene) {
     val offsets: Map<DrawableId, Int> = scene.offsets
     val vertexCounts: Map<DrawableId, Int> = scene.vertexCounts
     val meshes: List<DrawableId> = offsets.keys.toList()

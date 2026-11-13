@@ -50,6 +50,8 @@ private data class BindingManifestSpec(
     val provides: List<String> = emptyList(),
     val exclusiveFamily: String? = null,
     val writes: List<String>,
+    val creates: List<String> = emptyList(),
+    val modifies: List<String> = emptyList(),
     val composableKinds: List<String>,
     val parametersJson: String? = null,
 )
@@ -61,16 +63,40 @@ private val restPoseWrites = baseWrites + "rest_pose"
 private val physicsWrites = baseWrites + "physics"
 
 private val bindingManifestSpecs = listOf(
+    BindingManifestSpec("body-part", "body", "part", "Body", "body",
+        provides = listOf("body/legacy"), exclusiveFamily = "base:body",
+        writes = physicsWrites,
+        creates = listOf("parameters", "warpDeformers", "rotationDeformers", "physicsGroups"),
+        modifies = listOf("mesh.offsets", "deformer.keyforms"),
+        composableKinds = physicsComposable),
     BindingManifestSpec("body-legacy", "body/legacy", "motion", "Legacy body", "body",
         exclusiveFamily = "base:body", writes = baseWrites, composableKinds = defaultComposable),
+    BindingManifestSpec("face-part", "face", "part", "Face", "face",
+        provides = listOf("face/fitted", "face/legacy"), exclusiveFamily = "base:face",
+        writes = baseWrites,
+        creates = listOf("parameters", "warpDeformers", "rotationDeformers"),
+        modifies = listOf("mesh.offsets", "deformer.keyforms"),
+        composableKinds = defaultComposable),
     BindingManifestSpec("face-legacy", "face/legacy", "binding", "Legacy face binding", "face",
         exclusiveFamily = "base:face", writes = baseWrites, composableKinds = defaultComposable),
     BindingManifestSpec("face-fitted", "face/fitted", "binding", "Fitted face", "face",
         provides = listOf("face/legacy"), exclusiveFamily = "base:face", writes = baseWrites, composableKinds = defaultComposable),
+    BindingManifestSpec("eye-part", "eye", "part", "Eyes", "eye",
+        provides = listOf("eye/fitted", "eye/legacy"), exclusiveFamily = "base:eye",
+        writes = physicsWrites,
+        creates = listOf("parameters", "warpDeformers", "rotationDeformers", "physicsGroups"),
+        modifies = listOf("mesh.offsets", "mesh.opacity", "deformer.keyforms"),
+        composableKinds = physicsComposable),
     BindingManifestSpec("eye-legacy", "eye/legacy", "legacy", "Legacy eyes (source)", "eye",
         exclusiveFamily = "base:eye", writes = baseWrites, composableKinds = defaultComposable),
     BindingManifestSpec("eye-fitted", "eye/fitted", "fitted", "Fitted eyes (source)", "eye",
         exclusiveFamily = "base:eye", writes = baseWrites, composableKinds = defaultComposable),
+    BindingManifestSpec("brow-part", "brow", "part", "Brows", "brow",
+        provides = listOf("brow/fitted", "brow/legacy"), exclusiveFamily = "base:brow",
+        writes = restPoseWrites + "physics",
+        creates = listOf("parameters", "warpDeformers", "physicsGroups"),
+        modifies = listOf("mesh.offsets", "deformer.keyforms", "restPose"),
+        composableKinds = physicsComposable),
     BindingManifestSpec("brow-legacy", "brow/legacy", "binding", "Legacy brow binding", "brow",
         exclusiveFamily = "base:brow", writes = baseWrites, composableKinds = defaultComposable),
     BindingManifestSpec("brow-fitted", "brow/fitted", "binding", "Fitted brows", "brow",
@@ -79,6 +105,12 @@ private val bindingManifestSpecs = listOf(
         exclusiveFamily = "base:mouth", writes = restPoseWrites, composableKinds = defaultComposable),
     BindingManifestSpec("mouth-fitted", "mouth/fitted", "binding", "Fitted mouth", "mouth",
         exclusiveFamily = "base:mouth", writes = restPoseWrites, composableKinds = defaultComposable),
+    BindingManifestSpec("hair-part", "hair", "part", "Hair", "hair",
+        provides = listOf("hair/chains", "hair/legacy"), exclusiveFamily = "base:hair",
+        writes = physicsWrites,
+        creates = listOf("parameters", "warpDeformers", "physicsGroups"),
+        modifies = listOf("mesh.offsets", "deformer.keyforms"),
+        composableKinds = physicsComposable),
     BindingManifestSpec("hair-legacy", "hair/legacy", "legacy", "Legacy hair", "hair",
         exclusiveFamily = "base:hair", writes = baseWrites, composableKinds = defaultComposable),
     BindingManifestSpec("hair-chains", "hair/chains", "chains", "Hair chains", "hair",
@@ -195,13 +227,15 @@ val pluginPackages by tasks.registering {
             val id = pluginId(spec.type, 1)
             val provides = if (spec.provides.isEmpty()) "" else """"provides":${jsonArray(spec.provides)},"""
             val exclusive = spec.exclusiveFamily?.let { """"exclusiveFamily":"$it",""" } ?: ""
+            val creates = if (spec.creates.isEmpty()) "" else """"creates":${jsonArray(spec.creates)},"""
+            val modifies = if (spec.modifies.isEmpty()) "" else """"modifies":${jsonArray(spec.modifies)},"""
             val parameters = spec.parametersJson?.let { """"parameters":$it,""" } ?: ""
             root.resolve("${spec.slug}/plugin.json").apply { parentFile.mkdirs() }.writeText("""
                 {"protocol":1,"id":"$id","version":"$packageVersion","name":"${spec.name}",
                  "commands":{"jvm":["${'$'}JAVA","-jar","runtime.jar"]},"files":{"runtime.jar":"$digest"},
                  "algorithms":[{"type":"$id/${spec.entrypoint}","aliases":["${spec.type}"],"version":1,"name":"${spec.name}","category":"${spec.category}",
                    "targets":["mesh"],"requires":${jsonArray(spec.requires)},$provides$exclusive"contextVersion":2,
-                   "reads":["*"],"writes":${jsonArray(spec.writes)},"composableKinds":${jsonArray(spec.composableKinds)},$parameters
+                   "reads":["*"],"writes":${jsonArray(spec.writes)},$creates$modifies"composableKinds":${jsonArray(spec.composableKinds)},$parameters
                    "configSchema":{"type":"object"},"defaults":{}}]}
             """.trimIndent(), Charsets.UTF_8)
         }
