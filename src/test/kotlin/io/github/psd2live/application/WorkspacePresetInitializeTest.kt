@@ -233,10 +233,84 @@ class WorkspacePresetInitializeTest {
         assertTrue(RigModifierStack.fromJson(requireNotNull(noDepthInit.rigEdits.modifierStack)).instances.isNotEmpty())
     }
 
-    @Test fun mouthFittedProvidesMouthLegacyInRegistryAndBundledManifest() {
-        val def = assertNotNull(RigModifierAlgorithms.registry.defaultDefinition("mouth/fitted"))
-        assertTrue("mouth/legacy" in def.provides, "mouth/fitted must provide mouth/legacy")
-        val bundled = assertNotNull(BundledAlgorithmArtifacts.find("mouth/fitted", 1))
-        assertTrue("mouth/legacy" in bundled.manifest.algorithms.single().provides)
+    @Test fun modernBasesProvideLegacyEquivalentsInRegistryAndBundledManifests() {
+        val pairs = listOf(
+            "face/fitted" to "face/legacy",
+            "eye/fitted" to "eye/legacy",
+            "brow/fitted" to "brow/legacy",
+            "mouth/fitted" to "mouth/legacy",
+            "hair/chains" to "hair/legacy",
+        )
+        for ((modern, legacy) in pairs) {
+            val def = assertNotNull(RigModifierAlgorithms.registry.defaultDefinition(modern), "Missing $modern")
+            assertTrue(legacy in def.provides, "$modern must provide $legacy in registry")
+            val bundled = assertNotNull(BundledAlgorithmArtifacts.find(modern, 1), "Missing bundled $modern")
+            assertTrue(legacy in bundled.manifest.algorithms.single().provides, "$modern must provide $legacy in manifest")
+        }
+    }
+
+    @Test fun initializationSucceedsWithDuplicateLayerNamesAcrossAllModes(): Unit = runBlocking {
+        val base = Characters.head(physics = false)
+        val template = base.source.layers.first()
+        val duplicates = listOf(
+            "eyelash-dup-l" to "eyelash",
+            "eyelash-dup-r" to "eyelash",
+            "eyebrow-dup-l" to "eyebrow",
+            "eyebrow-dup-r" to "eyebrow",
+            "eyewhite-dup-l" to "eyewhite",
+            "eyewhite-dup-r" to "eyewhite",
+            "irides-dup-l" to "irides",
+            "irides-dup-r" to "irides",
+            "ears-dup-l" to "ears",
+            "ears-dup-r" to "ears",
+            "handwear-dup-l" to "handwear",
+            "handwear-dup-r" to "handwear",
+        ).mapIndexed { idx, (id, name) ->
+            WorkspaceSourceLayer(
+                LayerId(id), name, "", SourceLayerKind.Raster, true, base.source.layers.size + idx,
+                template.bounds, 1f, false, LayerBlend.Normal, ChannelMask.ALL,
+                template.raster, null, null, false,
+            )
+        }
+        val doc = base.copy(
+            source = WorkspaceSourceArt(base.source.widthPx, base.source.heightPx, base.source.layers + duplicates, base.source.groups),
+            rigEdits = base.rigEdits.copy(modifierStack = RigModifierStack().toJson()),
+        )
+        val preview = WorkspacePreviewBuilder().build(doc)
+        for (mode in listOf(
+            WorkspaceInitialModifiers.RECOMMENDED,
+            WorkspaceInitialModifiers.MINIMAL,
+            WorkspaceInitialModifiers.DEFAULT,
+            WorkspaceInitialModifiers.FULL,
+        )) {
+            val initialized = WorkspaceModifierEdits.apply(
+                WorkspaceDocumentOperation("modifier_initialize", buildJsonObject { put("modifiers", mode.name.lowercase()) }),
+                doc,
+                preview,
+            )
+            assertTrue(RigModifierStack.fromJson(requireNotNull(initialized.rigEdits.modifierStack)).instances.isNotEmpty())
+        }
+    }
+
+    @Test fun gloomAndCheekAcceptV2InstancesWithoutVersionRequirementFailure(): Unit = runBlocking {
+        val base = Characters.head(physics = false)
+        val doc = base.copy(rigEdits = base.rigEdits.copy(modifierStack = RigModifierStack().toJson()))
+        val preview = WorkspacePreviewBuilder().build(doc)
+        val initialized = WorkspaceModifierEdits.apply(
+            WorkspaceDocumentOperation("modifier_initialize", buildJsonObject { put("modifiers", "recommended") }),
+            doc,
+            preview,
+        )
+        val stack = RigModifierStack.fromJson(requireNotNull(initialized.rigEdits.modifierStack))
+        val upgraded = stack.copy(instances = stack.instances.map { entry ->
+            if (entry.type in setOf("expression.gloom", "expression.cheek", "face.depth-turn", "body/legacy", "brow/legacy", "brow/fitted")) {
+                entry.copy(version = 2)
+            } else {
+                entry
+            }
+        })
+        val updatedDoc = initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = upgraded.toJson()))
+        val rebuilt = WorkspacePreviewBuilder().build(updatedDoc)
+        assertTrue(rebuilt.rig.puppet.drawables.isNotEmpty())
     }
 }

@@ -13,7 +13,7 @@ class LegacyBodyAlgorithm : ChangingModifierAlgorithmPlugin {
     override fun changes(
         input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext, checkpoint: () -> Unit,
     ): ModifierModelChanges {
-        require(instance.version == 1 && instance.targets.all { it.kind == "mesh" })
+        require(instance.version >= 1 && instance.targets.all { it.kind == "mesh" }) { "Invalid legacy body invocation" }
         val values = context.values
         require(values["schema"]?.jsonPrimitive?.content == LegacyBodyInputs.SCHEMA)
         val providerId = instance.config.getValue("scaffold").jsonPrimitive.content

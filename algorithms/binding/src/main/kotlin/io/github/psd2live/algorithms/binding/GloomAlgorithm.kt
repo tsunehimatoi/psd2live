@@ -11,7 +11,7 @@ import kotlinx.serialization.json.jsonPrimitive
 class GloomAlgorithm : ReadingModifierAlgorithmPlugin {
     override fun changes(input: ModifierEvaluationInput, instance: RigModifierInstance, checkpoint: () -> Unit): ModifierModelChanges {
         checkpoint()
-        require(instance.version == 1 && instance.targets.all { it.kind == "mesh" })
+        require(instance.version >= 1 && instance.targets.all { it.kind == "mesh" }) { "Invalid gloom invocation" }
         val source = GloomInputs.decode(input.context)
         if (!source.applies) return ModifierModelChanges()
         val strength = instance.config["values"]?.jsonObject?.get("strength")?.jsonPrimitive?.float ?: 100f

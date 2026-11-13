@@ -13,7 +13,7 @@ import org.umamo.runtime.model.DrawableId
 /** Generates the legacy brow translation in its measured scaffold frame. */
 class BrowLegacyAlgorithm : ReadingModifierAlgorithmPlugin {
     override fun changes(input: ModifierEvaluationInput, instance: RigModifierInstance, checkpoint: () -> Unit): ModifierModelChanges {
-        require(instance.version == 1 && instance.targets.all { it.kind == "mesh" }) { "Invalid legacy brow invocation" }
+        require(instance.version >= 1 && instance.targets.all { it.kind == "mesh" }) { "Invalid legacy brow invocation" }
         val source = BrowLegacyInputs.decode(input.context)
         val lift = instance.config["tuning"]?.jsonObject?.get("browLift")?.jsonPrimitive?.float ?: source.lift
         require(lift.isFinite() && lift in 0f..40f)

@@ -13,7 +13,7 @@ import org.umamo.runtime.model.*
 class DepthTurnAlgorithm : ChangingModifierAlgorithmPlugin {
     override fun changes(input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext,
                          checkpoint: () -> Unit): ModifierModelChanges {
-        require(instance.version == 1 && instance.targets.all { it.kind == "mesh" })
+        require(instance.version >= 1 && instance.targets.all { it.kind == "mesh" }) { "Invalid depth-turn invocation" }
         val scaffold = requireNotNull(context.upstream.singleOrNull { it.capability == "rig.scaffold" }) {
             "Depth turn requires an explicit scaffold provider"
         }

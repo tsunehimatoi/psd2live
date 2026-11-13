@@ -64,7 +64,7 @@ internal class RigModifierSource(
     }
 
     internal fun legacyBindingSource(instance: RigModifierInstance): RigModifierSource =
-        if (instance.version == 1 && instance.type in setOf("expression.cheek", "expression.gloom")) legacyMoodSource else this
+        if (instance.version >= 1 && instance.type in setOf("expression.cheek", "expression.gloom")) legacyMoodSource else this
 
     private val parameterDefinitions = java.util.IdentityHashMap<PuppetModel, List<io.github.psd2live.format.model.Parameter>>()
     internal val primaryByLayer = layersByMesh.entries.sortedBy { it.key in copiedMeshes }.groupBy { it.value }.mapValues { it.value.first().key }

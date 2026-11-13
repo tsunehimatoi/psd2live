@@ -61,7 +61,7 @@ class BrowFittedAlgorithm : ChangingModifierAlgorithmPlugin {
         vertices: ModifierAlgorithmResource,
         checkpoint: () -> Unit = {},
     ): PuppetModel {
-        require(instance.version == 1 && instance.targets.all { it.kind == "mesh" }) { "Unsupported fitted brow instance" }
+        require(instance.version >= 1 && instance.targets.all { it.kind == "mesh" }) { "Unsupported fitted brow instance" }
         require(instance.config["scaffold"]?.jsonPrimitive?.content == inputs.scaffold) { "Mismatched fitted brow scaffold" }
         val lift = (instance.config["values"]?.jsonObject?.get("lift")?.jsonPrimitive?.float ?: 45f) / 100f
         require(lift in 0.2f..1f) { "Invalid fitted brow lift" }

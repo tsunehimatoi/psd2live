@@ -142,7 +142,10 @@ internal object RigLegacyBindings {
         RigModifierDefinition(spec.type, spec.version,
         requires = spec.requires, provides = when (spec.type) {
             FITTED_FACE -> setOf("face/legacy")
+            "eye/fitted" -> setOf("eye/legacy")
+            "brow/fitted" -> setOf("brow/legacy")
             "mouth/fitted" -> setOf("mouth/legacy")
+            "hair/chains" -> setOf("hair/legacy")
             else -> emptySet()
         }, exclusiveFamily = if (spec.isBase) "base:${spec.area}" else if (spec.chainKinds.isNotEmpty()) "chain:${spec.type}" else if (spec.expressionToggles || spec.mouthOutline) spec.type else null,
         providers = { instance -> providers(instance) },
