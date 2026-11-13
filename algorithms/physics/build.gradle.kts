@@ -45,6 +45,7 @@ tasks.register("pluginPackage") {
              "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
              "algorithms":[{"type":"builtin.70687973696373.v1/pendulum","aliases":["physics"],"version":1,"name":"Pendulum physics","category":"physics",
                "targets":["mesh","deformer"],"reads":["parameter","physics"],"writes":["physics"],
+               "creates":["physicsGroups"],"modifies":[],
                "configSchema":{"type":"object"},"defaults":{}}]}
         """.trimIndent())
     }

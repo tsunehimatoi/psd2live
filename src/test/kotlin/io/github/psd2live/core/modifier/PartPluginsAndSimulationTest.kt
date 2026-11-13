@@ -35,6 +35,35 @@ class PartPluginsAndSimulationTest {
     }
 
     @Test
+    fun `all builtin non-part plugins ship bundled manifests with explicit creates and modifies`() {
+        val bundledIds = listOf(
+            "rig.scaffold" to 2,
+            "physics" to 1,
+            "motion" to 1,
+            "swing" to 1,
+            "simulation" to 1,
+            "outfit.skirt" to 1,
+            "outfit.ribbons" to 1,
+            "outfit.creature" to 1,
+            "expression.cheek" to 1,
+            "expression.gloom" to 1,
+            "expression.toggles" to 1,
+            "face.skin-clip" to 1,
+            "eye.see-through" to 1,
+            "brow.see-through" to 1,
+        )
+        for ((id, version) in bundledIds) {
+            val bundled = assertNotNull(BundledAlgorithmArtifacts.find(id, version), "Missing bundled plugin $id@$version")
+            val alg = bundled.manifest.algorithms.single()
+            assertTrue("*" !in alg.creates && "*" !in alg.modifies, "$id@$version must not use wildcard creates/modifies")
+            assertTrue(
+                alg.creates.isNotEmpty() || alg.modifies.isNotEmpty(),
+                "$id@$version must declare at least one creates or modifies target",
+            )
+        }
+    }
+
+    @Test
     fun `legacy face body and hair stacks fold non-destructively into unified part instances`() {
         val targets = listOf(ModifierTarget("mesh", "mesh.head"))
         val instances = listOf(

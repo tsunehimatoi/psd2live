@@ -49,6 +49,7 @@ tasks.register("pluginPackage") {
              "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
              "algorithms":[{"type":"builtin.7377696e67.v1/sway","aliases":["swing"],"version":1,"name":"Swing","category":"physics",
                "targets":["mesh","deformer"],"reads":["*"],"writes":["*"],"composableKinds":["deformer","mesh","hierarchy"],
+               "creates":["warpDeformers","parameters"],"modifies":["mesh.offsets","deformer.keyforms","hierarchy"],
                "derivedOutputs":[{"kind":"deformer","localName":"swing","prefix":"Warp_Swing_","numbered":true},
                  {"kind":"physics","localName":"swing","prefix":"PhysicsSwing_","suffixes":["","_X","_Y"]}],
                "configSchema":{"type":"object"},"defaults":{}}]}

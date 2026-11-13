@@ -45,6 +45,7 @@ tasks.register("pluginPackage") {
              "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
              "algorithms":[{"type":"builtin.6d6f74696f6e.v1/clip","aliases":["motion"],"version":1,"name":"Motion clip","category":"motion",
                "targets":["mesh","deformer"],"reads":["parameter","motion","relations"],"writes":["motion","relations"],
+               "creates":["parameters","motionClips"],"modifies":["relations"],
                "configSchema":{"type":"object"},"defaults":{}}]}
         """.trimIndent())
     }

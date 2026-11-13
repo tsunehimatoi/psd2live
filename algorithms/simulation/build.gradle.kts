@@ -45,6 +45,7 @@ tasks.register("pluginPackage") {
              "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
              "algorithms":[{"type":"builtin.73696d756c6174696f6e.v1/baked","aliases":["simulation"],"version":1,"name":"Baked simulation","category":"physics",
                "targets":["mesh","deformer"],"reads":["*"],"writes":["*"],"composableKinds":["mesh","hierarchy"],
+               "creates":["parameters","physicsGroups"],"modifies":["mesh.offsets","deformer.keyforms","hierarchy"],
                "configSchema":{"type":"object"},"defaults":{}}]}
         """.trimIndent())
     }
