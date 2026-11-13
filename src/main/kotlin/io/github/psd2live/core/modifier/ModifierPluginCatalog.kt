@@ -7,17 +7,26 @@ internal object ModifierPluginCatalog {
                     resolveRasters: ModifierRasterResolver = RigModifierRasterAssets::resolve,
                     references: Set<ModifierPluginReference>? = null): List<RigModifierDefinition> = store.runnablePackages()
         .filter { references == null || it.reference in references }.flatMap { entry ->
-        entry.manifest.algorithms.flatMap { algorithm -> (algorithm.aliases + algorithm.type).map { type ->
-            // Only bundled stable aliases can use host-captured author input adapters.
-            val adapter = captured.singleOrNull { it.type in algorithm.aliases && (type == algorithm.type || it.type == type) && it.version == algorithm.version &&
-                it.plugin is ContextualModifierAlgorithmPlugin && entry.reference.id.startsWith("builtin.") }
+        val isBuiltin = entry.reference.id.startsWith("builtin.")
+        entry.manifest.algorithms.flatMap { algorithm ->
+            val types = if (isBuiltin) (algorithm.aliases + algorithm.type) else listOf(algorithm.type)
+            types.map { type ->
+            // Builtins match legacy aliases directly; standalone packages match only an explicit authorContext contract.
+            val adapter = captured.singleOrNull {
+                it.version == algorithm.version && it.plugin is ContextualModifierAlgorithmPlugin && if (isBuiltin) {
+                    it.type in algorithm.aliases && (type == algorithm.type || it.type == type)
+                } else {
+                    algorithm.authorContext != null && it.type == algorithm.authorContext
+                }
+            }
             if (adapter != null) {
                 fun native(instance: RigModifierInstance): RigModifierInstance {
                     // Reject only consumers of this exact package. An unused incompatible historical
                     // version must not prevent unrelated projects from constructing their registry.
                     require(adapter.requires == algorithm.requires && adapter.exclusiveFamily == algorithm.exclusiveFamily &&
-                        adapter.composableKinds == algorithm.composableKinds && adapter.provides == algorithm.provides) {
-                        "Bundled source adapter contract mismatch: $type (${entry.reference.id}@${entry.reference.version})"
+                        adapter.composableKinds == algorithm.composableKinds && adapter.provides == algorithm.provides &&
+                        (isBuiltin || adapter.changeWrites?.let { allowed -> algorithm.writes.all { it in allowed } } != false)) {
+                        "Source adapter contract mismatch: $type (${entry.reference.id}@${entry.reference.version})"
                     }
                     return instance.copy(type = adapter.type)
                 }
@@ -58,25 +67,25 @@ internal object ModifierPluginCatalog {
     }
 
     fun available(instance: RigModifierInstance): Boolean {
-        val resolvedVersion = if (instance.version > 1 && RigLegacyBindings.find(instance.type) != null) 1 else instance.version
+        val resolvedVersion = BuiltinModifierPlugins.resolveVersion(instance.type, instance.version, instance.plugin)
         val builtin = BuiltinModifierPlugins.reference(instance.type, resolvedVersion)
         val reference = instance.plugin ?: builtin ?: return false
         val store = ModifierPluginStore.shared
-        if (reference != builtin && !BuiltinModifierPlugins.matches(instance)) {
+        val isBuiltin = reference == builtin || BuiltinModifierPlugins.matches(instance)
+        if (!isBuiltin) {
             val manifest = store.packages().firstOrNull { it.reference == reference }?.manifest ?: return false
             if (manifest.algorithms.none {
                     it.version == instance.version && (it.type == instance.type || instance.type in it.aliases)
                 }) return false
         }
-        return store.resolution(builtin ?: reference).available
+        return store.resolution(if (isBuiltin) (builtin ?: reference) else reference).available
     }
 
     fun available(type: String, version: Int, plugin: ModifierPluginReference? = null): Boolean {
-        val resolvedVersion = if (version > 1 && RigLegacyBindings.find(type) != null) 1 else version
+        val resolvedVersion = BuiltinModifierPlugins.resolveVersion(type, version, plugin)
         val builtin = BuiltinModifierPlugins.reference(type, resolvedVersion)
         val reference = plugin?.takeUnless {
-            version > 1 && resolvedVersion == 1 &&
-                it.id == "builtin." + java.util.HexFormat.of().formatHex(type.encodeToByteArray()) + ".v$version"
+            it.id == "builtin" || BuiltinModifierPlugins.isHistoricalBuiltinReference(type, version, it)
         } ?: builtin
         val store = ModifierPluginStore.shared
         return reference?.let { store.resolution(it).available } ?: store.builtinsEnabled()

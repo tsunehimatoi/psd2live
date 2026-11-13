@@ -85,11 +85,10 @@ internal class RigModifierRegistry(definitions: List<RigModifierDefinition>) {
         definition(instance.type, instance.version, instance.plugin)
 
     private fun definition(type: String, version: Int, plugin: ModifierPluginReference?): RigModifierDefinition? {
-        val resolvedVersion = if (version > 1 && RigLegacyBindings.find(type) != null) 1 else version
+        val resolvedVersion = BuiltinModifierPlugins.resolveVersion(type, version, plugin)
         val canonical = BuiltinModifierPlugins.reference(type, resolvedVersion)
-        val historicalBuiltin = plugin != null && version > 1 && resolvedVersion == 1 &&
-            plugin.id == "builtin." + java.util.HexFormat.of().formatHex(type.encodeToByteArray()) + ".v$version"
-        if (plugin != null && (plugin == canonical || historicalBuiltin)) {
+        val historicalBuiltin = plugin != null && BuiltinModifierPlugins.isHistoricalBuiltinReference(type, version, plugin)
+        if (plugin != null && (plugin == canonical || historicalBuiltin || plugin.id == "builtin")) {
             entries[Triple(type, resolvedVersion, null)]?.let { return it }
         }
         return entries[Triple(type, resolvedVersion, plugin)]

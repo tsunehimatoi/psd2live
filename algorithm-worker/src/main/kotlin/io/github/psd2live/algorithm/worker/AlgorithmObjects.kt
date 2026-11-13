@@ -43,6 +43,16 @@ object AlgorithmObjects {
         return bytes
     }
 
+    fun readInline(blobs: Map<String, ByteArray>, reference: JsonElement): ByteArray {
+        val objectRef = reference.jsonObject
+        require(objectRef.keys == setOf("inline", "bytes")) { "Invalid inline algorithm object reference" }
+        val key = objectRef.getValue("inline").jsonPrimitive.content
+        val expected = objectRef.getValue("bytes").jsonPrimitive.long
+        val bytes = blobs[key] ?: throw IllegalArgumentException("Missing inline algorithm object: $key")
+        require(expected in 0..LIMIT && bytes.size.toLong() == expected) { "Invalid inline algorithm object size" }
+        return bytes
+    }
+
     fun apply(previous: Map<String, JsonElement>, delta: JsonObject): Map<String, JsonElement> {
         val changed = delta.getValue("changed").jsonObject
         val removed = delta.getValue("removed").jsonArray.map { it.jsonPrimitive.content }
@@ -51,15 +61,18 @@ object AlgorithmObjects {
         return (previous - removed.toSet() + changed).also { require(it.size <= 10000 && "frame" in it) { "Invalid algorithm object set" } }
     }
 
-    fun decode(objects: Map<String, JsonElement>, meshOrder: JsonArray, deformerOrder: JsonArray, directory: Path): RigIR {
+    fun decode(objects: Map<String, JsonElement>, meshOrder: JsonArray, deformerOrder: JsonArray, directory: Path): RigIR =
+        decode(objects, meshOrder, deformerOrder) { read(directory, it) }
+
+    fun decode(objects: Map<String, JsonElement>, meshOrder: JsonArray, deformerOrder: JsonArray, read: (JsonElement) -> ByteArray): RigIR {
         val meshes = meshOrder.map { it.jsonPrimitive.content }
         val deformers = deformerOrder.map { it.jsonPrimitive.content }
         require(meshes.distinct().size == meshes.size && deformers.distinct().size == deformers.size) { "Duplicate algorithm object identity" }
         require(objects.keys == (listOf("frame") + meshes.map { "mesh:$it" } + deformers.map { "deformer:$it" }).toSet()) { "Algorithm object order differs from contents" }
         require(objects.values.sumOf { it.jsonObject.getValue("bytes").jsonPrimitive.long.also { size -> require(size in 0..LIMIT) } } <= 512L * 1024 * 1024) { "Algorithm objects exceed size limit" }
-        val result = RigIrObjects.join(RigIrObjects.Objects(read(directory, objects.getValue("frame")),
-            deformers.map { read(directory, objects.getValue("deformer:$it")) },
-            meshes.map { read(directory, objects.getValue("mesh:$it")) }))
+        val result = RigIrObjects.join(RigIrObjects.Objects(read(objects.getValue("frame")),
+            deformers.map { read(objects.getValue("deformer:$it")) },
+            meshes.map { read(objects.getValue("mesh:$it")) }))
         require(result.meshes.map { it.id } == meshes && result.deformers.map { it.id } == deformers) { "Algorithm object identity mismatch" }
         return result
     }

@@ -133,7 +133,7 @@ object AlgorithmResultValidation {
                 finite(start, value); require(start in 0f..clip.duration)
                 var previous = start
                 segments.forEach { segment ->
-                    finite(segment.time, segment.value); require(segment.time > previous && segment.time <= clip.duration)
+                    finite(segment.time, segment.value); require(segment.time >= previous && segment.time <= clip.duration) { "Invalid segment in clip '${clip.file}': time=${segment.time}, previous=$previous, duration=${clip.duration}" }
                     if (segment is CurveSegment.Bezier) finite(segment.c1Time, segment.c1Value, segment.c2Time, segment.c2Value)
                     previous = segment.time
                 }

@@ -48,6 +48,8 @@ data class ModifierPluginAlgorithm(
     /** 2 opts into explicit upstream capability snapshots; existing packages retain context version 1. */
     val contextVersion: Int = 1,
     val provides: Set<String> = emptySet(),
+    /** Optional host-captured author context contract (e.g. "face.skin-clip") for standalone plugins. */
+    val authorContext: String? = null,
 )
 
 @Serializable

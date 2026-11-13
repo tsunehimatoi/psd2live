@@ -28,14 +28,17 @@ internal object AlgorithmRasters {
         })
     }
 
-    fun decode(encoded: JsonArray, directory: Path): List<ModifierRasterOutput> {
+    fun decode(encoded: JsonArray, directory: Path): List<ModifierRasterOutput> =
+        decode(encoded) { AlgorithmObjects.read(directory, it) }
+
+    fun decode(encoded: JsonArray, readBlob: (JsonElement) -> ByteArray): List<ModifierRasterOutput> {
         require(encoded.size in 1..10000)
         var total = 0L
         return encoded.map { value ->
             val item = value.jsonObject
             require(item.keys == setOf("model", "pixels", "uv_space")) { "Invalid raster result envelope" }
             fun read(name: String): ByteArray {
-                val data = AlgorithmObjects.read(directory, item.getValue(name))
+                val data = readBlob(item.getValue(name))
                 total += data.size
                 require(total <= LIMIT) { "Raster result exceeds transfer limit" }
                 return data

@@ -76,7 +76,10 @@ object AlgorithmChanges {
         }
     }
 
-    fun decode(value: JsonObject, directory: Path): ModifierModelChanges {
+    fun decode(value: JsonObject, directory: Path): ModifierModelChanges =
+        decode(value) { AlgorithmObjects.read(directory, it) }
+
+    fun decode(value: JsonObject, read: (JsonElement) -> ByteArray): ModifierModelChanges {
         val schema = value.getValue("schema").jsonPrimitive.content
         require(schema == CAPABILITY || schema == RASTER_CAPABILITY) { "Unsupported change schema" }
         val rasterKeys = if (schema == RASTER_CAPABILITY) setOf("rasters") else emptySet()
@@ -93,8 +96,8 @@ object AlgorithmChanges {
             }
         }
         require(total <= 10000) { "Too many changes" }
-        val before = RigIrBinary.decode(AlgorithmObjects.read(directory, value.getValue("before")))
-        val after = RigIrBinary.decode(AlgorithmObjects.read(directory, value.getValue("after")))
+        val before = RigIrBinary.decode(read(value.getValue("before")))
+        val after = RigIrBinary.decode(read(value.getValue("after")))
         fun <T> objects(name: String, old: List<T>, new: List<T>): ModifierObjectChanges<T> {
             val (add, update, remove, reuse) = counts[name] ?: listOf(0, 0, 0, 0)
             require(old.size == remove + reuse + update && new.size == add + update) { "Change payload count mismatch: $name" }
@@ -105,7 +108,7 @@ object AlgorithmChanges {
         fun <T> field(name: String, old: T, new: T): ModifierFieldChange<T>? =
             if (name in fields) ModifierFieldChange(old, new) else null
         return ModifierModelChanges(
-            rasters = if (schema == RASTER_CAPABILITY) AlgorithmRasters.decode(value.getValue("rasters").jsonArray, directory) else emptyList(),
+            rasters = if (schema == RASTER_CAPABILITY) AlgorithmRasters.decode(value.getValue("rasters").jsonArray, read) else emptyList(),
             parameters = objects("parameters", before.parameters, after.parameters),
             parts = objects("parts", before.parts, after.parts),
             deformers = objects("deformers", before.deformers, after.deformers),

@@ -132,7 +132,7 @@ object MotionData {
 		val first = source.keys.first()
 		// A curve needs a segment; a lone key, or one after zero, holds from zero.
 		val keys = buildList {
-			if (first.time > MotionData.TIME_EPSILON || source.keys.size == 1) add(first.copy(time = 0f, interpolation = MotionInterpolation.LINEAR))
+			if (first.time > MotionData.TIME_EPSILON) add(first.copy(time = 0f, interpolation = MotionInterpolation.LINEAR))
 			addAll(source.keys)
 			if (size == 1) add(first.copy(time = maxOf(first.time, MotionData.TIME_EPSILON)))
 		}

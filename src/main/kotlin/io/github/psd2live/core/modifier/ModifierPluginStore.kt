@@ -380,7 +380,7 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
         require(bytes.size <= 1024 * 1024) { "Plugin manifest is too large" }
         val manifest = codec.decodeFromString(ModifierPluginManifest.serializer(), bytes.decodeToString())
         require(manifest.id != "builtin") { "The aggregate bundled identity is reserved" }
-        require(manifest.protocol == 1 && token.matches(manifest.id) && manifest.version.length <= 128) { "Unsupported plugin manifest" }
+        require(manifest.protocol in 1..2 && token.matches(manifest.id) && manifest.version.length <= 128) { "Unsupported plugin manifest" }
         ModifierPluginVersion.parse(manifest.version, legacy = true)
         for (relation in manifest.dependencies + manifest.conflicts) {
             require(token.matches(relation.id) && relation.id != manifest.id) { "Invalid plugin relationship: ${relation.id}" }
@@ -396,6 +396,7 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
         manifest.algorithms.forEach {
             require(it.contextVersion in 1..2) { "Unsupported algorithm context version" }
             require(it.provides.size <= 128 && it.provides.all { name -> name.isNotBlank() && name.length <= 256 && name.none(Char::isISOControl) }) { "Invalid provided capabilities" }
+            it.authorContext?.let { ctx -> require(ctx.isNotBlank() && ctx.length <= 256 && ctx.none(Char::isISOControl)) { "Invalid authorContext contract" } }
             require(it.aliases.all { alias -> manifest.id == "builtin." + java.util.HexFormat.of().formatHex(alias.encodeToByteArray()) + ".v${it.version}" }) { "Only a matching bundled package may declare a legacy type" }
             require(!manifest.id.startsWith("builtin.") || it.aliases.size == 1) { "Bundled archives require a stable algorithm alias" }
             require(it.type.startsWith("${manifest.id}/") && it.version > 0 && it.name.isNotBlank()) { "Algorithm type must belong to its plugin namespace" }

@@ -208,7 +208,7 @@ The host merges the object delta into the complete upstream input, preserving co
 
 See [six-language examples and packaging instructions](../../../examples/plugins/README.md). Package-root `plugin.json` contains:
 
-- `protocol: 1`, package `id`, `version`, and `name`.
+- `protocol: 1` or `protocol: 2`, package `id`, `version`, and `name`.
 - `commands`: argument arrays indexed by platform, e.g. `windows-x86_64`. JVM workers use `jvm: ["$JAVA", "-jar", "worker.jar"]`. Commands do not pass through a shell.
 - `files`: relative payload paths and SHA-256 digests. Traversal, symlinks, and unlisted files are rejected.
 - `algorithms`: `package-id/type`, algorithm version/name, targets, dependencies, exclusivity, read/write domains, composable kinds, `configSchema`, and `defaults`.
@@ -216,7 +216,7 @@ See [six-language examples and packaging instructions](../../../examples/plugins
 
 `protocol` identifies the worker protocol revision. The top-level `version` in `plugin.json` resolves package dependencies, while each integer algorithm `version` identifies an executable entrypoint together with its type. For example, `mouth.outline@4` selects revision 4 of the outline algorithm. Projects pin both the algorithm entrypoint and the package version, content digest, and dependency locks. Existing instances retain their saved entrypoint when a package is upgraded.
 
-Requests/responses are one UTF-8 JSON line each. Stdout is protocol-only; logs go to stderr. Requests contain `protocol/id/method/type/version/instance/config/targets`. Responses echo `protocol/id` and return `commands` or `error`. A worker handles one request at a time; faults/timeouts reset it. Cancelling an active request terminates its worker without committing partial results. Queued requests can be cancelled independently without interrupting another active request; cancellation is also checked while awaiting a response.
+In `protocol: 1`, requests/responses are one UTF-8 JSON line each, and binary resources reference SHA-256 files under `PSD2LIVE_PLUGIN_RESOURCES` (`{"sha256": "...", "bytes": N}`). In `protocol: 2` (designed for fast native and multi-language plugins such as Rust/C++/Zig/Go/Python with zero temp-file or SHA-256 disk I/O), requests/responses use length-prefixed binary frames over stdio: `[u32le headerLen][UTF-8 JSON header][u32le blobCount]([u32le keyLen][UTF-8 key][u32le dataLen][bytes])*`, with inline blob references `{"inline": "<key>", "bytes": N}` and `PSD2LIVE_PLUGIN_PROTOCOL=2` set in the worker environment. In both protocols, stdout is protocol-only and logs go to stderr. Requests contain `protocol/id/method/type/version/instance/config/targets`. Responses echo `protocol/id` and return `commands`, `objects`, `changes`, or `error`. A worker handles one request at a time; faults/timeouts reset it. Cancelling an active request terminates its worker without committing partial results. Queued requests can be cancelled independently without interrupting another active request; cancellation is also checked while awaiting a response.
 
 Inputs are projected to declared read/write domains; `*` or unknown domains conservatively receive the full input. `changed` and `removed` update the object index, with `reset` starting a session. `frame`, `mesh:<id>`, and `deformer:<id>` point to content-addressed resources in the request's `resource_directory`, also available as `PSD2LIVE_PLUGIN_RESOURCES`. These use the versioned exact `RigIrObjects` binary format. `mesh_order` and `deformer_order` preserve order.
 

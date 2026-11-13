@@ -26,9 +26,16 @@ internal object BuiltinModifierPlugins {
     private fun canonicalVersion(type: String, version: Int): Int =
         if (version > 1 && RigLegacyBindings.find(type) != null) 1 else version
 
-    private fun isHistoricalBuiltinReference(type: String, version: Int, plugin: ModifierPluginReference): Boolean =
-        version > 1 && RigLegacyBindings.find(type) != null &&
-            plugin.id == "builtin." + java.util.HexFormat.of().formatHex(type.encodeToByteArray()) + ".v$version"
+    fun isHistoricalBuiltinReference(type: String, version: Int, plugin: ModifierPluginReference): Boolean =
+        version > 1 && RigLegacyBindings.find(type) != null && (
+            plugin.id == "builtin." + java.util.HexFormat.of().formatHex(type.encodeToByteArray()) + ".v$version" ||
+                plugin == reference(type, 1)
+            )
+
+    fun resolveVersion(type: String, version: Int, plugin: ModifierPluginReference?): Int =
+        if (version > 1 && RigLegacyBindings.find(type) != null &&
+            (plugin == null || plugin.id == "builtin" || isHistoricalBuiltinReference(type, version, plugin))) 1
+        else version
 
     private val byAlgorithm by lazy { entries.associateBy { it.definition.type to it.definition.version } }
     fun entry(type: String, version: Int): Entry? = byAlgorithm[type to canonicalVersion(type, version)]
