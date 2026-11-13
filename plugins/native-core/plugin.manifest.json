@@ -17,6 +17,8 @@
       "targets": ["mesh", "deformer", "part", "layer"],
       "reads": ["parameter", "physics"],
       "writes": ["physics"],
+      "creates": ["physicsGroups"],
+      "modifies": [],
       "configSchema": {"type": "object"},
       "defaults": {}
     },
@@ -28,6 +30,8 @@
       "targets": ["mesh", "deformer", "part", "layer"],
       "reads": ["parameter", "motion", "relations"],
       "writes": ["motion", "relations"],
+      "creates": ["motionClips", "relations"],
+      "modifies": ["parameters"],
       "configSchema": {"type": "object"},
       "defaults": {}
     },
@@ -42,6 +46,8 @@
       "contextVersion": 2,
       "reads": ["mesh", "relations"],
       "writes": ["mesh", "relations"],
+      "creates": [],
+      "modifies": ["mesh.clipping", "relations"],
       "composableKinds": ["mesh", "part", "deformer", "hierarchy", "relations", "parameter"],
       "configSchema": {"type": "object"},
       "defaults": {}
@@ -55,8 +61,10 @@
       "targets": ["mesh"],
       "requires": ["rig.scaffold"],
       "contextVersion": 2,
-      "reads": ["*"],
-      "writes": ["*"],
+      "reads": ["mesh", "part", "deformer", "hierarchy", "relations", "parameter"],
+      "writes": ["mesh", "part", "hierarchy", "relations", "parameter"],
+      "creates": ["derivedMeshes", "parameters", "parts"],
+      "modifies": ["mesh.opacity", "mesh.drawOrder", "relations"],
       "composableKinds": ["mesh", "part", "deformer", "hierarchy", "relations", "parameter"],
       "configSchema": {"type": "object"},
       "defaults": {}
@@ -70,8 +78,10 @@
       "targets": ["mesh"],
       "requires": ["rig.scaffold"],
       "contextVersion": 2,
-      "reads": ["*"],
-      "writes": ["*"],
+      "reads": ["mesh", "part", "deformer", "hierarchy", "relations", "parameter"],
+      "writes": ["mesh", "part", "hierarchy", "relations", "parameter"],
+      "creates": ["derivedMeshes", "parameters", "parts"],
+      "modifies": ["mesh.opacity", "mesh.drawOrder", "relations"],
       "composableKinds": ["mesh", "part", "deformer", "hierarchy", "relations", "parameter"],
       "configSchema": {"type": "object"},
       "defaults": {}
@@ -88,6 +98,8 @@
       "contextVersion": 2,
       "reads": ["mesh", "parameter", "physics"],
       "writes": ["mesh", "parameter", "physics"],
+      "creates": ["parameters", "physicsGroups"],
+      "modifies": ["mesh.opacity", "physics.inputs"],
       "composableKinds": ["mesh", "part", "deformer", "hierarchy", "relations", "parameter", "physics"],
       "configSchema": {"type": "object"},
       "defaults": {}
@@ -98,8 +110,10 @@
       "name": "Swing (Native)",
       "category": "physics",
       "targets": ["mesh", "deformer"],
-      "reads": ["*"],
-      "writes": ["*"],
+      "reads": ["mesh", "deformer", "parameter", "physics", "hierarchy"],
+      "writes": ["deformer", "mesh", "parameter", "physics", "hierarchy"],
+      "creates": ["warpDeformers", "parameters", "physicsGroups"],
+      "modifies": ["deformer.keyforms", "hierarchy"],
       "composableKinds": ["deformer", "mesh", "hierarchy"],
       "derivedOutputs": [
         {"kind": "deformer", "localName": "swing", "prefix": "Warp_Swing_", "numbered": true},
@@ -114,8 +128,10 @@
       "name": "Simulation (Native)",
       "category": "clothing",
       "targets": ["mesh"],
-      "reads": ["*"],
-      "writes": ["*"],
+      "reads": ["mesh", "deformer", "parameter", "physics", "hierarchy"],
+      "writes": ["mesh", "parameter", "physics"],
+      "creates": ["parameters", "physicsGroups"],
+      "modifies": ["mesh.offsets", "physics.inputs"],
       "composableKinds": ["mesh", "parameter", "physics"],
       "derivedOutputs": [
         {"kind": "physics", "localName": "physics", "prefix": "PhysicsSim_", "numbered": true}
@@ -134,6 +150,8 @@
       "contextVersion": 2,
       "reads": ["mesh", "parameter"],
       "writes": ["mesh", "parameter", "hierarchy"],
+      "creates": ["parameters"],
+      "modifies": ["mesh.tint", "mesh.opacity", "hierarchy"],
       "composableKinds": ["mesh", "part", "deformer", "hierarchy", "relations", "parameter"],
       "configSchema": {"type": "object"},
       "defaults": {}
@@ -149,6 +167,8 @@
       "contextVersion": 2,
       "reads": ["mesh", "parameter"],
       "writes": ["mesh", "parameter", "hierarchy"],
+      "creates": ["parameters"],
+      "modifies": ["mesh.tint", "mesh.opacity", "hierarchy"],
       "composableKinds": ["mesh", "part", "deformer", "hierarchy", "relations", "parameter"],
       "configSchema": {"type": "object"},
       "defaults": {}
@@ -164,6 +184,8 @@
       "contextVersion": 2,
       "reads": ["mesh", "parameter"],
       "writes": ["mesh", "parameter", "hierarchy"],
+      "creates": ["parameters"],
+      "modifies": ["mesh.tint", "mesh.opacity", "hierarchy"],
       "composableKinds": ["mesh", "part", "deformer", "hierarchy", "relations", "parameter"],
       "configSchema": {"type": "object"},
       "defaults": {}
@@ -179,6 +201,8 @@
       "contextVersion": 2,
       "reads": ["mesh", "parameter"],
       "writes": ["mesh", "part", "deformer", "hierarchy", "relations", "parameter"],
+      "creates": ["parameters"],
+      "modifies": ["mesh.opacity"],
       "composableKinds": ["mesh", "part", "deformer", "hierarchy", "relations", "parameter"],
       "configSchema": {"type": "object"},
       "defaults": {}
@@ -194,6 +218,8 @@
       "contextVersion": 2,
       "reads": ["mesh", "parameter"],
       "writes": ["mesh", "parameter", "hierarchy"],
+      "creates": ["parameters"],
+      "modifies": ["mesh.offsets"],
       "composableKinds": ["mesh", "part", "deformer", "hierarchy", "relations", "parameter"],
       "configSchema": {"type": "object"},
       "defaults": {}
@@ -209,6 +235,8 @@
       "contextVersion": 2,
       "reads": ["mesh", "deformer", "parameter", "physics"],
       "writes": ["mesh", "parameter", "hierarchy", "physics"],
+      "creates": ["parameters", "physicsGroups"],
+      "modifies": ["mesh.offsets", "deformer.keyforms"],
       "composableKinds": ["mesh", "part", "deformer", "hierarchy", "relations", "parameter", "physics"],
       "configSchema": {"type": "object"},
       "defaults": {}
@@ -224,6 +252,8 @@
       "contextVersion": 2,
       "reads": ["mesh", "deformer", "parameter"],
       "writes": ["mesh"],
+      "creates": [],
+      "modifies": ["mesh.offsets"],
       "composableKinds": ["mesh", "part", "deformer", "hierarchy", "relations", "parameter"],
       "configSchema": {"type": "object"},
       "defaults": {}

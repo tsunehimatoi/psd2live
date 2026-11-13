@@ -1,6 +1,10 @@
 package io.github.psd2live.core.modifier
 
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
@@ -8,6 +12,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+
+private val manifestTestJson = Json { ignoreUnknownKeys = true }
 
 class PartPluginsAndSimulationTest {
     @Test
@@ -59,6 +65,26 @@ class PartPluginsAndSimulationTest {
             assertTrue(
                 alg.creates.isNotEmpty() || alg.modifies.isNotEmpty(),
                 "$id@$version must declare at least one creates or modifies target",
+            )
+        }
+    }
+
+    @Test
+    fun `native-core manifest declares explicit writes creates and modifies without wildcards`() {
+        val manifestFile = java.io.File("plugins/native-core/plugin.manifest.json")
+        assertTrue(manifestFile.isFile, "Expected plugins/native-core/plugin.manifest.json")
+        val root = manifestTestJson.parseToJsonElement(manifestFile.readText()).jsonObject
+        val algorithms = root.getValue("algorithms").jsonArray.map {
+            manifestTestJson.decodeFromJsonElement<ModifierPluginAlgorithm>(it)
+        }
+        assertTrue(algorithms.isNotEmpty())
+        for (alg in algorithms) {
+            assertTrue("*" !in alg.reads, "${alg.type}@${alg.version} must not use wildcard reads")
+            assertTrue("*" !in alg.writes, "${alg.type}@${alg.version} must not use wildcard writes")
+            assertTrue("*" !in alg.creates && "*" !in alg.modifies, "${alg.type}@${alg.version} must not use wildcard creates/modifies")
+            assertTrue(
+                alg.creates.isNotEmpty() || alg.modifies.isNotEmpty(),
+                "${alg.type}@${alg.version} must declare at least one creates or modifies target",
             )
         }
     }
