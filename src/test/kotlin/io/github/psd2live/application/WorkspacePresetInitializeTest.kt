@@ -4,6 +4,7 @@ import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.recipe.RigRecipe
 import io.github.psd2live.project.*
+import io.github.psd2live.scenario.Characters
 import kotlinx.serialization.json.*
 import kotlinx.coroutines.runBlocking
 import org.umamo.format.art.*
@@ -151,5 +152,31 @@ class WorkspacePresetInitializeTest {
         val schema = WorkspaceModifierSchemas.request("modifier_initialize")
         assertEquals(setOf("state", "modifiers", "preset"), schema.getValue("properties").jsonObject.keys)
         assertEquals(setOf("state", "modifiers"), schema.getValue("required").jsonArray.map { it.jsonPrimitive.content }.toSet())
+    }
+
+    @Test fun recommendedInitializationSucceedsWithOpenMouthAndFullHeadLayers(): Unit = runBlocking {
+        val base = Characters.head(physics = false)
+        val mouthLayer = base.source.layers.first()
+        val mouthOpenLayer = WorkspaceSourceLayer(
+            LayerId("mouth-open-test"), "mouth_open", "", SourceLayerKind.Raster, true, base.source.layers.size,
+            mouthLayer.bounds, 1f, false, LayerBlend.Normal, ChannelMask.ALL,
+            mouthLayer.raster, null, null, false,
+        )
+        val emptyDoc = base.copy(
+            source = WorkspaceSourceArt(base.source.widthPx, base.source.heightPx, base.source.layers + mouthOpenLayer, base.source.groups),
+            layerOverrides = base.layerOverrides + ("mouth-open-test" to LayerClassificationOverride(LayerType.PRESET, SemanticTag.MOUTH_OPEN)),
+            rigEdits = base.rigEdits.copy(modifierStack = RigModifierStack().toJson()),
+        )
+        val builder = WorkspacePreviewBuilder()
+        val preview = builder.build(emptyDoc)
+        val initialized = WorkspaceModifierEdits.apply(
+            WorkspaceDocumentOperation("modifier_initialize", buildJsonObject { put("modifiers", "recommended") }),
+            emptyDoc,
+            preview,
+        )
+        val stack = RigModifierStack.fromJson(requireNotNull(initialized.rigEdits.modifierStack))
+        assertTrue(stack.instances.any { it.type == "mouth/fitted" })
+        assertTrue(stack.instances.any { it.type == "mouth.outline" })
+        assertTrue(stack.instances.none { it.type == "mouth/legacy" })
     }
 }
