@@ -18,6 +18,12 @@ internal object RigLegacyBindings {
         val area get() = type.substringBefore('/').substringBefore('.')
         val mouthOutline get() = module == RigModules.MOUTH_OUTLINE
         val expressionToggles get() = module == RigModules.EXPRESSION_TOGGLES
+        val expressionCheek get() = module == RigModules.EXPRESSION_CHEEK
+        val expressionGloom get() = module == RigModules.EXPRESSION_GLOOM
+        val eyeLidFade get() = module == RigModules.EYE_LID_FADE
+        val eyeSquash get() = module == RigModules.EYE_SQUASH
+        val browShape get() = module == RigModules.BROW_SHAPE
+        val browSpring get() = module == RigModules.BROW_SPRING
         val skinClip get() = module == RigModules.FACE_SKIN_CLIP
         val seeThrough get() = module == RigModules.EYE_SEE_THROUGH || module == RigModules.BROW_SEE_THROUGH
         val chainKinds get() = RigModifierChains.kinds(type)
@@ -153,13 +159,32 @@ internal object RigLegacyBindings {
             requireNotNull(source).provider(instance)
         }, composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter") +
             if (spec.expressionToggles || spec.hasPhysics) setOf("physics") else emptySet(),
-        changeWrites = if (spec.skinClip) setOf("mesh", "relations") else null,
+        changeWrites = when {
+            spec.skinClip -> setOf("mesh", "relations")
+            spec.expressionCheek || spec.expressionGloom -> setOf("mesh", "parameter", "hierarchy")
+            spec.eyeLidFade -> setOf("mesh")
+            spec.browShape -> setOf("mesh", "parameter", "hierarchy")
+            spec.browSpring -> setOf("mesh", "parameter", "hierarchy", "physics")
+            else -> null
+        },
         plugin = when {
             spec.expressionToggles -> io.github.psd2live.algorithms.binding.ExpressionAlgorithm()
+            spec.expressionCheek -> io.github.psd2live.algorithms.binding.CheekAlgorithm()
+            spec.expressionGloom -> io.github.psd2live.algorithms.binding.GloomAlgorithm()
+            spec.eyeLidFade -> object : ReadingModifierAlgorithmPlugin {
+                private val lidFade = io.github.psd2live.algorithms.binding.LidFadeAlgorithm()
+                override fun changes(input: ModifierEvaluationInput, instance: RigModifierInstance, checkpoint: () -> Unit) =
+                    lidFade.changes(input, instance.copy(version = 2), checkpoint)
+            }
             spec.seeThrough -> seeThrough
             spec.skinClip -> io.github.psd2live.algorithms.binding.SkinClipAlgorithm()
-            else -> object : ContextualModifierAlgorithmPlugin {
+            else -> object : ContextualModifierAlgorithmPlugin, ModifierOptionalUpstream {
                 private val transition = io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm()
+                override val optionalUpstream = when {
+                    spec.browShape -> setOf("eye/fitted")
+                    spec.browSpring -> setOf("eye/fitted", "brow.shape", "psd2live.native.core/brow-shape")
+                    else -> emptySet()
+                }
 
                 override fun evaluate(input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext,
                                       checkpoint: () -> Unit): RigIR {
@@ -173,6 +198,9 @@ internal object RigLegacyBindings {
         },
         authorContext = { when {
             spec.expressionToggles -> requireNotNull(source).expressionContext(it)
+            spec.expressionCheek -> requireNotNull(source).cheekContext(it)
+            spec.expressionGloom -> requireNotNull(source).gloomContext(it)
+            spec.eyeLidFade -> requireNotNull(source).lidFadeContext(it)
             spec.seeThrough -> requireNotNull(source).seeThroughContext(it)
             spec.skinClip -> requireNotNull(source).skinClipContext(it)
             else -> ModifierAlgorithmContext.Empty

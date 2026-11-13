@@ -148,12 +148,20 @@ internal class RigModifierSource(
             put("bangs", JsonArray(candidate.bangs.map(::JsonPrimitive)))
         }) } }
         put("earlier_owners", Json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(RigModifierInstance.serializer()),
-            activeBefore(instance).filter { RigLegacyBindings.find(it.type)?.seeThrough == true || isPackagedSeeThrough(it) }))
+            activeBefore(instance).filter {
+                RigLegacyBindings.find(it.type)?.seeThrough == true ||
+                    isPackagedAuthorContext(it, setOf("eye.see-through", "brow.see-through"))
+            }))
     })
 
-    private fun isPackagedSeeThrough(instance: RigModifierInstance): Boolean {
+    private fun isPackagedAuthorContext(instance: RigModifierInstance, contracts: Set<String>): Boolean {
         val plugin = instance.plugin ?: return false
-        return listOf("eye.see-through", "brow.see-through").any { alias ->
+        if (ModifierPluginStore.shared.packages().any { pkg ->
+                pkg.reference == plugin && pkg.manifest.algorithms.any {
+                    it.type == instance.type && it.version == instance.version && it.authorContext in contracts
+                }
+            }) return true
+        return contracts.any { alias ->
             val artifact = BundledAlgorithmArtifacts.find(alias, instance.version) ?: return@any false
             plugin.id == artifact.manifest.id && artifact.manifest.algorithms.any {
                 it.type == instance.type && it.version == instance.version && alias in it.aliases
@@ -240,8 +248,146 @@ internal class RigModifierSource(
                 if (requireUpstreamStandards) expressionSourceParameters(instance) else expressionParameters(instance))))))
 
     fun addUpstreamExpressionInputs(rig: RigIR, instance: RigModifierInstance): RigIR {
-        val preceding = activeBefore(instance).filter { RigLegacyBindings.find(it.type)?.expressionToggles == true }
+        val preceding = activeBefore(instance).filter {
+            RigLegacyBindings.find(it.type)?.expressionToggles == true ||
+                isPackagedAuthorContext(it, setOf("expression.toggles"))
+        }
         return RigModifierPhysics.addExpressionInputs(rig, listOf(instance), preceding.flatMap { expressionIds(it).map(ParameterId::raw) })
+    }
+
+    private fun priorMoodStrength(instance: RigModifierInstance, contract: String): Float? =
+        activeBefore(instance).lastOrNull {
+            it.type == contract || isPackagedAuthorContext(it, setOf(contract))
+        }?.let { RigLegacyBindings.values(it.copy(type = contract))["strength"] ?: 100f }
+
+    fun cheekContext(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val priorCheek = priorMoodStrength(instance, "expression.cheek")
+        val priorGloom = priorMoodStrength(instance, "expression.gloom")
+        val materialById = materialBase.drawables.associateBy { it.id.raw }
+        val targets = instance.targets.mapNotNull { target ->
+            val layerId = layersByMesh[target.id] ?: return@mapNotNull null
+            val layer = layersById[layerId] ?: return@mapNotNull null
+            val tag = layer.semantic.tag
+            val role = layer.semantic.role
+            val kind = when {
+                tag == SemanticTag.FACE_DETAIL && role == PartRole.BLUSH -> io.github.psd2live.algorithms.binding.CheekSource.LayerKind.BLUSH
+                tag == SemanticTag.FACE -> io.github.psd2live.algorithms.binding.CheekSource.LayerKind.FACE
+                tag == SemanticTag.NOSE -> io.github.psd2live.algorithms.binding.CheekSource.LayerKind.NOSE
+                tag == SemanticTag.EARS -> io.github.psd2live.algorithms.binding.CheekSource.LayerKind.EARS
+                tag == SemanticTag.FACE_DETAIL && role != PartRole.HIGHLIGHT -> io.github.psd2live.algorithms.binding.CheekSource.LayerKind.FACE_DETAIL
+                else -> io.github.psd2live.algorithms.binding.CheekSource.LayerKind.OTHER
+            }
+            val baseDrawable = primaryByLayer[layerId]?.let(materialById::get)
+            val generatedMultiply = baseDrawable?.channelGrids?.gridsByChannel?.containsKey(org.umamo.runtime.model.FormChannel.MULTIPLY_COLOR) == true
+            target.id to io.github.psd2live.algorithms.binding.CheekSource.Layer(kind, priorCheek, priorGloom, generatedMultiply)
+        }.toMap()
+        return io.github.psd2live.algorithms.binding.CheekSource(
+            hasFace = analysis.layers.any { it.semantic.tag == SemanticTag.FACE },
+            parameterName = io.github.psd2live.i18n.tr("model.parameter.cheek"),
+            folderName = io.github.psd2live.i18n.tr("model.group.face"),
+            targets = targets,
+        ).context()
+    }
+
+    fun lidFadeContext(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val targetLayers = instance.targets.mapNotNull { t -> layersByMesh[t.id]?.let { t.id to it } }.toMap()
+        val upstream = activeBefore(instance).map {
+            ModifierUpstreamCapability(it.type, it.type, it.version, it.targets, it.id, it.config)
+        }
+        return RigBuilder.lidFadeSourceInputs(analysis, sourceConfig(), meshCache, targetLayers).withUpstream(upstream)
+    }
+
+    fun eyeSquashContext(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val targetLayers = instance.targets.mapNotNull { t -> layersByMesh[t.id]?.let { t.id to it } }.toMap()
+        val base = instance.config["base"]?.jsonPrimitive?.content
+        val fitted = activeBefore(instance).singleOrNull { it.id == base }
+        return RigBuilder.eyeSquashSourceInputs(analysis, atlas, sourceConfig(), meshCache, targetLayers) { target, deformer ->
+            fitted?.let { deformerIds(it, ModifierTarget("mesh", target)) {}[DeformerId(deformer)]?.raw }
+                ?: RigSourceModifiers.deformerId(fitted ?: instance, target, deformer)
+        }
+    }
+
+    fun browShapeContext(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val targetLayers = instance.targets.mapNotNull { t -> layersByMesh[t.id]?.let { t.id to it } }.toMap()
+        val scaffold = instance.config["scaffold"]
+        val base = instance.config["base"]?.jsonPrimitive?.content
+        val fitted = activeBefore(instance).singleOrNull { it.id == base }
+        val eyeProvider = activeBefore(instance).lastOrNull {
+            it.type == "eye/fitted" && it.config["scaffold"] == scaffold
+        }?.id
+        return RigBuilder.browShapeSourceInputs(analysis, atlas, sourceConfig(), meshCache, targetLayers, eyeProvider) { target, deformer ->
+            fitted?.let { deformerIds(it, ModifierTarget("mesh", target)) {}[DeformerId(deformer)]?.raw }
+                ?: RigSourceModifiers.deformerId(fitted ?: instance, target, deformer)
+        }.encode()
+    }
+
+    fun browSpringContext(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val targetLayers = instance.targets.mapNotNull { t -> layersByMesh[t.id]?.let { t.id to it } }.toMap()
+        val scaffold = instance.config["scaffold"]
+        val base = instance.config["base"]?.jsonPrimitive?.content
+        val fitted = activeBefore(instance).singleOrNull { it.id == base }
+        val eyeProvider = activeBefore(instance).lastOrNull {
+            it.type == "eye/fitted" && it.config["scaffold"] == scaffold
+        }?.id
+        val shapeProvider = activeBefore(instance).lastOrNull {
+            (it.type == "brow.shape" || isPackagedAuthorContext(it, setOf("brow.shape"))) &&
+                it.config["scaffold"] == scaffold && it.config["base"] == instance.config["base"]
+        }?.id
+        val kept = activeBefore(instance).plus(instance).flatMapTo(HashSet()) {
+            val contract = RigLegacyBindings.find(it.type)?.type
+                ?: if (isPackagedAuthorContext(it, setOf("brow.shape"))) "brow.shape"
+                else if (isPackagedAuthorContext(it, setOf("brow.spring"))) "brow.spring"
+                else it.type
+            RigLegacyBindings.find(contract)?.parameters.orEmpty()
+        }
+        return RigBuilder.browSpringSourceInputs(analysis, atlas, sourceConfig(), meshCache, targetLayers, kept, eyeProvider, shapeProvider) { target, deformer ->
+            fitted?.let { deformerIds(it, ModifierTarget("mesh", target)) {}[DeformerId(deformer)]?.raw }
+                ?: RigSourceModifiers.deformerId(fitted ?: instance, target, deformer)
+        }.encode()
+    }
+
+    fun gloomContext(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val priorCheek = priorMoodStrength(instance, "expression.cheek")
+        val priorGloom = priorMoodStrength(instance, "expression.gloom")
+        val materialById = materialBase.drawables.associateBy { it.id.raw }
+        val layers = LinkedHashMap<String, io.github.psd2live.algorithms.binding.GloomInputs.Layer>()
+        val neutral = LinkedHashMap<String, io.github.psd2live.format.model.Mesh>()
+        for (target in instance.targets) {
+            val layerId = layersByMesh[target.id] ?: continue
+            val layer = layersById[layerId] ?: continue
+            val tag = layer.semantic.tag
+            val role = layer.semantic.role
+            val skin = tag == SemanticTag.FACE || tag == SemanticTag.NOSE || tag == SemanticTag.EARS ||
+                (tag == SemanticTag.FACE_DETAIL && role != PartRole.HIGHLIGHT)
+            val cheekWarmth = when {
+                tag == SemanticTag.FACE_DETAIL && role == PartRole.BLUSH -> 0.3f
+                tag == SemanticTag.FACE || tag == SemanticTag.NOSE -> 0.06f
+                tag == SemanticTag.EARS -> 0.05f
+                else -> 0f
+            }
+            layers[target.id] = io.github.psd2live.algorithms.binding.GloomInputs.Layer(
+                skin = skin,
+                highlight = role == PartRole.HIGHLIGHT,
+                cheekWarmth = cheekWarmth,
+                precedingCheekStrength = priorCheek,
+                precedingGloomStrength = priorGloom,
+            )
+            val baseDrawable = primaryByLayer[layerId]?.let(materialById::get)
+            neutral[target.id] = if (baseDrawable != null) {
+                io.github.psd2live.targets.cubism.PuppetIr.meshToIr(baseDrawable).copy(
+                    id = target.id, name = target.id, parent = null, geometry = null, offsets = null, shapes = emptyList(),
+                )
+            } else {
+                io.github.psd2live.format.model.Mesh(target.id, target.id, null, geometry = null, offsets = null)
+            }
+        }
+        return io.github.psd2live.algorithms.binding.GloomInputs(
+            applies = analysis.layers.any { it.semantic.tag == SemanticTag.FACE },
+            parameterName = io.github.psd2live.i18n.tr("model.parameter.gloom"),
+            groupName = io.github.psd2live.i18n.tr("model.group.face"),
+            layers = layers,
+            neutral = neutral,
+        ).context()
     }
 
     fun outline(rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit): RigIR {
@@ -308,6 +454,12 @@ internal class RigModifierSource(
         val spec = RigLegacyBindings.spec(instance.type)
         when {
             spec.expressionToggles -> return expressionContext(instance)
+            spec.expressionCheek -> return cheekContext(instance)
+            spec.expressionGloom -> return gloomContext(instance)
+            spec.eyeLidFade -> return lidFadeContext(instance)
+            spec.eyeSquash -> return eyeSquashContext(instance)
+            spec.browShape -> return browShapeContext(instance)
+            spec.browSpring -> return browSpringContext(instance)
             spec.seeThrough -> return seeThroughContext(instance)
             spec.skinClip -> return skinClipContext(instance)
         }

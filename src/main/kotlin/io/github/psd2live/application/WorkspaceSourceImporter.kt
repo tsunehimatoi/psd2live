@@ -90,13 +90,7 @@ internal class WorkspaceSourceImporter(
                                 project: (WorkspaceDocument, RigPreviewModel, String) -> Unit,
                                 sourceAuxiliary: JsonObject = JsonObject(emptyMap()), layout: Boolean = false,
                                 modifiers: WorkspaceInitialModifiers? = null, preset: WorkspaceInitialPreset? = null): WorkspaceCommit<RigPreviewModel> {
-        require(preset == null || modifiers == WorkspaceInitialModifiers.CUSTOM) { "Custom choices require the custom modifier mode" }
-        val choices = when (modifiers) {
-            WorkspaceInitialModifiers.RECOMMENDED -> WorkspaceModelPresetLibrary.shared.get("modern").choices
-            WorkspaceInitialModifiers.CUSTOM -> requireNotNull(preset) { "Custom modifier choices are required" }
-            WorkspaceInitialModifiers.MINIMAL, WorkspaceInitialModifiers.DEFAULT, WorkspaceInitialModifiers.FULL -> WorkspaceInitialPreset.forMode(modifiers)
-            else -> null
-        }
+        val choices = WorkspaceInitialPreset.resolveChoices(modifiers, preset)
         val before = runtime.state.value
         currentCoroutineContext().ensureActive()
         // Capture before source I/O. Another edit or reload cannot be hidden by taking a newer token.
@@ -110,13 +104,10 @@ internal class WorkspaceSourceImporter(
         val input = prepare()
         val source = input.source; val overrides = input.overrides
         progress(0.4f, "Preparing new source document")
-        val baseline = if (modifiers == WorkspaceInitialModifiers.RECOMMENDED)
-            WorkspacePresetBaseline.configure(initialConfig, "modern") else initialConfig
-        val config = (choices?.configure(baseline) ?: baseline).copy(layerVisibility = emptyMap(), deletedLayerIds = emptySet(),
+        val config = WorkspaceInitialPreset.applyToConfig(modifiers, choices, initialConfig).copy(
+            layerVisibility = emptyMap(), deletedLayerIds = emptySet(),
             layerOverrides = overrides, parentOverrides = emptyMap(), drawOrderOverrides = emptyMap(), meshOverrides = emptyMap(),
-            rigEdits = RigEditOverlay.Empty, generationSource = null, meshSource = null,
-            hairSimulationFront = choices?.frontHair == WorkspaceInitialHair.SIMULATION,
-            hairSimulationBack = choices?.backHair == WorkspaceInitialHair.SIMULATION)
+            rigEdits = RigEditOverlay.Empty, generationSource = null, meshSource = null)
         val overlay = if (modifiers == null) RigEditOverlay.Empty else RigEditOverlay(
             modifierStack = io.github.psd2live.core.modifier.RigModifierStack().toJson())
         val created = WorkspaceDocument(source, emptyMap(), emptySet(), overrides, emptyMap(), overlay,

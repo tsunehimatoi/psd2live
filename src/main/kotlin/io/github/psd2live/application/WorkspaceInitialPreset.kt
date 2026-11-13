@@ -38,5 +38,23 @@ data class WorkspaceInitialPreset(
             WorkspaceInitialModifiers.FULL -> "modern-dynamic"
             else -> error("This mode does not describe a shortcut: $mode")
         }).choices
+
+        internal fun resolveChoices(mode: WorkspaceInitialModifiers?, preset: WorkspaceInitialPreset?): WorkspaceInitialPreset? {
+            require(preset == null || mode == WorkspaceInitialModifiers.CUSTOM) { "Custom choices require the custom modifier mode" }
+            return when (mode) {
+                WorkspaceInitialModifiers.RECOMMENDED -> WorkspaceModelPresetLibrary.shared.get("modern").choices
+                WorkspaceInitialModifiers.CUSTOM -> requireNotNull(preset) { "Custom modifier choices are required" }
+                WorkspaceInitialModifiers.MINIMAL, WorkspaceInitialModifiers.DEFAULT, WorkspaceInitialModifiers.FULL -> forMode(mode)
+                WorkspaceInitialModifiers.EMPTY, null -> null
+            }
+        }
+
+        internal fun applyToConfig(mode: WorkspaceInitialModifiers?, choices: WorkspaceInitialPreset?, base: io.github.psd2live.core.PipelineConfig): io.github.psd2live.core.PipelineConfig {
+            val baseline = if (mode == WorkspaceInitialModifiers.RECOMMENDED) WorkspacePresetBaseline.configure(base, "modern") else base
+            return (choices?.configure(baseline) ?: baseline).copy(
+                hairSimulationFront = choices?.frontHair == WorkspaceInitialHair.SIMULATION,
+                hairSimulationBack = choices?.backHair == WorkspaceInitialHair.SIMULATION,
+            )
+        }
     }
 }

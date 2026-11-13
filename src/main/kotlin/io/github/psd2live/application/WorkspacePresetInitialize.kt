@@ -26,19 +26,9 @@ internal object WorkspacePresetInitialize {
             document.rigEdits.importedCmo3 == null) {
             "Initialize presets only before any modifiers have been added or applied; use preset switching for existing projects"
         }
-        require(preset == null || mode == WorkspaceInitialModifiers.CUSTOM) { "Custom choices require the custom modifier mode" }
-        val choices = when (mode) {
-            WorkspaceInitialModifiers.RECOMMENDED -> WorkspaceModelPresetLibrary.shared.get("modern").choices
-            WorkspaceInitialModifiers.CUSTOM -> requireNotNull(preset) { "Custom modifier choices are required" }
-            WorkspaceInitialModifiers.MINIMAL, WorkspaceInitialModifiers.DEFAULT, WorkspaceInitialModifiers.FULL -> WorkspaceInitialPreset.forMode(mode)
-            WorkspaceInitialModifiers.EMPTY -> return document to null
-        }
-        // Match SourceImporter: only Recommended resets the baseline; shortcuts/custom keep the import settings.
-        val baseline = if (mode == WorkspaceInitialModifiers.RECOMMENDED)
-            WorkspacePresetBaseline.configure(document.config(), "modern") else document.config()
-        val config = choices.configure(baseline).copy(
-            hairSimulationFront = choices.frontHair == WorkspaceInitialHair.SIMULATION,
-            hairSimulationBack = choices.backHair == WorkspaceInitialHair.SIMULATION)
+        val choices = WorkspaceInitialPreset.resolveChoices(mode, preset)
+        if (choices == null) return document to null
+        val config = WorkspaceInitialPreset.applyToConfig(mode, choices, document.config())
         return document.copy(settings = WorkspaceSettingsCodec.encode(config)) to choices
     }
 }

@@ -19,7 +19,8 @@ internal object WorkspacePresetInitialization {
                 choices: WorkspaceInitialPreset = WorkspaceInitialPreset(),
                 requestedVersions: Map<String, Int> = emptyMap(),
                 cliBindings: CliPresetBindings? = null,
-                restoreSourceRotations: Boolean = false): Pair<WorkspaceDocument, RigPreviewModel> {
+                restoreSourceRotations: Boolean = false,
+                pluginOverrides: Map<String, Pair<String, ModifierPluginReference>> = emptyMap()): Pair<WorkspaceDocument, RigPreviewModel> {
         val rawConfig = cliBindings?.config?.takeIf { restoreSourceRotations }
         fun configOf(candidate: WorkspaceDocument) = rawConfig?.copy(rigEdits = candidate.rigEdits) ?: candidate.config()
         val config = configOf(document)
@@ -161,7 +162,10 @@ internal object WorkspacePresetInitialization {
             stack = WorkspaceModifierPlan.simulationPreset(model, stack, targets, preset, allowNoLooseClothing = true).first
         }
         stack = stack.copy(instances = stack.instances.map {
-            WorkspaceModifierEdits.captureParameterProviders(it.copy(presetGroup = group), model, stopAtConsumer = true)
+            val captured = WorkspaceModifierEdits.captureParameterProviders(it.copy(presetGroup = group), model, stopAtConsumer = true)
+            pluginOverrides[captured.type]?.let { (overrideType, overridePlugin) ->
+                captured.copy(type = overrideType, version = 1, plugin = overridePlugin)
+            } ?: captured
         })
         RigModifierAlgorithms.evaluator().validateOrder(stack)
         stack = RigBuildProfile.stage("source preset: simulation preparation") {
