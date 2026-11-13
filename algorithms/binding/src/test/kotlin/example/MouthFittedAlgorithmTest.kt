@@ -14,7 +14,6 @@ import io.github.psd2live.algorithms.binding.Bounds
 import io.github.psd2live.algorithms.binding.MouthCurve
 import io.github.psd2live.algorithms.binding.MouthFit
 import io.github.psd2live.algorithms.binding.MouthFittedAlgorithm
-import io.github.psd2live.algorithms.binding.MouthFittedCandidateAlgorithm
 import io.github.psd2live.algorithms.binding.MouthFittedInputs
 import io.github.psd2live.algorithms.binding.MouthFittedSourceAlgorithm
 import io.github.psd2live.algorithms.binding.MouthOptions
@@ -104,7 +103,6 @@ class MouthFittedAlgorithmTest {
         algorithm.project(PuppetIr.toPuppet(input), targets.mapTo(linkedSetOf()) { it.id }, context,
             onBindingInput = { model -> bindingInput = model.drawables.map(PuppetIr::meshToIr) })
         val sourceAlgorithm = MouthFittedSourceAlgorithm()
-        assertFailsWith<IllegalArgumentException> { MouthFittedCandidateAlgorithm().changes(input, instance, context.encode()) {} }
         val provider = ModifierUpstreamCapability("face.depth-turn", "face.depth-turn", 1, targets, "head")
         val captured = context.encode().withUpstream(listOf(provider))
         val changes = sourceAlgorithm.changes(input, instance, captured) {}

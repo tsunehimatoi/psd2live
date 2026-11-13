@@ -32,7 +32,7 @@ internal object ModifierPluginCatalog {
                 }
                 adapter.copy(type = type, pluginReference = entry.reference, plugin = worker,
                     parameters = { adapter.parameters(native(it)) },
-                    authorContext = { adapter.authorContext(native(it)) },
+                    authorContext = { (adapter.workerAuthorContext ?: adapter.authorContext)(native(it)) },
                     validate = { rig, instance -> adapter.validate(rig, native(instance)) },
                     providers = { adapter.providers(native(it)) },
                     resolveParameter = { instance, before, declared -> adapter.resolveParameter(native(instance), before, declared) },
@@ -58,20 +58,26 @@ internal object ModifierPluginCatalog {
     }
 
     fun available(instance: RigModifierInstance): Boolean {
-        val builtin = BuiltinModifierPlugins.reference(instance.type, instance.version)
+        val resolvedVersion = if (instance.version > 1 && RigLegacyBindings.find(instance.type) != null) 1 else instance.version
+        val builtin = BuiltinModifierPlugins.reference(instance.type, resolvedVersion)
         val reference = instance.plugin ?: builtin ?: return false
         val store = ModifierPluginStore.shared
-        if (reference != builtin) {
+        if (reference != builtin && !BuiltinModifierPlugins.matches(instance)) {
             val manifest = store.packages().firstOrNull { it.reference == reference }?.manifest ?: return false
             if (manifest.algorithms.none {
                     it.version == instance.version && (it.type == instance.type || instance.type in it.aliases)
                 }) return false
         }
-        return store.resolution(reference).available
+        return store.resolution(builtin ?: reference).available
     }
 
     fun available(type: String, version: Int, plugin: ModifierPluginReference? = null): Boolean {
-        val reference = plugin ?: BuiltinModifierPlugins.reference(type, version)
+        val resolvedVersion = if (version > 1 && RigLegacyBindings.find(type) != null) 1 else version
+        val builtin = BuiltinModifierPlugins.reference(type, resolvedVersion)
+        val reference = plugin?.takeUnless {
+            version > 1 && resolvedVersion == 1 &&
+                it.id == "builtin." + java.util.HexFormat.of().formatHex(type.encodeToByteArray()) + ".v$version"
+        } ?: builtin
         val store = ModifierPluginStore.shared
         return reference?.let { store.resolution(it).available } ?: store.builtinsEnabled()
     }

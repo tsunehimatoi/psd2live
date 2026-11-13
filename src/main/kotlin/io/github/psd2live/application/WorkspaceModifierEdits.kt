@@ -1,6 +1,5 @@
 package io.github.psd2live.application
 
-import io.github.psd2live.algorithms.binding.DepthTurnV2Algorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.project.*
@@ -112,20 +111,12 @@ internal object WorkspaceModifierEdits {
             ModifierTarget(it.getValue("kind").jsonPrimitive.content, it.getValue("id").jsonPrimitive.content)
         } }
         val type = request.getValue("type").jsonPrimitive.content
-        require(type != DepthTurnV2Algorithm.TYPE || request["version"]?.jsonPrimitive?.int == DepthTurnV2Algorithm.VERSION) {
-            "Select face.depth-turn v2 explicitly, or add face/fitted"
-        }
         val registry = RigModifierAlgorithms.registry
         val stored = registry.storedType(type)
         val config = request.getValue("config").jsonObject
         val requestedVersion = request["version"]?.jsonPrimitive?.int
-        val sourceVersion = if (model != null && requestedVersion == null && request["plugin"] == null &&
-            request["index"] == null && stored == type) WorkspaceModifierPlan.preferredSourceVersion(model, stack, stored, targets, config)
-            else null
-        val version = requestedVersion ?: sourceVersion ?: registry.defaultDefinition(type)?.version
+        val version = requestedVersion ?: registry.defaultDefinition(type)?.version
             ?: error("Unknown modifier algorithm: $type")
-        RigDepthTurnDefinition.requireCompatible(stored, version, targets, stack.appliedCapabilities.asSequence() +
-            stack.instances.asSequence().filter { it.enabled }.map { it.capability() })
         val candidate = stack.add(stored, version, targets, config,
             request["group"]?.jsonPrimitive?.content, request["id"]?.jsonPrimitive?.content,
             plugin = request["plugin"]?.let { Json.decodeFromJsonElement(ModifierPluginReference.serializer(), it) } ?: ModifierPluginCatalog.algorithm(type, version)?.first?.reference)

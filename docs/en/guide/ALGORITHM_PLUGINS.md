@@ -1,5 +1,7 @@
 # Algorithm plugins
 
+> **Single-version & shared-runtime packaging**: All 44 binding modifier types are consolidated to canonical `version = 1` (`rig.scaffold` retains `v1` and `v2`). `:algorithms:binding:pluginPackages` emits a single shared `shared/runtime.jar` (`ExpressionWorker`) alongside 46 lightweight `<slug>/plugin.json` manifests; the host pools resident worker processes by `(command, files)` and caches resource SHA-256 digests. External plugins remain language-agnostic via the `protocol: 1` worker contract.
+
 Every preset modifier evaluates through an algorithm interface. Bundled Kotlin algorithms run in-process; external algorithms run in persistent worker processes and may be written in Python, Kotlin, Rust, C, C++, or C#. A package may provide multiple algorithms.
 
 Bundled entries are catalogued and enabled independently by algorithm type and revision. Swing, simulation, physics, motion, expression toggles, eye/brow see-through, skin clipping and binding structure have separate Kotlin implementation entrypoints. New instances pin a `builtin.*` identity, a full version and a content digest. Independently packaged algorithms hash the complete package; remaining entries still hash entrypoint bytecode. A mismatched digest is unavailable rather than silently replaced. Historical unpinned instances retain their original revision without rewriting history on open. `id=builtin,digest=builtin` remains a compatibility operation controlling the whole bundled set.

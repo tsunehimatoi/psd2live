@@ -12,6 +12,7 @@ import kotlinx.serialization.json.*
 internal object RigFittedMouthModuleSource {
     fun context(source: RigModifierSource, scaffold: RigModifierInstance, preceding: List<RigModifierInstance>,
                 activeModule: RigModule?, neutralScaffold: Boolean = false): Pair<PipelineConfig, RigBuilder.RigContext> {
+        if (activeModule == null && !neutralScaffold) return source.phaseContext(scaffold, preceding)
         val native = nativeConfig(source, scaffold, preceding, activeModule)
         return native to RigBuilder.rigContext(source.analysis, native, source.meshCache, neutralScaffold = neutralScaffold)
     }

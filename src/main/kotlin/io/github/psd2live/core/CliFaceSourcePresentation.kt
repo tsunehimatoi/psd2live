@@ -1,10 +1,8 @@
 package io.github.psd2live.core
 
-import io.github.psd2live.algorithms.binding.MouthOutlineV11Algorithm
-import io.github.psd2live.algorithms.binding.MouthOutlineV8Algorithm
 import io.github.psd2live.core.modifier.BuiltinModifierPlugins
 import io.github.psd2live.core.modifier.ModifierStatus
-import io.github.psd2live.core.modifier.RigFittedMouthOutlineDefinition
+import io.github.psd2live.core.modifier.RigLegacyBindings
 import io.github.psd2live.core.modifier.RigModifierSource
 import io.github.psd2live.format.compile.RigIrBinary
 import io.github.psd2live.targets.cubism.PuppetIr
@@ -18,8 +16,8 @@ internal object CliFaceSourcePresentation {
                               config: PipelineConfig): RigPreviewModel {
         val active = source.modifierEvaluation?.entries?.filter { it.status == ModifierStatus.ACTIVE }
             ?.associate { it.instance.type to it.instance } ?: return preview
-        if (active["mouth/fitted"]?.takeIf(BuiltinModifierPlugins::matches)?.version != 7 ||
-            active["mouth.outline"]?.takeIf(BuiltinModifierPlugins::matches)?.version != 10) return preview
+        if (active["mouth/fitted"]?.takeIf(BuiltinModifierPlugins::matches) == null ||
+            active["mouth.outline"]?.takeIf(BuiltinModifierPlugins::matches) == null) return preview
 
         val model = preview.rig.puppet
         val layers = analysis.layers.associateBy { it.source.id.raw }
@@ -95,17 +93,13 @@ internal object CliFaceSourcePresentation {
 
     fun restoreBrowForms(source: RigPreviewModel, preview: RigPreviewModel, config: PipelineConfig): RigPreviewModel {
         val outline = source.modifierEvaluation?.entries?.singleOrNull {
-            it.status == ModifierStatus.ACTIVE && it.instance.type == "mouth.outline" &&
-                it.instance.version in setOf(MouthOutlineV8Algorithm.VERSION, MouthOutlineV11Algorithm.VERSION)
+            it.status == ModifierStatus.ACTIVE && it.instance.type == "mouth.outline"
         }?.instance ?: return preview
         if (!BuiltinModifierPlugins.matches(outline)) return preview
         val owner = RigModifierSource.of(source)
         val sourceBrows = owner.analysis.layers.filter { it.semantic.tag == SemanticTag.EYEBROW }
             .mapTo(hashSetOf()) { it.source.id.raw }
-        val definition = if (outline.version == MouthOutlineV11Algorithm.VERSION)
-            RigFittedMouthOutlineDefinition.layeredSourceDefinition(owner)
-        else RigFittedMouthOutlineDefinition.sharedFrameDefinition(owner)
-        val context = definition.authorContext(outline)
+        val context = owner.workerBindingContext(outline)
         fun phase(name: String) = RigIrBinary.decode(context.resources.getValue(name).read())
         val prior = phase("before").meshes.associateBy { it.id }
         val desired = phase("after")

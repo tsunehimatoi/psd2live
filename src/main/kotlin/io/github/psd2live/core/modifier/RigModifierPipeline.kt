@@ -47,7 +47,7 @@ internal object RigModifierPipeline {
         }
         if (retained != null) RigBuildProfile.count("modifier author input cache hits")
         val input = retained?.input ?: RigIrCompiler.compileAuthored(base.analysis, base.atlas, base.rig, config)
-        val source = RigModifierSource(base.analysis, base.atlas, config, base.rig.layerIdByDrawableId, base.rig.copiedDrawableIds, base.baseRig.puppet, pipeline.meshCache)
+        val source = RigModifierSource(base.analysis, base.atlas, config, base.rig.layerIdByDrawableId, base.rig.copiedDrawableIds, base.rig.puppet, pipeline.meshCache)
         // Saving the initial automatic layout as an explicit arrangement is presentation bookkeeping.
         // Compare the resolved layout and let the evaluator compare the complete authored IR, including
         // page content, before reusing a prefix or its captured inputs.

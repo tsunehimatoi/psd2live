@@ -2,7 +2,6 @@ package io.github.psd2live.core
 
 import io.github.psd2live.algorithms.binding.MouthOutlineAlgorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineLegacyCandidate
-import io.github.psd2live.algorithms.binding.MouthOutlineLegacyPackage
 import io.github.psd2live.algorithms.binding.MouthOutlineInputs
 import io.github.psd2live.algorithms.binding.MouthOutlineOwner
 import io.github.psd2live.algorithms.binding.MouthContour
@@ -125,32 +124,6 @@ class MouthOutlinePluginParityTest {
                     })
             val complete = applyOwner(input)
             val rebasedResult = applyOwner(input, retainParent = true)
-            System.getProperty("psd2live.mouthOutlinePackage")?.let { directory ->
-                val root = java.nio.file.Files.createTempDirectory("outline-package-")
-                val preferences = java.util.prefs.Preferences.userRoot().node("psd2live-test/outline/${java.util.UUID.randomUUID()}")
-                val store = ModifierPluginStore(root, preferences)
-                val entry = store.install(directory)
-                try {
-                    val algorithm = entry.manifest.algorithms.single()
-                    val packaged = instance.copy(type = MouthOutlineLegacyPackage.TYPE, plugin = entry.reference)
-                    val context = MouthOutlineLegacyPackage.capture(captured.withUpstream(listOf(
-                        ModifierUpstreamCapability("mouth/legacy", "mouth/legacy", 1, listOf(target), "legacy-mouth"))), candidateOwners)
-                    assertFailsWith<IllegalArgumentException> {
-                        MouthOutlineLegacyPackage().changes(input, packaged, context.withUpstream(emptyList())) {}
-                    }
-                    fun evaluate(plugin: InstalledModifierPlugin) = ModifierPluginWorkers.evaluate(plugin, algorithm, input,
-                        packaged, {}, store, context = context,
-                        resolveRasters = { rig, outputs, checkpoint -> RigModifierRasterAssets.attach(rig, outputs, legacyConfig, checkpoint) })
-                    assertEquals(rebasedResult, evaluate(entry))
-                    store.uninstall(entry.reference)
-                    assertFailsWith<IllegalArgumentException> { evaluate(entry) }
-                    assertEquals(rebasedResult, evaluate(store.install(directory)))
-                } finally {
-                    ModifierPluginWorkers.stop(entry.reference)
-                    preferences.removeNode()
-                    ModifierPluginStore.deleteTree(root)
-                }
-            }
             val oldOwner = expected.meshes.single { it.id == id }
             val newOwner = complete.meshes.single { it.id == id }
             assertEquals(oldOwner.geometry, newOwner.geometry)

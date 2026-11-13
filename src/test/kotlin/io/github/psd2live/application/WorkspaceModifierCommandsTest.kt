@@ -497,14 +497,14 @@ class WorkspaceModifierCommandsTest {
     @Test fun explicitFittedEyePackagePlansItsVersionTwoScaffold(): Unit = runBlocking {
         val f = fixture()
         val plan = WorkspaceModifierPlan.prepare(f.now, buildJsonObject {
-            put("type", EyeFittedSourceAlgorithm.ENTRYPOINT)
+            put("type", "eye/fitted")
             putJsonArray("targets") { addJsonObject { put("kind", f.target.kind); put("id", f.target.id) } }
         })
         val entries = plan.getValue("entries")
         f.edit("modifier_add_group", buildJsonObject { put("group", plan.getValue("group")); put("entries", entries) })
         val (scaffold, eye) = stack(f).instances
         assertEquals("rig.scaffold" to 2, scaffold.type to scaffold.version)
-        assertEquals(EyeFittedSourceAlgorithm.TYPE to 3, eye.type to eye.version)
+        assertEquals("eye/fitted" to 1, eye.type to eye.version)
         assertEquals(scaffold.id, eye.config.getValue("scaffold").jsonPrimitive.content)
         assertEquals(5, f.now.model.rig.puppet.parameters.count { it.id.raw.startsWith("ParamEye") })
         val smile = WorkspaceModifierPlan.prepare(f.now, buildJsonObject {
@@ -529,7 +529,7 @@ class WorkspaceModifierCommandsTest {
         f.edit("modifier_add_group", buildJsonObject { put("group", plan.getValue("group")); put("entries", entries) })
         val instance = stack(f).instances.last()
         val eye = stack(f).instances.single { it.type == "eye/fitted" }
-        assertEquals(2, eye.version)
+        assertEquals(1, eye.version)
         assertEquals(mapOf("ParamEyeLOpen" to eye.id, "ParamEyeROpen" to eye.id), instance.parameterProviders)
         val ir = RigIrCompiler.compile(f.now.model)
         assertEquals(setOf("ParamEyeLOpen", "ParamEyeROpen"), ir.clips.single().curves.map { it.parameter }.toSet())

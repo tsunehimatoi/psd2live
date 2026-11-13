@@ -1,11 +1,5 @@
 package io.github.psd2live.application
 
-import io.github.psd2live.algorithms.binding.BrowLegacyV2Algorithm
-import io.github.psd2live.algorithms.binding.DepthTurnV2Algorithm
-import io.github.psd2live.algorithms.binding.EyeLegacySourceAlgorithm
-import io.github.psd2live.algorithms.binding.LegacyBodyV2Algorithm
-import io.github.psd2live.algorithms.binding.LegacyFaceV2Algorithm
-import io.github.psd2live.algorithms.binding.RibbonsAlgorithm
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.sim.*
@@ -17,12 +11,6 @@ internal object WorkspaceModifierPlan {
     const val NATURAL_MOTION_PREFIX = "natural:"
     val motionPresetIds = MotionClips.BUILTIN_NAMES + MotionClips.BASIC_NAMES.map { NATURAL_MOTION_PREFIX + it }
     val nativeTypes = listOf("swing", "physics", "motion", "simulation")
-    private val legacySourceBases = linkedMapOf(
-        LegacyBodyV2Algorithm.TYPE to LegacyBodyV2Algorithm.VERSION,
-        LegacyFaceV2Algorithm.TYPE to LegacyFaceV2Algorithm.VERSION,
-        EyeLegacySourceAlgorithm.TYPE to EyeLegacySourceAlgorithm.VERSION,
-        BrowLegacyV2Algorithm.TYPE to BrowLegacyV2Algorithm.VERSION,
-    )
     val types get() = (sourceTypes + nativeTypes).filter { ModifierPluginStore.shared.builtinsEnabled() } + ModifierPluginStore.shared.runnablePackages().filter { ModifierPluginStore.shared.resolution(it.reference).available }.flatMap { it.manifest.algorithms.map { it.type } }.distinct()
     const val RECOMMENDED_GROUP = "modern-standard"
     data class Group(val id: String, val algorithm: String, val richness: String, val types: List<String>)
@@ -66,7 +54,7 @@ internal object WorkspaceModifierPlan {
         val type = request["type"]?.jsonPrimitive?.content
         val registry = RigModifierAlgorithms.registry
         val stored = type?.let(registry::storedType)
-        val depthTurn = stored == DepthTurnV2Algorithm.TYPE
+        val depthTurn = stored == "face.depth-turn"
         val covered = if (stored in sourceTypes || depthTurn) (stack.instances.filter { it.type == stored }.flatMap { it.targets } +
             stack.appliedCapabilities.filter { it.type == stored }.flatMap { it.targets }).toSet() else emptySet()
         val targets = requestedTargets.filterNot(covered::contains)
@@ -115,7 +103,6 @@ internal object WorkspaceModifierPlan {
             val definition = requireNotNull(registry.defaultDefinition(wanted)) { "Unknown modifier algorithm: $wanted" }
             val version = definition.version
             val packaged = ModifierPluginCatalog.algorithm(wanted, version)
-            RigDepthTurnDefinition.requireCompatible(storedType, version, targets, available.asSequence())
             val spec = RigLegacyBindings.find(storedType)
             val preset = request["preset"]?.jsonPrimitive?.content
             val configuration = if (wanted == "physics" && preset != null) {
@@ -183,9 +170,7 @@ internal object WorkspaceModifierPlan {
                     if (related.isNotEmpty()) put("dependencies", JsonObject(related.mapValues { JsonPrimitive(requireNotNull(it.value.id)) }))
                 }
             }
-            val sourceVersion = if (requestedTypes == null && wanted == storedType && packaged == null)
-                preferredSourceVersion(model, candidate, storedType, targets, configuration, available) else null
-            candidate = candidate.add(storedType, sourceVersion ?: version, targets, configuration, group, plugin = packaged?.first?.reference)
+            candidate = candidate.add(storedType, version, targets, configuration, group, plugin = packaged?.first?.reference)
             val instance = candidate.instances.last()
             val cap = instance.capability()
             available += cap
@@ -205,72 +190,6 @@ internal object WorkspaceModifierPlan {
             put("entries", JsonArray(entries)); put("plan", JsonArray(planned.values.toList()))
             put("group", group ?: "custom")
         }
-    }
-
-    /** Select a standalone binding for a supported, unedited source prefix. */
-    fun preferredSourceVersion(model: RigPreviewModel, stack: RigModifierStack, type: String,
-                               targets: List<ModifierTarget>, configuration: JsonObject,
-                               available: List<ModifierCapability>? = null): Int? {
-        val legacyVersion = legacySourceBases[type]
-        val spec = if (type in WorkspaceMouthProfiles.selectableAdditions || type == RibbonsAlgorithm.TYPE) RigLegacyBindings.find(type) else null
-        if (legacyVersion == null && spec == null) return null
-        val keys = setOf("scaffold") + listOfNotNull(
-            "base".takeIf { spec?.module?.base != null },
-            "dependencies".takeIf { spec?.related?.isNotEmpty() == true })
-        if (configuration.keys != keys || !WorkspacePresetInitialization.freshSource(model.config) ||
-            stack.appliedCapabilities.isNotEmpty() || stack.overrides.values.any { it.isNotEmpty() }) return null
-        val scoped = (available ?: activeCapabilities(model, stack)).filter { entry -> entry.targets.any(targets::contains) }
-        val scaffold = scoped.singleOrNull { it.type == RigSourceModifiers.SCAFFOLD && it.version == 2 &&
-            JsonPrimitive(it.id) == configuration["scaffold"] && it.targets.toSet() == targets.toSet() } ?: return null
-        if (scaffold.plugin != BuiltinModifierPlugins.reference(scaffold.type, scaffold.version) ||
-            scaffold.config["featureDisplacement"] == JsonPrimitive(true)) return null
-        val version = if (legacyVersion != null) {
-            val earlier = legacySourceBases.keys.takeWhile { it != type }
-            if (scoped.any { it != scaffold && (it.type !in earlier || it.version != legacySourceBases[it.type] ||
-                    it.targets.toSet() != targets.toSet() || it.config["scaffold"] != configuration["scaffold"]) }) return null
-            legacyVersion
-        } else {
-            val sourceSpec = requireNotNull(spec)
-            val subject = io.github.psd2live.core.recipe.RecipeSubject.of(model.analysis)
-            if (sourceSpec.module?.applies?.invoke(subject) != true) return null
-            val sourceVersion = if (type == RibbonsAlgorithm.TYPE) bodyRibbonSourceVersion(model, sourceSpec, targets, configuration, scoped)
-            else mouthSourceVersion(sourceSpec, targets, configuration, scoped)
-            sourceVersion ?: return null
-        }
-        val reference = BuiltinModifierPlugins.reference(type, version) ?: return null
-        return version.takeIf { ModifierPluginCatalog.available(type, it, reference) }
-    }
-
-    private fun bodyRibbonSourceVersion(model: RigPreviewModel, spec: RigLegacyBindings.Spec, targets: List<ModifierTarget>,
-                                        configuration: JsonObject, scoped: List<ModifierCapability>): Int? {
-        val required = WorkspacePresetInitialization.bodyRibbonSourceProfile(model.analysis) ?: return null
-        val prefix = scoped.filter { it.type == RigSourceModifiers.SCAFFOLD || it.config["scaffold"] == configuration["scaffold"] }
-        if (prefix.any { it.type in setOf("outfit.skirt", "mouth.interior-depth", "mouth.tongue") }) return null
-        if (!required.all { (type, version) ->
-                prefix.any { it.type == type && it.version == version && it.targets.containsAll(targets) &&
-                    it.plugin == BuiltinModifierPlugins.reference(type, version) }
-            }) return null
-        val dependencies = configuration.getValue("dependencies").jsonObject
-        val registry = RigModifierAlgorithms.registry
-        if (dependencies.keys != spec.related || dependencies.any { (type, id) ->
-                prefix.none { JsonPrimitive(it.id) == id && registry.provides(it, type) }
-            }) return null
-        return RibbonsAlgorithm.VERSION
-    }
-
-    private fun mouthSourceVersion(spec: RigLegacyBindings.Spec, targets: List<ModifierTarget>, configuration: JsonObject,
-                                   scoped: List<ModifierCapability>): Int? {
-        val prefix = scoped.filter { it.config["scaffold"] == configuration["scaffold"] }
-        if (prefix.any { !it.targets.containsAll(targets) }) return null
-        val mouth = prefix.singleOrNull { it.type == "mouth/fitted" && JsonPrimitive(it.id) == configuration["base"] } ?: return null
-        val dependencies = (configuration["dependencies"] as? JsonObject).orEmpty()
-        val registry = RigModifierAlgorithms.registry
-        if (dependencies.keys != spec.related || dependencies.any { (type, id) ->
-                prefix.none { JsonPrimitive(it.id) == id && registry.provides(it, type) }
-            }) return null
-        val stages = listOf(mouth) + prefix.filter { it.type.startsWith("mouth.") }
-        if (stages.any { it.plugin != BuiltinModifierPlugins.reference(it.type, it.version) }) return null
-        return WorkspaceMouthProfiles.next(spec.type, stages.map { it.type to it.version })
     }
 
     private fun activeCapabilities(model: RigPreviewModel, stack: RigModifierStack): List<ModifierCapability> {

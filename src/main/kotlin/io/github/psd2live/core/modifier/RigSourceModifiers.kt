@@ -2,8 +2,6 @@ package io.github.psd2live.core.modifier
 
 import io.github.psd2live.algorithms.binding.ModelIdRemap
 import io.github.psd2live.algorithms.binding.ExpressionChannels
-import io.github.psd2live.algorithms.binding.MouthFittedInputs
-import io.github.psd2live.algorithms.binding.MouthLegacyInputs
 import io.github.psd2live.algorithms.binding.ScaffoldAlgorithm
 import io.github.psd2live.algorithms.binding.ScaffoldParts
 import io.github.psd2live.algorithms.binding.ScaffoldPartsContext
@@ -41,10 +39,10 @@ internal class RigModifierSource(
     private val legacyMoodSource: RigModifierSource by lazy {
         val authoredIds = analysis.source.layers.mapTo(hashSetOf()) { it.id.raw }
         val authoredLayers = analysis.layers.filter { it.source.id.raw in authoredIds }.associateBy { it.source.id.raw }
-        val currentOutline = BundledAlgorithmArtifacts.find("mouth.outline", 7)?.reference
+        val currentOutline = BundledAlgorithmArtifacts.find("mouth.outline", 1)?.reference
         // An unpinned legacy alias resolves to the current built-in. A pinned provider must match
         // its complete package identity; the namespace alone does not establish an output contract.
-        val outlines = stack.appliedCapabilities.filter { it.type == "mouth.outline" && it.version == 7 &&
+        val outlines = stack.appliedCapabilities.filter { it.type == "mouth.outline" && it.version >= 1 &&
             (it.plugin == null || it.plugin == currentOutline) && it.id != null }
         val generated = outlines.flatMapTo(hashSetOf()) { owner ->
             val instance = RigModifierInstance(requireNotNull(owner.id), owner.type, owner.version, owner.targets,
@@ -298,8 +296,72 @@ internal class RigModifierSource(
                 "ParamGroupBody" to tr("model.group.body"), "ParamGroupPhysics" to tr("model.group.physics")))
     }
 
-    fun closedMouthShellContext(instance: RigModifierInstance) =
-        RigClosedMouthShellProjection.capture(this, materialBase, instance)
+    private val phaseContexts = java.util.concurrent.ConcurrentHashMap<Pair<String, List<RigModifierInstance>>, Pair<PipelineConfig, RigBuilder.RigContext>>()
+
+    internal fun phaseContext(scaffold: RigModifierInstance, preceding: List<RigModifierInstance>): Pair<PipelineConfig, RigBuilder.RigContext> =
+        phaseContexts.computeIfAbsent(scaffold.id to preceding) {
+            val native = RigFittedMouthModuleSource.nativeConfig(this, scaffold, preceding, null)
+            native to RigBuilder.rigContext(analysis, native, meshCache)
+        }
+
+    fun workerBindingContext(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val spec = RigLegacyBindings.spec(instance.type)
+        when {
+            spec.expressionToggles -> return expressionContext(instance)
+            spec.seeThrough -> return seeThroughContext(instance)
+            spec.skinClip -> return skinClipContext(instance)
+        }
+        val source = legacyBindingSource(instance)
+        val pairs = instance.targets.map { source.transition(instance, it) {} }
+        if (pairs.isEmpty()) return ModifierAlgorithmContext.Empty
+        fun combine(models: List<PuppetModel>): PuppetModel {
+            val first = models.first()
+            val parameters = linkedMapOf<ParameterId, org.umamo.runtime.model.Parameter>()
+            val deformers = linkedMapOf<DeformerId, Deformer>()
+            val parts = linkedMapOf<PartId, Part>()
+            val drawables = linkedMapOf<DrawableId, Drawable>()
+            val roots = linkedSetOf<OrgChild>()
+            val groups = linkedMapOf<ParameterGroupId, ParameterNode.Group>()
+            val ungrouped = linkedSetOf<ParameterId>()
+            for (model in models) {
+                model.parameters.forEach { parameters.putIfAbsent(it.id, it) }
+                model.deformers.forEach { deformers.putIfAbsent(it.id, it) }
+                model.parts.forEach { parts.putIfAbsent(it.id, it) }
+                model.drawables.forEach { drawables.putIfAbsent(it.id, it) }
+                roots += model.rootChildren
+                for (node in model.parameterTree) when (node) {
+                    is ParameterNode.Group -> groups.merge(node.id, node) { a, b ->
+                        a.copy(children = (a.children + b.children).distinct())
+                    }
+                    is ParameterNode.Param -> ungrouped += node.id
+                }
+            }
+            val groupedIds = groups.values.flatMapTo(HashSet()) { g -> g.children.filterIsInstance<ParameterNode.Param>().map { it.id } }
+            val tree = groups.values.toList() + ungrouped.filter { it !in groupedIds }.map { ParameterNode.Param(it) }
+            return first.copy(
+                parameters = parameters.values.toList(),
+                parameterTree = tree,
+                parts = parts.values.toList(),
+                deformers = deformers.values.toList(),
+                drawables = drawables.values.toList(),
+                rootChildren = roots.toList(),
+            ).withDerivedRenderRoot()
+        }
+        val beforeModel = combine(pairs.map { it.first })
+        val afterModel = combine(pairs.map { it.second })
+        val available = afterModel.parameters.mapTo(HashSet()) { it.id.raw }
+        val fixedPhysics = spec.module?.physicsGroups.orEmpty().toSet()
+        val physicsRules = if (fixedPhysics.isEmpty()) emptyList()
+            else PhysicsGenerator.moduleRules(available).filter { it.id in fixedPhysics }
+        val values = buildJsonObject {
+            if (spec.isBase && spec.area == "mouth") put("rest_pose_open", true)
+            if (physicsRules.isNotEmpty()) putJsonArray("physics") { physicsRules.forEach { add(it.toJson()) } }
+        }
+        return ModifierAlgorithmContext(values, mapOf(
+            "before" to ModifierAlgorithmResource(RigIrBinary.encode(PuppetIr.toIr(beforeModel))),
+            "after" to ModifierAlgorithmResource(RigIrBinary.encode(PuppetIr.toIr(afterModel))),
+        ))
+    }
 
     fun outlineShellSource(context: RigBuilder.RigContext, config: PipelineConfig, layers: Map<String, ClassifiedLayer>,
                            parameters: Set<ParameterId>, includeFaceLean: Boolean = false,
@@ -387,42 +449,6 @@ internal class RigModifierSource(
             ScaffoldAlgorithm.captureSource(materialBase, canonical, organization, structure.frames, structure.branches,
                 RigBuilder.scaffoldMeshInputs(analysis, atlas, native, meshCache, sources))
         }
-
-    fun legacyMouthContext(instance: RigModifierInstance): ModifierAlgorithmContext {
-        val structure = provider(instance)
-        val corrections = io.github.psd2live.project.WorkspaceSettingsCodec.decodeRecipe(structure.config["corrections"])
-        val native = sourceConfig().copy(recipe = RigRecipe.Legacy.copy(moves = corrections.moves, eyeParts = corrections.eyeParts),
-            featureDisplacementEnabled = structure.config["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
-            hairSimulationFront = !(structure.config["frontHairSway"]?.jsonPrimitive?.boolean ?: true),
-            hairSimulationBack = !(structure.config["backHairSway"]?.jsonPrimitive?.boolean ?: true))
-        val measured = RigBuilder.rigContext(analysis, native.copy(generateDeformers = false), meshCache)
-        val tuning = RigLegacyBindings.tuning(instance, RigTuning())
-        val targets = instance.targets.mapTo(hashSetOf()) { it.id }
-        val clips = sourceClips
-        val layers = buildMap {
-            for (layer in measured.analysis.layers.sortedBy { it.source.order }) {
-                val id = layer.source.id.raw
-                val semantic = layer.semantic
-                if (semantic.tag !in CharacterAnalyzer.MOUTH_TAGS) continue
-                val primary = primaryByLayer[id] ?: continue
-                val aligned = measured.rigLayer(layer)
-                val frame = measured.parentAndFrame(layer, native).second
-                val isMask = semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) &&
-                    semantic.role == null && !layer.source.clipped && layer.opaquePixels > 0
-                for (mesh in meshesByLayer[id].orEmpty()) {
-                    if (mesh !in targets && !(mesh == primary && isMask)) continue
-                    put(mesh, MouthLegacyInputs.Layer(primary, semantic.tag.name, semantic.side, semantic.variant, frame,
-                        aligned.bounds, layer.bounds, (native.layerOverrides[id]?.type ?: semantic.type) == LayerType.PRESET,
-                        layer.source.opacity, clips[id]?.raw, mesh == primary && isMask))
-                }
-            }
-        }
-        return MouthLegacyInputs(layers,
-            MouthFittedInputs.Fallback(if (native.mouthShape == "custom") native.mouthCurve else MouthCurve.preset(native.mouthShape),
-                false, tuning.mouthClosedNarrow, tuning.mouthFormWiden, tuning.mouthSeam, tuning.mouthSmileBase, tuning.mouthSmile),
-            tuning.teethFade, measured.hasClosedMouth, io.github.psd2live.i18n.tr("model.parameter.mouthForm"), io.github.psd2live.i18n.tr("model.parameter.mouthOpen"),
-            io.github.psd2live.i18n.tr("model.group.mouth"), scaffoldContext(structure.copy(plugin = null))).encode()
-    }
 
     private fun templateKey(state: Map<String, RigModifierInstance>, scaffold: JsonObject): Map<String, JsonObject> {
         val key = state.mapValues { (_, instance) -> buildJsonObject {
@@ -786,7 +812,7 @@ internal class RigModifierSource(
 
     companion object {
         fun of(model: RigPreviewModel) = RigModifierSource(model.modifierAuthorAnalysis ?: model.analysis, model.modifierAuthorAtlas ?: model.atlas,
-            model.config, model.authored.rig.layerIdByDrawableId, model.authored.rig.copiedDrawableIds, model.baseRig.puppet)
+            model.config, model.authored.rig.layerIdByDrawableId, model.authored.rig.copiedDrawableIds, model.authored.rig.puppet)
     }
 }
 
@@ -810,7 +836,7 @@ internal object RigSourceModifiers {
             plugin = io.github.psd2live.algorithms.binding.ScaffoldAlgorithm(),
             changeWrites = setOf("mesh", "part", "deformer", "hierarchy"),
             authorContext = { requireNotNull(source).scaffoldContext(it) })
-    } + RigLegacyBindings.specs.map { RigLegacyBindings.definition(it, source) } + RigLegacyBindings.legacyMouthDefinition(source)
+    } + RigLegacyBindings.specs.map { RigLegacyBindings.definition(it, source) }
 
     /** Version 2 retains the source hierarchy; version 1 keeps persisted per-mesh identities replayable. */
     fun deformerId(instance: RigModifierInstance, mesh: String, canonical: String, shared: Boolean = instance.type == SCAFFOLD && instance.version >= 2) =

@@ -4,6 +4,8 @@ import io.github.psd2live.core.modifier.*
 import io.github.psd2live.format.model.*
 import io.github.psd2live.targets.cubism.PuppetIr
 import kotlinx.serialization.json.jsonPrimitive
+import org.umamo.runtime.eval.scalarAt
+import org.umamo.runtime.model.FormChannel
 
 /** The fitted lid line and shadow share a fade on their eye's opening axis. */
 class LidFadeAlgorithm : ReadingModifierAlgorithmPlugin {
@@ -41,7 +43,26 @@ class LidFadeAlgorithm : ReadingModifierAlgorithmPlugin {
                 PuppetIr.meshToIr(live.copy(channelGrids = ChannelResidual.channels(model, live, before, after, checkpoint)))
                     .channels.getValue(Channel.OPACITY)
             }
-            val updated = mesh.copy(channels = mesh.channels + (Channel.OPACITY to opacity))
+            val updated = mesh.copy(channels = mesh.channels + (Channel.OPACITY to opacity)).let { faded ->
+                if (faded.shapes.isEmpty()) faded else {
+                    val axes = listOf(mesh, faded).flatMap { it.channels[Channel.OPACITY]?.axes.orEmpty() }
+                    val parameters = axes.map { it.parameter }.distinct().mapNotNull(input::parameter)
+                    val defaults = parameters.associate { it.id to it.default }
+                    val samples = listOf(mesh, faded).mapIndexed { index, sample ->
+                        sample.copy(id = "sample-$index", parent = null, maskedBy = emptyList(),
+                            geometry = null, offsets = null, channels = sample.channels.filterKeys { it == Channel.OPACITY }, shapes = emptyList())
+                    }
+                    val model = PuppetIr.toPuppet(RigIR(Canvas(1f, 1f), parameters, meshes = samples))
+                    val (previous, current) = model.drawables.map { drawable ->
+                        drawable.channelGrids.scalarAt(FormChannel.OPACITY, drawable.opacity, paramValue = { defaults[it.raw] ?: 0f })
+                    }
+                    if (current == previous) faded else faded.copy(shapes = faded.shapes.map { binding ->
+                        binding.copy(shapes = binding.shapes.map { shape ->
+                            shape?.copy(opacity = current + if (shape.opacity.isFinite()) shape.opacity - previous else 0f)
+                        })
+                    })
+                }
+            }
             if (updated == mesh) null else ModifierObjectUpdate(mesh, updated)
         }
         return ModifierModelChanges(meshes = ModifierObjectChanges(updated = updates))

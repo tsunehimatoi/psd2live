@@ -24,11 +24,30 @@ internal object ModifierPluginWorkers {
     private fun typedWrites(writes: Set<String>): Set<String> =
         if ("rest_pose" in writes) writes + "restPose" else writes
 
-    private val workers = ConcurrentHashMap<ModifierPluginReference, Worker>()
+    private data class WorkerKey(val command: List<String>, val files: Map<String, String>)
+
+    private fun workerKey(entry: InstalledModifierPlugin): WorkerKey {
+        val raw = entry.manifest.commands[ModifierPluginStore.platform] ?: entry.manifest.commands.getValue("jvm")
+        val normalized = raw.mapIndexed { index, value ->
+            when {
+                value == "\$JAVA" -> "\$JAVA"
+                value in entry.manifest.files -> "file:$value:${entry.manifest.files.getValue(value)}"
+                index == 0 -> value
+                else -> value
+            }
+        }
+        return WorkerKey(normalized, entry.manifest.files)
+    }
+
+    private val workers = ConcurrentHashMap<WorkerKey, Worker>()
+    private val workerKeys = ConcurrentHashMap<ModifierPluginReference, WorkerKey>()
     private val executor = Executors.newVirtualThreadPerTaskExecutor()
     private class QueuedFailure(val original: Throwable) : RuntimeException(original)
     init { Runtime.getRuntime().addShutdownHook(Thread { workers.values.forEach { it.close() } }) }
-    fun stop(reference: ModifierPluginReference) { workers.remove(reference)?.close() }
+    fun stop(reference: ModifierPluginReference) {
+        val key = workerKeys.remove(reference) ?: return
+        workers.remove(key)?.close()
+    }
 
     fun evaluate(entry: InstalledModifierPlugin, algorithm: ModifierPluginAlgorithm, rig: RigIR,
                  instance: RigModifierInstance, checkpoint: () -> Unit, store: ModifierPluginStore = ModifierPluginStore.shared,
@@ -37,18 +56,20 @@ internal object ModifierPluginWorkers {
                  resolveRasters: ModifierRasterResolver = RigModifierRasterAssets::resolve): RigIR {
         require(timeoutMillis > 0)
         store.requireAvailable(entry.reference)
-        val worker = workers[entry.reference] ?: run {
+        val key = workerKey(entry)
+        workerKeys[entry.reference] = key
+        val worker = workers[key] ?: run {
             val installed = store.workerPackage(entry.reference)
-            workers.computeIfAbsent(entry.reference) { Worker(installed, store) }
+            workers.computeIfAbsent(key) { Worker(installed, store) }
         }
         try {
-            val result = worker.evaluate(algorithm, rig, instance, checkpoint, timeoutMillis, context, declaredParameters, resolveRasters)
+            val result = worker.evaluate(entry, algorithm, rig, instance, checkpoint, timeoutMillis, context, declaredParameters, resolveRasters)
             store.requireAvailable(entry.reference)
             return result
         } catch (failure: QueuedFailure) {
             throw failure.original
         } catch (failure: Throwable) {
-            if (workers.remove(entry.reference, worker)) runCatching { worker.close() }.exceptionOrNull()?.let(failure::addSuppressed)
+            if (workers.remove(key, worker)) runCatching { worker.close() }.exceptionOrNull()?.let(failure::addSuppressed)
             throw failure
         }
     }
@@ -60,19 +81,20 @@ internal object ModifierPluginWorkers {
     private data class SentInput(val meshes: Map<String, Mesh>, val deformers: Map<String, Deformer>,
                                  val objects: Map<String, JsonElement>)
 
-    private class Worker(val entry: InstalledModifierPlugin, val store: ModifierPluginStore) : AutoCloseable {
-        private val readResults = object : LinkedHashMap<String, ReadResult>(16, .75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ReadResult>?): Boolean = size > 128
+    private class Worker(val launchEntry: InstalledModifierPlugin, val store: ModifierPluginStore) : AutoCloseable {
+        private val readResults = object : LinkedHashMap<Pair<ModifierPluginReference, String>, ReadResult>(16, .75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Pair<ModifierPluginReference, String>, ReadResult>?): Boolean = size > 256
         }
+        private val writtenHashes = HashSet<String>()
         private val resources = Files.createTempDirectory("psd2live-plugin-")
-        private val command = (entry.manifest.commands[ModifierPluginStore.platform] ?: entry.manifest.commands.getValue("jvm")).mapIndexed { index, value ->
+        private val command = (launchEntry.manifest.commands[ModifierPluginStore.platform] ?: launchEntry.manifest.commands.getValue("jvm")).mapIndexed { index, value ->
             when {
                 value == "\$JAVA" -> Path.of(System.getProperty("java.home"), "bin", if (ModifierPluginStore.platform.startsWith("windows")) "java.exe" else "java").toString()
-                index == 0 || value in entry.manifest.files -> ModifierPluginStore.inside(entry.directory, value).toString()
+                index == 0 || value in launchEntry.manifest.files -> ModifierPluginStore.inside(launchEntry.directory, value).toString()
                 else -> value
             }
         }
-        private val process = try { ProcessBuilder(command).directory(entry.directory.toFile()).apply {
+        private val process = try { ProcessBuilder(command).directory(launchEntry.directory.toFile()).apply {
             environment()["PSD2LIVE_PLUGIN_RESOURCES"] = resources.toString()
         }.start() } catch (failure: Exception) { ModifierPluginStore.deleteTree(resources); throw failure }
         private val errors = StringBuilder()
@@ -92,7 +114,7 @@ internal object ModifierPluginWorkers {
         @Volatile private var closed = false
         private val requests = java.util.concurrent.locks.ReentrantLock(true)
 
-        fun evaluate(algorithm: ModifierPluginAlgorithm, rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit, timeoutMillis: Long, context: ModifierAlgorithmContext, declaredParameters: List<io.github.psd2live.format.model.Parameter>, resolveRasters: ModifierRasterResolver): RigIR {
+        fun evaluate(entry: InstalledModifierPlugin, algorithm: ModifierPluginAlgorithm, rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit, timeoutMillis: Long, context: ModifierAlgorithmContext, declaredParameters: List<io.github.psd2live.format.model.Parameter>, resolveRasters: ModifierRasterResolver): RigIR {
             // A cancelled queued request must neither wait on a JVM monitor nor kill the active request.
             try {
                 val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
@@ -103,16 +125,17 @@ internal object ModifierPluginWorkers {
                     if (requests.tryLock(minOf(remaining, TimeUnit.MILLISECONDS.toNanos(50)), TimeUnit.NANOSECONDS)) break
                 }
             } catch (failure: Throwable) { throw QueuedFailure(failure) }
-            try { return evaluateLocked(algorithm, rig, instance, checkpoint, timeoutMillis, context, declaredParameters, resolveRasters) }
+            try { return evaluateLocked(entry, algorithm, rig, instance, checkpoint, timeoutMillis, context, declaredParameters, resolveRasters) }
             finally { requests.unlock() }
         }
 
-        private fun evaluateLocked(algorithm: ModifierPluginAlgorithm, rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit, timeoutMillis: Long, context: ModifierAlgorithmContext, declaredParameters: List<io.github.psd2live.format.model.Parameter>, resolveRasters: ModifierRasterResolver): RigIR {
+        private fun evaluateLocked(entry: InstalledModifierPlugin, algorithm: ModifierPluginAlgorithm, rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit, timeoutMillis: Long, context: ModifierAlgorithmContext, declaredParameters: List<io.github.psd2live.format.model.Parameter>, resolveRasters: ModifierRasterResolver): RigIR {
             check(!closed) { "Algorithm plugin was stopped" }
             check(process.isAlive) { "Algorithm plugin process exited" }
             checkpoint()
             val input = ModifierInputCache.project(rig, algorithm.reads + algorithm.writes)
-            val cached = readResults[instance.id]?.takeIf {
+            val cacheKey = entry.reference to instance.id
+            val cached = readResults[cacheKey]?.takeIf {
                 it.algorithm == algorithm && it.instance == instance && it.context == context && it.reads.matches(input, context)
             }
             if (cached != null) {
@@ -126,7 +149,7 @@ internal object ModifierPluginWorkers {
                     return validated
                 }
             }
-            readResults.remove(instance.id)
+            readResults.remove(cacheKey)
             val sent = RigBuildProfile.stage("plugin input serialization") { serializeInput(input) }
             val current = sent.objects
             val earlier = previous?.objects.orEmpty()
@@ -175,7 +198,7 @@ internal object ModifierPluginWorkers {
                 }
                 Json.parseToJsonElement(response.toString()).jsonObject
             }
-            val response = try { awaitResponse(task, checkpoint, timeoutMillis) }
+            val response = try { awaitResponse(entry, task, checkpoint, timeoutMillis) }
             catch (failure: ExecutionException) { throw failure.cause ?: failure }
             catch (failure: Exception) { task.cancel(true); throw failure }
             checkpoint()
@@ -212,7 +235,7 @@ internal object ModifierPluginWorkers {
             }
             checkpoint()
             previous = sent
-            readResult?.let { readResults[instance.id] = it }
+            readResult?.let { readResults[cacheKey] = it }
             return output
         }
 
@@ -240,7 +263,7 @@ internal object ModifierPluginWorkers {
             return SentInput(input.meshes.associateBy(Mesh::id), input.deformers.associateBy(Deformer::id), objects)
         }
 
-        private fun awaitResponse(task: java.util.concurrent.Future<JsonObject>, checkpoint: () -> Unit, timeoutMillis: Long): JsonObject {
+        private fun awaitResponse(entry: InstalledModifierPlugin, task: java.util.concurrent.Future<JsonObject>, checkpoint: () -> Unit, timeoutMillis: Long): JsonObject {
             val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
             while (true) {
                 checkpoint()
@@ -255,10 +278,12 @@ internal object ModifierPluginWorkers {
 
         private fun blob(bytes: ByteArray): JsonObject {
             val hash = ModifierPluginStore.hash(bytes)
-            val path = resources.resolve(hash)
-            if (!Files.exists(path)) {
-                Files.write(path, bytes)
-                RigBuildProfile.count("plugin resource bytes", bytes.size.toLong())
+            if (writtenHashes.add(hash)) {
+                val path = resources.resolve(hash)
+                if (!Files.exists(path)) {
+                    Files.write(path, bytes)
+                    RigBuildProfile.count("plugin resource bytes", bytes.size.toLong())
+                }
             }
             return buildJsonObject { put("sha256", hash); put("bytes", bytes.size) }
         }

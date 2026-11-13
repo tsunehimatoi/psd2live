@@ -38,11 +38,10 @@ class WorkspaceBuiltinPluginsTest {
     @Test fun newInstancesPinEntrypointsWhileLegacyReadsAndOutputIdsStayUnchanged() {
         val targets = listOf(ModifierTarget("mesh", "body"))
         val registry = RigModifierAlgorithms.registry
-        assertEquals(
-            ModifierPluginReference("builtin.626f64792f6c6567616379.v1", "1.0.0",
-                "21e4a61f2450856341987aaa0ead648fa77d2df646192e2a92fb57018f6c7b7d"),
-            BuiltinModifierPlugins.reference("body/legacy", 1),
-        )
+        val ref = assertNotNull(BuiltinModifierPlugins.reference("body/legacy", 1))
+        assertEquals("builtin.626f64792f6c6567616379.v1", ref.id)
+        assertEquals("1.0.64", ref.version)
+        assertEquals(64, ref.digest.length)
         for (entry in BuiltinModifierPlugins.entries) {
             val definition = entry.definition
             val stack = RigModifierStack().add(definition.type, definition.version, targets)
@@ -58,133 +57,17 @@ class WorkspaceBuiltinPluginsTest {
         assertEquals("modifier:m1:e5afb9e8b1a13ac3a9", RigModifierInstance("m1", "motion", 1, targets).outputId("对象:é"))
     }
 
-    @Test fun openMouthBrowShapeV6IsAnExplicitIndependentPackage() {
-        val artifact = assertNotNull(BundledAlgorithmArtifacts.find("brow.shape", 6))
-        val definition = BuiltinModifierPlugins.entries.single { it.definition.type == "brow.shape" && it.definition.version == 6 }.definition
-        assertEquals("builtin.62726f772e7368617065.v6", artifact.reference.id)
-        assertTrue(definition.explicitVersion)
-        assertTrue(definition.upstreamInputs)
-        val required = setOf("rig.scaffold", "face/fitted", "eye/fitted", "brow/fitted")
-        assertEquals(required, definition.requires)
-        assertTrue(definition.optionalUpstream.intersect(required).isEmpty())
-        assertEquals(required, artifact.manifest.algorithms.single().requires)
-        assertEquals(setOf("mesh", "deformer", "parameter", "hierarchy"), artifact.manifest.algorithms.single().writes)
-        assertEquals(1, BuiltinModifierPlugins.definitions(null)
-            .filter { it.type == "brow.shape" && !it.explicitVersion }.maxOf { it.version })
-    }
-
-    @Test fun openMouthCheekLidV9IsAnExplicitIndependentPackage() {
-        val artifact = assertNotNull(BundledAlgorithmArtifacts.find("mouth.cheek-lid", 9))
-        assertEquals("builtin.6d6f7574682e636865656b2d6c6964.v9", artifact.reference.id)
-        assertEquals(artifact.reference.id, artifact.manifest.id)
-        assertEquals(artifact.manifest.version, artifact.reference.version)
-        val entry = BuiltinModifierPlugins.entries.single { it.definition.type == "mouth.cheek-lid" && it.definition.version == 9 }
-        assertEquals(artifact.reference, entry.reference)
-        assertEquals(artifact.reference, BuiltinModifierPlugins.reference("mouth.cheek-lid", 9))
-        val definition = entry.definition
-        assertTrue(definition.explicitVersion)
-        assertTrue(definition.upstreamInputs)
-        assertTrue(definition.optionalUpstream.intersect(setOf("face/fitted", "brow/fitted")).isEmpty())
-        val required = setOf("rig.scaffold", "mouth/fitted", "eye/fitted", "face/fitted", "brow/fitted")
-        assertEquals(required, definition.requires)
-        val instance = RigModifierInstance("cheek", "mouth.cheek-lid", 9, listOf(ModifierTarget("mesh", "lid")))
-        assertEquals(emptyList(), definition.parameters(instance))
-        val declaration = artifact.manifest.algorithms.single()
-        assertEquals(9, declaration.version)
-        assertEquals(2, declaration.contextVersion)
-        assertEquals(required, declaration.requires)
-        assertEquals(setOf("mesh", "parameter", "canvas", "deformer"), declaration.reads)
-        assertEquals(setOf("mesh", "deformer"), declaration.writes)
-        assertEquals(emptyList(), declaration.parameters)
-        assertEquals(1, BuiltinModifierPlugins.definitions(null)
-            .filter { it.type == "mouth.cheek-lid" && !it.explicitVersion }.maxOf { it.version })
-    }
-
-    @Test fun openMouthBrowShapeV6MissingProvidersSkipsCapture() {
+    @Test fun historicalBindingVersionsResolveToCanonicalV1WhileUnknownVersionsStillFail() {
+        val registry = RigModifierAlgorithms.registry
         val targets = listOf(ModifierTarget("mesh", "lid"))
-        val authored = io.github.psd2live.format.model.RigIR(io.github.psd2live.format.model.Canvas(1f, 1f), emptyList(),
-            meshes = listOf(io.github.psd2live.format.model.Mesh("lid", "Lid", null, geometry = null, offsets = null)))
-        var captures = 0
-        val definition = RigBrowShapeModifier.openShellDefinition(null).copy(
-            validate = { _, _ -> }, parameters = { emptyList() },
-            authorContext = {
-                captures++
-                error("Reached brow-shape v6 source capture")
-            })
-        val versions = mapOf("rig.scaffold" to 2, "eye/fitted" to 5, "face/fitted" to 3, "brow/fitted" to 4)
-        val providers = versions.entries.mapIndexed { index, (type, version) ->
-            RigModifierInstance("provider$index", type, version, targets)
+        val historical = RigModifierInstance("brow", "brow.shape", 6, targets)
+        val resolved = registry.definition(historical)
+        assertEquals(1, resolved.version)
+        assertEquals(BuiltinModifierPlugins.reference("brow.shape", 1), BuiltinModifierPlugins.reference("brow.shape", 6))
+        assertTrue(ModifierPluginCatalog.available("brow.shape", 6))
+        assertFailsWith<IllegalArgumentException> {
+            registry.definition(RigModifierInstance("unknown", "add", 2, targets))
         }
-        val providerIds = providers.associate { it.type to it.id }
-        val instance = RigModifierInstance("shape", "brow.shape", 6, targets, config = buildJsonObject {
-            put("scaffold", providerIds.getValue("rig.scaffold"))
-            put("base", providerIds.getValue("brow/fitted"))
-        })
-        // Keep the real v6 dependencies and provider selection; stub geometry validation and
-        // producer execution to test suspension before source capture without an artwork fixture.
-        val producerDefinitions = providers.map { provider -> RigModifierDefinition(provider.type, provider.version,
-            plugin = ModifierAlgorithmPlugin { rig, _, _ -> rig }) }
-        val evaluator = RigModifierEvaluator(RigModifierRegistry(producerDefinitions + definition))
-        val stack = RigModifierStack(instances = providers + instance)
-        for (type in listOf("rig.scaffold", "face/fitted", "eye/fitted", "brow/fitted")) {
-            val id = providerIds.getValue(type)
-            for (unavailable in listOf(stack.remove(id), stack.update(id) { it.copy(enabled = false) })) {
-                val result = evaluator.evaluate(authored, unavailable)
-                val consumer = result.entries.single { it.instance.id == instance.id }
-                assertEquals(ModifierStatus.MISSING_DEPENDENCY, consumer.status)
-                assertEquals(setOf(type), consumer.missingDependencies)
-                assertEquals(authored, result.rig)
-                assertEquals(0, captures, "Unavailable $type must suspend v6 before source capture")
-            }
-        }
-        // A complete chain must reach the capture sentinel, proving this is not a disabled consumer.
-        val reached = assertFailsWith<IllegalStateException> { evaluator.evaluate(authored, stack) }
-        assertEquals("Reached brow-shape v6 source capture", reached.message)
-        assertEquals(1, captures)
-    }
-
-    @Test fun openMouthCheekLidV9MissingFaceOrBrowSkipsCapture() {
-        val targets = listOf(ModifierTarget("mesh", "lid"))
-        val authored = io.github.psd2live.format.model.RigIR(io.github.psd2live.format.model.Canvas(1f, 1f), emptyList(),
-            meshes = listOf(io.github.psd2live.format.model.Mesh("lid", "Lid", null, geometry = null, offsets = null)))
-        var captures = 0
-        val definition = RigMouthCheekLidModifier.openShellDefinition(null).copy(
-            validate = { _, _ -> },
-            authorContext = {
-                captures++
-                error("Reached cheek-lid v9 source capture")
-            })
-        val versions = mapOf("rig.scaffold" to 2, "mouth/fitted" to 3, "eye/fitted" to 5, "face/fitted" to 3, "brow/fitted" to 4)
-        val providers = versions.entries.mapIndexed { index, (type, version) ->
-            RigModifierInstance("provider$index", type, version, targets)
-        }
-        val providerIds = providers.associate { it.type to it.id }
-        val instance = RigModifierInstance("cheek", "mouth.cheek-lid", 9, targets, config = buildJsonObject {
-            put("scaffold", providerIds.getValue("rig.scaffold"))
-            put("base", providerIds.getValue("mouth/fitted"))
-            putJsonObject("dependencies") { put("eye/fitted", providerIds.getValue("eye/fitted")) }
-        })
-        // Keep the real v9 dependencies and provider selection; stub geometry validation and
-        // producer execution to test suspension before source capture without an artwork fixture.
-        val producerDefinitions = providers.map { provider -> RigModifierDefinition(provider.type, provider.version,
-            plugin = ModifierAlgorithmPlugin { rig, _, _ -> rig }) }
-        val evaluator = RigModifierEvaluator(RigModifierRegistry(producerDefinitions + definition))
-        val stack = RigModifierStack(instances = providers + instance)
-        for (type in listOf("face/fitted", "brow/fitted")) {
-            val id = providerIds.getValue(type)
-            for (unavailable in listOf(stack.remove(id), stack.update(id) { it.copy(enabled = false) })) {
-                val result = evaluator.evaluate(authored, unavailable)
-                val consumer = result.entries.single { it.instance.id == instance.id }
-                assertEquals(ModifierStatus.MISSING_DEPENDENCY, consumer.status)
-                assertEquals(setOf(type), consumer.missingDependencies)
-                assertEquals(authored, result.rig)
-                assertEquals(0, captures, "Unavailable $type must suspend v9 before source capture")
-            }
-        }
-        // A complete chain must reach the capture sentinel, proving this is not a disabled consumer.
-        val reached = assertFailsWith<IllegalStateException> { evaluator.evaluate(authored, stack) }
-        assertEquals("Reached cheek-lid v9 source capture", reached.message)
-        assertEquals(1, captures)
     }
 
     @Test fun installedPackagesLockBundledDependenciesAndResumeAfterReenable() {

@@ -64,15 +64,15 @@ object BindingMerge {
             val previousById = previous.deformers.associateBy { it.id }
             val desiredById = desired.deformers.associateBy { it.id }
             val id = DrawableId(target.id)
-            val sample = current.drawables.single { it.id == id }
+            val sample = requireNotNull(current.drawables.singleOrNull { it.id == id }) { "${instance.id}: missing current drawable ${id.raw}" }
             val branch = LinkedHashSet<DeformerId>()
-            var parent = previous.drawables.single { it.id == id }.parentDeformerId
+            var parent = requireNotNull(previous.drawables.singleOrNull { it.id == id }) { "${instance.id}: missing previous drawable ${id.raw}" }.parentDeformerId
             while (parent != null) {
                 require(branch.add(parent)) { "Cyclic binding hierarchy" }
                 parent = previousById.getValue(parent).parent
             }
             val desiredBranch = ArrayList<DeformerId>()
-            var nextParent = desired.drawables.single { it.id == id }.parentDeformerId
+            var nextParent = requireNotNull(desired.drawables.singleOrNull { it.id == id }) { "${instance.id}: missing desired drawable ${id.raw}" }.parentDeformerId
             while (nextParent != null) {
                 require(nextParent !in desiredBranch) { "Cyclic generated binding hierarchy" }
                 desiredBranch += nextParent
@@ -163,7 +163,9 @@ object BindingMerge {
                 val actual = requireNotNull(current.deformers.singleOrNull { it.id == liveId }) { "${instance.id}: scaffold object ${liveId.raw} is missing" }
                 updatedDeformers[liveId] = actual
                 var before = previousById.getValue(canonical)
-                var after = desiredById[canonical] ?: source.static(previous).deformers.single { it.id == canonical }
+                var after = desiredById[canonical] ?: requireNotNull(source.static(previous).deformers.singleOrNull { it.id == canonical }) {
+                    "${instance.id}: missing static deformer ${canonical.raw}"
+                }
                 val originalParent = before.parent
                 val anchor = originalParent?.let(mapped::getValue)
                 val carriedParent = actual.parent != anchor

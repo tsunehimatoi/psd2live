@@ -37,15 +37,23 @@ internal object BundledAlgorithmArtifacts {
         val missing = requested.filterNot { it.reference in retained }
         if (missing.isEmpty()) return
         RigBuildProfile.stage("plugin load: retain bundled packages") {
+            val sharedRuntime = HashMap<String, ByteArray>()
             for (artifact in missing) {
                 Files.createDirectories(store.root)
                 val staging = Files.createTempDirectory(store.root, ".bundled-")
                 try {
                     Files.write(staging.resolve("plugin.json"), artifact.bytes)
-                    for (name in artifact.manifest.files.keys) {
+                    for ((name, digest) in artifact.manifest.files) {
                         val path = ModifierPluginStore.inside(staging, name)
                         Files.createDirectories(path.parent)
-                        requireNotNull(artifact.open(name)) { "Missing bundled file ${artifact.resource}$name" }.use { Files.copy(it, path) }
+                        if (name == SHARED_RUNTIME) {
+                            val bytes = sharedRuntime.getOrPut(digest) {
+                                requireNotNull(artifact.open(name)) { "Missing bundled file ${artifact.resource}$name" }.use { it.readAllBytes() }
+                            }
+                            Files.write(path, bytes)
+                        } else {
+                            requireNotNull(artifact.open(name)) { "Missing bundled file ${artifact.resource}$name" }.use { Files.copy(it, path) }
+                        }
                     }
                     store.installBundled(staging, artifact.reference)
                     RigBuildProfile.count("plugin load: bundled packages retained")

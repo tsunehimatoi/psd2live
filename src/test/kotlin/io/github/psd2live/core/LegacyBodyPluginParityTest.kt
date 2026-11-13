@@ -77,7 +77,7 @@ class LegacyBodyPluginParityTest {
             try {
                 val pkg = store.install(Path.of(directory).toString())
                 val algorithm = pkg.manifest.algorithms.single()
-                val declared = RigLegacyBodyDefinition.definition(capture).parameters(body)
+                val declared = RigLegacyBindings.definition(RigLegacyBindings.spec("body/legacy"), capture).parameters(body)
                 repeat(2) {
                     val installed = store.snapshot().single()
                     val transported = ModifierPluginWorkers.evaluate(installed, algorithm, input,

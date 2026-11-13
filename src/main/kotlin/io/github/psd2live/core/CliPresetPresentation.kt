@@ -1,7 +1,6 @@
 package io.github.psd2live.core
 
 import io.github.psd2live.algorithms.binding.ModelIdRemap
-import io.github.psd2live.algorithms.binding.MouthTongueV7Algorithm
 import io.github.psd2live.core.modifier.BuiltinModifierPlugins
 import io.github.psd2live.core.modifier.ModifierStatus
 import io.github.psd2live.core.modifier.RigModifierStack
@@ -29,7 +28,7 @@ internal object CliPresetPresentation {
         val face = CliFaceSourcePresentation.restoreSingleEyeForms(preview, brows, source.geometry, config)
         val hasLayeredTongue = preview.modifierEvaluation?.entries.orEmpty().any {
             it.status == ModifierStatus.ACTIVE && it.instance.type == "mouth.tongue" &&
-                it.instance.version == MouthTongueV7Algorithm.VERSION && BuiltinModifierPlugins.matches(it.instance)
+                BuiltinModifierPlugins.matches(it.instance)
         }
         val tongues = if (hasLayeredTongue)
             face.copy(rig = RigBuilder.sourceTongueExport(face.rig, source.geometry, face.atlas, config))

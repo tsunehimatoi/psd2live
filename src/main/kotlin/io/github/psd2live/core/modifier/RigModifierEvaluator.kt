@@ -34,6 +34,7 @@ internal data class RigModifierDefinition(
     val changeWrites: Set<String>? = null,
     val upstreamInputs: Boolean = false,
     val authorContext: (RigModifierInstance) -> ModifierAlgorithmContext = { ModifierAlgorithmContext.Empty },
+    val workerAuthorContext: ((RigModifierInstance) -> ModifierAlgorithmContext)? = null,
 ) {
     val optionalUpstream: Set<String> get() = (plugin as? ModifierOptionalUpstream)?.optionalUpstream.orEmpty()
     val explicitVersion: Boolean get() = type == (plugin as? ModifierVersionSelection)?.canonicalOptInType
@@ -83,9 +84,16 @@ internal class RigModifierRegistry(definitions: List<RigModifierDefinition>) {
     fun definitionOrNull(instance: RigModifierInstance): RigModifierDefinition? =
         definition(instance.type, instance.version, instance.plugin)
 
-    private fun definition(type: String, version: Int, plugin: ModifierPluginReference?): RigModifierDefinition? =
-        (if (plugin != null && plugin == BuiltinModifierPlugins.reference(type, version)) entries[Triple(type, version, null)] else null)
-            ?: entries[Triple(type, version, plugin)]
+    private fun definition(type: String, version: Int, plugin: ModifierPluginReference?): RigModifierDefinition? {
+        val resolvedVersion = if (version > 1 && RigLegacyBindings.find(type) != null) 1 else version
+        val canonical = BuiltinModifierPlugins.reference(type, resolvedVersion)
+        val historicalBuiltin = plugin != null && version > 1 && resolvedVersion == 1 &&
+            plugin.id == "builtin." + java.util.HexFormat.of().formatHex(type.encodeToByteArray()) + ".v$version"
+        if (plugin != null && (plugin == canonical || historicalBuiltin)) {
+            entries[Triple(type, resolvedVersion, null)]?.let { return it }
+        }
+        return entries[Triple(type, resolvedVersion, plugin)]
+    }
 
     fun provides(instance: RigModifierInstance, required: String): Boolean = instance.type == required ||
         required in definition(instance.type, instance.version, instance.plugin)?.provides.orEmpty()

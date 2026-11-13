@@ -47,11 +47,11 @@ internal object RigLegacyBindings {
         knobs = RigModules.FACE_DEPTH_TURN.knobs) + listOf(RigModules.EYE_FITTED, RigModules.BROW_FITTED, RigModules.MOUTH_FITTED, RigModules.HAIR_CHAINS).map { base ->
         val original = legacy.single { it.area == base.area }
         Spec(base.id, original.parameters, original.fields.filter { RigTuning.replacedBy[it.id] != base.id },
-            version = base.version, knobs = base.knobs, prerequisites = if (base == RigModules.HAIR_CHAINS) setOf("body/legacy", "face/legacy") else emptySet())
+            version = 1, knobs = base.knobs, prerequisites = if (base == RigModules.HAIR_CHAINS) setOf("body/legacy", "face/legacy") else emptySet())
     } + listOf(RigModules.EYE_SMILE, RigModules.EYE_SQUASH, RigModules.EYE_WIDE, RigModules.EYE_LID_FADE, RigModules.EYE_HIGHLIGHT, RigModules.EYE_AFTERSHOCK, RigModules.BROW_SHAPE, RigModules.BROW_SPRING, RigModules.EYE_EMOTION, RigModules.MOUTH_VOWEL, RigModules.EYE_GAZE_LID, RigModules.BROW_BLINK, RigModules.BROW_LID, RigModules.MOUTH_CHEEK_LID, RigModules.MOUTH_CAPTURE, RigModules.MOUTH_TONGUE, RigModules.MOUTH_JAW,
         RigModules.MOUTH_DEPTH, RigModules.MOUTH_SPRING, RigModules.MOUTH_OUTLINE, RigModules.EXPRESSION_CHEEK, RigModules.EXPRESSION_GLOOM, RigModules.EXPRESSION_TOGGLES, RigModules.FACE_SKIN_CLIP, RigModules.FACE_NECK, RigModules.FACE_DEPTH_TURN, RigModules.BODY_BUST, RigModules.BODY_ARMS, RigModules.OUTFIT_SKIRT, RigModules.OUTFIT_RIBBONS, RigModules.OUTFIT_CREATURE, RigModules.EYE_SEE_THROUGH, RigModules.BROW_SEE_THROUGH).map { module ->
         Spec(module.id, module.defines.mapTo(linkedSetOf()) { ParameterId(it.id) }, emptyList(),
-            version = module.version, knobs = if (module == RigModules.EYE_SEE_THROUGH || module == RigModules.BROW_SEE_THROUGH)
+            version = 1, knobs = if (module == RigModules.EYE_SEE_THROUGH || module == RigModules.BROW_SEE_THROUGH)
                 listOf(RecipeKnob("opacity", RigTuning.Unit.PERCENT, 0f..100f, 50f))
             else if (module == RigModules.MOUTH_OUTLINE) listOf(RecipeKnob("thickness", RigTuning.Unit.PIXELS, .5f..8f, 1.5f))
             else module.knobs, module = module,
@@ -97,20 +97,6 @@ internal object RigLegacyBindings {
         val dependencies = instance.config["dependencies"]?.jsonObject.orEmpty()
         require(dependencies.keys == spec.related) { "${instance.id}: specify exactly the related providers ${spec.related}" }
         spec.related.forEach { put(it, dependencies.getValue(it).jsonPrimitive.content) }
-    }
-
-    fun legacyMouthDefinition(source: RigModifierSource?): RigModifierDefinition {
-        val algorithm = io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm()
-        val type = io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm.TYPE
-        return definition(spec(type), source).copy(
-            version = io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm.VERSION,
-            parameters = { io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm.parameters(
-                io.github.psd2live.i18n.tr("model.parameter.mouthForm"), io.github.psd2live.i18n.tr("model.parameter.mouthOpen")) },
-            plugin = algorithm,
-            authorContext = { requireNotNull(source).legacyMouthContext(it) },
-            changeWrites = setOf("mesh", "parameter", "hierarchy", "restPose"),
-            upstreamInputs = true,
-        )
     }
 
     private val seeThrough = object : ContextualModifierAlgorithmPlugin {
@@ -166,15 +152,23 @@ internal object RigLegacyBindings {
             require(instance.targets.all { it.kind == "mesh" && source?.hasMesh(it.id) == true }) { "Binding targets must have captured source layers" }
             requireNotNull(source).provider(instance)
         }, composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter") +
-            if (spec.expressionToggles || spec.chainKinds.isNotEmpty()) setOf("physics") else emptySet(),
-        changeWrites = if (spec.skinClip) setOf("mesh") else null,
+            if (spec.expressionToggles || spec.hasPhysics) setOf("physics") else emptySet(),
+        changeWrites = if (spec.skinClip) setOf("mesh", "relations") else null,
         plugin = when {
             spec.expressionToggles -> io.github.psd2live.algorithms.binding.ExpressionAlgorithm()
             spec.seeThrough -> seeThrough
             spec.skinClip -> io.github.psd2live.algorithms.binding.SkinClipAlgorithm()
-            else -> ModifierAlgorithmPlugin { rig, instance, checkpoint ->
-                val bindings = RigSourceBinding.apply(rig, instance, requireNotNull(source), checkpoint)
-                if (spec.mouthOutline) source.outline(bindings, instance, checkpoint) else bindings
+            else -> object : ContextualModifierAlgorithmPlugin {
+                private val transition = io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm()
+
+                override fun evaluate(input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext,
+                                      checkpoint: () -> Unit): RigIR {
+                    if (context != ModifierAlgorithmContext.Empty) {
+                        return transition.evaluate(input, instance, context, checkpoint)
+                    }
+                    val bindings = RigSourceBinding.apply(input, instance, requireNotNull(source), checkpoint)
+                    return if (spec.mouthOutline) source.outline(bindings, instance, checkpoint) else bindings
+                }
             }
         },
         authorContext = { when {
@@ -183,5 +177,6 @@ internal object RigLegacyBindings {
             spec.skinClip -> requireNotNull(source).skinClipContext(it)
             else -> ModifierAlgorithmContext.Empty
         } },
+        workerAuthorContext = { requireNotNull(source).workerBindingContext(it) },
         )
 }

@@ -13,12 +13,12 @@ import kotlin.test.assertNotNull
 
 class LidFadeWorkerTest {
     @Test fun installedLidFadeRetainsAuthoredBlendOpacityRelativeToTheFade() {
-        val artifact = assertNotNull(BundledAlgorithmArtifacts.find("eye.lid-fade", 3))
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find("eye.lid-fade", 1))
         val open = "ParamEyeLOpen"
         val blink = "ParamLidPose"
         val targets = listOf(ModifierTarget("mesh", "lid"))
         val config = buildJsonObject { put("scaffold", "scaffold"); put("base", "eye") }
-        val instance = RigModifierInstance("fade", "eye.lid-fade", 3, targets, config = config, plugin = artifact.reference)
+        val instance = RigModifierInstance("fade", "eye.lid-fade", 1, targets, config = config, plugin = artifact.reference)
         val context = LidFadeInputs.encode(mapOf("lid" to LidFadeInputs(open, .2f, .5f))).withUpstream(listOf(
             ModifierUpstreamCapability("rig.scaffold", "rig.scaffold", 2, targets, "scaffold"),
             ModifierUpstreamCapability("eye/fitted", "eye/fitted", 5, targets, "eye"),
