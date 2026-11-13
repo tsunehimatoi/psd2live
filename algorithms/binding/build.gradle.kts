@@ -156,7 +156,7 @@ private val bindingManifestSpecs = listOf(
     BindingManifestSpec("mouth-spring", "mouth.spring", "spring", "Mouth spring", "mouth",
         requires = listOf("rig.scaffold", "mouth/fitted", "mouth.jaw"), writes = physicsWrites, composableKinds = physicsComposable),
     BindingManifestSpec("mouth-outline", "mouth.outline", "outline", "Mouth outline", "mouth",
-        requires = listOf("rig.scaffold", "mouth/legacy"), exclusiveFamily = "mouth.outline",
+        requires = listOf("rig.scaffold"), exclusiveFamily = "mouth.outline",
         writes = baseWrites + listOf("textures", "authoring"), composableKinds = defaultComposable),
     BindingManifestSpec("cheek", "expression.cheek", "color", "Cheek", "expression",
         writes = baseWrites, creates = listOf("parameters"), modifies = listOf("mesh.offsets", "mesh.opacity"),
