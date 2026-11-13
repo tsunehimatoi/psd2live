@@ -466,8 +466,10 @@ internal class RigModifierSource(
     }
 
     private fun outfitMeshContext(instance: RigModifierInstance): ModifierAlgorithmContext {
-        val scaffold = provider(instance)
-        return ModifierAlgorithmContext(resources = mapOf("source_meshes" to scaffoldContext(scaffold).resources.getValue("source_meshes")))
+        val targetLayers = instance.targets.mapNotNull { layersByMesh[it.id] }.distinct().associateWith { it }
+        val meshes = RigBuilder.scaffoldMeshInputs(analysis, atlas, sourceConfig(), meshCache, targetLayers)
+            .resources.getValue("source_meshes")
+        return ModifierAlgorithmContext(resources = mapOf("source_meshes" to meshes))
     }
 
     fun skirtContext(instance: RigModifierInstance): ModifierAlgorithmContext =

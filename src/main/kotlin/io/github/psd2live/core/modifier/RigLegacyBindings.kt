@@ -159,6 +159,7 @@ internal object RigLegacyBindings {
             requireNotNull(source).provider(instance)
         }, composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter") +
             if (spec.expressionToggles || spec.hasPhysics) setOf("physics") else emptySet(),
+        upstreamInputs = spec.type in setOf("outfit.skirt", "outfit.ribbons", "outfit.creature"),
         changeWrites = when {
             spec.skinClip -> setOf("mesh", "relations")
             spec.expressionCheek || spec.expressionGloom -> setOf("mesh", "parameter", "hierarchy")
