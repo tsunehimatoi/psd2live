@@ -57,6 +57,7 @@ class PartPluginsAndSimulationTest {
             "face.skin-clip" to 1,
             "eye.see-through" to 1,
             "brow.see-through" to 1,
+            "mesh.split" to 1,
         )
         for ((id, version) in bundledIds) {
             val bundled = assertNotNull(BundledAlgorithmArtifacts.find(id, version), "Missing bundled plugin $id@$version")

@@ -76,6 +76,7 @@ object ExpressionWorker {
         register("expression.toggles", "toggles", BindingTransitionAlgorithm(ExpressionAlgorithm(), 1))
         register("expression.cheek", "color", BindingTransitionAlgorithm(CheekAlgorithm(), 1))
         register("expression.gloom", "gloom", BindingTransitionAlgorithm(GloomAlgorithm(), 1))
+        register("mesh.split", "split", MeshSplitAlgorithm())
 
         AlgorithmWorker.run(algorithms)
     }

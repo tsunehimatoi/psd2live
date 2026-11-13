@@ -203,6 +203,10 @@ private val bindingManifestSpecs = listOf(
     BindingManifestSpec("see-through-brow", "brow.see-through", "visibility", "brow through bangs", "brow",
         writes = listOf("*"), creates = listOf("derivedMeshes"), modifies = listOf("mesh.opacity", "mesh.mask"),
         composableKinds = defaultComposable),
+    BindingManifestSpec("mesh-split", "mesh.split", "split", "Mesh split", "mesh",
+        writes = listOf("mesh", "part", "hierarchy"), creates = listOf("derivedMeshes"),
+        modifies = listOf("mesh.visibility", "hierarchy"),
+        composableKinds = listOf("mesh", "part", "hierarchy")),
 )
 
 val pluginPackages by tasks.registering {

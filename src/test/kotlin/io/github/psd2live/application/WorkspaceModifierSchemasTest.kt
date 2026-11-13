@@ -20,6 +20,7 @@ class WorkspaceModifierSchemasTest {
         "motion" -> MotionClips.toJson(MotionClip("template", "Motion", curves = listOf(MotionCurve("P", listOf(MotionKey(0f, 0f), MotionKey(1f, 1f))))))
         "physics" -> RigPhysicsEdit("template", "Physics", listOf(PhysicsInput("P")), listOf(PhysicsOutput("Q"))).toJson()
         "swing" -> RigSwingEdit.single("template", "Swing", SwingKind.LATERAL, listOf("warp"), listOf("P")).toJson()
+        "mesh.split" -> JsonObject(emptyMap())
         "simulation" -> RigSimEdit("template", "Simulation", SimKind.CLOTH, listOf("mesh")).copy(bake =
             SimBakeResult("fingerprint", mapOf("mesh" to 3), emptyList(), listOf(SimBakedMode(
                 SimBakedAxis("P", floatArrayOf(-1f, 0f, 1f), mapOf("mesh" to List(3) { FloatArray(6) })), 1f, 1f)))).toJson()
@@ -54,7 +55,7 @@ class WorkspaceModifierSchemasTest {
                 validateOperationSchema(JsonObject(request + ("config" to JsonObject(config + ("unknown" to JsonPrimitive(true))))), schema)
             }
         }
-        assertEquals(setOf("swing", "simulation", "physics", "motion", "rig.scaffold", "eye", "brow", "face", "body", "hair", "body/legacy", "face/legacy",
+        assertEquals(setOf("swing", "simulation", "physics", "motion", "mesh.split", "rig.scaffold", "eye", "brow", "face", "body", "hair", "body/legacy", "face/legacy",
             "eye/legacy", "brow/legacy", "mouth/legacy", "hair/legacy", "face/fitted", "eye/fitted", "brow/fitted", "mouth/fitted", "eye.smile", "eye.squash", "eye.wide", "eye.lid-fade", "eye.highlight", "eye.aftershock", "brow.shape", "brow.spring", "eye.emotion", "mouth.vowel", "eye.gaze-lid", "brow.blink", "brow.lid-coupling", "mouth.cheek-lid", "mouth.capture", "mouth.tongue", "mouth.jaw", "mouth.interior-depth", "mouth.spring", "mouth.outline", "expression.cheek", "expression.gloom", "expression.toggles", "face.skin-clip", "face.neck", "face.depth-turn", "eye.see-through", "brow.see-through", "hair/chains", "body.bust", "body.arms", "outfit.skirt", "outfit.ribbons", "outfit.creature"), WorkspaceModifierSchemas.types.toSet())
     }
 

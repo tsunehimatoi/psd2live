@@ -7911,9 +7911,8 @@ class PSD2LiveViewModel : AutoCloseable {
             if (!layout) {
                 if (choices.initialMode() != io.github.psd2live.application.WorkspaceInitialModifiers.EMPTY)
                     importPresetContinuation.start(_state.value.projectOpenGeneration, choices)
-                // The unbound mesh is available to the existing naming dialogs before any preset captures it.
-                offerImportMeshSplit(_state.value.previewModel?.analysis?.source?.layers.orEmpty().map { it.id.raw })
-                resumeMeshSplits() // Also handles a muted import prompt.
+                // Mesh splitting is now a composable mesh.split modifier rather than an import-time modal.
+                resumeMeshSplits()
             }
         }) { if (layout) it.importLayout(path, discardUnsaved) else it.importPsd(path, discardUnsaved,
             io.github.psd2live.application.WorkspaceInitialModifiers.EMPTY) }

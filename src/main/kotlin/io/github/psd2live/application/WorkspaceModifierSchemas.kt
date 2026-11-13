@@ -54,6 +54,10 @@ internal object WorkspaceModifierSchemas {
         "physics" -> physics
         "motion" -> WorkspaceAnimationResultSchemas.motion
         "swing" -> WorkspaceInspectionResultSchemas.swing
+        "mesh.split" -> s.obj(mapOf(
+            "pieceIds" to s.array(s.handle(), 1, 256),
+            "names" to s.array(s.handle(), 1, 256),
+        ), emptySet())
         "simulation" -> if (summary) s.obj(simFields, simRequired) else simulation
         "eye" -> s.obj(mapOf(
             "scaffold" to s.handle(),
