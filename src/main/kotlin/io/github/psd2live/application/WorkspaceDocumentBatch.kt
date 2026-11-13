@@ -8,7 +8,13 @@ import kotlin.coroutines.CoroutineContext
 import io.github.psd2live.project.WorkspaceMutationResult
 
 internal class WorkspaceBatchEditException(val index: Int, val editOperation: String, cause: Exception) :
-    IllegalArgumentException("Edit $index ($editOperation) failed: ${cause.message}", cause)
+    IllegalArgumentException(
+        "Edit $index ($editOperation) failed: ${cause.message}" +
+            if (cause.message == "Failed requirement." || cause.message.isNullOrBlank()) {
+                cause.stackTrace.firstOrNull()?.let { " at ${it.className.substringAfterLast('.')}.${it.methodName}(${it.fileName}:${it.lineNumber})" }.orEmpty()
+            } else "",
+        cause,
+    )
 
 /** Each batchable operation's business request: its published schema without the shared request context. */
 internal fun batchMemberSchemas(registry: WorkspaceOperationRegistry): Map<String, JsonObject> =
