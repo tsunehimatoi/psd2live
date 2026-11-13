@@ -115,7 +115,7 @@ internal object RigBrowFittedModifier {
         val scope = priorLayers.keys.filterTo(linkedSetOf()) { id ->
             priorLayers.getValue(id).semantic.tag == SemanticTag.EYEBROW || oldFrames[id] != newFrames[id] ||
                 before.headSpaceFor(priorLayers.getValue(id), old) != after.headSpaceFor(nextLayers.getValue(id), next) ||
-                generateSequence(oldFrames.getValue(id).first) { oldBranches.getValue(it).parent }.any { it in changed }
+                generateSequence(oldFrames.getValue(id).first) { oldBranches[it]?.parent }.any { it in changed }
         }
         return FrameTransition(old to before, next to after, priorLayers, nextLayers, scope)
     }

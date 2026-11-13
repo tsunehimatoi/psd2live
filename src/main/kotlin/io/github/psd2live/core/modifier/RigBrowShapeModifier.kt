@@ -4,6 +4,7 @@ import io.github.psd2live.algorithms.binding.BrowShapeAlgorithm
 import io.github.psd2live.algorithms.binding.BrowShapeV3Algorithm
 import io.github.psd2live.algorithms.binding.BrowShapeV4Algorithm
 import io.github.psd2live.algorithms.binding.BrowShapeV5Algorithm
+import io.github.psd2live.algorithms.binding.BrowShapeV6Algorithm
 import io.github.psd2live.algorithms.binding.BrowShapeInputs
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
 import io.github.psd2live.core.RigBuilder
@@ -76,6 +77,86 @@ internal object RigBrowShapeModifier {
                 put("eye", eye.id)
                 put("group", tr("model.group.brows"))
             })
+    }
+
+    private val openShellAlgorithm = object : ReadingModifierAlgorithmPlugin by BrowShapeV6Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = RigLegacyBindings.specs.filter { !it.expressionToggles && !it.seeThrough }
+            .mapTo(linkedSetOf()) { it.type } - setOf("rig.scaffold", "face/fitted", "eye/fitted", "brow/fitted")
+        override val canonicalOptInType = BrowShapeV6Algorithm.TYPE
+    }
+
+    /** Source-only shape capture in precisely the same native frame as its preceding head turn. */
+    fun openShellDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val captures = HashMap<RigModifierInstance, Pair<BrowShapeInputs, ModifierAlgorithmContext>>()
+        fun capture(instance: RigModifierInstance) = captures.getOrPut(instance) { requireNotNull(source).captureOpenShell(instance) }
+        return RigLegacyBindings.definition(RigLegacyBindings.spec(BrowShapeV6Algorithm.TYPE), source).copy(
+            version = BrowShapeV6Algorithm.VERSION, plugin = openShellAlgorithm,
+            requires = setOf("rig.scaffold", "face/fitted", "eye/fitted", "brow/fitted"),
+            parameters = { BrowShapeV6Algorithm.parameters(capture(it).first) }, resolveParameter = { _, _, _ -> null },
+            changeWrites = setOf("mesh", "deformer", "parameter", "hierarchy"), upstreamInputs = true,
+            authorContext = { capture(it).second },
+        )
+    }
+
+    private fun RigModifierSource.captureOpenShell(instance: RigModifierInstance): Pair<BrowShapeInputs, ModifierAlgorithmContext> {
+        val scaffold = provider(instance)
+        require(scaffold.version == 2 && scaffold.targets.containsAll(instance.targets)) {
+            "Brow shape v6 requires a shared v2 scaffold"
+        }
+        val prefix = activeBefore(instance).filter { entry ->
+            entry.config["scaffold"] == JsonPrimitive(scaffold.id) && entry.targets.any(instance.targets::contains) &&
+                RigLegacyBindings.find(entry.type)?.let { !it.expressionToggles && !it.seeThrough } == true
+        }
+        require(prefix.none { it.type in setOf("brow.shape", "brow.spring", "brow.blink", "brow.lid-coupling", "face.depth-turn") }) {
+            "Brow shape v6 must precede other brow motion modifiers and cannot use a separate depth turn"
+        }
+        fun required(type: String, version: Int) = requireNotNull(prefix.singleOrNull {
+            it.type == type && it.version == version && it.targets.containsAll(instance.targets)
+        }) { "Brow shape v6 requires $type@$version on the same shared scaffold" }
+        val face = required("face/fitted", 3)
+        val eye = required("eye/fitted", 5)
+        val brow = required("brow/fitted", 4)
+        require(brow.id == instance.config.getValue("base").jsonPrimitive.content) {
+            "Brow shape v6 requires its configured fitted brow provider"
+        }
+        // The candidate is deliberately absent: strength must not affect either source resource.
+        val (native, measured) = RigFittedMouthModuleSource.context(this, scaffold, prefix, null)
+        require(measured.analysis.layers.none { it.semantic.tag == SemanticTag.MOUTH_CLOSE && it.opaquePixels > 0 }) {
+            "Brow shape v6 does not support a separate closed-mouth drawing"
+        }
+        require(measured.analysis.layers.any { it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) &&
+            it.semantic.role == null && it.opaquePixels > 0 }) { "Brow shape v6 requires whole open-mouth source artwork" }
+        val eyes = measured.fittedEyes(native)?.rigs.orEmpty()
+        require(eyes.size == 1) { "Brow shape v6 requires exactly one readable fitted eye" }
+        require(measured.fittedBrowMeasurements(native).first.keys == eyes.keys) {
+            "Brow shape v6 requires one fitted brow paired with its captured eye"
+        }
+        require(measured.analysis.layers.any { it.semantic.tag == SemanticTag.EYELASH &&
+            it.semantic.side == eyes.keys.single() && it.opaquePixels > 0 }) { "Brow shape v6 requires same-side eyelash artwork" }
+        val inputs = RigBuilder.browShapeSourceInputs(analysis, atlas, native, meshCache,
+            instance.targets.associate { it.id to layersByMesh.getValue(it.id) }, eye.id) { mesh, parent ->
+            ScaffoldBinding.deformerId(scaffold, mesh, parent)
+        }
+        require(inputs.targets.size == 1 && inputs.targets.values.single().fit.side == eyes.keys.single() &&
+            inputs.targets.values.single().eye != null) { "Brow shape v6 requires one fitted brow paired with its captured eye" }
+        val layers = measured.analysis.layers.associateBy { it.source.id.raw }
+        val raw = inputs.targets.keys.map { id ->
+            val layer = layers.getValue(layersByMesh.getValue(id))
+            val channels = Drawable(DrawableId(id), layer.source.name, null, BlendMode.Normal, emptyList(), null, null)
+            PuppetIr.meshToIr(RigBuilder.browTurnLoweringSource(layer, measured, native, atlas, meshCache, channels))
+        }
+        require(raw.all { it.shapes.isNotEmpty() }) { "Brow shape v6 requires the captured fallback head turn" }
+        val branch = RigBuilder.browTurnSourceBranch(measured, native, meshCache,
+            raw.mapNotNullTo(hashSetOf()) { it.parent?.let(::DeformerId) }).map(PuppetIr::deformerToIr)
+        val context = inputs.encode()
+        return inputs to ModifierAlgorithmContext(JsonObject(context.values + mapOf(
+            "face" to JsonPrimitive(face.id), "eye" to JsonPrimitive(eye.id),
+            "native_ids" to JsonObject(inputs.targets.keys.associateWith {
+                JsonPrimitive(primaryByLayer.getValue(layersByMesh.getValue(it))) }),
+            "turn_name" to JsonPrimitive(tr("model.deformer.meshTurn", "{meshName}")))),
+            context.resources + ("brow_turn" to ModifierAlgorithmResource(RigIrBinary.encode(
+                RigIR(Canvas(1f, 1f), emptyList(), meshes = raw, deformers = branch)))))
     }
 
     private val fallbackAlgorithm = object : ReadingModifierAlgorithmPlugin by BrowShapeV4Algorithm(),

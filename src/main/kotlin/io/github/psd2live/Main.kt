@@ -232,7 +232,7 @@ private fun runGui() {
 				if (io.github.psd2live.ui.utils.MacShell.active) {
 					desktop?.takeIf { it.isSupported(java.awt.Desktop.Action.APP_ABOUT) }?.setAboutHandler {
 						javax.swing.SwingUtilities.invokeLater {
-							javax.swing.JOptionPane.showMessageDialog(null, "PSD2Live 3.7.0", tr("app.title"),
+							javax.swing.JOptionPane.showMessageDialog(null, "PSD2Live ${io.github.psd2live.AppVersion.value}", tr("app.title"),
 								javax.swing.JOptionPane.INFORMATION_MESSAGE)
 						}
 					}

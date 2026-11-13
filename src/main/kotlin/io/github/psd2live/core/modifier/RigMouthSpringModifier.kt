@@ -8,13 +8,13 @@ import io.github.psd2live.algorithms.binding.MouthSpringV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV8Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV9Algorithm
-import io.github.psd2live.algorithms.binding.MouthSpringV10Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV11Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV12Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV13Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV14Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV15Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV16Algorithm
+import io.github.psd2live.algorithms.binding.MouthSpringV17Algorithm
 import io.github.psd2live.core.CharacterAnalyzer
 import io.github.psd2live.core.PartRole
 import io.github.psd2live.core.PhysicsGenerator
@@ -127,7 +127,7 @@ internal object RigMouthSpringModifier {
         layered && withTeethOnly -> sourceFrameDefinition(source, MouthSpringV14Algorithm.VERSION, MouthSpringV14Algorithm())
         layered && withSharedTongue -> sourceFrameDefinition(source, MouthSpringV13Algorithm.VERSION, MouthSpringV13Algorithm())
         layered -> sourceFrameDefinition(source, MouthSpringV11Algorithm.VERSION, MouthSpringV11Algorithm())
-        withSharedTongue -> sourceFrameDefinition(source, MouthSpringV10Algorithm.VERSION, MouthSpringV10Algorithm())
+        withSharedTongue -> sourceFrameDefinition(source, MouthSpringV17Algorithm.VERSION, MouthSpringV17Algorithm())
         else -> sourceFrameDefinition(source, MouthSpringV9Algorithm.VERSION, MouthSpringV9Algorithm())
     }
 
@@ -221,7 +221,7 @@ internal object RigMouthSpringModifier {
         }
         val baseProviders = setOf("mouth.outline", "mouth.vowel", "mouth.capture", "mouth.jaw", "mouth.cheek-lid")
         val providers = when {
-            layeredTongue || instance.version in setOf(MouthSpringV10Algorithm.VERSION, MouthSpringV15Algorithm.VERSION) ->
+            layeredTongue || instance.version in setOf(MouthSpringV17Algorithm.VERSION, MouthSpringV15Algorithm.VERSION) ->
                 baseProviders + setOf("mouth.tongue", "mouth.interior-depth")
             layeredTeeth -> baseProviders + "mouth.interior-depth"
             else -> baseProviders

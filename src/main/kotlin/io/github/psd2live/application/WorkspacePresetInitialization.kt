@@ -5,18 +5,22 @@ import io.github.psd2live.algorithms.binding.ArmSwingV4Algorithm
 import io.github.psd2live.algorithms.binding.BrowBlinkV3Algorithm
 import io.github.psd2live.algorithms.binding.BrowBlinkV4Algorithm
 import io.github.psd2live.algorithms.binding.BrowBlinkV5Algorithm
+import io.github.psd2live.algorithms.binding.BrowBlinkV6Algorithm
 import io.github.psd2live.algorithms.binding.BrowFittedV3Binding
 import io.github.psd2live.algorithms.binding.BrowFittedV4Binding
 import io.github.psd2live.algorithms.binding.BrowLegacyV2Algorithm
 import io.github.psd2live.algorithms.binding.BrowLidV5Algorithm
 import io.github.psd2live.algorithms.binding.BrowLidV6Algorithm
 import io.github.psd2live.algorithms.binding.BrowLidV7Algorithm
+import io.github.psd2live.algorithms.binding.BrowLidV8Algorithm
 import io.github.psd2live.algorithms.binding.BrowShapeV3Algorithm
 import io.github.psd2live.algorithms.binding.BrowShapeV4Algorithm
 import io.github.psd2live.algorithms.binding.BrowShapeV5Algorithm
+import io.github.psd2live.algorithms.binding.BrowShapeV6Algorithm
 import io.github.psd2live.algorithms.binding.BrowSpringV4Algorithm
 import io.github.psd2live.algorithms.binding.BrowSpringV5Algorithm
 import io.github.psd2live.algorithms.binding.BrowSpringV6Algorithm
+import io.github.psd2live.algorithms.binding.BrowSpringV7Algorithm
 import io.github.psd2live.algorithms.binding.BustBindingV3Algorithm
 import io.github.psd2live.algorithms.binding.CheekCarrierAlgorithm
 import io.github.psd2live.algorithms.binding.CreatureAlgorithm
@@ -52,6 +56,8 @@ import io.github.psd2live.algorithms.binding.MouthCaptureV7Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV7Algorithm
+import io.github.psd2live.algorithms.binding.MouthCheekLidV8Algorithm
+import io.github.psd2live.algorithms.binding.MouthCheekLidV9Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV3Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthDepthV5Algorithm
@@ -69,6 +75,7 @@ import io.github.psd2live.algorithms.binding.MouthOutlineV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV7Algorithm
+import io.github.psd2live.algorithms.binding.MouthOutlineV8Algorithm
 import io.github.psd2live.algorithms.binding.MouthOutlineV11Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV4Algorithm
 import io.github.psd2live.algorithms.binding.MouthSpringV6Algorithm
@@ -80,7 +87,9 @@ import io.github.psd2live.algorithms.binding.MouthVowelV5Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV6Algorithm
 import io.github.psd2live.algorithms.binding.MouthVowelV8Algorithm
 import io.github.psd2live.algorithms.binding.NeckV3Algorithm
+import io.github.psd2live.algorithms.binding.NeckV4Algorithm
 import io.github.psd2live.algorithms.binding.RibbonsAlgorithm
+import io.github.psd2live.algorithms.binding.ScaffoldHead
 import io.github.psd2live.algorithms.binding.RibbonsResidualAlgorithm
 import io.github.psd2live.algorithms.binding.RibbonsV4Algorithm
 import io.github.psd2live.algorithms.binding.RibbonsV5Algorithm
@@ -127,6 +136,8 @@ internal object WorkspacePresetInitialization {
         val config = configOf(document)
         var stack = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack))
         require(stack.instances.isEmpty()) { "Initialize presets only into an empty stack" }
+        // A cleared preset still has retired identities. It is not a new source import.
+        val pristineSourceStack = stack == RigModifierStack()
         val pipeline = PSD2LivePipeline().apply {
             deferRuntimeBundles = true
             rawSourceRotations = restoreSourceRotations && cliBindings != null && freshSource(config)
@@ -212,9 +223,12 @@ internal object WorkspacePresetInitialization {
         val completeEyePair = eyeWhiteSides.size == 2 && lashSides.size == 2
         val singleEye = eyeWhiteSides.size == 1 && lashSides == eyeWhiteSides &&
             subject.sides(SemanticTag.EYEBROW) == eyeWhiteSides
+        val singleEyeClosedMouth = singleEye && subject.has(SemanticTag.MOUTH_CLOSE)
+        val singleEyeOpenMouth = singleEye && !subject.has(SemanticTag.MOUTH_CLOSE) &&
+            (subject.has(SemanticTag.MOUTH) || subject.has(SemanticTag.MOUTH_OPEN))
         val fittedSources = if (scaffold != null && config.recipe == RigRecipe.Modern && fittedFace &&
             !config.featureDisplacementEnabled && config.rigTuning == RigTuning() && requestedVersions.isEmpty() && freshSource(config) &&
-            (!subject.has(SemanticTag.EYEBROW) || completeEyePair || singleEye)) {
+            (!subject.has(SemanticTag.EYEBROW) || completeEyePair || singleEyeClosedMouth || singleEyeOpenMouth)) {
             fun packages(versions: Map<String, Int>): Map<String, Pair<Int, ModifierPluginReference>> {
                 val selected = versions.mapNotNull { (type, version) ->
                     val entry = stack.instances.singleOrNull { it.type == type } ?: return@mapNotNull null
@@ -278,7 +292,7 @@ internal object WorkspacePresetInitialization {
                         frameBindings + mouth + moods + arms + neck
                     }
                 } else emptyMap()
-            } else if (singleEye) {
+            } else if (singleEyeClosedMouth) {
                 val closedMouth = if (subject.has(SemanticTag.MOUTH_CLOSE))
                     sourceMouthVersions(model.analysis, config, types, singleEye = true) else emptyMap()
                 if (closedMouth.isNotEmpty()) {
@@ -317,6 +331,16 @@ internal object WorkspacePresetInitialization {
                         }
                     } else emptyMap()
                 }
+            } else if (singleEyeOpenMouth) {
+                // Migrate the verified head, eyes, mouth and four brow add-ons together.
+                // Moods keep their existing default versions.
+                val mouth = sourceMouthVersions(model.analysis, config, types, singleEye = true)
+                val brows = mapOf(RigModules.BROW_FITTED.id to BrowFittedV4Binding.VERSION,
+                    RigModules.BROW_SHAPE.id to BrowShapeV6Algorithm.VERSION,
+                    RigModules.BROW_LID.id to BrowLidV8Algorithm.VERSION,
+                    RigModules.BROW_BLINK.id to BrowBlinkV6Algorithm.VERSION,
+                    RigModules.BROW_SPRING.id to BrowSpringV7Algorithm.VERSION).filterKeys { it in plannedTypes }
+                if (mouth.isEmpty()) emptyMap() else packages(headVersions + plannedLids + mouth + brows)
             } else {
                 val lids = packages(plannedLids)
                 val brows = if (lids.isNotEmpty() && subject.has(SemanticTag.EYEBROW)) {
@@ -376,7 +400,12 @@ internal object WorkspacePresetInitialization {
                 independent.takeIf(ModifierPluginCatalog::available) ?: entry
             } else entry
         })
-        if (fittedSources.isNotEmpty()) {
+        if (singleEyeOpenMouth && fittedSources[RigModules.MOUTH_CHEEK_LID.id]?.first == MouthCheekLidV9Algorithm.VERSION) {
+            stack = sourceSingleEyeCheekLidDefault(model, stack)
+        }
+        stack = sourceSingleEyeSkinDefault(model, config, stack, requestedVersions, cliBindings, pristineSourceStack,
+            singleEyeOpenMouth && fittedSources[RigModules.MOUTH_CHEEK_LID.id]?.first == MouthCheekLidV9Algorithm.VERSION)
+        if (fittedSources.isNotEmpty() && !singleEyeOpenMouth) {
             val layeredDepth = layeredFace + WorkspaceMouthProfiles.depth(WorkspaceMouthProfiles.Source.LAYERED)
             val layeredDepthBarriers = setOf(RigModules.MOUTH_TONGUE.id, RigModules.OUTFIT_SKIRT.id, RigModules.OUTFIT_RIBBONS.id)
             val skirtBinding = RigModules.OUTFIT_SKIRT.id to SkirtAlgorithm.VERSION
@@ -470,6 +499,7 @@ internal object WorkspacePresetInitialization {
             for (entry in stack.instances) selected += selectAttachment(entry, selected)
             stack = stack.copy(instances = selected)
         }
+        stack = sourceNeckDefault(model, config, stack, fittedSources[RigModules.FACE_NECK.id], requestedVersions, cliBindings)
         if (cliBindings != null) stack = cliBindings.bindings(model, stack)
         model = build("binding preview")
         val parameters = model.rig.puppet.parameters.associateBy { it.id.raw }
@@ -535,7 +565,98 @@ internal object WorkspacePresetInitialization {
         }
     }
 
-    fun freshSource(config: PipelineConfig): Boolean =
+    private fun sourceSingleEyeCheekLidDefault(model: RigPreviewModel, stack: RigModifierStack): RigModifierStack {
+        val coupling = stack.instances.single { it.type == RigModules.MOUTH_CHEEK_LID.id }
+        val scaffold = stack.instances.single { it.id == coupling.config.getValue("scaffold").jsonPrimitive.content }
+        val preceding = stack.instances.take(stack.index(coupling.id)).filter { entry ->
+            entry.config["scaffold"] == JsonPrimitive(scaffold.id) && entry.targets.any(coupling.targets::contains) &&
+                RigLegacyBindings.find(entry.type)?.let { !it.expressionToggles && !it.seeThrough } == true
+        }
+        val source = RigModifierSource.of(model)
+        val native = RigFittedMouthModuleSource.nativeConfig(source, scaffold, preceding, null).copy(generateDeformers = false)
+        val eye = preceding.single { it.type == RigModules.EYE_FITTED.id }
+        val head = preceding.single { it.type == RigLegacyBindings.FITTED_FACE }
+        val depth = RigModules.FACE_DEPTH_TURN
+        // Brow/lid v8 measures its fallback head before source mouth outlining. Cheek/lid v9
+        // captures the full mouth prefix, whose outlined footprint can change the inferred head shell.
+        // Compare those source measurements, not the presence of optional nose or lid artwork.
+        val lidNative = native.copy(mouthOutlineEnabled = source.sourceConfig().mouthOutlineEnabled, recipe = native.recipe.copy(
+            bases = mapOf("eye" to BaseChoice(eye.type, eye.version)),
+            modules = RigModules.modules.associate { module ->
+                module.id to if (module == depth) ModuleChoice(true, depth.version, RigLegacyBindings.values(head))
+                else ModuleChoice(false)
+            },
+        ))
+        val mouthHead = RigBuilder.rigContext(source.analysis, native, source.meshCache).faceRig
+        val lidHead = RigBuilder.rigContext(source.analysis, lidNative, source.meshCache).faceRig
+        if (RigBuilder.headTurnMeasurements(mouthHead, native) == RigBuilder.headTurnMeasurements(lidHead, lidNative)) return stack
+        val legacy = requireNotNull(BuiltinModifierPlugins.reference(coupling.type, 1))
+        return stack.copy(instances = stack.instances.map {
+            if (it.id == coupling.id) it.copy(version = 1, plugin = legacy) else it
+        })
+    }
+
+    /** Fresh initialization only. Published versions and existing instances keep their locked identities. */
+    internal fun sourceSingleEyeSkinDefault(model: RigPreviewModel, config: PipelineConfig, stack: RigModifierStack,
+                                           requestedVersions: Map<String, Int>, cliBindings: CliPresetBindings?,
+                                           pristineSourceStack: Boolean, automaticSingleEyeOpenMouth: Boolean): RigModifierStack =
+        if (!freshSource(config)) stack else WorkspaceSourceSkinDefaults.select(model, config, stack,
+            requestedVersions, cliBindings, pristineSourceStack, automaticSingleEyeOpenMouth)
+
+    /** Only the verified fresh shared-frame cohort advances; persisted and explicit locks never pass here. */
+    internal fun sourceNeckDefault(model: RigPreviewModel, config: PipelineConfig, stack: RigModifierStack,
+                                   automatic: Pair<Int, ModifierPluginReference>?, requestedVersions: Map<String, Int>,
+                                   cliBindings: CliPresetBindings?): RigModifierStack {
+        val type = RigModules.FACE_NECK.id
+        if (requestedVersions.isNotEmpty() || cliBindings != null || !freshSource(config) ||
+            config.generationSource != null || config.meshSource != null || automatic?.first != NeckV3Algorithm.VERSION) return stack
+        val neck = stack.instances.singleOrNull { it.type == type } ?: return stack
+        if (neck.version != automatic.first || neck.plugin != automatic.second || !neck.enabled ||
+            !BuiltinModifierPlugins.matches(neck)) return stack
+        val prefix = stack.instances.take(stack.index(neck.id))
+        val versions = mapOf(RigSourceModifiers.SCAFFOLD to 2, LegacyBodyV2Algorithm.TYPE to LegacyBodyV2Algorithm.VERSION,
+            RigLegacyBindings.FITTED_FACE to FittedFaceV3Algorithm.VERSION, RigModules.EYE_FITTED.id to EyeFittedV5Algorithm.VERSION,
+            RigModules.BROW_FITTED.id to BrowFittedV4Binding.VERSION, RigModules.MOUTH_FITTED.id to MouthFittedV6Algorithm.VERSION)
+        if (versions.any { (provider, version) -> prefix.singleOrNull { it.type == provider }?.version != version }) return stack
+        // Outline follows neck in the default plan. It identifies the verified final cohort, not an upstream input.
+        val outline = stack.instances.singleOrNull { it.type == RigModules.MOUTH_OUTLINE.id }
+            ?.takeIf { it.version == MouthOutlineV8Algorithm.VERSION } ?: return stack
+        val scaffold = prefix.single { it.type == RigSourceModifiers.SCAFFOLD }
+        val scaffoldId = JsonPrimitive(scaffold.id)
+        val targets = scaffold.targets.toSet()
+        if (targets.isEmpty() || targets.any { it.kind != "mesh" } || neck.targets.toSet() != targets ||
+            neck.config["scaffold"] != scaffoldId || neck.outputAliases.isNotEmpty() ||
+            (prefix + outline).any { !it.enabled || !BuiltinModifierPlugins.matches(it) || it.targets.toSet() != targets ||
+                it.outputAliases.isNotEmpty() || it != scaffold && it.config["scaffold"] != scaffoldId }) return stack
+        val face = prefix.single { it.type == RigLegacyBindings.FITTED_FACE }
+        if (RigLegacyBindings.providers(neck)["face/legacy"] != face.id) return stack
+        val source = RigModifierSource.of(model)
+        val layers = source.analysis.layers.filter { it.opaquePixels > 0 && it.semantic.tag == SemanticTag.NECK }
+        if (layers.isEmpty() || layers.any { it.semantic.side != Side.NONE || it.semantic.role != null }) return stack
+        val ids = layers.mapTo(hashSetOf()) { it.source.id.raw }
+        val meshes = source.layersByMesh.filterValues { it in ids }
+        // Each source neck must have exactly one ordinary mesh, not a copied or automatically paired artifact.
+        if (meshes.size != ids.size || meshes.values.toSet() != ids || meshes.any { (mesh, layer) ->
+                source.primaryByLayer[layer] != mesh || ModifierTarget("mesh", mesh) !in targets
+            }) return stack
+        // This is still the unbound author preview, not a generated prefix or a motion projection.
+        val raw = model.rig.puppet.drawables.associateBy { it.id.raw }
+        // Ordinary Z contributes three cells. Above 120,000 floats lowering inserts a private carrier.
+        if (meshes.keys.any { raw[it]?.mesh?.positions?.size?.let { size -> size in 1..40_000 } != true }) return stack
+        val preceding = prefix.filter { RigLegacyBindings.find(it.type)?.let { spec -> !spec.expressionToggles && !spec.seeThrough } == true }
+        val native = RigFittedMouthModuleSource.nativeConfig(source, scaffold, preceding, null).copy(generateDeformers = false)
+        val measured = RigBuilder.rigContext(source.analysis, native, source.meshCache)
+        if (layers.any { measured.parentAndFrame(it, native).let { (parent, frame) ->
+                parent?.raw != ScaffoldHead.breathId.raw || frame != measured.bodyFrame
+            } }) return stack
+        val plugin = BuiltinModifierPlugins.reference(type, NeckV4Algorithm.VERSION) ?: return stack
+        if (!ModifierPluginCatalog.available(type, NeckV4Algorithm.VERSION, plugin)) return stack
+        return stack.copy(instances = stack.instances.map {
+            if (it.id == neck.id) it.copy(version = NeckV4Algorithm.VERSION, plugin = plugin) else it
+        })
+    }
+
+    internal fun freshSource(config: PipelineConfig): Boolean =
         config.rigEdits.copy(modifierStack = null) == RigEditOverlay.Empty &&
             config.meshOverrides.isEmpty() && config.parentOverrides.isEmpty() &&
             !config.deferRig && config.rigPendingLayerIds.isEmpty()
@@ -575,6 +696,21 @@ internal object WorkspacePresetInitialization {
         RigModules.MOUTH_SPRING.id to MouthSpringV8Algorithm.VERSION,
     ).filterKeys { it in types }
 
+    private fun singleEyeOpenMouthVersions(types: List<String>): Map<String, Int> {
+        if (RigModules.MOUTH_FITTED.id !in types || RigModules.MOUTH_OUTLINE.id !in types) return emptyMap()
+        return buildMap {
+            put(RigModules.MOUTH_FITTED.id, MouthFittedV3Algorithm.VERSION)
+            put(RigModules.MOUTH_OUTLINE.id, MouthOutlineV7Algorithm.VERSION)
+            if (RigModules.MOUTH_VOWEL.id in types) put(RigModules.MOUTH_VOWEL.id, MouthVowelV6Algorithm.VERSION)
+            if (RigModules.MOUTH_CAPTURE.id in types) put(RigModules.MOUTH_CAPTURE.id, MouthCaptureV5Algorithm.VERSION)
+            if (RigModules.MOUTH_TONGUE.id in types) put(RigModules.MOUTH_TONGUE.id, MouthTongueV5Algorithm.VERSION)
+            if (RigModules.MOUTH_JAW.id in types) put(RigModules.MOUTH_JAW.id, MouthJawV7Algorithm.VERSION)
+            if (RigModules.MOUTH_CHEEK_LID.id in types) put(RigModules.MOUTH_CHEEK_LID.id, MouthCheekLidV9Algorithm.VERSION)
+            if (RigModules.MOUTH_DEPTH.id in types) put(RigModules.MOUTH_DEPTH.id, MouthDepthV3Algorithm.VERSION)
+            if (RigModules.MOUTH_SPRING.id in types) put(RigModules.MOUTH_SPRING.id, MouthSpringV8Algorithm.VERSION)
+        }
+    }
+
     private fun sourceMouthVersions(analysis: PipelineAnalysis, config: PipelineConfig, types: List<String>,
                                     singleEye: Boolean = false, sharedBrow: Boolean = false): Map<String, Int> {
         val measurement = config.copy(generateDeformers = false)
@@ -591,8 +727,8 @@ internal object WorkspacePresetInitialization {
             singleEye -> singleEyeMouthVersions(types)
             else -> closedMouthVersions(types)
         }
-        if (singleEye) return emptyMap()
         if (analysis.layers.any { it.semantic.tag == SemanticTag.MOUTH_CLOSE }) return emptyMap()
+        if (singleEye) return singleEyeOpenMouthVersions(types)
         if (sharedBrow) return WorkspaceMouthProfiles.preset(WorkspaceMouthProfiles.Source.SHARED, types)
         val withInterior = RigModules.MOUTH_TONGUE.id in types || RigModules.MOUTH_DEPTH.id in types
         return mapOf(

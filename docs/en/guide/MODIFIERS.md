@@ -66,9 +66,13 @@ Blink aftershock and brow spring add pendulums together with their bindings. Exp
 
 Mouth modifiers include capture axes, tongue, jaw, interior depth, and spring. Addition plans list their prerequisites. Cheek and gloom add color channels that combine with mouth movement. Color-key edits belong to an instance, sleep while disabled, and resume with that original instance.
 
+Cheek v4 (`expression.cheek@4`) is an explicit-only source candidate for single-eye, whole open-mouth artwork with a matching brow and eyelash and unedited, unsplit preset skin. It uses the specific source-provider versions listed in [Algorithm plugins](ALGORITHM_PLUGINS.md), with both mood parameters unused. Its frozen, separately compiled `skinReplayV1` helper reconstructs source motion and checks the exact preceding skin and carrier state before adding warmth. Dense detail meshes are rejected if that state cannot be reproduced exactly; provider versions are not downgraded to obtain a match. Existing defaults and saved locks are unchanged, Gloom v4 still requires Cheek v1, and this candidate does not establish independence of the entire preset chain.
+
 The Physics panel shows evaluated stack groups with a Modifier badge. Edit generated groups in their owning modifiers; Open Presets returns to that panel. Their order follows the stack. After application, they are ordinary custom configurations that can be edited, disabled, and reordered normally.
 
 Skin clipping adds face masks for blush, skin overlays and bangs shadows. Neck follow binds the neck to head tilt and clips its shadow; its addition plan includes a pinned face-binding prerequisite. Both use existing artwork. Contributions show the mask sources and inversion before and after the modifier; click the target or a source to locate it.
+
+Neck follow v4 is an explicit-only source candidate. It reconstructs ordinary neck tilt and neck-shadow turn motion from the current preceding configuration inside its worker. It currently requires the current bundled providers and supports unsided neck meshes directly below the shared body/breath branch, with unchanged source UVs and topology. Older provider package digests, paired necks, parent wrappers and transitions needing a private turn carrier are rejected. Existing neck versions, preset choices and saved v1–v3 package locks are unchanged.
 
 Segmented hair chains are an alternative to the legacy hair base on the same target. Skirts, ribbons and pendants, ears, tails and wings, chest follow and arm lag can also be added separately. The addition plan lists the required body and face bindings. Adjust swing, hair softness and the actual physics groups inside their modifier; moving other entries keeps the chain references intact.
 

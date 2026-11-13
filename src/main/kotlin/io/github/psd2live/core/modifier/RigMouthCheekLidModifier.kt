@@ -13,6 +13,7 @@ import io.github.psd2live.algorithms.binding.MouthCheekLidV11Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV12Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV13Algorithm
 import io.github.psd2live.algorithms.binding.MouthCheekLidV14Algorithm
+import io.github.psd2live.algorithms.binding.MouthCheekLidV15Algorithm
 import io.github.psd2live.core.CharacterAnalyzer
 import io.github.psd2live.core.RigBuilder
 import io.github.psd2live.core.SemanticTag
@@ -104,11 +105,60 @@ internal object RigMouthCheekLidModifier {
             })
     }
 
+    private val openShellAlgorithm = object : ReadingModifierAlgorithmPlugin by MouthCheekLidV9Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = MouthCheekLidV9Algorithm.optionalUpstream
+        override val canonicalOptInType = MouthCheekLidV9Algorithm.TYPE
+    }
+
+    /** Single-eye open-mouth source contract; closed and bilateral variants retain their own definitions. */
+    fun openShellDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val fitted = fittedDefinition(source)
+        return fitted.copy(version = MouthCheekLidV9Algorithm.VERSION, plugin = openShellAlgorithm,
+            requires = fitted.requires + setOf("face/fitted", "brow/fitted"),
+            authorContext = { instance ->
+                val capture = requireNotNull(source)
+                val scaffold = capture.provider(instance)
+                require(scaffold.version == 2) { "Cheek and lid v9 requires a shared v2 scaffold" }
+                val prefix = capture.activeBefore(instance).filter { entry ->
+                    entry.config["scaffold"] == JsonPrimitive(scaffold.id) && entry.targets.any(instance.targets::contains) &&
+                        RigLegacyBindings.find(entry.type)?.let { !it.expressionToggles && !it.seeThrough } == true
+                }
+                val mouthId = instance.config.getValue("base").jsonPrimitive.content
+                val eyeId = instance.config.getValue("dependencies").jsonObject.getValue("eye/fitted").jsonPrimitive.content
+                for ((type, version) in mapOf("mouth/fitted" to 3, "eye/fitted" to 5, "face/fitted" to 3, "brow/fitted" to 4)) {
+                    val provider = prefix.singleOrNull { it.type == type }
+                    require(provider != null && provider.version == version && provider.targets.containsAll(instance.targets) &&
+                        (type != "mouth/fitted" || provider.id == mouthId) && (type != "eye/fitted" || provider.id == eyeId)) {
+                        "Cheek and lid v9 requires $type v$version on the same shared scaffold"
+                    }
+                }
+                val (native, measured) = RigFittedMouthModuleSource.context(capture, scaffold, prefix, null)
+                val mouth = requireNotNull(measured.fittedMouth(native)?.takeIf { it.source != null }) {
+                    "Cheek and lid v9 requires readable fitted open-mouth source artwork"
+                }
+                require(!mouth.closedLine) { "Cheek and lid v9 does not support a separate closed-mouth drawing" }
+                require(measured.fittedEyes(native)?.rigs?.size == 1) { "Cheek and lid v9 requires exactly one readable fitted eye" }
+                val context = fitted.authorContext(instance)
+                val layers = measured.analysis.layers.associateBy { it.source.id.raw }
+                val turns = instance.targets.mapNotNull { target ->
+                    val layer = layers[capture.layersByMesh[target.id]] ?: return@mapNotNull null
+                    if (layer.semantic.tag !in setOf(SemanticTag.EYELASH, SemanticTag.EYEWHITE)) return@mapNotNull null
+                    val channels = Drawable(DrawableId(target.id), layer.source.name, null, BlendMode.Normal, emptyList(), null, null)
+                    val raw = RigBuilder.lidTurnLoweringSource(layer, measured, native, capture.atlas, capture.meshCache, channels)
+                    PuppetIr.meshToIr(raw).takeIf { it.shapes.isNotEmpty() }
+                }
+                val resource = ModifierAlgorithmResource(RigIrBinary.encode(RigIR(Canvas(1f, 1f), emptyList(), meshes = turns)))
+                ModifierAlgorithmContext(JsonObject(context.values + ("turnName" to JsonPrimitive(tr("model.deformer.meshTurn", "{meshName}")))),
+                    context.resources + ("lid_turn" to resource))
+            })
+    }
+
     fun sharedFrameDefinition(source: RigModifierSource?, withTongue: Boolean = false,
                               layered: Boolean = false): RigModifierDefinition = when {
         layered && withTongue -> sourceFrameDefinition(source, MouthCheekLidV12Algorithm.VERSION, MouthCheekLidV12Algorithm, withTongue = true)
         layered -> sourceFrameDefinition(source, MouthCheekLidV10Algorithm.VERSION, MouthCheekLidV10Algorithm)
-        withTongue -> sourceFrameDefinition(source, MouthCheekLidV9Algorithm.VERSION, MouthCheekLidV9Algorithm, withTongue = true)
+        withTongue -> sourceFrameDefinition(source, MouthCheekLidV15Algorithm.VERSION, MouthCheekLidV15Algorithm, withTongue = true)
         else -> sourceFrameDefinition(source, MouthCheekLidV8Algorithm.VERSION, MouthCheekLidV8Algorithm)
     }
 
@@ -135,6 +185,7 @@ internal object RigMouthCheekLidModifier {
                 MouthCheekLidV12Algorithm.VERSION -> MouthCheekLidV12Algorithm.WRITES
                 MouthCheekLidV13Algorithm.VERSION -> MouthCheekLidV13Algorithm.WRITES
                 MouthCheekLidV14Algorithm.VERSION -> MouthCheekLidV14Algorithm.WRITES
+                MouthCheekLidV15Algorithm.VERSION -> MouthCheekLidV15Algorithm.WRITES
                 else -> MouthCheekLidV8Algorithm.WRITES
             },
             authorContext = { requireNotNull(source).captureSharedFrames(it, withTongue) })
@@ -163,7 +214,8 @@ internal object RigMouthCheekLidModifier {
             val capture = requireNotNull(source)
             val (measurements, carriers) = inputs(capture, instance)
             val browCover = if (capture.activeBefore(instance).any { it.type == "brow.lid-coupling" }) {
-                RigBuilder.rigContext(capture.analysis, capture.sourceConfig(), capture.meshCache, neutralScaffold = true).browCover
+                RigBuilder.rigContext(capture.analysis, capture.sourceConfig().copy(generateDeformers = false),
+                    capture.meshCache, neutralScaffold = true).browCover
             } else 0f
             MouthCheekLidV3Algorithm.context(measurements, carriers, browCover)
         },

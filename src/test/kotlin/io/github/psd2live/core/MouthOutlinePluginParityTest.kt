@@ -101,7 +101,10 @@ class MouthOutlinePluginParityTest {
         val sourceId = DrawableId(layerId)
         val paths = MouthOutlineOwner.paths(sourceId, capturedOwner)
         assertEquals(2, paths.size)
-        assertEquals(paths, native.deformPaths.filter { it.drawableId == sourceId })
+        // The builder measures the owner's paths under the source layer id, where no mesh lives, and keeps only paths on
+        // live meshes; the candidate attaches the same paths to the owner mesh itself.
+        assertTrue(native.deformPaths.none { it.drawableId == sourceId })
+        val ownerPaths = paths.map { it.copy(drawableId = DrawableId(id)) }
         val expected = PuppetIr.toIr(native)
         if (!fitted) {
             val neutralContext = RigBuilder.rigContext(analysis, config, cache)
@@ -152,7 +155,7 @@ class MouthOutlinePluginParityTest {
             val newOwner = complete.meshes.single { it.id == id }
             assertEquals(oldOwner.geometry, newOwner.geometry)
             assertEquals(oldOwner.offsets, newOwner.offsets)
-            val nativePaths = expected.authoring.paths.filter { it.mesh == layerId }.map { it.copy(mesh = id) }
+            val nativePaths = PuppetIr.toIr(native.copy(deformPaths = ownerPaths)).authoring.paths
             assertEquals(nativePaths, complete.authoring.paths.filter { it.mesh == id })
 
             assertNotEquals(frame.observation(), capturedTarget.frame)

@@ -4,6 +4,7 @@ import io.github.psd2live.algorithms.binding.BrowBlinkAlgorithm
 import io.github.psd2live.algorithms.binding.BrowBlinkV3Algorithm
 import io.github.psd2live.algorithms.binding.BrowBlinkV4Algorithm
 import io.github.psd2live.algorithms.binding.BrowBlinkV5Algorithm
+import io.github.psd2live.algorithms.binding.BrowBlinkV6Algorithm
 import io.github.psd2live.algorithms.binding.BrowShapeInputs
 import io.github.psd2live.algorithms.binding.ScaffoldBinding
 import io.github.psd2live.core.RigBuilder
@@ -66,6 +67,60 @@ internal object RigBrowBlinkModifier {
         plugin = sharedFrameAlgorithm,
         authorContext = { requireNotNull(source).captureFallback(it) },
     )
+
+    private val singleEyeAlgorithm = object : ReadingModifierAlgorithmPlugin by BrowBlinkV6Algorithm(),
+        ModifierOptionalUpstream, ModifierVersionSelection {
+        override val optionalUpstream = BrowBlinkV6Algorithm.optionalUpstream
+        override val canonicalOptInType = BrowBlinkV6Algorithm.TYPE
+    }
+
+    /** Explicit source-only candidate; dip is read only by the independent worker. */
+    fun singleEyeDefinition(source: RigModifierSource?): RigModifierDefinition = definition(source).copy(
+        version = BrowBlinkV6Algorithm.VERSION, plugin = singleEyeAlgorithm,
+        requires = BrowBlinkV6Algorithm.requires,
+        authorContext = { requireNotNull(source).captureSingleEye(it) },
+    )
+
+    private fun RigModifierSource.captureSingleEye(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val scaffold = provider(instance)
+        require(scaffold.version == 2 && scaffold.targets.containsAll(instance.targets))
+        val prefix = activeBefore(instance).filter { it.targets.any(instance.targets::contains) }
+        require(prefix.none { it.type in BrowBlinkV6Algorithm.unsupported }) {
+            "Brow blink v6 does not support preceding blink, spring, cheek coupling or separate depth turn"
+        }
+        fun required(type: String, version: Int) = requireNotNull(prefix.singleOrNull { it.type == type }) {
+            "Brow blink v6 requires one unambiguous $type provider"
+        }.also {
+            require(it.version == version && it.config["scaffold"] == JsonPrimitive(scaffold.id) &&
+                it.targets.containsAll(instance.targets)) { "Brow blink v6 requires $type@$version on its shared scaffold" }
+        }
+        val face = required("face/fitted", 3)
+        val eye = required("eye/fitted", 5)
+        val brow = required("brow/fitted", 4)
+        val shape = required("brow.shape", 6)
+        val lid = required("brow.lid-coupling", 8)
+        require(brow.id == instance.config.getValue("base").jsonPrimitive.content &&
+            listOf(brow, shape, lid).all { it.targets.toSet() == instance.targets.toSet() } &&
+            shape.config["base"] == JsonPrimitive(brow.id) && lid.config["base"] == JsonPrimitive(brow.id) &&
+            lid.config["dependencies"]?.jsonObject?.get("eye/fitted") == JsonPrimitive(eye.id) &&
+            prefix.indexOf(shape) < prefix.indexOf(lid)) { "Brow blink v6 requires its preceding shape6 and lid8 chain" }
+        for ((type, version) in BrowBlinkV6Algorithm.directVersions) {
+            val candidates = prefix.filter { it.type == type }
+            require(candidates.size <= 1)
+            candidates.singleOrNull()?.let { require(it.version == version && it.config["scaffold"] == JsonPrimitive(scaffold.id) &&
+                it.config["base"] == JsonPrimitive(eye.id) && it.targets.containsAll(instance.targets)) }
+        }
+        // Use the actual preceding shape instance: neither this blink nor the later lid can
+        // influence the source measurements or the already witnessed head-turn capture.
+        val captured = RigBrowShapeModifier.openShellDefinition(this).authorContext(shape)
+        require(captured.values["face"] == JsonPrimitive(face.id) && captured.values["eye"] == JsonPrimitive(eye.id))
+        val layers = analysis.layers.associateBy { it.source.id.raw }
+        val names = captured.values.getValue("native_ids").jsonObject.keys.associateWith { id ->
+            JsonPrimitive(tr("model.deformer.meshShape", layers.getValue(layersByMesh.getValue(id)).source.name))
+        }
+        return ModifierAlgorithmContext(JsonObject(captured.values + mapOf(
+            "shape" to JsonPrimitive(shape.id), "lid" to JsonPrimitive(lid.id), "carrier_names" to JsonObject(names))), captured.resources)
+    }
 
     private fun RigModifierSource.captureFallback(instance: RigModifierInstance): ModifierAlgorithmContext {
         val observations = capture(instance)

@@ -42,31 +42,53 @@ internal object ModifierInputCache {
     private val known = setOf("mesh", "deformer", "part", "parameter", "physics", "motion", "glue", "textures", "hierarchy", "relations")
 
     /** Replace only changed components; untouched components always come from the actual upstream input. */
-    class Patch(private val before: RigIR, private val after: RigIR) {
-        fun apply(current: RigIR): RigIR {
-            fun <T> field(old: T, new: T, current: T): T = if (old == new) current else new
-            return current.copy(
-                canvas = field(before.canvas, after.canvas, current.canvas),
-                parameters = field(before.parameters, after.parameters, current.parameters),
-                parameterLinks = field(before.parameterLinks, after.parameterLinks, current.parameterLinks),
-                parameterTree = field(before.parameterTree, after.parameterTree, current.parameterTree),
-                parameterRoles = field(before.parameterRoles, after.parameterRoles, current.parameterRoles),
-                parts = field(before.parts, after.parts, current.parts),
-                rootChildren = field(before.rootChildren, after.rootChildren, current.rootChildren),
-                rootPart = field(before.rootPart, after.rootPart, current.rootPart),
-                deformers = field(before.deformers, after.deformers, current.deformers),
-                meshes = field(before.meshes, after.meshes, current.meshes),
-                glues = field(before.glues, after.glues, current.glues),
-                renderRoot = field(before.renderRoot, after.renderRoot, current.renderRoot),
-                textures = field(before.textures, after.textures, current.textures),
-                physics = field(before.physics, after.physics, current.physics),
-                clips = field(before.clips, after.clips, current.clips),
-                restPose = field(before.restPose, after.restPose, current.restPose),
-                authoring = field(before.authoring, after.authoring, current.authoring),
-                advanced = field(before.advanced, after.advanced, current.advanced),
-                hitAreas = field(before.hitAreas, after.hitAreas, current.hitAreas),
-            )
+    class Patch(before: RigIR, after: RigIR) {
+        // Captured IR snapshots are immutable. Compare once, not on every cache replay.
+        private class Field<T>(before: T, private val after: T) {
+            private val changed = before != after
+            fun apply(current: T): T = if (changed) after else current
         }
+        private val canvas = Field(before.canvas, after.canvas)
+        private val parameters = Field(before.parameters, after.parameters)
+        private val parameterLinks = Field(before.parameterLinks, after.parameterLinks)
+        private val parameterTree = Field(before.parameterTree, after.parameterTree)
+        private val parameterRoles = Field(before.parameterRoles, after.parameterRoles)
+        private val parts = Field(before.parts, after.parts)
+        private val rootChildren = Field(before.rootChildren, after.rootChildren)
+        private val rootPart = Field(before.rootPart, after.rootPart)
+        private val deformers = Field(before.deformers, after.deformers)
+        private val meshes = Field(before.meshes, after.meshes)
+        private val glues = Field(before.glues, after.glues)
+        private val renderRoot = Field(before.renderRoot, after.renderRoot)
+        private val textures = Field(before.textures, after.textures)
+        private val physics = Field(before.physics, after.physics)
+        private val clips = Field(before.clips, after.clips)
+        private val restPose = Field(before.restPose, after.restPose)
+        private val authoring = Field(before.authoring, after.authoring)
+        private val advanced = Field(before.advanced, after.advanced)
+        private val hitAreas = Field(before.hitAreas, after.hitAreas)
+
+        fun apply(current: RigIR): RigIR = current.copy(
+            canvas = canvas.apply(current.canvas),
+            parameters = parameters.apply(current.parameters),
+            parameterLinks = parameterLinks.apply(current.parameterLinks),
+            parameterTree = parameterTree.apply(current.parameterTree),
+            parameterRoles = parameterRoles.apply(current.parameterRoles),
+            parts = parts.apply(current.parts),
+            rootChildren = rootChildren.apply(current.rootChildren),
+            rootPart = rootPart.apply(current.rootPart),
+            deformers = deformers.apply(current.deformers),
+            meshes = meshes.apply(current.meshes),
+            glues = glues.apply(current.glues),
+            renderRoot = renderRoot.apply(current.renderRoot),
+            textures = textures.apply(current.textures),
+            physics = physics.apply(current.physics),
+            clips = clips.apply(current.clips),
+            restPose = restPose.apply(current.restPose),
+            authoring = authoring.apply(current.authoring),
+            advanced = advanced.apply(current.advanced),
+            hitAreas = hitAreas.apply(current.hitAreas),
+        )
     }
     data class ReadEntry(val instance: RigModifierInstance, val plugin: ModifierAlgorithmPlugin,
                          val context: ModifierAlgorithmContext, val reads: ModifierReadSet, val changes: ModifierModelChanges)

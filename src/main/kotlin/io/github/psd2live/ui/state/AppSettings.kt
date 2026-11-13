@@ -340,7 +340,7 @@ object AppSettings {
 
 	private const val KEY_RECENT_FILES = "recent_files"
 
-	/** Offers the splits of the layers a layer import adds. */
+	/** Offers mesh splits after a new PSD or additional layer import. */
 	var autoDetectMeshSplitsOnImport: Boolean
 		get() = promptEnabled(AppPrompt.MESH_SPLITS_ON_IMPORT)
 		set(value) = setPromptEnabled(AppPrompt.MESH_SPLITS_ON_IMPORT, value)

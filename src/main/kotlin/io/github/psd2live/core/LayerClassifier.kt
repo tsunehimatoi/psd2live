@@ -42,12 +42,14 @@ object LayerClassifier {
 		names(SemanticTag.OBJECTS, "objects", "object", "prop", "props", "道具", "物件", "소품", "물건", "오브젝트")
 	}
 
+	// ">" and "<" are side marks too: ">" is the character's left (it points to the screen right, where that side is
+	// drawn) and "<" the character's right, so "눈썹_>" reads as "눈썹_좌".
 	private val sideSuffix = Regex(
-		"(?:[\\s_-]*[（\\(\\[【](l|r|left|right|左|右|왼쪽|오른쪽|좌|우)[）\\)\\]】]|[\\s_-]+(l|r|left|right|左|右|왼쪽|오른쪽|좌|우)|(?<=[\\p{IsHan}\\p{IsHiragana}\\p{IsKatakana}\\d])(左|右)|(?<=[\\p{IsHangul}\\d])(왼쪽|오른쪽)|(?<=[\\p{IsHan}\\p{IsHiragana}\\p{IsKatakana}\\p{IsHangul}])(l|r))$",
+		"(?:[\\s_-]*[（\\(\\[【](l|r|left|right|左|右|왼쪽|오른쪽|좌|우|<|>)[）\\)\\]】]|[\\s_-]+(l|r|left|right|左|右|왼쪽|오른쪽|좌|우|<|>)|(?<=[\\p{IsHan}\\p{IsHiragana}\\p{IsKatakana}\\d])(左|右)|(?<=[\\p{IsHangul}\\d])(왼쪽|오른쪽)|(?<=[\\p{IsHan}\\p{IsHiragana}\\p{IsKatakana}\\p{IsHangul}])(l|r))$",
 		RegexOption.IGNORE_CASE,
 	)
 	private val sidePrefix = Regex(
-		"^(?:(左|右)[-_.\\s]*|(왼쪽|오른쪽)[-_.\\s]*|(왼|오른)(?=\\p{IsHangul})|(l|r|left|right|좌|우)[-_.\\s]+|[（\\(\\[【](l|r|left|right|左|右|왼쪽|오른쪽|좌|우)[）\\)\\]】][\\s_-]*)",
+		"^(?:(左|右)[-_.\\s]*|(왼쪽|오른쪽)[-_.\\s]*|(왼|오른)(?=\\p{IsHangul})|(l|r|left|right|좌|우|<|>)[-_.\\s]+|[（\\(\\[【](l|r|left|right|左|右|왼쪽|오른쪽|좌|우|<|>)[）\\)\\]】][\\s_-]*)",
 		RegexOption.IGNORE_CASE,
 	)
 	private val variantSuffix = Regex("(?:[-_.\\s]+|(?<=[\\p{IsHan}\\p{IsHiragana}\\p{IsKatakana}\\p{IsHangul}a-zA-Z]))(\\d+)$")
@@ -114,7 +116,7 @@ object LayerClassifier {
 
 	private fun sideOf(raw: String): Side =
 		when (raw.lowercase(Locale.ROOT)) {
-			"l", "left", "左", "왼쪽", "왼", "좌" -> Side.LEFT
+			"l", "left", "左", "왼쪽", "왼", "좌", ">" -> Side.LEFT
 			else -> Side.RIGHT
 		}
 
@@ -174,7 +176,7 @@ object LayerClassifier {
 		}
 		return ClassifiedLayer(
 			source = layer,
-			semantic = classify(layer.name),
+			semantic = IrisGroupSide.inherit(layer, classify(layer.name), alphaThreshold, count),
 			bounds = bounds,
 			centroidX = if (count == 0) bounds.centerX else layer.bounds.left + sumX.toFloat() / count,
 			centroidY = if (count == 0) bounds.centerY else layer.bounds.top + sumY.toFloat() / count,

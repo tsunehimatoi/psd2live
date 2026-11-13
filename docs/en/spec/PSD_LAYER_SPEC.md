@@ -86,7 +86,7 @@ The recognised part and side show in the editor as a set of tags you can change 
 
 ## Sides and splitting
 
-Left/right are the character’s own sides: character-left is usually screen-right. Names such as `eyelash-l`, `eyelash-r`, `eyelash_left`, `왼쪽 속눈썹` and `속눈썹_우` are supported; the single-syllable Korean `좌` / `우` needs a separator or brackets. Eligible layers without a side assignment may split when their generated mesh has two disconnected components, including eyes, brows, hair pieces or limbs. Face, mouth and oral parts are excluded. Touching shapes or fragmented artwork need manual separation and inspection.
+Left/right are the character’s own sides: character-left is usually screen-right. Names such as `eyelash-l`, `eyelash-r`, `eyelash_left`, `왼쪽 속눈썹` and `속눈썹_우` are supported; the single-syllable Korean `좌` / `우` needs a separator or brackets. The arrows `>` / `<` also name a side, with a separator or brackets: `>` is character-left (it points to the screen right, where that side is drawn) and `<` character-right, as in `눈썹_>` or `흰자(<)`. Eligible layers without a side assignment may split when their generated mesh has two disconnected components, including eyes, brows, hair pieces or limbs. Face, mouth and oral parts are excluded. Touching shapes or fragmented artwork need manual separation and inspection.
 
 ## Numbers and variants
 

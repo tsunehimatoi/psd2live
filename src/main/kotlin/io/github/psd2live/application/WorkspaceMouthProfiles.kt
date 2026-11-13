@@ -16,7 +16,7 @@ internal object WorkspaceMouthProfiles {
             speech = speech(fitted = 6, outline = 8, vowel = 7, capture = 6),
             plain = motion(jaw = 8, lids = 8, spring = 9),
             depth = motion(jaw = 8, lids = 8, depth = 6, spring = 9),
-            tongue = motion(tongue = 6, jaw = 9, lids = 9, depth = 7, spring = 10),
+            tongue = motion(tongue = 6, jaw = 9, lids = 15, depth = 7, spring = 17),
         ),
         Source.SINGLE_EYE to Profile(
             speech = speech(fitted = 7, outline = 10, vowel = 9, capture = 8),

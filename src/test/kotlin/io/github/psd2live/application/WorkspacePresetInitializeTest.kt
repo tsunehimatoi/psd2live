@@ -1,0 +1,155 @@
+package io.github.psd2live.application
+
+import io.github.psd2live.core.*
+import io.github.psd2live.core.modifier.*
+import io.github.psd2live.core.recipe.RigRecipe
+import io.github.psd2live.project.*
+import kotlinx.serialization.json.*
+import kotlinx.coroutines.runBlocking
+import org.umamo.format.art.*
+import kotlin.test.*
+
+class WorkspacePresetInitializeTest {
+    private fun document(stack: RigModifierStack = RigModifierStack()): WorkspaceDocument {
+        val source = WorkspaceSourceArt(64, 64, emptyList(), emptyList())
+        val config = PipelineConfig(recipe = RigRecipe.Legacy, atlasSize = 128, meshSpacing = 9,
+            headTurnStrength = .3f, hairSimulationFront = true)
+        return WorkspaceDocument(source, mapOf("hidden" to false), setOf("original"),
+            mapOf("left-piece" to LayerClassificationOverride(LayerType.PRESET, SemanticTag.EARS, Side.LEFT)),
+            emptyMap(), RigEditOverlay(modifierStack = stack.toJson(),
+                splitBaselineLayerIds = setOf("original"), splitDrawableIds = mapOf("left-piece" to "piece-mesh")),
+            WorkspaceSettingsCodec.encode(config))
+    }
+
+    @Test fun preparingBindingsPreservesSplitArtworkAndAuthoredOverrides() {
+        val original = document()
+        val custom = WorkspaceInitialPreset(headStrength = .7f, bodyStrength = .6f,
+            frontHair = WorkspaceInitialHair.OFF, backHair = WorkspaceInitialHair.SIMULATION,
+            clothing = false, eyeJelly = false)
+        val (prepared, choices) = WorkspacePresetInitialize.prepare(original, WorkspaceInitialModifiers.CUSTOM, custom)
+        assertEquals(custom, choices)
+        assertEquals(original, prepared.copy(settings = original.settings))
+        val config = prepared.config()
+        assertEquals(RigRecipe.Legacy, config.recipe)
+        assertEquals(.7f, config.headTurnStrength)
+        assertEquals(.6f, config.bodyStrength)
+        assertFalse(config.hairSimulationFront)
+        assertTrue(config.hairSimulationBack)
+        assertFalse(config.physicsFrontHair)
+        assertFalse(config.physicsEyeJelly)
+        assertEquals(128, config.atlasSize)
+        assertEquals(9, config.meshSpacing)
+    }
+
+    @Test fun recommendedAndShortcutsMatchSourceImportConfiguration() {
+        val original = document()
+        for (mode in listOf(WorkspaceInitialModifiers.RECOMMENDED, WorkspaceInitialModifiers.MINIMAL,
+            WorkspaceInitialModifiers.DEFAULT, WorkspaceInitialModifiers.FULL)) {
+            val choices = if (mode == WorkspaceInitialModifiers.RECOMMENDED) WorkspaceModelPresetLibrary.shared.get("modern").choices
+                else WorkspaceInitialPreset.forMode(mode)
+            val baseline = if (mode == WorkspaceInitialModifiers.RECOMMENDED)
+                WorkspacePresetBaseline.configure(original.config(), "modern") else original.config()
+            val expected = choices.configure(baseline).copy(
+                hairSimulationFront = choices.frontHair == WorkspaceInitialHair.SIMULATION,
+                hairSimulationBack = choices.backHair == WorkspaceInitialHair.SIMULATION)
+            val (prepared, captured) = WorkspacePresetInitialize.prepare(original, mode)
+            assertEquals(choices, captured)
+            assertEquals(WorkspaceSettingsCodec.encode(expected), prepared.settings)
+            assertEquals(original, prepared.copy(settings = original.settings))
+        }
+    }
+
+    @Test fun initializationRejectsExistingAppliedOrPreviouslyRemovedModifiers() {
+        val target = ModifierTarget("mesh", "piece-mesh")
+        val used = RigModifierStack().add("test/binding", 1, listOf(target))
+        val rejected = listOf(used, used.remove(used.instances.single().id),
+            RigModifierStack(appliedCapabilities = listOf(ModifierCapability("test/binding", 1, listOf(target)))),
+            RigModifierStack(nextId = 2))
+        for (stack in rejected) assertFailsWith<IllegalArgumentException> {
+            WorkspacePresetInitialize.prepare(document(stack), WorkspaceInitialModifiers.RECOMMENDED)
+        }
+        val original = document()
+        assertFailsWith<IllegalArgumentException> {
+            WorkspacePresetInitialize.prepare(original.copy(rigEdits = original.rigEdits.copy(modifierStack = null)), WorkspaceInitialModifiers.RECOMMENDED)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            WorkspacePresetInitialize.prepare(original.copy(rigEdits = original.rigEdits.copy(importedCmo3 = "imported")), WorkspaceInitialModifiers.RECOMMENDED)
+        }
+    }
+
+    @Test fun emptyIsANoopAndCustomChoicesMustMatchTheSelectedMode() {
+        val original = document()
+        assertEquals(original to null, WorkspacePresetInitialize.prepare(original, WorkspaceInitialModifiers.EMPTY))
+        assertFailsWith<IllegalArgumentException> { WorkspacePresetInitialize.prepare(original, WorkspaceInitialModifiers.CUSTOM) }
+        assertFailsWith<IllegalArgumentException> {
+            WorkspacePresetInitialize.prepare(original, WorkspaceInitialModifiers.DEFAULT, WorkspaceInitialPreset())
+        }
+        assertEquals(original, WorkspacePresetInitialize.apply(original, buildJsonObject { put("modifiers", "empty") }, WorkspaceRasterWork.Direct))
+    }
+
+    @Test fun splitUnsidedIrisBeforeInitializationKeepsNamedSidesAndPrimitiveRecords(): Unit = runBlocking {
+        data class Shape(val id: String, val tag: SemanticTag, val side: Side, val x: Int, val y: Int, val w: Int, val h: Int)
+        val shapes = listOf(
+            Shape("iris", SemanticTag.IRIDES, Side.NONE, 0, 0, 64, 80),
+            Shape("white-left", SemanticTag.EYEWHITE, Side.LEFT, 38, 22, 14, 10),
+            Shape("white-right", SemanticTag.EYEWHITE, Side.RIGHT, 12, 22, 14, 10),
+            Shape("lash-left", SemanticTag.EYELASH, Side.LEFT, 38, 20, 14, 2),
+            Shape("lash-right", SemanticTag.EYELASH, Side.RIGHT, 12, 20, 14, 2),
+            Shape("brow-left", SemanticTag.EYEBROW, Side.LEFT, 38, 14, 14, 2),
+            Shape("brow-right", SemanticTag.EYEBROW, Side.RIGHT, 12, 14, 14, 2),
+            Shape("face", SemanticTag.FACE, Side.NONE, 8, 8, 48, 52))
+        val art = WorkspaceSourceArt(64, 80, shapes.mapIndexed { index, shape ->
+            val rgba = ByteArray(shape.w * shape.h * 4)
+            for (y in 0 until shape.h) for (x in 0 until shape.w) {
+                if (shape.id != "iris" || y in 23..30 && (x in 16..21 || x in 42..47))
+                    for (c in 0..3) rgba[(y * shape.w + x) * 4 + c] = -1
+            }
+            WorkspaceSourceLayer(LayerId(shape.id), shape.id, "", SourceLayerKind.Raster, true, index,
+                LayerBounds(shape.x, shape.y, shape.w, shape.h), 1f, false, LayerBlend.Normal, ChannelMask.ALL,
+                LayerRaster(shape.w, shape.h, rgba), null, null, false)
+        }, emptyList())
+        val config = PipelineConfig(atlasSize = 128, meshSpacing = 3, generatePhysics = false,
+            rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val imported = WorkspaceDocument(art, emptyMap(), emptySet(), shapes.associate { shape ->
+            shape.id to LayerClassificationOverride(LayerType.PRESET, shape.tag, shape.side)
+        }, emptyMap(), config.rigEdits, WorkspaceSettingsCodec.encode(config))
+        val builder = WorkspacePreviewBuilder()
+        val before = builder.build(imported)
+        val plan = assertNotNull(WorkspacePartitionEdits.componentPlan(before, "iris"))
+        assertEquals(2, plan.components.size)
+        val sides = plan.components.map { if (it.centerX > 32f) Side.LEFT else Side.RIGHT }
+        val ids = sides.map { "iris-${it.name.lowercase()}" }
+        val split = WorkspacePartitionEdits.apply(WorkspaceDocumentOperation("source_split_components", buildJsonObject {
+            put("layer_id", "iris")
+            put("piece_ids", JsonArray(ids.map(::JsonPrimitive)))
+            put("names", JsonArray(sides.map { JsonPrimitive("Iris ${it.name}") }))
+            put("sides", JsonArray(sides.map { JsonPrimitive(it.name.lowercase()) }))
+        }), imported, before)
+        val splitRecords = ArtPrimitiveJournal.commands(split.rigEdits)
+        assertTrue(splitRecords.isNotEmpty())
+        val splitPreview = builder.build(split)
+        // Splitting an unbound source must not smuggle legacy feature warps into ordinary content.
+        assertTrue(splitPreview.authored.rig.puppet.drawables.all { it.parentDeformerId == null })
+        assertTrue(splitPreview.authored.rig.puppet.deformers.isEmpty())
+        val initialized = WorkspaceModifierEdits.apply(WorkspaceDocumentOperation("modifier_initialize",
+            buildJsonObject { put("modifiers", "recommended") }), split, splitPreview)
+        assertEquals(split.layerOverrides, initialized.layerOverrides)
+        assertEquals(split.source, initialized.source)
+        assertEquals(split.rigEdits.splitDrawableIds, initialized.rigEdits.splitDrawableIds)
+        assertEquals(splitRecords, ArtPrimitiveJournal.commands(initialized.rigEdits))
+        val rebuilt = builder.build(initialized)
+        for ((id, side) in ids.zip(sides)) {
+            assertEquals(side, initialized.layerOverrides.getValue(id).side)
+            assertEquals(side, rebuilt.analysis.layers.single { it.source.id.raw == id }.semantic.side)
+        }
+        assertFalse(rebuilt.analysis.layers.any { it.source.id.raw == "iris" && it.opaquePixels > 0 })
+        assertTrue(RigModifierStack.fromJson(requireNotNull(initialized.rigEdits.modifierStack)).instances.isNotEmpty())
+    }
+
+    @Test fun initializationIsRegisteredWithImportCompatibleRequestFields() {
+        assertTrue("modifier_initialize" in WorkspaceModifierEdits.supported)
+        val schema = WorkspaceModifierSchemas.request("modifier_initialize")
+        assertEquals(setOf("state", "modifiers", "preset"), schema.getValue("properties").jsonObject.keys)
+        assertEquals(setOf("state", "modifiers"), schema.getValue("required").jsonArray.map { it.jsonPrimitive.content }.toSet())
+    }
+}

@@ -42,6 +42,14 @@ class StartPageScenario {
 		vm.analyze(discardUnsaved = true)
 		until("the import") { vm.state.value.errorMessage != null || vm.state.value.previewModel != null && !vm.startPageShown }
         assertNull(vm.state.value.errorMessage, "Import failed")
+        // Import first opens an unbound preview for the mesh split scan. The selected
+        // preset is applied asynchronously after that scan finds no split candidates.
+        until("the import preset after the split scan") {
+            vm.state.value.errorMessage != null || vm.state.value.rigEdits.modifierStack?.let {
+                io.github.psd2live.core.modifier.RigModifierStack.fromJson(it).instances.isNotEmpty()
+            } == true
+        }
+        assertNull(vm.state.value.errorMessage, "Preset initialization failed")
         val stack = io.github.psd2live.core.modifier.RigModifierStack.fromJson(assertNotNull(vm.state.value.rigEdits.modifierStack))
         assertTrue(stack.instances.isNotEmpty())
         assertTrue(stack.instances.none { it.type == "motion" || it.type == "mouth.outline" || it.type == "simulation" })
@@ -54,7 +62,7 @@ class StartPageScenario {
 		importFigure(vm, StartQuickPreset.MINIMAL.choices)
 		assertEquals(WorkspacePreset.EDIT, vm.state.value.activeWorkspace.preset)
 		assertFalse(vm.state.value.mouthOutlineEnabled)
-		assertNull(vm.pendingMeshSplitBatch, "Splits wait for the Tools menu")
+		assertNull(vm.pendingMeshSplitBatch, "The single-island fixture needs no split prompt")
 		assertNull(vm.pendingMeshSplit)
 	}
 

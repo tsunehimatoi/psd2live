@@ -12,6 +12,7 @@ import kotlinx.serialization.json.putJsonObject
 import org.umamo.runtime.model.Drawable
 import io.github.psd2live.algorithms.binding.GloomBindingAlgorithm
 import io.github.psd2live.core.SemanticTag
+import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.targets.cubism.PuppetIr
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -33,8 +34,14 @@ internal fun RigModifierSource.captureSkinLowering(targets: List<ModifierTarget>
                 target in it.targets && RigLegacyBindings.find(it.type)?.let { spec -> !spec.expressionToggles && !spec.seeThrough } == true
             }
             require(preceding.none { it.type == GloomBindingAlgorithm.TYPE }) { "Skin lowering requires an unshaded skin binding" }
-            val (native, rig) = contexts.getOrPut(preceding) {
-                RigFittedMouthModuleSource.context(this@captureSkinLowering, scaffold, preceding, null)
+            // The fitted face measures face details (blush) without the outline, and a source outline leaves them alone,
+            // so they keep that turn. The face itself, and every skin under the legacy outline, still follow the
+            // native outline.
+            val fittedFace = preceding.any { it.type == RigLegacyBindings.FITTED_FACE }
+            val detail = layer.semantic.tag == SemanticTag.FACE_DETAIL
+            val framing = preceding.filterNot { detail && fittedFace && it.type == RigModules.MOUTH_OUTLINE.id && it.version > 1 }
+            val (native, rig) = contexts.getOrPut(framing) {
+                RigFittedMouthModuleSource.context(this@captureSkinLowering, scaffold, framing, null)
             }
             val alignedLayer = rig.analysis.layers.single { it.source.id == layer.source.id }
             val skin = RigBuilder.skinLoweringSource(alignedLayer, rig, native, atlas, meshCache, scaffoldMeshes.getValue(target.id))

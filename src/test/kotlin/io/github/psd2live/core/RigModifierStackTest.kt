@@ -319,7 +319,8 @@ class RigModifierStackTest {
     @Test fun missingTargetsUnknownVersionsAndCancellationFailWithoutPublishingResults() {
         val stack = RigModifierStack(listOf(entry("a", "add"), entry("b", "multiply")))
         assertFailsWith<IllegalArgumentException> { evaluator.evaluate(authored, stack.update("a") { it.copy(targets = listOf(ModifierTarget("mesh", "missing"))) }) }
-        assertFailsWith<IllegalArgumentException> { evaluator.evaluate(authored, stack.copy(instances = listOf(entry("a", "add").copy(version = 2)))) }
+        assertEquals(listOf(ModifierStatus.MISSING_PLUGIN),
+            evaluator.evaluate(authored, stack.copy(instances = listOf(entry("a", "add").copy(version = 2)))).entries.map { it.status })
         var checkpoints = 0
         assertFailsWith<java.util.concurrent.CancellationException> {
             evaluator.evaluate(authored, stack) { if (++checkpoints == 4) throw java.util.concurrent.CancellationException() }

@@ -380,6 +380,9 @@ internal class RigModifierEvaluator(
 
     private fun validateOrder(stack: RigModifierStack, definitions: List<RigModifierDefinition?>) {
         val instances = stack.instances
+        // Missing plugins still occupy an enabled position, so they count for explicit provider order.
+        val lastEnabled = HashMap<String, Int>(instances.size)
+        for ((index, instance) in instances.withIndex()) if (instance.enabled) lastEnabled[instance.id] = index
         val motionOutputs = HashMap<Int, Set<String>>()
         for ((index, instance) in instances.withIndex()) {
             val definition = definitions[index] ?: continue
@@ -394,24 +397,29 @@ internal class RigModifierEvaluator(
                 require(conflicts.isEmpty()) { "${instance.id} must follow ${later.id} for motions ${conflicts.joinToString()}" }
             }
             for ((parameter, provider) in instance.parameterProviders) {
-                require(provider != instance.id && stack.instances.drop(index + 1).none { it.id == provider && it.enabled }) {
+                require(provider != instance.id && (lastEnabled[provider] ?: -1) <= index) {
                     "${instance.id} must follow $provider for parameter $parameter"
                 }
             }
             for (command in stack.overrides[instance.id].orEmpty()) {
                 for (provider in command["providers"]?.jsonArray.orEmpty()) {
                     val id = provider.jsonPrimitive.content
-                    require(stack.instances.drop(index + 1).none { it.id == id && it.enabled }) {
+                    require((lastEnabled[id] ?: -1) <= index) {
                         "${instance.id} must follow $id for its generated-content override"
                     }
                 }
             }
-            for (type in definition.requires) for (target in instance.targets) {
-                val provider = definition.providers(instance)[type]
-                val earlier = stack.appliedCapabilities.any { registry.provides(it, type) && target in it.targets && (provider == null || it.id == provider) } ||
-                    stack.instances.take(index).any { it.enabled && registry.provides(it, type) && target in it.targets && (provider == null || it.id == provider) }
-                val later = stack.instances.drop(index + 1).any { it.enabled && registry.provides(it, type) && target in it.targets && (provider == null || it.id == provider) }
-                require(earlier || !later) { "${instance.id} must follow ${provider ?: type} ($type) on ${target.id}" }
+            if (definition.requires.isNotEmpty()) {
+                val prefix = instances.subList(0, index)
+                val suffix = instances.subList(index + 1, instances.size)
+                val providers = definition.providers(instance)
+                for (type in definition.requires) for (target in instance.targets) {
+                    val provider = providers[type]
+                    val earlier = stack.appliedCapabilities.any { registry.provides(it, type) && target in it.targets && (provider == null || it.id == provider) } ||
+                        prefix.any { it.enabled && registry.provides(it, type) && target in it.targets && (provider == null || it.id == provider) }
+                    val later = suffix.any { it.enabled && registry.provides(it, type) && target in it.targets && (provider == null || it.id == provider) }
+                    require(earlier || !later) { "${instance.id} must follow ${provider ?: type} ($type) on ${target.id}" }
+                }
             }
         }
     }
@@ -455,11 +463,18 @@ internal class RigModifierEvaluator(
     }
 
     private fun validateTargets(rig: RigIR, instance: RigModifierInstance) {
+        val kindCounts = instance.targets.groupingBy { it.kind }.eachCount()
+        val idsByKind = HashMap<String, Set<String>>()
+        fun <T> contains(target: ModifierTarget, values: List<T>, id: (T) -> String): Boolean {
+            if (kindCounts.getValue(target.kind) == 1) return values.any { id(it) == target.id }
+            // Index only the current rig, and only when this kind is reached in target order.
+            return target.id in idsByKind.getOrPut(target.kind) { values.mapTo(HashSet(), id) }
+        }
         for (target in instance.targets) {
             val present = when (target.kind) {
-                "mesh" -> rig.meshes.any { it.id == target.id }
-                "deformer" -> rig.deformers.any { it.id == target.id }
-                "part" -> rig.parts.any { it.id == target.id }
+                "mesh" -> contains(target, rig.meshes) { it.id }
+                "deformer" -> contains(target, rig.deformers) { it.id }
+                "part" -> contains(target, rig.parts) { it.id }
                 "layer" -> sourceTargetExists(target)
                 else -> false
             }
@@ -515,32 +530,40 @@ internal class RigModifierEvaluator(
 
     companion object {
     internal fun contributions(before: RigIR, after: RigIR): List<ModifierContribution> = buildList {
-        fun <T> compare(kind: String, left: List<T>, right: List<T>, key: (T) -> String) {
-            if (left === right) return
-            val a = left.associateBy(key); val b = right.associateBy(key)
-            require(a.size == left.size && b.size == right.size) { "Duplicate $kind IDs in modifier output" }
+        fun <T> compareIndexed(kind: String, a: Map<String, T>, b: Map<String, T>) {
             for ((id, value) in b) when {
                 id !in a -> add(ModifierContribution(kind, id, ModifierChange.ADDED))
                 a[id] != value -> add(ModifierContribution(kind, id, ModifierChange.MODIFIED))
             }
-            for (id in a.keys - b.keys) add(ModifierContribution(kind, id, ModifierChange.REMOVED))
+            for (id in a.keys) if (id !in b) add(ModifierContribution(kind, id, ModifierChange.REMOVED))
+        }
+        fun <T> compare(kind: String, left: List<T>, right: List<T>, key: (T) -> String) {
+            if (left === right) return
+            val a = left.associateBy(key); val b = right.associateBy(key)
+            require(a.size == left.size && b.size == right.size) { "Duplicate $kind IDs in modifier output" }
+            compareIndexed(kind, a, b)
         }
         compare("parameter", before.parameters, after.parameters) { it.id }
         compare("part", before.parts, after.parts) { it.id }
         compare("deformer", before.deformers, after.deformers) { it.id }
-        compare("mesh", before.meshes, after.meshes) { it.id }
-        val previousMeshes = before.meshes.associateBy { it.id }
-        val nextMeshes = after.meshes.associateBy { it.id }
-        for (id in previousMeshes.keys + nextMeshes.keys) {
-            val previous = previousMeshes[id]; val next = nextMeshes[id]
-            val oldMasks = previous?.maskedBy.orEmpty(); val newMasks = next?.maskedBy.orEmpty()
-            val oldInverted = previous?.invertMask == true; val newInverted = next?.invertMask == true
-            if (oldMasks != newMasks || oldInverted != newInverted) {
-                val change = when { oldMasks.isEmpty() && newMasks.isNotEmpty() -> ModifierChange.ADDED
-                    newMasks.isEmpty() && oldMasks.isNotEmpty() -> ModifierChange.REMOVED
-                    else -> ModifierChange.MODIFIED }
-                add(ModifierContribution("relations", "mask:$id", change,
-                    ModifierMaskRelation(id, oldMasks, newMasks, oldInverted, newInverted)))
+        if (before.meshes !== after.meshes) {
+            val previousMeshes = before.meshes.associateBy { it.id }
+            val nextMeshes = after.meshes.associateBy { it.id }
+            require(previousMeshes.size == before.meshes.size && nextMeshes.size == after.meshes.size) {
+                "Duplicate mesh IDs in modifier output"
+            }
+            compareIndexed("mesh", previousMeshes, nextMeshes)
+            for (id in previousMeshes.keys + nextMeshes.keys) {
+                val previous = previousMeshes[id]; val next = nextMeshes[id]
+                val oldMasks = previous?.maskedBy.orEmpty(); val newMasks = next?.maskedBy.orEmpty()
+                val oldInverted = previous?.invertMask == true; val newInverted = next?.invertMask == true
+                if (oldMasks != newMasks || oldInverted != newInverted) {
+                    val change = when { oldMasks.isEmpty() && newMasks.isNotEmpty() -> ModifierChange.ADDED
+                        newMasks.isEmpty() && oldMasks.isNotEmpty() -> ModifierChange.REMOVED
+                        else -> ModifierChange.MODIFIED }
+                    add(ModifierContribution("relations", "mask:$id", change,
+                        ModifierMaskRelation(id, oldMasks, newMasks, oldInverted, newInverted)))
+                }
             }
         }
         compare("glue", before.glues, after.glues) { it.id ?: "${it.meshA.length}:${it.meshA}${it.meshB}" }

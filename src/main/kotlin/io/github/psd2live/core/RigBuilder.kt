@@ -371,7 +371,7 @@ object RigBuilder {
 		private val frameByDeformer: Map<String, Bounds>,
 		private val pairedParentByLayerId: Map<String, Pair<DeformerId, Bounds>>,
 		private val skeletonEnabled: Boolean,
-		/** False when the config built no deformers, which leaves every mesh in canvas space. */
+		/** Whether native deformers were generated. Source measurements can request alignment separately. */
 		val deformersEnabled: Boolean,
 		val deformers: List<Deformer>,
 		/** How the figure stands, which places the body, lean and legs warps. */
@@ -379,6 +379,8 @@ object RigBuilder {
 		/** The frame the body warps span: the body's own parts and the neck. */
 		val bodyFrame: Bounds,
         private val sharedStages: RigStageCache? = null,
+		/** Explicit aligned observations for source skin capture, with no native motion or ancestry. */
+		internal val sourceMeasurementsOnly: Boolean = false,
 	) {
 		/** A closed mouth draws the mouth at rest, so an open mouth beside it fades out there; see [buildChannels]. */
 		val hasClosedMouth: Boolean = analysis.layers.any { it.semantic.tag == SemanticTag.MOUTH && it.opaquePixels > 0 }
@@ -406,21 +408,38 @@ object RigBuilder {
 		fun fittedEyes(config: PipelineConfig): io.github.psd2live.core.fit.FittedEyes? {
 			if (config.recipe.base("eye") !== io.github.psd2live.core.recipe.RigModules.EYE_FITTED) return null
 			return fittedEyes.getOrPut(Identity(config)) {
-				val values = io.github.psd2live.core.recipe.RigModules.EYE_FITTED.knobs.map { config.recipe.baseValue("eye", it.id) }
-				val options = eyeOptions(config)
 				val space = analysis.layers.firstOrNull { it.semantic.tag == SemanticTag.EYEWHITE && it.opaquePixels > 0 }?.let { headSpaceFor(it, config) }
-				val toRig = { x: Float, y: Float -> space?.toAligned(x, y) ?: (x to y) }
-				val result = sourceEyes(space)
-				val fits = result.fits.mapValues { (side, drawn) -> drawn.moved(rigMoves(config, if (side == Side.LEFT) "eye.L" else "eye.R", toRig)) }
-				val artwork = sourceFit("eye artwork", listOf(analysis.layers, fits, config.recipe.eyeParts, space)) {
-                    io.github.psd2live.core.fit.EyeArtworkFitting.fit(analysis.layers, fits, config.recipe.eyeParts, toRig)
-                }
-				io.github.psd2live.core.fit.FittedEyes(result, fits.mapValues { (side, drawn) ->
-					val fit = drawn.copy(artwork = artwork[side])
-					io.github.psd2live.algorithms.binding.EyeRig(fit, values[0] / 100f, values[1] / 100f, values[2] / 100f,
-						smileArc = options.smileArc, smilePush = options.smilePush, wideLift = options.wideLift)
-				}, options)
+				fitEyes(config, space)
 			}
+		}
+
+		/** Source lid fade needs the same numeric fit, but no generated parent hierarchy or cached native fit. */
+		internal fun fittedEyesForSourceLidFade(config: PipelineConfig): io.github.psd2live.core.fit.FittedEyes? {
+			check(!deformersEnabled && deformers.isEmpty() && !sourceMeasurementsOnly && !skeletonEnabled)
+			require(config.parentOverrides.isEmpty() && config.rigEdits.skeleton?.enabled != true) {
+				"Source lid fade measurements require inferred parents without a skeleton"
+			}
+			if (config.recipe.base("eye") !== io.github.psd2live.core.recipe.RigModules.EYE_FITTED) return null
+			val firstWhite = analysis.layers.firstOrNull { it.semantic.tag == SemanticTag.EYEWHITE && it.opaquePixels > 0 }
+			val space = headSpace.takeIf { config.generateDeformers && !config.meshOnly && firstWhite != null &&
+				inferredGroup(firstWhite, analysis.anchors) == LayerGroup.HEAD }
+			return fitEyes(config, space)
+		}
+
+		private fun fitEyes(config: PipelineConfig, space: HeadCoordinateSpace?): io.github.psd2live.core.fit.FittedEyes {
+			val values = io.github.psd2live.core.recipe.RigModules.EYE_FITTED.knobs.map { config.recipe.baseValue("eye", it.id) }
+			val options = eyeOptions(config)
+			val toRig = { x: Float, y: Float -> space?.toAligned(x, y) ?: (x to y) }
+			val result = sourceEyes(space)
+			val fits = result.fits.mapValues { (side, drawn) -> drawn.moved(rigMoves(config, if (side == Side.LEFT) "eye.L" else "eye.R", toRig)) }
+			val artwork = sourceFit("eye artwork", listOf(analysis.layers, fits, config.recipe.eyeParts, space)) {
+				io.github.psd2live.core.fit.EyeArtworkFitting.fit(analysis.layers, fits, config.recipe.eyeParts, toRig)
+			}
+			return io.github.psd2live.core.fit.FittedEyes(result, fits.mapValues { (side, drawn) ->
+				val fit = drawn.copy(artwork = artwork[side])
+				io.github.psd2live.algorithms.binding.EyeRig(fit, values[0] / 100f, values[1] / 100f, values[2] / 100f,
+					smileArc = options.smileArc, smilePush = options.smilePush, wideLift = options.wideLift)
+			}, options)
 		}
 
 		/** [feature]'s handle moves in [config], carried from canvas pixels into the rig's space by [toRig]. */
@@ -488,6 +507,7 @@ object RigBuilder {
 
 		/** The deformers under the face's warp: what the face's turn ([faceTurn]) carries, and nothing else turns. */
 		val underFace: Set<DeformerId> by lazy {
+			check(!sourceMeasurementsOnly) { "Source skin measurements do not provide generated deformer ancestry" }
 			val byParent = deformers.groupBy { it.parent }
 			val out = HashSet<DeformerId>()
 			fun walk(id: DeformerId) { for (c in byParent[id].orEmpty()) if (out.add(c.id)) walk(c.id) }
@@ -638,7 +658,17 @@ object RigBuilder {
 			stance = stance,
 			bodyFrame = bodyFrame,
             sharedStages = sharedStages,
+			sourceMeasurementsOnly = sourceMeasurementsOnly,
 		)
+
+		/** Keep the same numeric observations, adding only static parent/frame metadata for skin. */
+		internal fun withSourceSkinFrames(frames: Map<String, Bounds>, parents: Map<String, Pair<DeformerId, Bounds>>): RigContext {
+			require(!deformersEnabled && deformers.isEmpty() && !skeletonEnabled)
+			return RigContext(analysis, character, head, face, frontHair, backHair, headSpace, faceRig, eyeWhiteLayers,
+				frameByDeformer + frames, parents, skeletonEnabled = false, deformersEnabled = false,
+				deformers = emptyList(), stance = stance, bodyFrame = bodyFrame, sharedStages = sharedStages,
+				sourceMeasurementsOnly = true)
+		}
 		/** The layer expressed in the coordinate system its mesh and its keyforms are authored in. */
 		fun rigLayer(layer: ClassifiedLayer): ClassifiedLayer =
 			if (skeletonEnabled && layer.semantic.tag in SkeletonAutoBuilder.limbTags) layer
@@ -650,7 +680,7 @@ object RigBuilder {
 		 * deformers' frames are aligned and the others' are not, whatever the layer depicts.
 		 */
 		fun headSpaceFor(layer: ClassifiedLayer, config: PipelineConfig): HeadCoordinateSpace? {
-			if (!deformersEnabled || skeletonEnabled && layer.semantic.tag in SkeletonAutoBuilder.limbTags) return null
+			if ((!deformersEnabled && !sourceMeasurementsOnly) || skeletonEnabled && layer.semantic.tag in SkeletonAutoBuilder.limbTags) return null
 			val head = if (config.parentOverrides.containsKey(layer.source.id.raw)) underHeadRotation(parentAndFrame(layer, config).first, config)
 				else inferredGroup(layer, analysis.anchors) == LayerGroup.HEAD
 			return if (head) headSpace else null
@@ -673,6 +703,8 @@ object RigBuilder {
 		 * the automatically paired deformer, or the parent its semantic tag implies.
 		 */
 		fun parentAndFrame(layer: ClassifiedLayer, config: PipelineConfig): Pair<DeformerId?, Bounds> {
+			if (sourceMeasurementsOnly) require(layer.semantic.tag in setOf(SemanticTag.FACE, SemanticTag.NOSE,
+				SemanticTag.EARS, SemanticTag.FACE_DETAIL)) { "Source skin framing cannot bind ${layer.semantic.tag}" }
 			val paired = pairedParentByLayerId[layer.source.id.raw] ?: inferredParentAndFrame(layer, config)
 			if (!config.parentOverrides.containsKey(layer.source.id.raw)) return paired
 			val parentId = config.parentOverrides[layer.source.id.raw]
@@ -690,7 +722,7 @@ object RigBuilder {
 		 */
 		fun resolveFrame(parentId: DeformerId, config: PipelineConfig): Bounds? {
 			// The head rotation's children are head-aligned pixels from its pivot, as the head container's lattice is.
-			if (parentId == headRotationId && deformers.any { it.id == headRotationId && it is Deformer.Rotation })
+			if (parentId == headRotationId && (sourceMeasurementsOnly || deformers.any { it.id == headRotationId && it is Deformer.Rotation }))
 				return Bounds(faceRig.centerX, faceRig.mouthLineY, faceRig.centerX + 1f, faceRig.mouthLineY + 1f)
 			var id = parentId.raw
 			val seen = mutableSetOf<String>()
@@ -707,7 +739,7 @@ object RigBuilder {
 
 		private fun inferredParentAndFrame(layer: ClassifiedLayer, config: PipelineConfig): Pair<DeformerId, Bounds> =
 			defaultParentAndFrame(layer, faceRig, analysis.anchors, character, head, face, frontHair, backHair,
-				config.rigEdits.skeleton?.enabled == true, stance.legsFrame.takeIf { deformersEnabled }, bodyFrame)
+				config.rigEdits.skeleton?.enabled == true, stance.legsFrame.takeIf { deformersEnabled || sourceMeasurementsOnly }, bodyFrame)
 	}
 
 	/**
@@ -797,6 +829,79 @@ object RigBuilder {
 			scaffold.bodyFrame,
             stagesOf(meshCache),
 		)
+	}
+
+	/**
+	 * Source-skin observation path. Native frame measurements are retained, but animated
+	 * scaffold construction is skipped. Static pair identities use the frozen allocator over the complete
+	 * source inventory, in source order. Its identity lattices are discarded, not serialized as motion.
+	 * Only Spring v10, Cheek v5 and Gloom v5 source capture uses this path; ordinary rig contexts are unchanged.
+	 */
+	internal fun sourceSkinMeasurementContext(analysis: PipelineAnalysis, config: PipelineConfig, cache: PreviewMeshCache): RigContext {
+		require(!config.meshOnly && config.generateDeformers && config.parentOverrides.isEmpty() &&
+			config.rigEdits.skeleton?.enabled != true && config.rigEdits.warpEdits.isEmpty()) {
+			"Source skin measurements require unedited native source framing"
+		}
+		val modules = io.github.psd2live.core.recipe.RigModules
+		val subject = io.github.psd2live.core.recipe.RecipeSubject.of(analysis)
+		require(listOf(modules.OUTFIT_SKIRT, modules.OUTFIT_RIBBONS, modules.OUTFIT_CREATURE).none {
+			modules.builds(it, config, subject)
+		}) { "Source skin measurements do not provide clothing or creature chain parents" }
+		RigBuildProfile.count("source skin: measurement contexts")
+		val context = rigContext(analysis, config.copy(generateDeformers = false), cache)
+		val faceRig = context.faceRig
+		val frames = linkedMapOf<String, Bounds>()
+		// These are exactly the IDs allocated before ScaffoldPairs in native buildDeformers.
+		// Hair chains and hanging arms are allocated afterwards and cannot rename an earlier pair.
+		val reserved = linkedSetOf(bodyWarpId.raw, BodyStance.leanWarpId.raw, breathWarpId.raw, headRotationId.raw,
+			headWarpId.raw, faceWarpId.raw, faceContourId.raw)
+		if (context.stance.standing) reserved += BodyStance.legsWarpId.raw
+		if (config.featureDisplacementEnabled) reserved += featureDisplacementId.raw
+		for ((feature, id) in listOf(FaceFeature.EYE to eyesWarpId, FaceFeature.BROW to browsWarpId,
+			FaceFeature.EAR to earsWarpId)) {
+			val left = faceRig.regions.firstOrNull { it.feature == feature && it.side == Side.LEFT }
+			val right = faceRig.regions.firstOrNull { it.feature == feature && it.side == Side.RIGHT }
+			if (left != null && right != null) {
+				reserved += id.raw
+				frames[id.raw] = left.bounds.union(right.bounds).expanded(0.04f)
+			}
+		}
+		for (region in faceRig.regions.filter { it.feature != FaceFeature.IRIS }) reserved += featureWarpId(region).raw
+		for (region in faceRig.regions.filter { it.feature == FaceFeature.IRIS }) {
+			if (faceRig.regionFor(FaceFeature.EYE, region.side) == null) continue
+			reserved += featureWarpId(region).raw
+			reserved += gazeWarpId(region).raw
+		}
+		if (context.frontHair != null) reserved += listOf(frontHairFollowWarpId.raw, frontHairPhysicsWarpId.raw)
+		if (context.backHair != null) reserved += listOf(backHairFollowWarpId.raw, backHairPhysicsWarpId.raw)
+		val candidates = context.analysis.layers.filter { layer ->
+			layer.opaquePixels > 0 && layer.semantic.side in setOf(Side.LEFT, Side.RIGHT) &&
+				!isHandledByFaceRegion(layer, faceRig)
+		}.map { layer ->
+			val (parent, frame) = defaultParentAndFrame(layer, faceRig, context.analysis.anchors, context.character,
+				context.head, context.face, context.frontHair, context.backHair, false, context.stance.legsFrame, context.bodyFrame)
+			val part = when {
+				layer.semantic.tag == SemanticTag.FRONT_HAIR -> PartId("PartHairFront")
+				layer.semantic.tag == SemanticTag.BACK_HAIR -> PartId("PartHairBack")
+				layer.semantic.tag in faceTags -> PartId("PartFace")
+				inferredGroup(layer, context.analysis.anchors) == LayerGroup.HEAD -> PartId("PartHeadAccessories")
+				inferredGroup(layer, context.analysis.anchors) == LayerGroup.EXTRA -> PartId("PartExtra")
+				else -> PartId("PartBody")
+			}
+			ScaffoldPairs.Layer(layer.source.id.raw, layer.source.name, layer.semantic.tag.name, layer.semantic.side,
+				context.rigLayer(layer).bounds, parent, frame, part)
+		}
+		val parents = linkedMapOf<String, Pair<DeformerId, Bounds>>()
+		val pairs = RigBuildProfile.stage("source skin: static pair frames") {
+			ScaffoldPairs.build(candidates, reserved, { tr("model.deformer.pair", it) })
+		}
+		for (pair in pairs) {
+			frames[pair.warp.id.raw] = pair.bounds
+			for (id in pair.layerIds) parents[id] = pair.warp.id to pair.bounds
+		}
+		// With clothing/creature modules excluded, later hair/arm branches cannot own skin targets. Do not
+		// expose this partial parent inventory as a general-purpose rig or lower other layer types.
+		return context.withSourceSkinFrames(frames, parents)
 	}
 
 	/**
@@ -1415,8 +1520,8 @@ object RigBuilder {
     /** Capture the source eye fit and the opacity beneath the generated fade. */
     internal fun lidFadeSourceInputs(analysis: PipelineAnalysis, config: PipelineConfig, cache: PreviewMeshCache,
                                      targetLayers: Map<String, String>): io.github.psd2live.core.modifier.ModifierAlgorithmContext {
-        val context = rigContext(analysis, config, cache)
-        val eyes = context.fittedEyes(config)?.rigs.orEmpty()
+        val context = rigContext(analysis, config.copy(generateDeformers = false), cache)
+        val eyes = context.fittedEyesForSourceLidFade(config)?.rigs.orEmpty()
         val layers = context.analysis.layers.associateBy { it.source.id.raw }
         val targets = targetLayers.mapNotNull { (id, layerId) ->
             val layer = layers[layerId] ?: return@mapNotNull null
@@ -3673,8 +3778,12 @@ object RigBuilder {
 	internal fun browTurnSourceBranch(context: RigContext, config: PipelineConfig, cache: PreviewMeshCache,
 	                                  parents: Set<DeformerId>): List<Deformer> {
 		val deformers = faceTurnAndLean(context, config, stagesOf(cache)).associateBy { it.id }
-		return parents.flatMap { parent -> generateSequence(parent) { deformers.getValue(it).parent }.toList() }
-			.distinct().map(deformers::getValue)
+		// Inferred frames may reference a synthetic parent not emitted into this context
+		// (for example the shared eye-shape frame when only left/right eye warps exist).
+		// Collect only actual deformers, stopping at the first absent ancestor.
+		return parents.flatMap { parent ->
+			generateSequence(deformers[parent]) { deformer -> deformer.parent?.let(deformers::get) }.toList()
+		}.distinctBy { it.id }
 	}
 
 	private fun turnLoweringSource(layer: ClassifiedLayer, context: RigContext, config: PipelineConfig,
@@ -3714,6 +3823,7 @@ object RigBuilder {
     /** Source meshes and frames needed by clothing attachment residuals. */
     internal fun attachmentBindingSource(analysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig,
                                      cache: PreviewMeshCache, ids: Map<String, DrawableId>): Pair<PuppetModel, List<io.github.psd2live.core.fit.HairChain>> {
+        RigBuildProfile.count("modifier attachment source builds")
         val prepared = if (config.mouthOutlineEnabled) MouthLipLayers.prepare(analysis, config, cache) else analysis
         val context = rigContext(prepared, config, cache)
         val layers = context.analysis.layers.associateBy { it.source.id.raw }
