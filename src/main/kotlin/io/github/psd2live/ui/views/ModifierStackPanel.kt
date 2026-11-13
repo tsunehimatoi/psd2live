@@ -40,6 +40,9 @@ internal fun modifierName(type: String): String {
     val registry = RigModifierAlgorithms.registry
     val stored = registry.storedType(type)
     if (stored != type) return tr("modifier.algorithm.version", modifierName(stored), requireNotNull(registry.defaultDefinition(type)).version)
+    if (type in setOf(RigSourceModifiers.EYE, RigSourceModifiers.BROW, RigSourceModifiers.FACE, RigSourceModifiers.BODY, RigSourceModifiers.HAIR)) {
+        return tr("settings.rig.area.$type")
+    }
     ModifierPluginCatalog.algorithm(type)?.let { return it.second.name }
     return when {
         type == RigSourceModifiers.SCAFFOLD -> tr("modifier.scaffold")
@@ -124,6 +127,7 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                                     CompactButton(contentName(state, target.kind, target.id), { vm.locateModifierContent(target.kind, target.id) }, height = 20.dp)
                                 }
                                 2 -> {
+                                    ModifierBehaviorPreview(selected.type, selected.version)
                                     ModifierDependencies(selected, stack, enabled, vm)
                                     report?.let { ModifierContributions(it, state, vm) }
                                     CompactButton(tr("modifier.apply"), { vm.editModifier("modifier_apply", buildJsonObject { put("id", selected.id) }) }, enabled = enabled, height = 22.dp)
@@ -165,7 +169,9 @@ private fun ModifierDependencies(instance: RigModifierInstance, stack: RigModifi
 
 @Composable
 private fun ModifierModulePhysicsValues(instance: RigModifierInstance, report: JsonObject?, state: PSD2LiveState, enabled: Boolean, vm: PSD2LiveViewModel) {
-    if (RigLegacyBindings.find(instance.type)?.hasPhysics != true || report?.get("status")?.jsonPrimitive?.content != "active") return
+    val hasPhysics = RigLegacyBindings.find(instance.type)?.hasPhysics == true ||
+        instance.type in setOf(RigSourceModifiers.EYE, RigSourceModifiers.BROW, RigSourceModifiers.BODY, RigSourceModifiers.HAIR)
+    if (!hasPhysics || report?.get("status")?.jsonPrimitive?.content != "active") return
     val rig = state.previewModel?.rig?.modifierOutput ?: return
     val groups = rig.physics.groups.associateBy { it.id }
     val candidates = report.getValue("contributions").jsonArray.mapNotNull { raw ->
@@ -214,6 +220,10 @@ private fun ModifierSourceValues(instance: RigModifierInstance, enabled: Boolean
                 Text(tr(label), style = LocalToolTypography.current.caption)
             }
         }
+        return
+    }
+    if (instance.type in setOf(RigSourceModifiers.EYE, RigSourceModifiers.BROW, RigSourceModifiers.FACE, RigSourceModifiers.BODY, RigSourceModifiers.HAIR)) {
+        ModifierPartValues(instance, enabled, vm)
         return
     }
     val spec = RigLegacyBindings.find(instance.type) ?: return
@@ -284,6 +294,123 @@ private fun ModifierSourceValues(instance: RigModifierInstance, enabled: Boolean
             spec.fields.filter { it.group == selectedGroup }.forEach { field ->
                 value(tr("settings.rigTuning.${field.id}"), "tuning", field.id, field.default, field.range, unit(field.unit))
             }
+        }
+    }
+}
+
+@Composable
+private fun ModifierPartValues(instance: RigModifierInstance, enabled: Boolean, vm: PSD2LiveViewModel) {
+    fun updateConfig(next: JsonObject) {
+        vm.editModifier("modifier_update", buildJsonObject {
+            put("id", instance.id); put("type", instance.type); put("config", next)
+        })
+    }
+    val modes = when (instance.type) {
+        RigSourceModifiers.EYE, RigSourceModifiers.BROW, RigSourceModifiers.FACE -> listOf("fitted", "legacy")
+        RigSourceModifiers.HAIR -> listOf("chains", "legacy")
+        else -> emptyList()
+    }
+    if (modes.isNotEmpty()) {
+        val currentMode = instance.config["mode"]?.jsonPrimitive?.contentOrNull ?: modes.first()
+        InspectorFormRow(tr("modifier.part.mode")) {
+            CompactDropdown(modes, currentMode, { next ->
+                if (next != currentMode) updateConfig(JsonObject(instance.config + ("mode" to JsonPrimitive(next))))
+            }, itemLabel = { tr("modifier.part.mode.$it") }, enabled = enabled, height = 20.dp, modifier = Modifier.fillMaxWidth())
+        }
+    }
+    if (instance.type in setOf(RigSourceModifiers.BROW, RigSourceModifiers.HAIR)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CompactCheckbox(instance.config["physicsEnabled"]?.jsonPrimitive?.booleanOrNull != false, { value ->
+                updateConfig(JsonObject(instance.config + ("physicsEnabled" to JsonPrimitive(value))))
+            }, enabled = enabled)
+            Text(tr("swing.physics"), style = LocalToolTypography.current.caption)
+        }
+    }
+    if (instance.type in setOf(RigSourceModifiers.FACE, RigSourceModifiers.BODY)) {
+        val strength = instance.config["strength"]?.jsonPrimitive?.floatOrNull ?: 1f
+        ModifierNumber(tr("modifier.strength"), strength, 0f..4f, "", enabled, vm) { number, expected, done ->
+            vm.editModifier("modifier_update", buildJsonObject {
+                put("id", instance.id); put("type", instance.type)
+                put("config", JsonObject(instance.config + ("strength" to JsonPrimitive(number))))
+            }, expected, done)
+        }
+    }
+    val features = when (instance.type) {
+        RigSourceModifiers.EYE -> listOf(
+            "wide" to "settings.rig.module.eye.wide",
+            "smile" to "settings.rig.module.eye.smile",
+            "emotion" to "settings.rig.module.eye.emotion",
+            "gazeLid" to "settings.rig.module.eye.gaze-lid",
+            "highlight" to "settings.rig.module.eye.highlight",
+            "lidFade" to "settings.rig.module.eye.lid-fade",
+            "squash" to "settings.rig.module.eye.squash",
+            "aftershock" to "settings.rig.module.eye.aftershock",
+        )
+        RigSourceModifiers.BROW -> listOf(
+            "shape" to "settings.rig.module.brow.shape",
+            "spring" to "settings.rig.module.brow.spring",
+            "blink" to "settings.rig.module.brow.blink",
+            "lid" to "settings.rig.module.brow.lid-coupling",
+        )
+        RigSourceModifiers.FACE -> listOf(
+            "depthTurn" to "settings.rig.module.face.depth-turn",
+            "neck" to "settings.rig.module.face.neck",
+        )
+        RigSourceModifiers.BODY -> listOf(
+            "bust" to "settings.rig.module.body.bust",
+            "arms" to "settings.rig.module.body.arms",
+        )
+        else -> emptyList()
+    }
+    for ((key, labelKey) in features) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CompactCheckbox(instance.config[key]?.jsonPrimitive?.booleanOrNull == true, { value ->
+                updateConfig(JsonObject(instance.config + (key to JsonPrimitive(value))))
+            }, enabled = enabled)
+            Text(tr(labelKey), style = LocalToolTypography.current.caption)
+        }
+    }
+    val fields = RigLegacyBindings.find(when (instance.type) {
+        RigSourceModifiers.EYE -> "eye/fitted"
+        RigSourceModifiers.BROW -> "brow/fitted"
+        RigSourceModifiers.FACE -> RigLegacyBindings.FITTED_FACE
+        RigSourceModifiers.BODY -> "body/legacy"
+        RigSourceModifiers.HAIR -> "hair/chains"
+        else -> ""
+    })?.fields.orEmpty()
+    if (fields.isNotEmpty()) {
+        val groups = fields.map { it.group }.distinct()
+        var selectedGroup by remember(instance.id) { mutableStateOf(groups.firstOrNull()) }
+        if (groups.size > 1) CompactDropdown(groups, selectedGroup ?: groups.first(), { selectedGroup = it },
+            itemLabel = { tr("settings.rigTuning.group." + it.name.lowercase()) }, modifier = Modifier.fillMaxWidth(), height = 22.dp)
+        fields.filter { it.group == selectedGroup }.forEach { field ->
+            val current = instance.config["tuning"]?.jsonObject?.get(field.id)?.jsonPrimitive?.floatOrNull ?: field.default
+            ModifierNumber(tr("settings.rigTuning.${field.id}"), current, field.range, unit(field.unit), enabled, vm) { number, expected, done ->
+                val tuning = JsonObject(instance.config["tuning"]?.jsonObject.orEmpty() + (field.id to JsonPrimitive(number)))
+                vm.editModifier("modifier_update", buildJsonObject {
+                    put("id", instance.id); put("type", instance.type)
+                    put("config", JsonObject(instance.config + ("tuning" to tuning)))
+                }, expected, done)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModifierBehaviorPreview(type: String, version: Int? = null) {
+    val algorithm = remember(type, version) {
+        (version?.let { ModifierPluginCatalog.algorithm(type, it) } ?: ModifierPluginCatalog.algorithm(type))?.second
+    } ?: return
+    if (algorithm.creates.isEmpty() && algorithm.modifies.isEmpty()) return
+    val colors = LocalToolColors.current
+    Column(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        if (algorithm.creates.isNotEmpty()) {
+            Text(tr("modifier.behavior.creates", algorithm.creates.joinToString()), color = colors.textMuted,
+                style = LocalToolTypography.current.caption)
+        }
+        if (algorithm.modifies.isNotEmpty()) {
+            Text(tr("modifier.behavior.modifies", algorithm.modifies.joinToString()), color = colors.textMuted,
+                style = LocalToolTypography.current.caption)
         }
     }
 }
@@ -397,12 +524,25 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
     val available = if (groups) WorkspaceModifierPlan.groupCatalog.map { it.id }
         else if (dialog.targets.all { it.kind == "mesh" }) WorkspaceModifierPlan.types.filterNot { it == RigSourceModifiers.SCAFFOLD } else listOf("swing") + ModifierPluginStore.shared.runnablePackages().filter { ModifierPluginStore.shared.resolution(it.reference).available }.flatMap { it.manifest.algorithms }.filter { algorithm -> dialog.targets.all { it.kind in algorithm.targets } }.map { it.type }
     val pluginRevision by ModifierPluginStore.shared.revision.collectAsState()
-    val visibleAvailable = available.filter { type -> groups || state.previewModel?.let { !dialog.availability(it, type).hidden } != false }
+    val foldedLegacyUiTypes = setOf(
+        "eye/fitted", "eye/legacy", "eye.wide", "eye.smile", "eye.emotion", "eye.gaze-lid",
+        "eye.highlight", "eye.lid-fade", "eye.squash", "eye.aftershock",
+        "brow/fitted", "brow/legacy", "brow.shape", "brow.spring", "brow.blink", "brow.lid-coupling",
+        "face/fitted", "face/legacy", "face.depth-turn", "face.neck",
+        "body/legacy", "body.bust", "body.arms",
+        "hair/chains", "hair/legacy",
+    )
+    val hideFoldedLegacy = !groups && RigSourceModifiers.EYE in available
+    val visibleAvailable = available.filter { type ->
+        (groups || state.previewModel?.let { !dialog.availability(it, type).hidden } != false) &&
+            (!hideFoldedLegacy || type !in foldedLegacyUiTypes)
+    }
     fun category(type: String): String = when {
         groups -> type.substringBefore('-')
         type == RigSourceModifiers.SCAFFOLD -> "structure"
         type == "physics" || type == "simulation" || type == "swing" -> "advanced"
         type == "motion" -> "expression"
+        type in setOf(RigSourceModifiers.EYE, RigSourceModifiers.BROW, RigSourceModifiers.FACE, RigSourceModifiers.BODY, RigSourceModifiers.HAIR) -> type
         else -> RigLegacyBindings.find(RigModifierAlgorithms.registry.storedType(type))?.area ?: "plugins"
     }
     fun categoryName(id: String): String = when {
@@ -473,6 +613,11 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                 planned.forEach { raw -> val item = raw.jsonObject
                     FloatingMenuRow(modifierName(item.getValue("type").jsonPrimitive.content), {}, enabled = false,
                         trailing = tr("modifier.plan.${item.getValue("disposition").jsonPrimitive.content}"))
+                }
+            }
+            (dialog.type ?: planned.lastOrNull()?.jsonObject?.get("type")?.jsonPrimitive?.contentOrNull)?.let { previewType ->
+                Box(Modifier.fillMaxWidth().padding(horizontal = Spacing.Margin)) {
+                    ModifierBehaviorPreview(previewType)
                 }
             }
             FloatingMenuRow(tr("modifier.add"), vm::confirmModifierAddition,
