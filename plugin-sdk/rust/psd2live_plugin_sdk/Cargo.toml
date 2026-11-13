@@ -1,0 +1,7 @@
+[package]
+name = "psd2live_plugin_sdk"
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+description = "Zero-dependency Rust SDK for standalone PSD2Live protocol 2 / 1 modifier plugins."
+publish = false

@@ -1,0 +1,23 @@
+{
+  "schema": "psd2live.runtime.deps/v1",
+  "description": "Independent shared runtime environment & extensible dependency manifest for standalone modifier plugins.",
+  "runtimes": {
+    "native": {
+      "protocol": 2,
+      "env": {
+        "protocol": "PSD2LIVE_PLUGIN_PROTOCOL",
+        "deps_manifest": "PSD2LIVE_PLUGIN_DEPS",
+        "resources": "PSD2LIVE_PLUGIN_RESOURCES"
+      },
+      "sdk": "plugin-sdk/rust/psd2live_plugin_sdk"
+    },
+    "python": {
+      "protocol": 2,
+      "sdk": "plugin-sdk/python/psd2live_plugin.py"
+    }
+  },
+  "extensible_dependencies": {
+    "format": "Each installed dependency package is staged under .runtime/.deps/<id>/ and indexed in deps.json.",
+    "fields": ["id", "version", "digest", "dir"]
+  }
+}
