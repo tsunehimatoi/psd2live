@@ -170,7 +170,7 @@ internal class RigModifierEvaluator(
         var current = authored
         val available = stack.appliedCapabilities.toMutableList()
         val entries = ArrayList<ModifierEvaluation>()
-        val exclusive = HashMap<Pair<String, ModifierTarget>, String>()
+        val exclusive = HashMap<Pair<String, ModifierTarget>, Pair<String, String>>()
         val writers = HashMap<Pair<String, String>, Pair<String, RigModifierDefinition>>()
         val previous = cache?.snapshot?.takeIf { it.plugins == pluginRevision }
         val saved = previous?.takeIf { it.context == context && it.authored == authored &&
@@ -216,7 +216,7 @@ internal class RigModifierEvaluator(
                 entries += entry
                 outputs += current
                 if (entry.status == ModifierStatus.ACTIVE) {
-                    definition.exclusiveFamily?.let { family -> instance.targets.forEach { exclusive[family to it] = instance.id } }
+                    definition.exclusiveFamily?.let { family -> instance.targets.forEach { exclusive[family to it] = instance.id to instance.type } }
                     entry.contributions.filter { it.change != ModifierChange.REUSED }.forEach {
                         writers[it.kind to it.id] = instance.id to definition
                     }
@@ -246,8 +246,10 @@ internal class RigModifierEvaluator(
                 continue
             }
             definition.exclusiveFamily?.let { family -> instance.targets.forEach { target ->
-                val previous = exclusive.put(family to target, instance.id)
-                require(previous == null) { "Modifiers $previous and ${instance.id} are mutually exclusive on ${target.id}" }
+                val previous = exclusive.put(family to target, instance.id to instance.type)
+                require(previous == null) {
+                    "Modifiers ${previous?.first} (${previous?.second}) and ${instance.id} (${instance.type}) are mutually exclusive on ${target.id} (family $family)"
+                }
             } }
             validateTargets(current, instance)
             RigBuildProfile.modifierStage("validation", instance.type) { definition.validate(current, instance) }

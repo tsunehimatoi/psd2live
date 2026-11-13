@@ -197,4 +197,39 @@ class WorkspacePresetInitializeTest {
             assertTrue(stack.instances.isNotEmpty(), "Expected non-empty stack for $mode")
         }
     }
+
+    @Test fun initializationSucceedsWithLegacyRecipeAndDisabledDepthTurn(): Unit = runBlocking {
+        val base = Characters.head(physics = false)
+        val builder = WorkspacePreviewBuilder()
+        val legacySettings = WorkspaceSettingsCodec.encode(base.config().copy(recipe = io.github.psd2live.core.recipe.RigRecipe.Legacy))
+        val legacyDoc = base.copy(settings = legacySettings, rigEdits = base.rigEdits.copy(modifierStack = RigModifierStack().toJson()))
+        val legacyPreview = builder.build(legacyDoc)
+        for (mode in listOf(
+            WorkspaceInitialModifiers.MINIMAL,
+            WorkspaceInitialModifiers.DEFAULT,
+            WorkspaceInitialModifiers.FULL,
+        )) {
+            val initialized = WorkspaceModifierEdits.apply(
+                WorkspaceDocumentOperation("modifier_initialize", buildJsonObject { put("modifiers", mode.name.lowercase()) }),
+                legacyDoc,
+                legacyPreview,
+            )
+            assertTrue(RigModifierStack.fromJson(requireNotNull(initialized.rigEdits.modifierStack)).instances.isNotEmpty())
+        }
+
+        val noDepthTurnRecipe = io.github.psd2live.core.recipe.RigRecipe.Modern.let { r ->
+            r.copy(modules = r.modules + (io.github.psd2live.core.recipe.RigModules.FACE_DEPTH_TURN.id to io.github.psd2live.core.recipe.ModuleChoice(on = false)))
+        }
+        val noDepthDoc = base.copy(
+            settings = WorkspaceSettingsCodec.encode(base.config().copy(recipe = noDepthTurnRecipe)),
+            rigEdits = base.rigEdits.copy(modifierStack = RigModifierStack().toJson()),
+        )
+        val noDepthPreview = builder.build(noDepthDoc)
+        val noDepthInit = WorkspaceModifierEdits.apply(
+            WorkspaceDocumentOperation("modifier_initialize", buildJsonObject { put("modifiers", "default") }),
+            noDepthDoc,
+            noDepthPreview,
+        )
+        assertTrue(RigModifierStack.fromJson(requireNotNull(noDepthInit.rigEdits.modifierStack)).instances.isNotEmpty())
+    }
 }
