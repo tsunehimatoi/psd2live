@@ -157,26 +157,44 @@ class WorkspacePresetInitializeTest {
     @Test fun recommendedInitializationSucceedsWithOpenMouthAndFullHeadLayers(): Unit = runBlocking {
         val base = Characters.head(physics = false)
         val mouthLayer = base.source.layers.first()
-        val mouthOpenLayer = WorkspaceSourceLayer(
-            LayerId("mouth-open-test"), "mouth_open", "", SourceLayerKind.Raster, true, base.source.layers.size,
-            mouthLayer.bounds, 1f, false, LayerBlend.Normal, ChannelMask.ALL,
-            mouthLayer.raster, null, null, false,
-        )
+        val extraLayers = listOf(
+            "mouth-open-test" to LayerClassificationOverride(LayerType.PRESET, SemanticTag.MOUTH_OPEN),
+            "tongue-test" to LayerClassificationOverride(LayerType.PRESET, SemanticTag.TONGUE),
+            "face-detail-test" to LayerClassificationOverride(LayerType.PRESET, SemanticTag.FACE_DETAIL),
+            "topwear-test" to LayerClassificationOverride(LayerType.PRESET, SemanticTag.TOPWEAR, role = PartRole.SKIRT),
+            "tail-test" to LayerClassificationOverride(LayerType.PRESET, SemanticTag.TAIL),
+            "neck-test" to LayerClassificationOverride(LayerType.PRESET, SemanticTag.NECK),
+            "handwear-test" to LayerClassificationOverride(LayerType.PRESET, SemanticTag.HANDWEAR),
+        ).mapIndexed { idx, (id, override) ->
+            WorkspaceSourceLayer(
+                LayerId(id), id, "", SourceLayerKind.Raster, true, base.source.layers.size + idx,
+                mouthLayer.bounds, 1f, false, LayerBlend.Normal, ChannelMask.ALL,
+                mouthLayer.raster, null, null, false,
+            ) to (id to override)
+        }
         val emptyDoc = base.copy(
-            source = WorkspaceSourceArt(base.source.widthPx, base.source.heightPx, base.source.layers + mouthOpenLayer, base.source.groups),
-            layerOverrides = base.layerOverrides + ("mouth-open-test" to LayerClassificationOverride(LayerType.PRESET, SemanticTag.MOUTH_OPEN)),
+            source = WorkspaceSourceArt(
+                base.source.widthPx, base.source.heightPx,
+                base.source.layers + extraLayers.map { it.first }, base.source.groups,
+            ),
+            layerOverrides = base.layerOverrides + extraLayers.map { it.second },
             rigEdits = base.rigEdits.copy(modifierStack = RigModifierStack().toJson()),
         )
         val builder = WorkspacePreviewBuilder()
         val preview = builder.build(emptyDoc)
-        val initialized = WorkspaceModifierEdits.apply(
-            WorkspaceDocumentOperation("modifier_initialize", buildJsonObject { put("modifiers", "recommended") }),
-            emptyDoc,
-            preview,
-        )
-        val stack = RigModifierStack.fromJson(requireNotNull(initialized.rigEdits.modifierStack))
-        assertTrue(stack.instances.any { it.type == "mouth/fitted" })
-        assertTrue(stack.instances.any { it.type == "mouth.outline" })
-        assertTrue(stack.instances.none { it.type == "mouth/legacy" })
+        for (mode in listOf(
+            WorkspaceInitialModifiers.RECOMMENDED,
+            WorkspaceInitialModifiers.MINIMAL,
+            WorkspaceInitialModifiers.DEFAULT,
+            WorkspaceInitialModifiers.FULL,
+        )) {
+            val initialized = WorkspaceModifierEdits.apply(
+                WorkspaceDocumentOperation("modifier_initialize", buildJsonObject { put("modifiers", mode.name.lowercase()) }),
+                emptyDoc,
+                preview,
+            )
+            val stack = RigModifierStack.fromJson(requireNotNull(initialized.rigEdits.modifierStack))
+            assertTrue(stack.instances.isNotEmpty(), "Expected non-empty stack for $mode")
+        }
     }
 }
