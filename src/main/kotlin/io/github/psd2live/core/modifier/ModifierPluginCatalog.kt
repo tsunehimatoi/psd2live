@@ -57,7 +57,18 @@ internal object ModifierPluginCatalog {
         } }
     }
 
-    fun available(instance: RigModifierInstance): Boolean = available(instance.type, instance.version, instance.plugin)
+    fun available(instance: RigModifierInstance): Boolean {
+        val builtin = BuiltinModifierPlugins.reference(instance.type, instance.version)
+        val reference = instance.plugin ?: builtin ?: return false
+        val store = ModifierPluginStore.shared
+        if (reference != builtin) {
+            val manifest = store.packages().firstOrNull { it.reference == reference }?.manifest ?: return false
+            if (manifest.algorithms.none {
+                    it.version == instance.version && (it.type == instance.type || instance.type in it.aliases)
+                }) return false
+        }
+        return store.resolution(reference).available
+    }
 
     fun available(type: String, version: Int, plugin: ModifierPluginReference? = null): Boolean {
         val reference = plugin ?: BuiltinModifierPlugins.reference(type, version)
@@ -76,15 +87,7 @@ internal object ModifierPluginCatalog {
     }
 
     fun requireAvailable(stack: RigModifierStack) {
-        val packages by lazy { ModifierPluginStore.shared.packages().associateBy { it.reference } }
-        val missing = stack.instances.filter { instance ->
-            if (!instance.enabled) return@filter false
-            val reference = instance.plugin ?: BuiltinModifierPlugins.reference(instance.type, instance.version)
-                ?: return@filter true
-            val manifest = packages[reference]?.manifest ?: return@filter true
-            manifest.algorithms.none { it.version == instance.version && (it.type == instance.type || instance.type in it.aliases) } ||
-                !available(instance.type, instance.version, reference)
-        }
+        val missing = stack.instances.filter { it.enabled && !available(it) }
         require(missing.isEmpty()) { "Missing or disabled algorithm plugins: ${missing.joinToString { "${it.id} (${it.type}@${it.version})" }}" }
     }
 }

@@ -375,7 +375,9 @@ internal class RigModifierEvaluator(
     fun validateOrder(stack: RigModifierStack) = validateOrder(stack, resolveDefinitions(stack))
 
     private fun resolveDefinitions(stack: RigModifierStack) = stack.instances.map { instance ->
-        registry.definitionOrNull(instance)?.takeIf { ModifierPluginCatalog.available(instance) }
+        registry.definitionOrNull(instance)?.takeIf {
+            ModifierPluginCatalog.available(instance.type, instance.version, instance.plugin)
+        }
     }
 
     private fun validateOrder(stack: RigModifierStack, definitions: List<RigModifierDefinition?>) {

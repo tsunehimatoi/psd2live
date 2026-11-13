@@ -28,6 +28,7 @@ class PhysicsModifierWorkspaceTest {
         val project = SyntheticProject(temp, 1, 12, 1)
         val (document, stack) = fixture(project)
         val legacy = stack.instances.single().copy(plugin = null)
+        assertTrue(ModifierPluginCatalog.available(legacy))
         val unpinned = document.copy(rigEdits = document.rigEdits.copy(
             modifierStack = stack.copy(instances = listOf(legacy)).toJson()))
         val restored = WorkspacePreviewBuilder().build(unpinned)
@@ -46,6 +47,7 @@ class PhysicsModifierWorkspaceTest {
 
     private suspend fun verifyUnavailablePhysics(project: SyntheticProject, document: WorkspaceDocument, missing: RigModifierStack) {
         val unavailable = missing.instances.single()
+        assertFalse(ModifierPluginCatalog.available(unavailable))
         val saved = document.copy(rigEdits = document.rigEdits.copy(modifierStack = missing.toJson()))
         val reopened = reopen(project, saved)
         val preview = WorkspacePreviewBuilder().build(reopened)
