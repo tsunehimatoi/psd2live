@@ -14,6 +14,7 @@ internal object MeshSplitAlgorithmPlugin {
             }
         },
         composableKinds = setOf("mesh", "part", "hierarchy"),
+        changeWrites = setOf("mesh", "part", "hierarchy"),
         plugin = implementation,
     )
 }

@@ -313,4 +313,83 @@ class WorkspacePresetInitializeTest {
         val rebuilt = WorkspacePreviewBuilder().build(updatedDoc)
         assertTrue(rebuilt.rig.puppet.drawables.isNotEmpty())
     }
+
+    @Test fun bundledPluginRetainSupersedesStaleSameVersionDevBuildInRealStore() {
+        val tempRoot = java.nio.file.Files.createTempDirectory("psd2live-store-test-")
+        val prefs = java.util.prefs.Preferences.userRoot().node("io.github.psd2live.test/${java.util.UUID.randomUUID()}")
+        try {
+            val artifact = assertNotNull(BundledAlgorithmArtifacts.find("mouth/fitted", 1))
+            val runtimeBytes = "stale-dev-build".encodeToByteArray()
+            val runtimeDigest = ModifierPluginStore.hash(runtimeBytes)
+            val staleManifest = artifact.manifest.copy(
+                files = artifact.manifest.files.mapValues { (name, old) ->
+                    if (name.endsWith(".jar")) runtimeDigest else old
+                },
+            )
+            val staleBytes = kotlinx.serialization.json.Json.encodeToString(
+                ModifierPluginManifest.serializer(),
+                staleManifest,
+            ).encodeToByteArray()
+            val staleDigest = ModifierPluginStore.hash(staleBytes)
+            assertNotEquals(artifact.reference.digest, staleDigest)
+            val staleDir = tempRoot.resolve(staleDigest)
+            java.nio.file.Files.createDirectories(staleDir)
+            java.nio.file.Files.write(staleDir.resolve("plugin.json"), staleBytes)
+            artifact.manifest.files.keys.forEach { name ->
+                val target = staleDir.resolve(name)
+                java.nio.file.Files.createDirectories(target.parent)
+                if (name.endsWith(".jar")) {
+                    java.nio.file.Files.write(target, runtimeBytes)
+                } else {
+                    artifact.open(name)!!.use { java.nio.file.Files.copy(it, target) }
+                }
+            }
+            java.nio.file.Files.writeString(staleDir.resolve(".dependencies"), "[]")
+
+            val store = ModifierPluginStore(tempRoot, prefs, bundledWorkers = true)
+            BundledAlgorithmArtifacts.retain(store, listOf(artifact))
+            val retained = store.packages().filter { it.reference.id == artifact.reference.id && it.reference.version == artifact.reference.version }
+            assertEquals(listOf(artifact.reference.digest), retained.map { it.reference.digest })
+        } finally {
+            runCatching { prefs.removeNode() }
+            ModifierPluginStore.deleteTree(tempRoot)
+        }
+    }
+
+    @Test fun realHostFlowInitializesPresetsAndAppliesMeshSplitModifier() = runBlocking {
+        val tempDir = java.nio.file.Files.createTempDirectory("psd2live-host-flow-")
+        try {
+            HeadlessPresentation().use { presentation ->
+                WorkspaceHost(presentation, tempDir).use { host ->
+                    presentation.attach(host)
+                    val base = Characters.head(physics = false)
+                    val emptyDoc = base.copy(rigEdits = base.rigEdits.copy(modifierStack = RigModifierStack().toJson()))
+                    val preview = WorkspacePreviewBuilder().build(emptyDoc)
+                    val initialized = WorkspaceModifierEdits.apply(
+                        WorkspaceDocumentOperation("modifier_initialize", buildJsonObject { put("modifiers", "recommended") }),
+                        emptyDoc,
+                        preview,
+                    )
+                    val initPreview = WorkspacePreviewBuilder().build(initialized)
+                    val targetId = initPreview.rig.puppet.drawables.first { it.mesh != null && it.id.raw in initPreview.rig.ownLayerIdByDrawableId }.id.raw
+                    val withSplit = WorkspaceModifierEdits.apply(
+                        WorkspaceDocumentOperation("modifier_add", buildJsonObject {
+                            put("type", "mesh.split")
+                            put("config", JsonObject(emptyMap()))
+                            putJsonArray("targets") {
+                                addJsonObject { put("kind", "mesh"); put("id", targetId) }
+                            }
+                        }),
+                        initialized,
+                        initPreview,
+                    )
+                    val finalPreview = WorkspacePreviewBuilder().build(withSplit)
+                    assertTrue(finalPreview.rig.puppet.drawables.isNotEmpty())
+                    assertTrue(RigModifierStack.fromJson(requireNotNull(withSplit.rigEdits.modifierStack)).instances.any { it.type == "mesh.split" })
+                }
+            }
+        } finally {
+            ModifierPluginStore.deleteTree(tempDir)
+        }
+    }
 }
