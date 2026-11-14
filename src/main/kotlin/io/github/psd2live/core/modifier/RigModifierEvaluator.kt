@@ -28,6 +28,7 @@ internal data class RigModifierDefinition(
     val provides: Set<String> = emptySet(),
     val plugin: ModifierAlgorithmPlugin,
     val pluginReference: ModifierPluginReference? = null,
+    val defaultSelection: Boolean = true,
     /** Null keeps source-aware algorithms on the conservative ordered-prefix cache. */
     val cacheReads: Set<String>? = null,
     /** Required for direct-output plugins; checked before any change is applied. */
@@ -52,7 +53,7 @@ internal interface ModifierVersionSelection {
 
 internal class RigModifierRegistry(definitions: List<RigModifierDefinition>) {
     private val entries = definitions.associateBy { Triple(it.type, it.version, it.pluginReference) }
-    private val defaults by lazy { definitions.filterNot { it.explicitVersion }.groupBy { it.type }
+    private val defaults by lazy { definitions.filter { it.defaultSelection && !it.explicitVersion }.groupBy { it.type }
         .mapValues { (_, candidates) -> candidates.maxBy { it.version } } }
 
     init {
@@ -85,6 +86,9 @@ internal class RigModifierRegistry(definitions: List<RigModifierDefinition>) {
         definition(instance.type, instance.version, instance.plugin)
 
     private fun definition(type: String, version: Int, plugin: ModifierPluginReference?): RigModifierDefinition? {
+        // A retained exact package wins over the compatibility mapping for unretained legacy records.
+        if (plugin != null && plugin != BuiltinModifierPlugins.reference(type, version))
+            entries[Triple(type, version, plugin)]?.let { return it }
         val resolvedVersion = BuiltinModifierPlugins.resolveVersion(type, version, plugin)
         val canonical = BuiltinModifierPlugins.reference(type, resolvedVersion)
         val historicalBuiltin = plugin != null && BuiltinModifierPlugins.isHistoricalBuiltinReference(type, version, plugin)

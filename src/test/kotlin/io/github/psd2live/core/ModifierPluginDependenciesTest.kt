@@ -23,6 +23,19 @@ class ModifierPluginDependenciesTest {
         assertFails { ModifierPluginVersionRange(minimum = "2.0.0", maximum = "1.0.0").validate() }
     }
 
+    @Test fun unlockedBundledDependenciesUseCurrentContentsWhileHistoricalLocksStayExact() {
+        val artifact = assertNotNull(BundledAlgorithmArtifacts.find("physics", 1))
+        val current = InstalledModifierPlugin(artifact.manifest, artifact.reference, Path.of("."), true)
+        val historical = current.copy(reference = current.reference.copy(digest = "f".repeat(64)))
+        val consumer = entry("consumer", dependencies = listOf(ModifierPluginDependency(current.reference.id)))
+        val packages = listOf(consumer, historical, current)
+        assertEquals(listOf(current.reference), ModifierPluginDependencies.resolve(consumer.reference, packages).dependencies)
+        val locked = consumer.copy(dependencyLock = listOf(historical.reference))
+        assertEquals(listOf(historical.reference), ModifierPluginDependencies.resolve(locked.reference, listOf(locked, current, historical)).dependencies)
+        assertFalse(ModifierPluginDependencies.resolve(locked.reference, listOf(locked, current)).available)
+        assertFalse(ModifierPluginDependencies.resolve(consumer.reference, listOf(consumer, historical)).available)
+    }
+
     @Test fun lockedDependenciesDoNotUpgradeAndRecoverOnlyWithOriginalContents() {
         val base = entry("base")
         val dependent = entry("consumer", dependencies = listOf(ModifierPluginDependency("base"))).copy(dependencyLock = listOf(base.reference))

@@ -100,7 +100,12 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
 
     fun snapshot(): List<InstalledModifierPlugin> = synchronized(lock) { installed.toList() }
     fun runnablePackages(): List<InstalledModifierPlugin> = synchronized(lock) {
-        (installed + shippedWorkers).distinctBy { it.reference }
+        (shippedWorkers + installed).distinctBy { it.reference }
+    }
+
+    /** Historical contents remain runnable only by exact reference, never as a new instance's default. */
+    fun defaultPackages(): List<InstalledModifierPlugin> = runnablePackages().filter { entry ->
+        !entry.reference.id.startsWith("builtin.") || entry.reference == BuiltinModifierPlugins.entry(entry.reference.id)?.reference
     }
 
     fun retainBundledReferences(references: Collection<ModifierPluginReference>) {
@@ -239,14 +244,8 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
         checkCancelled()
         checkDependencies(runnablePackages() + checked)
         installed.firstOrNull { it.reference.digest == checked.reference.digest }?.let { return@synchronized it }
-        val staleSameVersion = if (archiveOnly && checked.reference.id.startsWith("builtin.")) {
-            installed.filter { it.reference.id == checked.reference.id && it.reference.version == checked.reference.version && it.reference.digest != checked.reference.digest }
-        } else {
-            emptyList()
-        }
-        require(shippedWorkers.none { it.reference.id == checked.reference.id && it.reference.version == checked.reference.version &&
-            it.reference != checked.reference }) { "This bundled plugin version has different contents; use a new package version" }
-        if (staleSameVersion.isEmpty()) {
+        // Bundled rebuilds retain every immutable digest. Only explicit uninstall may remove history.
+        if (!archiveOnly && !checked.reference.id.startsWith("builtin.")) {
             require(installed.none { it.reference.id == checked.reference.id && it.reference.version == checked.reference.version }) {
                 "This plugin version is already installed with different contents; use a new package version"
             }
@@ -270,12 +269,11 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
             movePackage(destination, damaged)
             runCatching { deleteTree(damaged) }
         }
-        staleSameVersion.forEach { stopAffected(it.reference) }
         movePackage(checked.directory, destination)
         val result = checked.copy(directory = destination, dependencyLock = dependencies, reference = checked.reference.copy(
             dependencyDigests = dependencies.associate { "${it.id}@${it.version}" to it.digest }))
-        installed = installed.filterNot { it in staleSameVersion } + result
-        staleSameVersion.forEach { runCatching { deleteTree(it.directory) } }
+        installed = installed + result
+        catalogSnapshot = null
         loadProblems.removeAll { it.startsWith(checked.reference.digest + ":") }
         // The same exact reference was already in the catalog. Archiving its bytes cannot invalidate a candidate.
         if (!archiveOnly) changes.value++
