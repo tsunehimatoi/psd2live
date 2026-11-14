@@ -252,8 +252,23 @@ internal object ModifierPluginOutput {
         }
         val changes = RigModifierEvaluator.contributions(rig, output)
         require(changes.all { it.kind in algorithm.writes || "*" in algorithm.writes }) { "Plugin wrote undeclared object kinds" }
+        // Builtin part packages execute persisted child identities. Their outputs remain owned by
+        // those children instead of being renamed when a fresh preset is folded.
+        val partType = ModifierPartConfig.features.keys.singleOrNull { type ->
+            BuiltinModifierPlugins.entry(type, 1)?.artifact?.manifest?.algorithms?.any { it.type == algorithm.type } == true
+        }
+        val childOwners = partType?.let { type ->
+            ModifierPartConfig.features.getValue(type).filterKeys { ModifierPartConfig.enabled(instance.config, it) }.values.map { child ->
+                ModifierPartConfig.child(instance.copy(type = type), child).also {
+                    require(instance.targets.containsAll(it.targets)) { "Part child output scope exceeds the part targets" }
+                }
+            }
+        }.orEmpty()
+        require(childOwners.map { it.id }.distinct().size == childOwners.size && childOwners.none { it.id == instance.id }) {
+            "Part child output identities must be distinct"
+        }
         require(changes.filter { it.change == ModifierChange.ADDED && it.kind !in setOf("relations", "hierarchy") }.all {
-            instance.localOutputName(it.id) != null || it.kind == "parameter" && (algorithm.parameters.any { p -> p.id == it.id } || it.id in approved) ||
+            instance.localOutputName(it.id) != null || childOwners.any { child -> child.localOutputName(it.id) != null } || it.kind == "parameter" && (algorithm.parameters.any { p -> p.id == it.id } || it.id in approved) ||
                 algorithm.derivedOutputs.any { rule -> rule.matches(instance, it.kind, it.id) }
         }) { "Plugin outputs must use instance-owned deterministic IDs or declared shared parameters" }
         return output

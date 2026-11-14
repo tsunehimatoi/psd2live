@@ -41,9 +41,23 @@ class WorkspaceModifierSchemasTest {
                 flags.forEach { (flag, _) -> put(flag, true) }
                 putJsonObject("subConfigs") {
                     flags.values.forEach { child ->
-                        put(child, JsonObject(configuration(child) + mapOf(
+                        val spec = RigLegacyBindings.spec(child)
+                        val settings = buildJsonObject {
+                            configuration(child).forEach { (key, value) -> put(key, value) }
+                            if (spec.knobs.isNotEmpty()) putJsonObject("values") { spec.knobs.forEach { put(it.id, it.range.start) } }
+                            if (spec.mouthOutline) put("color", 0x563421)
+                            if (spec.hasPhysics) {
+                                put("physicsEnabled", false)
+                                putJsonObject("physics") {
+                                    spec.module!!.physicsGroups.forEach { group ->
+                                        put(group, RigPhysicsEdit("rule", "Custom", listOf(PhysicsInput("P")), listOf(PhysicsOutput("Q"))).toJson())
+                                    }
+                                }
+                            }
+                        }
+                        put(child, JsonObject(settings + mapOf(
                             "targets" to Json.encodeToJsonElement(listOf(ModifierTarget("mesh", "separate-target"))),
-                            "id" to JsonPrimitive("original-child"), "version" to JsonPrimitive(2),
+                            "id" to JsonPrimitive("original-child"), "version" to JsonPrimitive(1),
                             "outputAliases" to buildJsonObject { put("local", "original-output") },
                         )))
                     }
@@ -55,6 +69,12 @@ class WorkspaceModifierSchemasTest {
             validateOperationSchema(request, WorkspaceModifierSchemas.request("modifier_update"))
             val stack = RigModifierStack().add(part, 1, listOf(ModifierTarget("mesh", "base-target")), config, id = "part")
             assertEquals(config, RigModifierStack.fromJson(Json.parseToJsonElement(stack.toJson().toString()).jsonObject).instances.single().config)
+            val snapshot = buildJsonObject { putJsonObject("rigEdits") { put("modifierStack", stack.toJson()) } }
+            val index = io.github.psd2live.project.ProjectFormatV2.split(temp.resolve(part), snapshot)
+            val reopened = io.github.psd2live.project.ProjectFormatV2.join(temp.resolve(part), index)
+                .getValue("rigEdits").jsonObject.getValue("modifierStack").jsonObject
+            assertEquals(config, RigModifierStack.fromJson(reopened).instances.single().config)
+
             val first = flags.values.first()
             val invalid = JsonObject(config + ("subConfigs" to buildJsonObject {
                 put(first, buildJsonObject { put("unknown", true) })

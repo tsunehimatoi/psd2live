@@ -5,16 +5,11 @@ import io.github.psd2live.core.modifier.ChangingModifierAlgorithmPlugin
 import io.github.psd2live.core.modifier.ModifierAlgorithmContext
 import io.github.psd2live.core.modifier.ModifierEvaluationInput
 import io.github.psd2live.core.modifier.ModifierModelChanges
-import io.github.psd2live.core.modifier.ModifierTarget
 import io.github.psd2live.core.modifier.ModifierUpstreamCapability
 import io.github.psd2live.core.modifier.ReadingModifierAlgorithmPlugin
 import io.github.psd2live.core.modifier.RigModifierInstance
 import io.github.psd2live.format.model.RigIR
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -63,6 +58,7 @@ class BrowPartAlgorithm : ChangingModifierAlgorithmPlugin {
         }
 
         if (mode == "legacy") {
+            require(ModifierPartConfig.features.getValue(TYPE).keys.none { ModifierPartConfig.enabled(instance.config, it) }) { "${instance.id}: sub-features require fitted mode" }
             return PartChangeComposer.between(input, current, checkpoint)
         }
 
@@ -79,46 +75,19 @@ class BrowPartAlgorithm : ChangingModifierAlgorithmPlugin {
         val subConfigs = context.values["sub_configs"]?.jsonObject.orEmpty()
 
         for ((flagKey, subType, subPlugin) in subFeatures) {
-            val enabled = ModifierPartConfig.enabled(instance.config, flagKey) || subType in subContexts
+            val enabled = ModifierPartConfig.enabled(instance.config, flagKey)
             if (!enabled) continue
-            val subValues = subContexts[subType]?.jsonObject ?: continue
-            val subCfgJson = subConfigs[subType]?.jsonObject ?: JsonObject(emptyMap())
-            val subTargets = subCfgJson["targets"]?.jsonArray?.map {
-                Json.decodeFromJsonElement(ModifierTarget.serializer(), it)
-            } ?: instance.targets
-            val subConfig = buildJsonObject {
-                put("scaffold", scaffold)
-                put("base", instance.id)
-                subCfgJson["values"]?.let { put("values", it) }
-                subCfgJson["tuning"]?.let { put("tuning", it) }
-                subCfgJson["physics"]?.let { put("physics", it) }
-                subCfgJson["physicsEnabled"]?.let { put("physicsEnabled", it) }
-                val deps = subCfgJson["dependencies"]?.jsonObject ?: instance.config["dependencies"]?.jsonObject ?: JsonObject(emptyMap())
-                val mergedDeps = buildJsonObject {
-                    deps.forEach { (k, v) -> put(k, v) }
-                    if (subType == BrowLidAlgorithm.TYPE && "eye/fitted" !in deps) {
-                        upstream.lastOrNull { it.capability == "eye/fitted" }?.instanceId?.let { put("eye/fitted", it) }
-                    }
-                }
-                if (mergedDeps.isNotEmpty()) put("dependencies", mergedDeps)
-                subCfgJson["dip"]?.let { put("dip", it) }
-            }
-            val subInstance = RigModifierInstance(
-                id = "${instance.id}:$subType",
-                type = subType,
-                version = 2,
-                targets = subTargets,
-                config = subConfig,
-                outputAliases = instance.outputAliases,
-                plugin = instance.plugin,
-            )
+            val subValues = requireNotNull(subContexts[subType]?.jsonObject) { "${instance.id}: missing enabled sub-context $subType" }
+            val subInstance = ModifierPartConfig.child(instance.copy(type = TYPE), subType, 2, upstream, subConfigs[subType]?.jsonObject)
+            val subTargets = subInstance.targets
+            val subConfig = subInstance.config
             val prefix = "sub:$subType:"
             val subResources = context.resources
                 .filterKeys { it.startsWith(prefix) }
                 .mapKeys { it.key.removePrefix(prefix) }
             val subContext = ModifierAlgorithmContext(subValues, subResources, upstream)
             val evalInput = ModifierEvaluationInput(current, subContext)
-            current = subPlugin.changes(evalInput, subInstance, checkpoint).apply(current, checkpoint)
+            current = subPlugin.changes(evalInput, subInstance.copy(version = 2), checkpoint).apply(current, checkpoint)
             upstream += ModifierUpstreamCapability(
                 capability = subType,
                 type = subType,

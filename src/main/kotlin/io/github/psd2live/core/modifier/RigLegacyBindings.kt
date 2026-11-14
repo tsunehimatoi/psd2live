@@ -153,6 +153,14 @@ internal object RigLegacyBindings {
         references = if (spec.seeThrough) SeeThroughContributions::references else RigModifierPhysics::references,
         parameters = { instance -> when {
             spec.type == "hair/legacy" -> requireNotNull(source).hairLegacyParameters(instance)
+            spec.module == RigModules.MOUTH_VOWEL -> io.github.psd2live.algorithms.binding.MouthVowelAlgorithm.parameters(
+                requireNotNull(source).mouthModuleContext(instance, RigModules.MOUTH_VOWEL))
+            spec.module == RigModules.MOUTH_CAPTURE -> io.github.psd2live.algorithms.binding.MouthCaptureAlgorithm.parameters(
+                requireNotNull(source).mouthModuleContext(instance, RigModules.MOUTH_CAPTURE))
+            spec.module == RigModules.MOUTH_TONGUE -> listOf(io.github.psd2live.algorithms.binding.MouthTongueAlgorithm.parameter(
+                requireNotNull(source).mouthModuleContext(instance, RigModules.MOUTH_TONGUE)))
+            spec.module == RigModules.MOUTH_SPRING -> io.github.psd2live.algorithms.binding.MouthSpringAlgorithm.parameters(
+                requireNotNull(source).mouthModuleContext(instance, RigModules.MOUTH_SPRING))
             spec.expressionToggles -> requireNotNull(source).expressionParameters(instance)
             spec.browShape -> io.github.psd2live.algorithms.binding.BrowShapeAlgorithm.parameters(
                 io.github.psd2live.algorithms.binding.BrowShapeInputs.decode(requireNotNull(source).browShapeContext(instance)) {})
@@ -198,12 +206,15 @@ internal object RigLegacyBindings {
             "body/legacy", "body.bust", "body.arms",
             "face/legacy", FITTED_FACE, "face.depth-turn", "face.neck",
             "hair/legacy", "hair/chains",
+            "mouth/fitted", "mouth/legacy", "mouth.outline", "mouth.vowel", "mouth.capture",
+            "mouth.tongue", "mouth.jaw", "mouth.cheek-lid", "mouth.interior-depth", "mouth.spring",
         ),
         changeWrites = when {
             spec.type == "face/legacy" -> setOf("mesh", "deformer", "parameter", "hierarchy", "relations")
             spec.type == "hair/legacy" -> setOf("mesh", "deformer", "parameter", "hierarchy")
             spec.type == "hair/chains" -> io.github.psd2live.algorithms.binding.HairChainsAlgorithm.WRITES
             spec.skinClip -> setOf("mesh", "relations")
+            spec.mouthOutline -> setOf("mesh", "part", "deformer", "parameter", "hierarchy", "relations", "textures", "authoring")
             spec.expressionCheek || spec.expressionGloom -> setOf("mesh", "parameter", "hierarchy")
             spec.eyeLidFade -> setOf("mesh")
             spec.browShape -> setOf("mesh", "parameter", "hierarchy")
@@ -308,13 +319,16 @@ internal object RigLegacyBindings {
                 io.github.psd2live.algorithms.binding.CreatureAlgorithm(), io.github.psd2live.algorithms.binding.CreatureAlgorithm.VERSION)
             spec.type == "hair/legacy" -> io.github.psd2live.algorithms.binding.HairLegacyAlgorithm()
             spec.type == "hair/chains" -> io.github.psd2live.algorithms.binding.HairChainsAlgorithm()
-            spec.type == "mouth/fitted" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
-                io.github.psd2live.algorithms.binding.MouthFittedAlgorithm(), 1)
+            spec.type == "mouth/fitted" -> object : ContextualModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.MouthFittedSourceAlgorithm(), 1), ModifierOptionalUpstream {
+                override val optionalUpstream = setOf("face/fitted", "face.depth-turn", "face/legacy", "body/legacy")
+            }
             spec.type == "mouth/legacy" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
                 io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm(),
                 io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm.VERSION)
-            spec.type == "mouth.outline" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
-                io.github.psd2live.algorithms.binding.MouthOutlineAlgorithm(), 1)
+            spec.type == "mouth.outline" -> object : ReadingModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.MouthOutlineAlgorithm(), ModifierOptionalUpstream {
+                override val optionalUpstream = setOf("mouth/fitted", "face/fitted", "face.depth-turn")
+            }
             spec.type == "mouth.vowel" -> object : ContextualModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
                 io.github.psd2live.algorithms.binding.MouthVowelAlgorithm(),
                 io.github.psd2live.algorithms.binding.MouthVowelAlgorithm.VERSION), ModifierOptionalUpstream {

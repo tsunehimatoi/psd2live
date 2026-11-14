@@ -1,18 +1,14 @@
 package io.github.psd2live.algorithms.binding
 
+import io.github.psd2live.core.modifier.ModifierPartConfig
 import io.github.psd2live.core.modifier.ChangingModifierAlgorithmPlugin
 import io.github.psd2live.core.modifier.ModifierAlgorithmContext
 import io.github.psd2live.core.modifier.ModifierEvaluationInput
 import io.github.psd2live.core.modifier.ModifierModelChanges
-import io.github.psd2live.core.modifier.ModifierTarget
 import io.github.psd2live.core.modifier.ModifierUpstreamCapability
 import io.github.psd2live.core.modifier.RigModifierInstance
 import io.github.psd2live.format.model.RigIR
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -32,6 +28,7 @@ class FacePartAlgorithm : ChangingModifierAlgorithmPlugin {
             ?: instance.config["mode"]?.jsonPrimitive?.content
             ?: "fitted"
         require(mode == "fitted" || mode == "legacy") { "Unsupported face mode: $mode" }
+        require(mode == "legacy" || !ModifierPartConfig.enabled(instance.config, "depthTurn")) { "${instance.id}: depthTurn requires legacy mode" }
 
         val scaffold = instance.config.getValue("scaffold").jsonPrimitive.content
         val baseType = if (mode == "fitted") "face/fitted" else "face/legacy"
@@ -82,57 +79,27 @@ class FacePartAlgorithm : ChangingModifierAlgorithmPlugin {
         val subContexts = context.values["sub_contexts"]?.jsonObject.orEmpty()
         val subConfigs = context.values["sub_configs"]?.jsonObject.orEmpty()
 
-        if (mode == "legacy" && (instance.config["depthTurn"]?.jsonPrimitive?.booleanOrNull == true || "face.depth-turn" in subContexts)) {
-            subContexts["face.depth-turn"]?.jsonObject?.let { subValues ->
-                val subCfg = subConfigs["face.depth-turn"]?.jsonObject ?: JsonObject(emptyMap())
-                val subTargets = subCfg["targets"]?.jsonArray?.map {
-                    Json.decodeFromJsonElement(ModifierTarget.serializer(), it)
-                } ?: instance.targets
-                val subConfig = buildJsonObject {
-                    put("scaffold", scaffold)
-                    put("dependencies", buildJsonObject { put("face/legacy", instance.id) })
-                    subCfg["values"]?.let { put("values", it) }
-                }
-                val subInstance = RigModifierInstance(
-                    id = "${instance.id}:face.depth-turn",
-                    type = "face.depth-turn",
-                    version = 1,
-                    targets = subTargets,
-                    config = subConfig,
-                )
+        if (mode == "legacy" && ModifierPartConfig.enabled(instance.config, "depthTurn")) {
+            requireNotNull(subContexts["face.depth-turn"]?.jsonObject) { "${instance.id}: missing enabled sub-context face.depth-turn" }.let { subValues ->
+                val subInstance = ModifierPartConfig.child(instance.copy(type = TYPE), "face.depth-turn", 1, upstream, subConfigs["face.depth-turn"]?.jsonObject)
                 val prefix = "sub:face.depth-turn:"
                 val subResources = context.resources.entries.associate { (k, v) ->
                     (if (k.startsWith(prefix)) k.removePrefix(prefix) else k) to v
                 }
                 val subContext = ModifierAlgorithmContext(subValues, subResources, upstream)
-                current = DepthTurnAlgorithm().changes(current, subInstance, subContext, checkpoint).apply(current, checkpoint)
+                current = DepthTurnAlgorithm().changes(current, subInstance.copy(version = 1), subContext, checkpoint).apply(current, checkpoint)
             }
         }
 
-        if (instance.config["neck"]?.jsonPrimitive?.booleanOrNull == true || "face.neck" in subContexts) {
-            subContexts["face.neck"]?.jsonObject?.let { subValues ->
-                val subCfg = subConfigs["face.neck"]?.jsonObject ?: JsonObject(emptyMap())
-                val subTargets = subCfg["targets"]?.jsonArray?.map {
-                    Json.decodeFromJsonElement(ModifierTarget.serializer(), it)
-                } ?: instance.targets
-                val subConfig = buildJsonObject {
-                    put("scaffold", scaffold)
-                    put("dependencies", buildJsonObject { put("face/legacy", instance.id) })
-                    subCfg["values"]?.let { put("values", it) }
-                }
-                val subInstance = RigModifierInstance(
-                    id = "${instance.id}:face.neck",
-                    type = "face.neck",
-                    version = NeckAlgorithm.VERSION,
-                    targets = subTargets,
-                    config = subConfig,
-                )
+        if (ModifierPartConfig.enabled(instance.config, "neck")) {
+            requireNotNull(subContexts["face.neck"]?.jsonObject) { "${instance.id}: missing enabled sub-context face.neck" }.let { subValues ->
+                val subInstance = ModifierPartConfig.child(instance.copy(type = TYPE), "face.neck", NeckAlgorithm.VERSION, upstream, subConfigs["face.neck"]?.jsonObject)
                 val prefix = "sub:face.neck:"
                 val subResources = context.resources
                     .filterKeys { it.startsWith(prefix) }
                     .mapKeys { (k, _) -> k.removePrefix(prefix) }
                 val subContext = ModifierAlgorithmContext(subValues, subResources, upstream)
-                current = NeckAlgorithm().changes(ModifierEvaluationInput(current, subContext), subInstance, checkpoint).apply(current, checkpoint)
+                current = NeckAlgorithm().changes(ModifierEvaluationInput(current, subContext), subInstance.copy(version = NeckAlgorithm.VERSION), checkpoint).apply(current, checkpoint)
             }
         }
 

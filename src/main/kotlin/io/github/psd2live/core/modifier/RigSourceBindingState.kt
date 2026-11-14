@@ -1,7 +1,6 @@
 package io.github.psd2live.core.modifier
 
 import io.github.psd2live.core.RigTuning
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -30,7 +29,7 @@ internal class RigSourceBindingState(instances: List<RigModifierInstance>) {
         (byType[RigLegacyBindings.FITTED_FACE] ?: byType["face/legacy"])?.let(RigLegacyBindings::strength) ?: 1f
     }
 
-    private companion object {
+    companion object {
         private val partBases = mapOf(
             "eye" to ("eye/fitted" to "eye/legacy"),
             "brow" to ("brow/fitted" to "brow/legacy"),
@@ -39,20 +38,7 @@ internal class RigSourceBindingState(instances: List<RigModifierInstance>) {
             "body" to ("body/legacy" to "body/legacy"),
             "hair" to ("hair/chains" to "hair/legacy"),
         )
-        private val partFlags = mapOf(
-            "eye" to listOf("wide" to "eye.wide", "smile" to "eye.smile", "emotion" to "eye.emotion",
-                "gazeLid" to "eye.gaze-lid", "highlight" to "eye.highlight", "lidFade" to "eye.lid-fade",
-                "squash" to "eye.squash", "aftershock" to "eye.aftershock"),
-            "brow" to listOf("shape" to "brow.shape", "spring" to "brow.spring",
-                "lidCoupling" to "brow.lid-coupling", "blink" to "brow.blink"),
-            "mouth" to listOf("outline" to "mouth.outline", "vowel" to "mouth.vowel",
-                "capture" to "mouth.capture", "tongue" to "mouth.tongue", "jaw" to "mouth.jaw",
-                "cheekLid" to "mouth.cheek-lid", "depth" to "mouth.interior-depth", "spring" to "mouth.spring"),
-            "face" to listOf("depthTurn" to "face.depth-turn", "neck" to "face.neck"),
-            "body" to listOf("bust" to "body.bust", "arms" to "body.arms"),
-        )
-
-        private fun expandPart(instance: RigModifierInstance): List<RigModifierInstance> {
+        internal fun expandPart(instance: RigModifierInstance): List<RigModifierInstance> {
             val bases = partBases[instance.type] ?: return listOf(instance)
             val mode = instance.config["mode"]?.jsonPrimitive?.content ?: "fitted"
             val baseType = if (mode == "legacy") bases.second else bases.first
@@ -65,13 +51,9 @@ internal class RigSourceBindingState(instances: List<RigModifierInstance>) {
                 instance.config["physicsEnabled"]?.let { put("physicsEnabled", it) }
             }
             val result = mutableListOf(instance.copy(type = baseType, config = baseConfig))
-            for ((flag, subType) in partFlags[instance.type].orEmpty()) {
+            for ((flag, subType) in ModifierPartConfig.features[instance.type].orEmpty()) {
                 if (ModifierPartConfig.enabled(instance.config, flag)) {
-                    val subConfig = buildJsonObject {
-                        instance.config["scaffold"]?.let { put("scaffold", it) }
-                        put("base", instance.id)
-                    }
-                    result += instance.copy(id = "${instance.id}:$flag", type = subType, config = subConfig)
+                    result += ModifierPartConfig.child(instance, subType)
                 }
             }
             return result

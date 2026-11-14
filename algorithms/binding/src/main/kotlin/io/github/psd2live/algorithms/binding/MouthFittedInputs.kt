@@ -2,6 +2,7 @@ package io.github.psd2live.algorithms.binding
 
 import io.github.psd2live.core.modifier.ModifierAlgorithmContext
 import io.github.psd2live.core.modifier.ModifierAlgorithmResource
+import io.github.psd2live.core.modifier.ModifierParameterI18n
 import kotlinx.serialization.json.*
 import kotlin.math.abs
 import kotlin.math.pow
@@ -192,7 +193,7 @@ data class MouthFittedInputs(
         """.trim().split(Regex("\\s+")).toSet()
 
         fun decode(context: ModifierAlgorithmContext): MouthFittedInputs {
-            val value = context.values
+            val value = JsonObject(context.values - ModifierParameterI18n.CONTEXT_KEY - MouthFittedSourceAlgorithm.COARSE_CONTEXT)
             require(value["schema"] == JsonPrimitive(SCHEMA)) { "Missing fitted mouth source inputs" }
             require(value.keys.all { it in setOf("schema", "mouth", "chin", "variant", "closed", "inside", "fade", "shapeName", "turnName",
                 "masks", "head", "fallback", "layers", "sourceVertices") })

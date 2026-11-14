@@ -56,7 +56,7 @@ object ExpressionWorker {
         val mouthFitted = BindingTransitionAlgorithm(MouthFittedSourceAlgorithm(), 1)
         register("mouth/fitted", "binding", mouthFitted)
         register("mouth/fitted", "source", mouthFitted)
-        register("mouth.outline", "outline", BindingTransitionAlgorithm(MouthOutlineAlgorithm(), 1))
+        register("mouth.outline", "outline", MouthOutlineAlgorithm())
         register("mouth.capture", "capture", BindingTransitionAlgorithm(MouthCaptureAlgorithm(), MouthCaptureAlgorithm.VERSION))
         register("mouth.vowel", "vowel", BindingTransitionAlgorithm(MouthVowelAlgorithm(), MouthVowelAlgorithm.VERSION))
         register("mouth.tongue", "tongue", BindingTransitionAlgorithm(MouthTongueAlgorithm(), MouthTongueAlgorithm.VERSION))

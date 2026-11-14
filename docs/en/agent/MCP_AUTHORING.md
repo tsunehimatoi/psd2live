@@ -109,6 +109,10 @@ Intent tools themselves have no dry run. `author_compile` compiles the same inte
 | `path_get / path_list / path_preview / path_put / path_delete / path_deform` | `request` | `get/list/preview/put/delete/deform` |
 | `history_checkpoint / history_list / history_checkout` | `request` | Create a checkpoint, read history or switch nodes |
 
+Part configurations (`eye`, `brow`, `mouth`, `face`, `body`, `hair`) remain strictly validated. Feature settings belong in `subConfigs`, keyed by the standalone type, such as `mouth.outline`. Each value accepts the corresponding algorithm's declared numeric, physics, dependency, and color fields, plus captured `targets`. Folded records also retain child `id`, `version`, and `outputAliases`; preserve unedited fields when updating. Child versions accept only public facade version `1`, which maps to the corresponding implementation version; unknown versions are rejected. The outline flag is `outline`. The canonical brow coupling flag is `lidCoupling`; historical `lid` is read only when the canonical key is absent. Explicit canonical `false` takes precedence. Editing the checkbox writes only the canonical key; reads and history navigation never rewrite old configurations.
+
+New presets fold only current-package candidates whose order, identities, targets, and dependencies can be preserved. Repeated features, disabled members, intervening steps, external child references, explicit version choices, or package overrides keep the affected group expanded. Saved exact package locks are never silently converted.
+
 Motion modifier `config` accepts optional `parameter_roles`, a map from runtime role names to parameter ID arrays. Blink plans populate `EyeBlink`. Evaluation validates referenced parameters and rejects incompatible definitions of the same role. Queries report changes under relations; applying a prefix persists the roles as ordinary model metadata.
 
 Materialized motion queries may return `captured_ranges: {parameterId: {min, max, repeat}}`, preserving the curve controls captured at application. These references follow parameter renames, deletions and range edits and persist with the project.

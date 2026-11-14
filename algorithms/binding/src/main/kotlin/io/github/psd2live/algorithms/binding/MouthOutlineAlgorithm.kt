@@ -73,7 +73,7 @@ class MouthOutlineAlgorithm : ReadingModifierAlgorithmPlugin {
     }
 
     private fun requireProvider(context: ModifierAlgorithmContext, provider: String, type: String, id: String) {
-        require(context.upstream.any { it.instanceId == provider && it.type == type && ModifierTarget("mesh", id) in it.targets }) {
+        require(context.upstream.any { it.instanceId == provider && it.capability == type && ModifierTarget("mesh", id) in it.targets }) {
             "Missing outline $type provider for $id"
         }
     }
