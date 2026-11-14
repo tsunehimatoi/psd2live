@@ -66,7 +66,7 @@ internal class RigSourceBindingState(instances: List<RigModifierInstance>) {
             }
             val result = mutableListOf(instance.copy(type = baseType, config = baseConfig))
             for ((flag, subType) in partFlags[instance.type].orEmpty()) {
-                if (instance.config[flag]?.jsonPrimitive?.booleanOrNull == true) {
+                if (ModifierPartConfig.enabled(instance.config, flag)) {
                     val subConfig = buildJsonObject {
                         instance.config["scaffold"]?.let { put("scaffold", it) }
                         put("base", instance.id)

@@ -932,7 +932,7 @@ internal class RigModifierSource(
                     "aftershock" to ("eye.aftershock" to ::eyeAftershockContext),
                 )
                 for ((flag, entry) in subBuilders) {
-                    if (instance.config[flag]?.jsonPrimitive?.booleanOrNull == true) {
+                    if (ModifierPartConfig.enabled(instance.config, flag)) {
                         val (subType, builder) = entry
                         val subCtx = builder(instance)
                         put(subType, subCtx.values)
@@ -970,7 +970,7 @@ internal class RigModifierSource(
                     "lidCoupling" to ("brow.lid-coupling" to ::browLidContext),
                 )
                 for ((flag, pair) in subs) {
-                    if (instance.config[flag]?.jsonPrimitive?.booleanOrNull == true) {
+                    if (ModifierPartConfig.enabled(instance.config, flag)) {
                         val (subType, provider) = pair
                         val subCtx = provider(instance)
                         put(subType, subCtx.values)
@@ -1038,7 +1038,7 @@ internal class RigModifierSource(
                 "arms" to ("body.arms" to ::armSwingContext),
             )
             for ((flag, pair) in subs) {
-                if (instance.config[flag]?.jsonPrimitive?.booleanOrNull == true) {
+                if (ModifierPartConfig.enabled(instance.config, flag)) {
                     val (subType, provider) = pair
                     val subCtx = provider(instance)
                     put(subType, subCtx.values)
@@ -1291,7 +1291,7 @@ internal class RigModifierSource(
         val resources = LinkedHashMap<String, ModifierAlgorithmResource>(baseContext.resources)
         val subContexts = buildJsonObject {
             for ((flag, entry) in subFlagToModule) {
-                if (instance.config[flag]?.jsonPrimitive?.booleanOrNull == true) {
+                if (ModifierPartConfig.enabled(instance.config, flag)) {
                     val (subType, builder) = entry
                     val subCfgObj = subConfigs[subType]?.jsonObject
                     val subTargets = subCfgObj?.get("targets")?.jsonArray?.map {

@@ -350,7 +350,7 @@ private fun ModifierPartValues(instance: RigModifierInstance, enabled: Boolean, 
             "shape" to "settings.rig.module.brow.shape",
             "spring" to "settings.rig.module.brow.spring",
             "blink" to "settings.rig.module.brow.blink",
-            "lid" to "settings.rig.module.brow.lid-coupling",
+            ModifierPartConfig.LID_COUPLING to "settings.rig.module.brow.lid-coupling",
         )
         RigSourceModifiers.FACE -> listOf(
             "depthTurn" to "settings.rig.module.face.depth-turn",
@@ -364,8 +364,8 @@ private fun ModifierPartValues(instance: RigModifierInstance, enabled: Boolean, 
     }
     for ((key, labelKey) in features) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            CompactCheckbox(instance.config[key]?.jsonPrimitive?.booleanOrNull == true, { value ->
-                updateConfig(JsonObject(instance.config + (key to JsonPrimitive(value))))
+            CompactCheckbox(ModifierPartConfig.enabled(instance.config, key), { value ->
+                updateConfig(ModifierPartConfig.withFlag(instance.config, key, value))
             }, enabled = enabled)
             Text(tr(labelKey), style = LocalToolTypography.current.caption)
         }

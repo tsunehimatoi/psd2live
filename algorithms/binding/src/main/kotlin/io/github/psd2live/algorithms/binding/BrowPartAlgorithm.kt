@@ -1,5 +1,6 @@
 package io.github.psd2live.algorithms.binding
 
+import io.github.psd2live.core.modifier.ModifierPartConfig
 import io.github.psd2live.core.modifier.ChangingModifierAlgorithmPlugin
 import io.github.psd2live.core.modifier.ModifierAlgorithmContext
 import io.github.psd2live.core.modifier.ModifierEvaluationInput
@@ -78,7 +79,7 @@ class BrowPartAlgorithm : ChangingModifierAlgorithmPlugin {
         val subConfigs = context.values["sub_configs"]?.jsonObject.orEmpty()
 
         for ((flagKey, subType, subPlugin) in subFeatures) {
-            val enabled = instance.config[flagKey]?.jsonPrimitive?.booleanOrNull == true || subType in subContexts
+            val enabled = ModifierPartConfig.enabled(instance.config, flagKey) || subType in subContexts
             if (!enabled) continue
             val subValues = subContexts[subType]?.jsonObject ?: continue
             val subCfgJson = subConfigs[subType]?.jsonObject ?: JsonObject(emptyMap())

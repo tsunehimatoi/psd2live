@@ -105,6 +105,7 @@ internal object WorkspaceModifierSchemas {
             "spring" to s.boolean(),
             "blink" to s.boolean(),
             "lidCoupling" to s.boolean(),
+            "lid" to s.boolean(), // Historical UI spelling; canonical lidCoupling takes precedence.
             "tuning" to s.dictionary(s.number()),
             "values" to s.dictionary(s.number()),
         ), setOf("scaffold"))
