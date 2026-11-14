@@ -24,15 +24,17 @@ endif()
 
 # Official Cubism SDK for Native is proprietary and must NOT be redistributed.
 # Point CUBISM_SDK_ROOT at your locally extracted CubismSdkForNative-5-r.5 tree.
+set(CUBISM_SDK_ROOT "" CACHE PATH "Path to locally extracted CubismSdkForNative-5-r.5")
 if(NOT CUBISM_SDK_ROOT AND DEFINED ENV{CUBISM_SDK_ROOT})
   set(CUBISM_SDK_ROOT "$ENV{CUBISM_SDK_ROOT}")
 endif()
 if(NOT CUBISM_SDK_ROOT)
-  message(FATAL_ERROR
-    "CUBISM_SDK_ROOT is not set.\n"
-    "Download Cubism 5 SDK for Native from Live2D, extract it, then pass:\n"
-    "  cmake -DCUBISM_SDK_ROOT=\"C:/path/to/CubismSdkForNative-5-r.5\" ...\n"
+  message(STATUS
+    "CUBISM_SDK_ROOT is not set; skipping optional live2d_renderer target. "
+    "Download Cubism 5 SDK for Native from Live2D, extract it, then pass "
+    "-DCUBISM_SDK_ROOT=\"C:/path/to/CubismSdkForNative-5-r.5\" "
     "or set the CUBISM_SDK_ROOT environment variable.")
+  return()
 endif()
 
 get_filename_component(CUBISM_SDK_ROOT "${CUBISM_SDK_ROOT}" ABSOLUTE)
