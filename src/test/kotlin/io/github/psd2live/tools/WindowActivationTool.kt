@@ -101,10 +101,11 @@ class WindowActivationTool {
             val runtime = checkNotNull(P2lRuntime.load(library)) { "P2LRT native library ABI is incompatible" }
             environment["nativeAbi"] = runtime.abiVersion.let { "${it ushr 16}.${it and 0xffff}" }
             environment["nativeAbiRequired"] = "${P2lRuntime.ABI_MAJOR}.${P2lRuntime.ABI_MINOR}"
-            SkiaGpu.requestOpenGl()
             // These are separate runs: set PSD2LIVE_COMPOSITOR=0 for the non-composited viewport path.
+            // GraphicsSettings captures this property on first access, including requestOpenGl().
             System.setProperty("psd2live.compositor", setting("PSD2LIVE_COMPOSITOR", "1").let { (it != "0").toString() })
             environment["compositorRequested"] = System.getProperty("psd2live.compositor")
+            SkiaGpu.requestOpenGl()
             val viewModel = edt { PSD2LiveViewModel() }.also { vm = it }
             val desktop = DesktopWorkspace(viewModel, out.resolve("workspace").toPath()).also { workspace = it }
             edt { viewModel.attachWorkspace(desktop); viewModel.selectPreviewBackend(PreviewBackend.P2LRT) }
@@ -198,6 +199,17 @@ class WindowActivationTool {
                 previousFrame = withTimeout(timeoutMs) { viewModel.sdkFrameFor(expected.viewId).first { it?.presentation?.token?.candidate == expected.candidate } }
                 check(previousFrame?.backend == PreviewBackend.P2LRT) { "Requested P2LRT but another backend delivered the frame" }
                 environment["gpu"] = SkiaGpu.primary?.description ?: gpu.description
+                val compositor = edt {
+                    val windowGpu = checkNotNull(SkiaGpu.primary)
+                    windowGpu.composited.value to windowGpu.compositorFrames
+                }
+                val requestedCompositor = environment["compositorRequested"] == "true"
+                check(compositor.first == requestedCompositor && (!requestedCompositor || compositor.second.first > 0)) {
+                    "Requested compositor=$requestedCompositor but observed active=${compositor.first}, frames=${compositor.second}"
+                }
+                environment["compositorActive"] = compositor.first.toString()
+                environment["composedFrames"] = compositor.second.first.toString()
+                environment["pictureReplayFrames"] = compositor.second.second.toString()
                 if (index > 0) {
                     check(activation.third) { "Missing stale-frame rejection evidence" }
                     rows += row(index, expected, activation.second, activation.third, "accepted", receipt)

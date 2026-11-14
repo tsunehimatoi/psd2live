@@ -40,7 +40,7 @@ $env:PSD2LIVE_TOOLS = '1'
 
 ## 生产预览的窗口 GPU 完成回执
 
-生产路径已接线，尚未运行真实窗口/GPU 验收或 30 次正式采样。本节指标名称为**模型激活捕获至窗口 GPU 完成**。起点是 VM 准备激活模型、捕获已提交工作区之前，不是编辑命令发起时刻；模型构建已完成，不能据此计算完整编辑延迟。
+生产路径已接线，当前工作树已运行真实窗口/GPU 功能 smoke（见末节），尚未执行整合基线的 30 次正式采样。本节指标名称为**模型激活捕获至窗口 GPU 完成**。起点是 VM 准备激活模型、捕获已提交工作区之前，不是编辑命令发起时刻；模型构建已完成，不能据此计算完整编辑延迟。
 
 1. `refreshSdkSession` 记录单调时钟，使用 `captureTextures()` 的原子快照检查 `preview === capture.model`。只有匹配时才携带该快照的 `revision/state`。每次激活分配不可复用的 `candidate`；未知来源的编辑草稿仍有候选身份以拒绝过期帧，但不报告修订延迟。延迟加载保留原令牌。
 2. `PreviewSessions.load` 向 Cubism 和 P2LRT 传递相同令牌，包括后端回退和多窗口懒加载。Cubism 仅在加载/更新成功后安装令牌；P2LRT 从 `PendingModel` 携带到实际成功的 `Loaded`。失败不会将新身份赋给旧模型。
@@ -65,14 +65,14 @@ PresentationMeasurements.onCompleted = null
 - 接线仅证明同一已提交模型候选的预览纹理经过窗口消费及 GPU 完成，不自动验证像素颜色、裁剪可见区域、遮挡或业务视觉正确性；正式首个正确画面验收仍应使用可区分修订的已知图案与像素检查。编辑画布的离屏工具不因此变成窗口测量工具。
 - 不覆盖窗口交换、系统桌面合成或显示器扫描，不能称为“已显示到屏幕”。同步 GPU 等待的开销包含在本指标中。
 - `candidate` 是本次模型激活身份，尚未与 `RigBuildProfile.Operation` 的候选身份建立映射；不能拼接两者得到完整编辑延迟。`revision/state` 可以用于诊断，但不能替代这种关联。
-- 钩子依赖仓库当前 Skiko 0.144.6 的 `drawContent/picture/pictureLock`。结构变化或上下文不可用会关闭回执并记录原因，不回退成录制时间。真实驱动、窗口回放和反射接线仍须在主会话安排的独占窗口中验证。
+- 钩子依赖仓库当前 Skiko 0.144.6 的 `drawContent/picture/pictureLock`。结构变化或上下文不可用会关闭回执并记录原因，不回退成录制时间。当前工作树已完成真实驱动、窗口回放和反射接线的功能 smoke；最终整合基线仍须在独占窗口中验收。
 - 无已提交捕获、预览未挂载、软件绘制、无匹配帧或被更新修订淘汰时不产生成功样本，验收工具应将其记为未完成，不能记作零延迟。
 
-无 GPU 回归覆盖令牌淘汰、视图关闭/重开、逐次纹理身份、发布与 GPU 完成乱序、重复完成、关闭测量、未知修订及观察者异常隔离，并以模拟 Cubism API 检查实际 session 的相同 bundle 重载、旧交付淘汰和加载失败。P2LRT 原生编译、真实窗口与像素正确性留待独占验收。
+无 GPU 回归覆盖令牌淘汰、视图关闭/重开、逐次纹理身份、发布与 GPU 完成乱序、重复完成、关闭测量、未知修订及观察者异常隔离，并以模拟 Cubism API 检查实际 session 的相同 bundle 重载、旧交付淘汰和加载失败。P2LRT 和真实窗口接线已另行完成下述功能 smoke；真实窗口像素正确性与正式性能验收仍待执行。
 
 ## 独占窗口验收驱动
 
-`WindowActivationTool` 已准备并通过编译，真实窗口执行仍需单独安排。它启动完整的 `PSD2LiveApp`，使用合成的四块彩色图案，经 `DesktopWorkspace` 安装原子工作区快照，再通过实际 VM、`WorkspaceRenderCoordinator`、P2LRT、`CanvasViewportComposable` 和 Skiko 的 `drawContent` 回放回执验收。它不调用离屏探针、不直接制造 GPU 完成回执。
+`WindowActivationTool` 已完成下述真实窗口功能 smoke，正式性能采样仍需单独安排。它启动完整的 `PSD2LiveApp`，使用合成的四块彩色图案，经 `DesktopWorkspace` 安装原子工作区快照，再通过实际 VM、`WorkspaceRenderCoordinator`、P2LRT、`CanvasViewportComposable` 和 Skiko 的 `drawContent` 回放回执验收。它不调用离屏探针、不直接制造 GPU 完成回执。
 
 每个样本先生成模型，再安装不同颜色的源图；模型生成不计入 activation 指标。激活在同一 EDT turn 内连续执行两次，前一候选被取代；验收要求后一候选的 `revision/state/candidate/viewId/capturedAt` 完全匹配。上一轮真实帧还会重新送给 production coordinator 和 VM，确认不能覆盖新帧流。普通测试中的假回执仅用于身份校验和队列边界的无 GPU 单元测试，不进入窗口采样。
 
@@ -92,10 +92,21 @@ $env:PSD2LIVE_TOOLS = '1'
 # 可明确指定已验证的 native DLL；未指定时会查找工具目录内准备好的本地副本。
 $env:PSD2LIVE_RUNTIME = (Resolve-Path 'build/tools/window-activation/native/p2l_runtime.dll').Path
 $env:PSD2LIVE_COMPOSITOR = '1'
-.\gradlew.bat :test --tests '*WindowActivationTool.smoke' --max-workers=2 '-Ppsd2live.testForks=1' --rerun-tasks
+.\gradlew.bat :test --tests '*WindowActivationTool.smoke' --max-workers=2 '-Ppsd2live.testForks=1'
 $env:PSD2LIVE_WINDOW_SAMPLES = '30'
-.\gradlew.bat :test --tests '*WindowActivationTool.measure' --max-workers=2 '-Ppsd2live.testForks=1' --rerun-tasks
+.\gradlew.bat :test --tests '*WindowActivationTool.measure' --max-workers=2 '-Ppsd2live.testForks=1'
 # 普通 Compose 回放路径另跑一轮，先保存前一轮报告，再设 PSD2LIVE_COMPOSITOR=0。
 ```
 
 `PSD2LIVE_WINDOW_TIMEOUT_SECONDS` 默认 30，允许 5–120 秒。准备的 DLL 来自主检出已有产物，仅作只读复制，ABI 已检查为 1.4（当前绑定最低 1.1），SHA-256 为 `09c517548a6daae7ac2f900f387ca89011a3d1bc1e432592de32402cbf1eab15`；主检出已在修订 `175b1672d8ab081ec9e9578296b46b6ea186f0b1`、runtime tree `cd24a07e9e018d894ffd718cfe7fb42422cbb5e3` 上成功执行 `cargo build --release --lib --locked -j 2`，Cargo 确认 optimized release 产物对当前源码和锁文件为 fresh，产物哈希与本地副本一致。来源记录在同目录 `provenance.json`，构建证据位于主检出的 `build/architecture-acceptance/runtime-build.log` 和 `runtime-provenance.json`。这项校验只确认 native 构建来源；实际窗口、GPU 及像素验收仍须分别执行。
+
+## 2026-11-14 功能 smoke 证据
+
+在 `07574b8e` 基础上执行功能检查，并修正工具的 compositor 初始化顺序：`GraphicsSettings` 在首次访问时读取启动属性，故 `psd2live.compositor` 必须在 `SkiaGpu.requestOpenGl()` 之前设置。工具现在同时检查并记录请求值、实际 `composited` 状态和合成帧计数；曾出现的“请求关闭但实际开启”结果作为失败证据保留，未计为关闭路径通过。
+
+- 离屏 `FirstCorrectFrameTool.verifyReadback`：三个规模、两种模式共 12 帧通过已知像素校验。
+- `WindowActivationTool.smoke`：compositor=1 和 0 分别执行，均完成 1 次预热和 2 次检查激活，回执身份、被取代候选和旧帧拒绝检查通过，实际模式与请求一致，窗口自动关闭。
+- GPU 为 NVIDIA RTX 4080 Laptop，驱动报告 617.42；P2LRT DLL 哈希与上述已验证构建相同。本轮 `preActivationReceipts` 为空，未复现导入前回执竞态。
+- 检查期间有并行 CPU 构建，所有时间均不作性能验收数据，不输出性能分位数。窗口 smoke 只证明 activation→window GPU 身份及完成回执；窗口像素仍未核验，不能与离屏像素检查合称完整 first correct frame 验收。
+
+独立报告、日志、JUnit 结果与失败留档位于当前工作树 `build/verification/window-functional-smoke/`。`PSD2LIVE_TOOLS=1` 已使 Gradle 测试任务禁用缓存和 up-to-date 替代，不需要用 `--rerun-tasks` 重编译全部依赖。正式 30 次采样仍等待最终整合基线及独占窗口。
