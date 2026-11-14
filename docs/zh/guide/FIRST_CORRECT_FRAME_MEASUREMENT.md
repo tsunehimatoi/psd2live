@@ -96,4 +96,4 @@ $env:PSD2LIVE_WINDOW_SAMPLES = '30'
 # 普通 Compose 回放路径另跑一轮，先保存前一轮报告，再设 PSD2LIVE_COMPOSITOR=0。
 ```
 
-`PSD2LIVE_WINDOW_TIMEOUT_SECONDS` 默认 30，允许 5–120 秒。准备的 DLL 来自主检出已有产物，仅作只读复制，ABI 已检查为 1.4（当前绑定最低 1.1），SHA-256 为 `09c517548a6daae7ac2f900f387ca89011a3d1bc1e432592de32402cbf1eab15`；该二进制的精确源码版本尚未证明，来源记录在同目录 `provenance.json`。需要严格绑定当前源码时，应在当前工作树执行 `:buildRuntime` 后显式设置 `PSD2LIVE_RUNTIME`，不能把 ABI 兼容等同于源码一致。
+`PSD2LIVE_WINDOW_TIMEOUT_SECONDS` 默认 30，允许 5–120 秒。准备的 DLL 来自主检出已有产物，仅作只读复制，ABI 已检查为 1.4（当前绑定最低 1.1），SHA-256 为 `09c517548a6daae7ac2f900f387ca89011a3d1bc1e432592de32402cbf1eab15`；主检出已在修订 `175b1672d8ab081ec9e9578296b46b6ea186f0b1`、runtime tree `cd24a07e9e018d894ffd718cfe7fb42422cbb5e3` 上成功执行 `cargo build --release --lib --locked -j 2`，Cargo 确认 optimized release 产物对当前源码和锁文件为 fresh，产物哈希与本地副本一致。来源记录在同目录 `provenance.json`，构建证据位于主检出的 `build/architecture-acceptance/runtime-build.log` 和 `runtime-provenance.json`。这项校验只确认 native 构建来源；实际窗口、GPU 及像素验收仍须分别执行。
