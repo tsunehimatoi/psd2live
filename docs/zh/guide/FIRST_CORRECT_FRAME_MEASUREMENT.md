@@ -77,7 +77,7 @@ PresentationMeasurements.onCompleted = null
 每个样本先生成模型，再安装不同颜色的源图；模型生成不计入 activation 指标。激活在同一 EDT turn 内连续执行两次，前一候选被取代；验收要求后一候选的 `revision/state/candidate/viewId/capturedAt` 完全匹配。上一轮真实帧还会重新送给 production coordinator 和 VM，确认不能覆盖新帧流。普通测试中的假回执只用于 `WindowActivationAuditTest`，不进入窗口采样。
 
 - `smoke`：1 次预热、2 次正式激活，仅作实际窗口、native 及反射接线的初验，无性能分位数。
-- `measure`：1 次预热、至少 30 次正式激活；所有样本身份正确才输出中位数、最近秩 P95、最大值。
+- `measure`：5 次预热、至少 30 次正式激活；预热也必须通过身份与回执校验，预热耗时不纳入统计。报告记录要求和完成的预热次数；所有样本身份正确才输出中位数、最近秩 P95、最大值。
 - 使用 coroutine flow/channel 和有界超时等待事件，不使用 sleep 轮询。无窗口回执会记录 `timeout_no_window_receipt` 和空 GPU 结束时间，失败退出、保留已完成样本，不输出成功统计或用 CPU/离屏时间补齐。
 - 报告分别写到 `build/tools/window-activation-smoke/report.json`、`build/tools/window-activation/report.json`，保留所有原始回执、期望身份、被取代候选、旧帧拒绝结果、GPU/native 环境与 DLL SHA-256。实际驱动不证明像素颜色或屏幕扫描正确。
 - 起点分别记录 `syntheticInstallStartedAtNanos`、`activationCapturedAtNanos`；`editStartedAtNanos=null`，因为这里没有测量真实编辑命令，不能把合成安装起点称为编辑起点。JVM/窗口 context 已热，每次安装会重新挂载预览视图，结果也不能冒充进程冷启动。

@@ -46,6 +46,7 @@ class WindowActivationTool {
     }
 
     private fun run(samples: Int, benchmark: Boolean) = runBlocking {
+        val warmups = if (benchmark) 5 else 1
         val out = output(if (benchmark) "window-activation" else "window-activation-smoke")
         val rows = ArrayList<JsonObject>()
         val raw = ConcurrentLinkedQueue<PresentationReceipt>()
@@ -59,6 +60,7 @@ class WindowActivationTool {
         var failure: String? = null
         var phase = "native_preflight"
         var successful = 0
+        var warmedUp = 0
         val timeoutMs = setting("PSD2LIVE_WINDOW_TIMEOUT_SECONDS", "30").toLong().also { require(it in 5..120) } * 1000
         val previousObserver = PresentationMeasurements.onCompleted
         check(previousObserver == null) { "Another presentation measurement is already active" }
@@ -68,7 +70,8 @@ class WindowActivationTool {
             out.resolve("report.json").writeText(buildJsonObject {
                 put("metric", "model_activation_capture_to_window_gpu_completion")
                 put("benchmark", benchmark); put("requestedSamples", samples); put("successfulSamples", successful)
-                put("complete", failure == null && successful == samples)
+                put("requestedWarmups", warmups); put("successfulWarmups", warmedUp)
+                put("complete", failure == null && warmedUp == warmups && successful == samples)
                 put("phase", phase); put("failure", failure?.let(::JsonPrimitive) ?: JsonNull)
                 put("backend", "P2LRT"); put("pixelCorrectnessValidated", false); put("screenPresentationMeasured", false)
                 put("workload", "four synthetic colored tiles; changing raster revision; no masks, physics or playback")
@@ -132,11 +135,12 @@ class WindowActivationTool {
             val revisions = HashSet<String>()
             val states = HashSet<String>()
             var previousFrame: PreviewFrame? = null
-            for (index in 0..samples) {
-                phase = if (index == 0) "warmup" else "sample_$index"
-                val (document, model) = fixture(index) // Preparation is outside activation timing.
+            for (ordinal in 1..warmups + samples) {
+                val index = ordinal - warmups
+                phase = if (index <= 0) "warmup_$ordinal" else "sample_$index"
+                val (document, model) = fixture(ordinal) // Preparation is outside activation timing.
                 val installStarted = System.nanoTime()
-                edt { viewModel.applySourceImport(viewModel.state.value, document, model, null, "window-activation-$index") }
+                edt { viewModel.applySourceImport(viewModel.state.value, document, model, null, "window-activation-$ordinal") }
                 withTimeout(60_000) { desktop.importedPsd(recoverLegacy = false) }
                 val activation = edt {
                     viewModel.leaveStartPage()
@@ -169,7 +173,7 @@ class WindowActivationTool {
                 val expected = activation.first
                 val receipt = withTimeoutOrNull(timeoutMs) { receipts.receive() }
                 if (receipt == null) {
-                    if (index != 0) rows += row(index, expected, activation.second, activation.third, "timeout_no_window_receipt", null)
+                    if (index > 0) rows += row(index, expected, activation.second, activation.third, "timeout_no_window_receipt", null)
                     report()
                     error("No window GPU receipt for candidate ${expected.candidate} within ${timeoutMs}ms; status=${viewModel.state.value.sdkStatus}")
                 }
@@ -180,12 +184,12 @@ class WindowActivationTool {
                 previousFrame = withTimeout(timeoutMs) { viewModel.sdkFrameFor(expected.viewId).first { it?.presentation?.token?.candidate == expected.candidate } }
                 check(previousFrame?.backend == PreviewBackend.P2LRT) { "Requested P2LRT but another backend delivered the frame" }
                 environment["gpu"] = SkiaGpu.primary?.description ?: gpu.description
-                if (index != 0) {
+                if (index > 0) {
                     check(activation.third) { "Missing stale-frame rejection evidence" }
                     rows += row(index, expected, activation.second, activation.third, "accepted", receipt)
                     durations += nanos; successful++
                     report()
-                }
+                } else { warmedUp++; report() }
             }
             // Drain already delivered extras: duplicates/late obsolete callbacks cannot silently pass.
             check(receipts.tryReceive().isFailure) { "Unexpected extra window receipt" }
@@ -207,7 +211,7 @@ class WindowActivationTool {
             if (failure == null && receipts.tryReceive().isSuccess) failure = "Unexpected late window receipt during shutdown"
             report()
         }
-        check(failure == null && successful == samples) { failure ?: "Incomplete window acceptance" }
+        check(failure == null && warmedUp == warmups && successful == samples) { failure ?: "Incomplete window acceptance" }
     }
 
     private suspend fun <T> edt(action: () -> T): T = withTimeout(30_000) {
