@@ -140,7 +140,9 @@ internal class RigModifierEvaluationCache {
                         val entries: List<ModifierEvaluation>, val outputs: List<RigIR>, val plugins: Long = ModifierPluginStore.shared.revision.value,
                         val algorithms: Map<String, ModifierInputCache.Entry> = emptyMap(),
                         val authorContexts: Map<String, ModifierAlgorithmContext> = emptyMap(),
-                        val readAlgorithms: Map<String, ModifierInputCache.ReadEntry> = emptyMap())
+                        val readAlgorithms: Map<String, ModifierInputCache.ReadEntry> = emptyMap(),
+                        /** Immutable caller provenance; never part of the evaluator's semantic cache key. */
+                        val buildInputs: Any? = null)
     @Volatile var snapshot: Snapshot? = null
 }
 

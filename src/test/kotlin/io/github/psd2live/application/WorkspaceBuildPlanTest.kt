@@ -138,4 +138,18 @@ class WorkspaceBuildPlanTest {
         assertFull(WorkspaceBuildPlanner.plan(inputs(), changed, contracts(stack)), WorkspaceBuildReason.DOCUMENT_CHANGED)
         assertFailsWith<IllegalArgumentException> { after.copy(config = after.config.copy(rigEdits = RigEditOverlay())) }
     }
+
+    @Test fun bundledReadContractsAcceptCanonicalAliasesButRejectHistoricalAndForeignPackages() {
+        val scaffold = RigModifierInstance("scaffold", "rig.scaffold", 2, target)
+        val current = part.copy(plugin = BuiltinModifierPlugins.reference("eye", 1))
+        val foreign = part.copy(id = "foreign", plugin = ModifierPluginReference("foreign", "1.0.0", "a".repeat(64)))
+        val unknown = prefix.copy(type = "future.algorithm")
+        val definitions = WorkspaceBuildPlanner.completeBundledReads(inputs(RigModifierStack(listOf(scaffold, current, foreign, unknown))))
+        assertTrue(ModifierBuildIdentity.of(scaffold) in definitions)
+        assertTrue(ModifierBuildIdentity.of(current) in definitions)
+        assertFalse(ModifierBuildIdentity.of(foreign) in definitions)
+        assertFalse(ModifierBuildIdentity.of(unknown) in definitions)
+        val historical = current.copy(plugin = current.plugin!!.copy(digest = "b".repeat(64)))
+        assertTrue(WorkspaceBuildPlanner.completeBundledReads(inputs(RigModifierStack(listOf(historical)))).isEmpty())
+    }
 }

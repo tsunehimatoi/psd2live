@@ -1,6 +1,8 @@
 package io.github.psd2live.application
 
 import io.github.psd2live.core.PipelineConfig
+import io.github.psd2live.core.RigBuildProfile
+import io.github.psd2live.core.modifier.BuiltinModifierPlugins
 import io.github.psd2live.core.modifier.ModifierPluginReference
 import io.github.psd2live.core.modifier.RigModifierInstance
 import io.github.psd2live.core.modifier.RigModifierStack
@@ -35,6 +37,7 @@ internal enum class WorkspaceBuildReason {
     PART_SUB_CONFIG_CHANGED, MESH_SPLIT_APPENDED, UNCHANGED_PREFIX, ORDERED_SUCCESSOR,
 }
 internal enum class WorkspaceBuildPilot { NONE, PART_SUB_CONFIG, APPEND_MESH_SPLIT }
+internal enum class WorkspaceBuildRoute { EXISTING_PIPELINE, PILOT, UNCACHED }
 internal data class WorkspaceStageDecision(val stage: WorkspaceBuildStage, val action: WorkspaceBuildAction, val reason: WorkspaceBuildReason)
 internal data class WorkspaceModifierDecision(val id: String, val action: WorkspaceBuildAction, val reason: WorkspaceBuildReason)
 
@@ -49,13 +52,42 @@ internal data class WorkspaceBuildPlan(
     val modifiers: List<WorkspaceModifierDecision>,
 ) {
     val fullyInvalidated get() = stages.all { it.action == WorkspaceBuildAction.INVALIDATE }
+    // Outside the two audited pilots this policy grants no new reuse. Existing caches continue to
+    // check their own complete keys; a conservative plan is not an instruction to flush all of them.
+    val route get() = when {
+        stages.any { it.reason == WorkspaceBuildReason.CACHE_DISABLED } -> WorkspaceBuildRoute.UNCACHED
+        pilot != WorkspaceBuildPilot.NONE -> WorkspaceBuildRoute.PILOT
+        else -> WorkspaceBuildRoute.EXISTING_PIPELINE
+    }
 }
 
 internal object WorkspaceBuildPlanner {
+    // These in-process entrypoints read the immutable ordinary rig, captured source/config, and ordered
+    // upstream capabilities. Simulation bakes, foreign packages and historical worker implementations
+    // have no audited build-input contract here and remain conservative misses.
+    private val auditedBuiltins = setOf("rig.scaffold", "eye", "brow", "mouth", "face", "body", "mesh.split", "motion", "physics")
+    fun completeBundledReads(vararg inputs: WorkspaceBuildInputs?): Set<ModifierBuildIdentity> = inputs.filterNotNull()
+        .flatMap { it.document.rigEdits.modifierStack?.let(RigModifierStack::fromJson)?.instances.orEmpty() }
+        .filter { instance -> instance.type in auditedBuiltins &&
+            (instance.version == 1 || (instance.type == "rig.scaffold" && instance.version == 2)) &&
+            (instance.plugin == null || instance.plugin == BuiltinModifierPlugins.reference(instance.type, instance.version)) }
+        .mapTo(HashSet(), ModifierBuildIdentity::of)
+
+    fun record(plan: WorkspaceBuildPlan) {
+        if (!RigBuildProfile.recording) return
+        RigBuildProfile.count("build plan route: ${plan.route.name.lowercase()}")
+        if (plan.route == WorkspaceBuildRoute.EXISTING_PIPELINE) return
+        for (decision in plan.stages) RigBuildProfile.count(
+            "build plan: ${decision.stage.name.lowercase()}: ${decision.action.name.lowercase()}: ${decision.reason.name.lowercase()}")
+        RigBuildProfile.count("build plan pilot: ${plan.pilot.name.lowercase()}")
+        RigBuildProfile.gauge("build plan invalidated modifiers",
+            plan.modifiers.count { it.action == WorkspaceBuildAction.INVALIDATE }.toLong())
+    }
+
     /**
      * [completeReads] must come from audited algorithm/author-context contracts for these exact identities.
      * An omitted declaration invalidates everything, including stages that a heuristic could call unchanged.
-     * Final builder/cache-owner integration is deliberately separate from this pure planning boundary.
+     * The builder applies these decisions before consulting its existing bounded cache owner.
      */
     fun plan(before: WorkspaceBuildInputs?, after: WorkspaceBuildInputs,
              completeReads: Set<ModifierBuildIdentity> = emptySet(), cacheEnabled: Boolean = true): WorkspaceBuildPlan {
@@ -77,7 +109,7 @@ internal object WorkspaceBuildPlanner {
         if (after.config.copy(rigEdits = restoredOverlay) != before.config) return full(WorkspaceBuildReason.CONFIG_CHANGED)
         if ((old.instances + next.instances).any { ModifierBuildIdentity.of(it) !in completeReads })
             return full(WorkspaceBuildReason.UNKNOWN_READS)
-        if (old == next) return WorkspaceBuildPlan(WorkspaceBuildPilot.NONE,
+        if (old.toJson() - "organization" == next.toJson() - "organization") return WorkspaceBuildPlan(WorkspaceBuildPilot.NONE,
             WorkspaceBuildStage.entries.map { WorkspaceStageDecision(it, WorkspaceBuildAction.CHECK_EXISTING_KEY, WorkspaceBuildReason.UNCHANGED_INPUTS) },
             next.instances.map { WorkspaceModifierDecision(it.id, WorkspaceBuildAction.CHECK_EXISTING_KEY, WorkspaceBuildReason.UNCHANGED_INPUTS) })
 
