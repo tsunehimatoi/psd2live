@@ -16,17 +16,15 @@ import kotlin.test.*
 /**
  * Procedural artwork only; no external sample or worker is required.
  * PSD2LIVE_TOOLS=1 ./gradlew :test --tests '*WorkspacePartBuildPlanTool'
- * Default: one correctness pair, not a performance acceptance run. Set PSD2LIVE_BUILD_PLAN_SAMPLES=30
- * only in the reserved measurement window, and rerun on the final part-plugin integration baseline.
+ * Default: one correctness pair, zero warmups, never performance acceptance.
+ * Formal (reserved window only): PSD2LIVE_BUILD_PLAN_FORMAL=1 and PSD2LIVE_BUILD_PLAN_BASELINE=<full SHA>.
+ * Requires a clean fixed checkout, >=5 warmup pairs and >=30 measured pairs; defaults are 5 and 30.
+ * PSD2LIVE_BUILD_PLAN_WARMUPS / PSD2LIVE_BUILD_PLAN_SAMPLES override those counts.
+ * Both phases validate parity; warmup observations are excluded from latency summaries.
  */
 class WorkspacePartBuildPlanTool {
     @Test fun actualPartSubConfigMatchesUncachedBuild() = runBlocking<Unit> {
         requireTools()
-        val samples = setting("PSD2LIVE_BUILD_PLAN_SAMPLES", "1").toInt().also { require(it in 1..100) }
-        val revision = ProcessBuilder("git", "rev-parse", "HEAD").redirectErrorStream(true).start().let {
-            val value = it.inputStream.bufferedReader().readText().trim()
-            check(it.waitFor() == 0); value
-        }
         val directory = output("workspace-part-build-plan").toPath()
         val owners = mutableSetOf<ModifierBuildCacheOwner>()
         fun retain(model: RigPreviewModel) = model.also { it.modifierBuildOwner?.let(owners::add) }
@@ -34,9 +32,13 @@ class WorkspacePartBuildPlanTool {
         val enabled = WorkspacePreviewBuilder(observeBuildPlan = plans::add)
         val disabled = WorkspacePreviewBuilder(modifierCachesEnabled = false)
         val recording = RigBuildProfile.recording
-        val rows = mutableListOf<JsonObject>()
-        Files.writeString(directory.resolve("report.json"), """{"status":"running","revision":"$revision"}""")
+        var report: PartBuildPlanRunReport? = null
+        Files.writeString(directory.resolve("report.json"), """{"status":"initializing","complete":false}""")
         try {
+            val options = PartBuildPlanRunOptions.environment()
+            val runReport = PartBuildPlanRunReport(options, PartBuildPlanSource.capture()).also { report = it }
+            runReport.validateStart()
+            Files.writeString(directory.resolve("report.json"), runReport.json().toString())
             val artwork = Characters.mouthed(withNose = true)
             val config = artwork.config().copy(meshSpacing = 24,
                 rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
@@ -73,7 +75,7 @@ class WorkspacePartBuildPlanTool {
                 retain((if (cache) enabled else disabled).build(edited, before))
             }
             fun record(sample: Int, cache: Boolean, measured: RigBuildProfile.Measurement<RigPreviewModel>, ir: RigIR) {
-                rows += buildJsonObject {
+                runReport.append(buildJsonObject {
                     put("sample", sample); put("cache", cache); put("elapsed_ms", measured.elapsedMillis)
                     put("heap_before", measured.before.heapUsed); put("heap_after", measured.after.heapUsed)
                     putJsonObject("stages") { measured.stages.forEach { (name, value) ->
@@ -83,14 +85,15 @@ class WorkspacePartBuildPlanTool {
                     put("rig_ir_sha256", digest(RigIrBinary.encode(ir)))
                     putJsonArray("texture_png_sha256") { ir.textures.pages.forEach { add(digest(it.png.shared())) } }
                     putJsonObject("tile_rgba_sha256") { ir.textures.tileArt.forEach { put(it.tile, digest(it.rgba.shared())) } }
-                }
+                })
             }
-            repeat(samples) { sample ->
+            repeat(options.warmups + options.samples) { pair ->
+                val sample = pair - options.warmups
                 // Alternate pair order; the captured start model/document stay identical in every sample.
-                val first = build(sample % 2 == 0)
-                val second = build(sample % 2 != 0)
-                val hot = if (sample % 2 == 0) first else second
-                val cold = if (sample % 2 == 0) second else first
+                val first = build(pair % 2 == 0)
+                val second = build(pair % 2 != 0)
+                val hot = if (pair % 2 == 0) first else second
+                val cold = if (pair % 2 == 0) second else first
                 val plan = plans.last()
                 assertEquals(WorkspaceBuildRoute.PILOT, plan.route)
                 assertEquals(WorkspaceBuildPilot.PART_SUB_CONFIG, plan.pilot)
@@ -126,14 +129,17 @@ class WorkspacePartBuildPlanTool {
                     Files.write(directory.resolve("cache-off.rigir"), RigIrBinary.encode(expected))
                     Files.writeString(directory.resolve("edited-stack.json"), edited.rigEdits.modifierStack.toString())
                 }
-                record(sample, true, hot, actual); record(sample, false, cold, expected)
+                if (sample < 0) runReport.warmupCompleted() else {
+                    record(sample, true, hot, actual); record(sample, false, cold, expected)
+                }
+                Files.writeString(directory.resolve("report.json"), runReport.json().toString())
                 cold.value.modifierBuildOwner?.let { it.close(); owners.remove(it) }
             }
-            Files.writeString(directory.resolve("report.json"), Json { prettyPrint = true }.encodeToString(JsonObject.serializer(), buildJsonObject {
-                put("status", "passed"); put("revision", revision); put("samples_per_mode", samples)
+            // Resource release is part of completion; a failed release cannot publish successful percentiles.
+            owners.forEach { it.close() }
+            runReport.complete(PartBuildPlanSource.capture())
+            Files.writeString(directory.resolve("report.json"), JsonObject(runReport.json() + buildJsonObject {
                 put("validation", "complete IR + PNG + RGBA + actual PART_SUB_CONFIG route + changed face keyforms")
-                put("scope", "modifier build caches; no external workers; final A5 baseline must be revalidated")
-                put("performance_acceptance", false)
                 put("operation", identity.scenario)
                 put("start_revision", identity.startRevision); put("candidate_revision", identity.candidate)
                 put("meshes", identity.meshes); put("vertices", identity.vertices)
@@ -146,12 +152,14 @@ class WorkspacePartBuildPlanTool {
                         put("stage", decision.stage.name); put("action", decision.action.name); put("reason", decision.reason.name)
                     } } }
                 }
-                put("measurements", JsonArray(rows))
-            }))
+            }).toString())
         } catch (failure: Throwable) {
-            Files.writeString(directory.resolve("report.json"), buildJsonObject {
-                put("status", "failed"); put("revision", revision); put("failure", failure.toString())
-            }.toString())
+            report?.failed(failure)
+            val failed = report?.json() ?: buildJsonObject {
+                put("status", "failed"); put("complete", false); put("performance_acceptance", false)
+                put("failure", failure.toString())
+            }
+            Files.writeString(directory.resolve("report.json"), failed.toString())
             throw failure
         } finally { RigBuildProfile.recording = recording; owners.forEach { it.close() } }
     }
