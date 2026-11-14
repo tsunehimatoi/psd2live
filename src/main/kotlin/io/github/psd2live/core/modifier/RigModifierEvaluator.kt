@@ -1,5 +1,6 @@
 package io.github.psd2live.core.modifier
 
+import io.github.psd2live.algorithm.worker.AlgorithmResultValidation
 import io.github.psd2live.format.model.Parameter
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.format.model.Deformer
@@ -329,21 +330,24 @@ internal class RigModifierEvaluator(
                             val view = ModifierEvaluationInput(before, authorContext)
                             val changes = plugin.changes(view, instance, checkpoint)
                             changes.requireWrites(requireNotNull(definition.changeWrites) { "${instance.type}: missing change write contract" })
-                            syncParametersFromTree(changes.applyWithResources(before, checkpoint, resolveRasters)).also {
+                            changes.applyWithResources(before, checkpoint, resolveRasters).also {
                                 readCache[instance.id] = ModifierInputCache.ReadEntry(instance, plugin, authorContext, view.reads(), changes)
                             }
                         }
                     }
-                    is ChangingModifierAlgorithmPlugin -> syncParametersFromTree(plugin.changes(before, instance, authorContext, checkpoint).also {
+                    is ChangingModifierAlgorithmPlugin -> plugin.changes(before, instance, authorContext, checkpoint).also {
                         it.requireWrites(requireNotNull(definition.changeWrites) { "${instance.type}: missing change write contract" })
-                    }.applyWithResources(before, checkpoint, resolveRasters))
-                    is ContextualModifierAlgorithmPlugin -> syncParametersFromTree(plugin.evaluate(before, instance, authorContext, checkpoint))
-                    else -> syncParametersFromTree(plugin.evaluate(before, instance, checkpoint))
+                    }.applyWithResources(before, checkpoint, resolveRasters)
+                    is ContextualModifierAlgorithmPlugin -> plugin.evaluate(before, instance, authorContext, checkpoint)
+                    else -> plugin.evaluate(before, instance, checkpoint)
                 }
             }
-            val generated = if (rawSourceRotations && cached == null)
+            // Both caches retain raw changes. Derived parameter order must be recomputed from the
+            // actual prefix rather than replayed as an algorithm-owned replacement of all parameters.
+            val raw = if (rawSourceRotations && cached == null)
                 RawSourceRotationTransfer.apply(before, evaluated, instance, authorContext) else evaluated
-            if (inputKey != null && cached == null) algorithmCache[instance.id] = ModifierInputCache.Entry(instance, inputKey, ModifierInputCache.Patch(before, generated))
+            val generated = normalizeResult(raw)
+            if (inputKey != null && cached == null) algorithmCache[instance.id] = ModifierInputCache.Entry(instance, inputKey, ModifierInputCache.Patch(before, raw))
             checkpoint()
             validateParameters(before, generated, instance, resolved)
             declared.forEach { parameter ->
@@ -353,7 +357,7 @@ internal class RigModifierEvaluator(
             val overrides = stack.overrides[instance.id].orEmpty()
             val overridden = if (overrides.isEmpty()) ModifierOverrideResult(generated) else
                 io.github.psd2live.core.RigBuildProfile.stage("modifier overrides") { applyOverrides(generated, instance, overrides) }
-            current = overridden.rig.let { output ->
+            current = (if (overrides.isEmpty()) overridden.rig else normalizeResult(overridden.rig)).let { output ->
                 if (physicsOrder.isEmpty()) output else output.copy(physics = output.physics.copy(
                     groups = io.github.psd2live.core.PhysicsCatalog.ordered(output.physics.groups, physicsOrder) { it.id }))
             }
@@ -477,6 +481,13 @@ internal class RigModifierEvaluator(
         } }
     }
 
+    private fun normalizeResult(rig: RigIR): RigIR {
+        // Validate before indexing the parameter list: normalization must never hide duplicate IDs
+        // or dangling tree entries. Reordering an already valid list preserves these invariants.
+        AlgorithmResultValidation.validate(rig)
+        return syncParametersFromTree(rig)
+    }
+
     private fun syncParametersFromTree(rig: RigIR): RigIR {
         if (rig.parameterTree.isEmpty()) return rig
         val order = ArrayList<String>(rig.parameters.size)
@@ -490,7 +501,7 @@ internal class RigModifierEvaluator(
         if (order.isEmpty()) return rig
         val byId = rig.parameters.associateBy { it.id }
         val seen = order.toHashSet()
-        val next = order.mapNotNull(byId::get) + rig.parameters.filter { it.id !in seen }
+        val next = order.map(byId::getValue) + rig.parameters.filter { it.id !in seen }
         return if (next.map { it.id } == rig.parameters.map { it.id }) rig else rig.copy(parameters = next)
     }
 
