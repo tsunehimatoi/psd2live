@@ -324,7 +324,7 @@ class WorkspacePresetInitializeTest {
         assertTrue(rebuilt.rig.puppet.drawables.isNotEmpty())
     }
 
-    @Test fun bundledPluginRetainSupersedesStaleSameVersionDevBuildInRealStore() {
+    @Test fun bundledPluginRetainPreservesExactSameVersionHistoryInRealStore() {
         val tempRoot = java.nio.file.Files.createTempDirectory("psd2live-store-test-")
         val prefs = java.util.prefs.Preferences.userRoot().node("io.github.psd2live.test/${java.util.UUID.randomUUID()}")
         try {
@@ -340,7 +340,10 @@ class WorkspacePresetInitializeTest {
                 ModifierPluginManifest.serializer(),
                 staleManifest,
             ).encodeToByteArray()
-            val staleDigest = ModifierPluginStore.hash(staleBytes)
+            val staleDigest = ModifierPluginStore.hash(buildString {
+                append(ModifierPluginStore.hash(staleBytes))
+                staleManifest.files.toSortedMap().forEach { (name, digest) -> append("\n$name:$digest") }
+            }.encodeToByteArray())
             assertNotEquals(artifact.reference.digest, staleDigest)
             val staleDir = tempRoot.resolve(staleDigest)
             java.nio.file.Files.createDirectories(staleDir)
@@ -357,9 +360,32 @@ class WorkspacePresetInitializeTest {
             java.nio.file.Files.writeString(staleDir.resolve(".dependencies"), "[]")
 
             val store = ModifierPluginStore(tempRoot, prefs, bundledWorkers = true)
+            val historical = store.snapshot().single().reference
+            assertEquals(staleDigest, historical.digest)
+            assertTrue(store.resolution(historical).available)
+            // Populate the catalog before archiving, which must also refresh it without changing the revision.
+            val revision = store.revision.value
             BundledAlgorithmArtifacts.retain(store, listOf(artifact))
             val retained = store.packages().filter { it.reference.id == artifact.reference.id && it.reference.version == artifact.reference.version }
-            assertEquals(listOf(artifact.reference.digest), retained.map { it.reference.digest })
+            assertEquals(setOf(staleDigest, artifact.reference.digest), retained.map { it.reference.digest }.toSet())
+            assertEquals(revision, store.revision.value)
+            assertTrue(java.nio.file.Files.isDirectory(staleDir))
+            for (reopened in listOf(store, ModifierPluginStore(tempRoot, prefs, bundledWorkers = true))) {
+                assertTrue(reopened.problems().isEmpty())
+                assertTrue(reopened.resolution(historical).available)
+                assertEquals(historical, reopened.verify(historical).reference)
+                assertFalse(ModifierPluginCatalog.available("unrelated", 1, historical, reopened))
+                assertFalse(ModifierPluginCatalog.available(staleManifest.algorithms.single().type, 99, historical, reopened))
+                assertEquals(artifact.reference, reopened.defaultPackages().single { it.reference.id == historical.id }.reference)
+                val type = artifact.manifest.algorithms.single().type
+                assertEquals(artifact.reference, ModifierPluginCatalog.algorithm(type, store = reopened)?.first?.reference)
+                val registry = RigModifierRegistry(ModifierPluginCatalog.definitions(reopened))
+                assertEquals(artifact.reference, registry.defaultDefinition(type)?.pluginReference)
+                val instance = RigModifierInstance("historical", type, 1, listOf(ModifierTarget("mesh", "mesh")), plugin = historical)
+                val restored = RigModifierStack.fromJson(RigModifierStack(listOf(instance)).toJson()).instances.single()
+                assertEquals(historical, registry.definition(restored).pluginReference)
+                assertNull(registry.definitionOrNull(instance.copy(plugin = historical.copy(digest = "0".repeat(64)))))
+            }
         } finally {
             runCatching { prefs.removeNode() }
             ModifierPluginStore.deleteTree(tempRoot)

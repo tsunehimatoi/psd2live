@@ -115,6 +115,47 @@ class ModifierPluginRuntimeFixTest {
     }
 
     @Test
+    fun exactHistoricalBuiltinDefinitionPrecedesLegacyVersionMapping() {
+        val historical = ModifierPluginReference("builtin.6579652f666974746564.v2", "1", "old-content")
+        val legacy = RigModifierDefinition("eye/fitted", 1, plugin = ModifierAlgorithmPlugin { rig, _, _ -> rig })
+        val exact = legacy.copy(version = 2, pluginReference = historical, defaultSelection = false)
+        val registry = RigModifierRegistry(listOf(legacy, exact))
+        val instance = RigModifierInstance("eye", "eye/fitted", 2, listOf(ModifierTarget("mesh", "eye")), plugin = historical)
+        assertEquals(exact, registry.definition(instance))
+        assertEquals(legacy, registry.definition(instance.copy(plugin = null)))
+        assertEquals(legacy, registry.defaultDefinition("eye/fitted"))
+        val absent = instance.copy(plugin = historical.copy(digest = "0".repeat(64)))
+        kotlin.test.assertNull(registry.definitionOrNull(absent))
+        assertFalse(ModifierPluginCatalog.available(absent))
+        assertFalse(ModifierPluginCatalog.available(absent.type, absent.version, absent.plugin))
+    }
+
+    @Test
+    fun knownHostOnlyFingerprintsRemainLegacyAliasesButArbitraryDigestsDoNot() {
+        // Host-only versions in the fixed writer; packaged higher versions must stay exact.
+        val fingerprints = listOf(
+            Triple("body/legacy", 1, "21e4a61f2450856341987aaa0ead648fa77d2df646192e2a92fb57018f6c7b7d"),
+            Triple("eye/fitted", 2, "5d4af03fad27632a25e8bfa8cd15f8074995cead2e643dd9c4be7b8a02b275a6"),
+        )
+        val registry = RigModifierAlgorithms.registry
+        for ((type, version, digest) in fingerprints) {
+            val fingerprint = ModifierPluginReference("builtin." + java.util.HexFormat.of().formatHex(type.encodeToByteArray()) + ".v$version",
+                "$version.0.0", digest)
+            val instance = RigModifierInstance("legacy", type, version, listOf(ModifierTarget("mesh", "mesh")), plugin = fingerprint)
+            assertTrue(BuiltinModifierPlugins.isHistoricalBuiltinReference(type, version, fingerprint))
+            assertEquals(1, registry.definition(instance).version)
+            assertTrue(ModifierPluginCatalog.available(instance))
+            assertTrue(ModifierPluginCatalog.available(type, version, fingerprint))
+            for (bad in listOf(fingerprint.copy(digest = "0".repeat(64)), fingerprint.copy(version = "$version.0.1"),
+                fingerprint.copy(dependencyDigests = mapOf("dependency@1" to "0".repeat(64))))) {
+                assertFalse(BuiltinModifierPlugins.isHistoricalBuiltinReference(type, version, bad))
+                kotlin.test.assertNull(registry.definitionOrNull(instance.copy(plugin = bad)))
+                assertFalse(ModifierPluginCatalog.available(instance.copy(plugin = bad)))
+            }
+        }
+    }
+
+    @Test
     fun thirdPartyPluginVersionAboveOneIsNotNormalizedToOne() {
         val thirdPartyRef = ModifierPluginReference("thirdparty.eye", "1.0.0", "digest-tp")
         assertEquals(2, BuiltinModifierPlugins.resolveVersion("eye/fitted", 2, thirdPartyRef))

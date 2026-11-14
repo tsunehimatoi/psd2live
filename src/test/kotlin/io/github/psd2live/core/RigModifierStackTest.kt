@@ -203,7 +203,9 @@ class RigModifierStackTest {
             KeyCell(Ints.values(0, 0), delta), KeyCell(Ints.values(0, 1), delta), KeyCell(Ints.values(1, 1), delta),
         )), channels = mapOf(Channel.OPACITY to opacity))
         val extend = RigModifierDefinition("extend", 1, plugin = ModifierAlgorithmPlugin { rig, _, _ -> rig.copy(meshes = listOf(output)) })
-        val result = RigModifierEvaluator(RigModifierRegistry(listOf(extend))).evaluate(authored.copy(meshes = listOf(mesh)),
+        val withAxes = authored.copy(meshes = listOf(mesh), parameters = listOf(
+            Parameter("x", "X", -1f, 1f, 0f), Parameter("y", "Y", -2f, 2f, 0f)))
+        val result = RigModifierEvaluator(RigModifierRegistry(listOf(extend))).evaluate(withAxes,
             RigModifierStack(listOf(entry("extend", "extend", targets = listOf(ModifierTarget("mesh", mesh.id))))))
         assertEquals(listOf(
             ModifierKeyform("mesh", mesh.id, "y", key = mapOf("x" to 0f, "y" to 2f)),

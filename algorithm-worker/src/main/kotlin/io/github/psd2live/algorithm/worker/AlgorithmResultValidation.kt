@@ -11,6 +11,25 @@ object AlgorithmResultValidation {
         }
         fun finite(vararg values: Float) { require(values.all(Float::isFinite)) { "Non-finite algorithm output" } }
         val parameters = ids(rig.parameters.map { it.id })
+        val treeParameters = HashSet<String>()
+        val treeGroups = HashSet<String>()
+        fun parameterTree(nodes: List<ParameterNode>) {
+            for (node in nodes) when (node) {
+                is ParameterNode.Param -> require(node.id in parameters && treeParameters.add(node.id)) {
+                    "Missing or duplicate parameter tree reference: ${node.id}"
+                }
+                is ParameterNode.Group -> {
+                    require(node.id.isNotBlank() && node.id.none(Char::isISOControl) && treeGroups.add(node.id)) {
+                        "Invalid or duplicate parameter group: ${node.id}"
+                    }
+                    parameterTree(node.children)
+                }
+            }
+        }
+        parameterTree(rig.parameterTree)
+        rig.parameterLinks.forEach { link ->
+            require(link.horizontal in parameters && link.vertical in parameters) { "Missing parameter link reference" }
+        }
         val meshes = ids(rig.meshes.map { it.id })
         val deformers = ids(rig.deformers.map { it.id })
         val parts = ids(rig.parts.map { it.id })
