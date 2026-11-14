@@ -576,11 +576,11 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
     val isMeshTarget = remember(dialog.targets) { dialog.targets.all { it.kind == "mesh" } }
     val available = remember(isMeshTarget, externalPlugins) {
         val builtins = if (isMeshTarget) {
-            (WorkspaceModifierPlan.sourceTypes + WorkspaceModifierPlan.nativeTypes)
+            (WorkspaceModifierPlan.sourceTypes + listOf("swing", "physics", "simulation"))
                 .filterNot { it == RigSourceModifiers.SCAFFOLD }
                 .filter { ModifierPluginStore.shared.builtinsEnabled() }
         } else {
-            WorkspaceModifierPlan.nativeTypes.filter { ModifierPluginStore.shared.builtinsEnabled() }
+            listOf("swing").filter { ModifierPluginStore.shared.builtinsEnabled() }
         }
         (builtins + externalPlugins).distinct()
     }
