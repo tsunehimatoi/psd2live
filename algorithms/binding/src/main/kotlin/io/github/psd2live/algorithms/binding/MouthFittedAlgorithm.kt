@@ -7,9 +7,13 @@ import org.umamo.runtime.eval.colorAt
 import org.umamo.runtime.eval.meshGridDefaultDeltas
 import org.umamo.runtime.eval.scalarAt
 import org.umamo.runtime.model.*
+import kotlinx.serialization.json.jsonObject
 
 /** Builds the fitted mouth transition from neutral upstream geometry and source measurements. */
-class MouthFittedAlgorithm(private val upgradeToSource: Boolean = false) : ChangingModifierAlgorithmPlugin {
+class MouthFittedAlgorithm(
+    private val upgradeToSource: Boolean = false,
+    private val preservedMeshes: Set<String> = emptySet(),
+) : ChangingModifierAlgorithmPlugin {
     override fun changes(input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext, checkpoint: () -> Unit) =
         candidateChanges(input, instance, context, checkpoint, lowerShapes = true)
 
@@ -23,7 +27,8 @@ class MouthFittedAlgorithm(private val upgradeToSource: Boolean = false) : Chang
         val source = PuppetIr.toPuppet(input)
         val targets = instance.targets.mapTo(linkedSetOf()) { it.id }
         val tongues = linkedMapOf<String, String>()
-        val posed = sourceCandidate(source, targets, inputs, checkpoint, scaffold = scaffoldProvider, tongueId = { id ->
+        val prepared = withParameters(source, context)
+        val posed = sourceCandidate(prepared, targets, inputs, checkpoint, scaffold = scaffoldProvider, tongueId = { id ->
             instance.outputId("tongue-out:${id.raw}").also { tongues[it] = id.raw }
         })
         val model = if (lowerShapes) lower(posed, inputs, checkpoint) else posed
@@ -39,11 +44,27 @@ class MouthFittedAlgorithm(private val upgradeToSource: Boolean = false) : Chang
         val hierarchy = if (tongues.isEmpty()) null else PuppetIr.toIr(model.copy(
             parts = emptyList(), drawables = emptyList(), deformers = emptyList()))
         return ModifierModelChanges(parameters = parameters, meshes = meshes, parts = parts, deformers = deformers,
+            parameterTree = PuppetIr.toIr(model.copy(drawables = emptyList(), deformers = emptyList(), parts = emptyList())).parameterTree
+                .takeIf { it != input.parameterTree }?.let { ModifierFieldChange(input.parameterTree, it) },
             rootChildren = hierarchy?.rootChildren?.takeIf { it != input.rootChildren }?.let { ModifierFieldChange(input.rootChildren, it) },
             renderRoot = hierarchy?.renderRoot?.takeIf { it != input.renderRoot }?.let { ModifierFieldChange(input.renderRoot, it) },
             textures = textureBindings.takeIf { it.isNotEmpty() }?.let {
                 ModifierFieldChange(input.textures, input.textures.copy(bindings = input.textures.bindings + it))
             })
+    }
+
+    private fun withParameters(source: PuppetModel, context: ModifierAlgorithmContext): PuppetModel {
+        val i18n = ModifierParameterI18n.fromContext(context)
+        val missing = listOf(
+            Parameter(ParameterId("ParamMouthForm"), i18n.resolveName("ParamMouthForm", "Mouth Form"), -1f, 1f, 0f),
+            Parameter(ParameterId("ParamMouthOpenY"), i18n.resolveName("ParamMouthOpenY", "Mouth Open"), 0f, 1f, 0f),
+        ).filter { candidate -> source.parameters.none { it.id == candidate.id } }
+        if (missing.isEmpty()) return source
+        val group = ModifierParameterGroups.MOUTH
+        val groupName = i18n.resolveGroup(group).let { if (it == group) "Mouth" else it }
+        val folder = ParameterNode.Group(ParameterGroupId(group), groupName, true, missing.map { ParameterNode.Param(it.id) })
+        return source.copy(parameters = source.parameters + missing,
+            parameterTree = BindingMerge.appendTree(source, listOf(folder), missing.mapTo(hashSetOf()) { it.id }, false))
     }
 
     /** Unchanged engine objects retain their identity. Convert only the objects the transition wrote. */
@@ -124,7 +145,8 @@ class MouthFittedAlgorithm(private val upgradeToSource: Boolean = false) : Chang
             }?.let { rawMeshes.getValue(it.canonical) }
             val suppliedPositions = sourcePositions[original.id.raw]
             val matches = raw != null && matchesSource(raw, geometry, layer.frame, checkpoint)
-            val upgradeMesh = upgradeToSource && (covered || faceSkin || mouthFace) && raw != null && suppliedPositions == null && !matches
+            val upgradeMesh = upgradeToSource && original.id.raw !in preservedMeshes && (covered || faceSkin || mouthFace) &&
+                raw != null && suppliedPositions == null && !matches
             val nextMesh = if (!upgradeMesh) geometry else {
                 val frame = layer.frame
                 val normalized = FloatArray(raw!!.rigPositions.size) { index ->
@@ -382,6 +404,39 @@ class MouthFittedAlgorithm(private val upgradeToSource: Boolean = false) : Chang
 
 /** Supplies the source binding candidate for host-side composition and lowering. */
 class MouthFittedSourceAlgorithm : ChangingModifierAlgorithmPlugin {
-    override fun changes(input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext, checkpoint: () -> Unit) =
-        MouthFittedAlgorithm().candidateChanges(input, instance, context, checkpoint, lowerShapes = false)
+    override fun changes(input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext, checkpoint: () -> Unit): ModifierModelChanges {
+        val coarse = context.values[COARSE_CONTEXT]?.jsonObject ?: return MouthFittedAlgorithm()
+            .candidateChanges(input, instance, context, checkpoint, lowerShapes = false)
+        val captured = MouthFittedInputs.decode(context)
+        val vertices = requireNotNull(captured.sourceVertices)
+        val ordinary = ScaffoldAlgorithm().buildSource(ModifierAlgorithmContext(coarse,
+            context.resources.filterKeys { it.startsWith("ordinary:") }.mapKeys { it.key.removePrefix("ordinary:") }), checkpoint)
+            .drawables.associate { it.id.raw to PuppetIr.meshToIr(it).geometry }
+        // Upgrade untouched ordinary geometry only. Authored or split topology keeps its own
+        // vertices, UVs and indices; sub-features retain their explicit eligibility checks.
+        val indexed = buildSet {
+            input.glues.forEach { add(it.meshA); add(it.meshB) }
+            input.authoring.paths.forEach { add(it.mesh) }
+            input.authoring.vertexGroups.forEach { add(it.mesh) }
+            input.advanced.colliders.forEach { it.mesh?.let(::add) }
+            input.advanced.simulations.forEach { simulation ->
+                simulation.targets.forEach { add(it.mesh) }
+                addAll(simulation.particles.anchorMesh.filter(String::isNotEmpty))
+                simulation.statics.forEach { addAll(it.offsets.keys) }
+            }
+        }
+        val preserved = input.meshes.filter { mesh ->
+            val target = vertices.targets[mesh.id] ?: return@filter true
+            val expected = ordinary[target.canonical]
+            val geometry = mesh.geometry
+            mesh.id in indexed || geometry != expected || mesh.shapes.any {
+                    captured.head == null || !captured.layers.getValue(mesh.id).turnsWithHeadMesh ||
+                        it.parameter !in setOf("ParamAngleX", "ParamAngleY")
+                }
+        }.mapTo(hashSetOf()) { it.id }
+        return MouthFittedAlgorithm(upgradeToSource = true, preservedMeshes = preserved)
+            .candidateChanges(input, instance, context, checkpoint, lowerShapes = false)
+    }
+
+    companion object { const val COARSE_CONTEXT = "ordinary_mouth_scaffold" }
 }

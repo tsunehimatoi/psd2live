@@ -57,8 +57,11 @@ internal object RigFittedMouthModuleSource {
         }
         val inputs = RigFittedMouthSource.capture(context, native, parents, layers,
             frames.mapValues { it.value.second }, emptyList(), headProvider?.id)
+        // Outline emits separate ribbon rasters and never replaces its owner's mesh. Later
+        // mouth modules must capture the same source topology as the fitted base.
+        val meshConfig = native.copy(mouthOutlineEnabled = false)
         val vertices = ScaffoldMeshContext.capture(layers.values.distinctBy { it.source.id }.map { layer ->
-            val data = RigBuilder.fittedMouthSourceMesh(layer, context, native, source.atlas, source.meshCache)
+            val data = RigBuilder.fittedMouthSourceMesh(layer, context, meshConfig, source.atlas, source.meshCache)
             ScaffoldMeshContext.Material(source.primaryByLayer.getValue(layer.source.id.raw), layer.source.id.raw,
                 ScaffoldMesh.RawMesh(data.rigPositions, data.mesh.uvs, data.mesh.indices), ScaffoldMesh.Geometry.Zero)
         }).resources.getValue("source_meshes")

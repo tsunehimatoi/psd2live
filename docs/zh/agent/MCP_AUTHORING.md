@@ -111,6 +111,10 @@
 | `path_get / path_list / path_preview / path_put / path_delete / path_deform` | `request` | `get/list/preview/put/delete/deform` |
 | `history_checkpoint / history_list / history_checkout` | `request` | 创建检查点、读取历史或切换节点 |
 
+部件配置（`eye`、`brow`、`mouth`、`face`、`body`、`hair`）保持严格校验。子功能配置存入 `subConfigs`，键为原子功能类型，如 `mouth.outline`；值接受对应算法声明的数值、物理、依赖、颜色字段，以及固定的 `targets`。折叠记录还保存子实例 `id`、`version` 和 `outputAliases`，更新时应保留未编辑字段。子版本只支持公开 facade 版本 `1`，求值映射到对应实现版本；未知版本拒绝执行。描边开关为 `outline`。眉眼耦合规范键为 `lidCoupling`；历史 `lid` 仅在规范键不存在时读取，显式规范键 `false` 优先。界面修改该开关后只写规范键，读取和历史切换不改写旧配置。
+
+新预设仅折叠顺序、身份、目标和依赖可保留的当前包候选。重复子功能、禁用成员、中间存在其他步骤、外部子实例引用、显式版本选择或包覆盖会使相关组保持展开；已保存的精确包锁定不自动转换。
+
 动作修改器的 `config` 支持可选 `parameter_roles`，将运行时角色名映射到参数 ID 数组。眨眼添加计划填写 `EyeBlink`。求值会检查参数引用，并拒绝同一角色的不兼容定义。查询在关系贡献中报告变化；应用前缀后角色作为普通模型元数据保存。
 
 固化后的动作查询可返回 `captured_ranges: {参数ID: {min, max, repeat}}`，用于保留固化时的曲线控制点。它随参数重命名、删除和范围编辑更新，并进入保存恢复。

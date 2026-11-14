@@ -98,6 +98,8 @@ internal object WorkspaceModifierSchemas {
         }
         val flags = io.github.psd2live.core.modifier.ModifierPartConfig.features[type].orEmpty()
         flags.keys.forEach { fields[it] = s.boolean() }
+        val related = (partBases.getValue(type) + flags.values).flatMap { RigLegacyBindings.spec(it).related }.toSet()
+        if (related.isNotEmpty()) fields["dependencies"] = s.obj(related.associateWith { s.handle() }, emptySet())
         if (type == "brow") {
             fields["lid"] = s.boolean() // Historical spelling, canonical lidCoupling wins.
             fields["physicsEnabled"] = s.boolean()
@@ -106,7 +108,7 @@ internal object WorkspaceModifierSchemas {
         if (flags.isNotEmpty()) fields["subConfigs"] = s.obj(flags.values.associateWith { child ->
             val properties = configuration(child).getValue("properties").jsonObject.mapValues { it.value.jsonObject }
             s.obj(properties + mapOf(
-                "targets" to s.array(target, 1, 4096), "id" to s.handle(), "version" to s.integer(1),
+                "targets" to s.array(target, 1, 4096), "id" to s.handle(), "version" to s.integer(1, 1),
                 "outputAliases" to s.dictionary(s.handle()),
             ), emptySet())
         }, emptySet())

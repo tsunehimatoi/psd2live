@@ -911,6 +911,40 @@ internal class RigModifierSource(
     private val scaffoldTorsos = HashMap<RigModifierInstance, io.github.psd2live.algorithms.binding.TorsoFrame>()
     private val scaffoldContexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
     private val sourceScaffoldContexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
+    fun partParameters(instance: RigModifierInstance): List<io.github.psd2live.format.model.Parameter> {
+        val children = ModifierPartConfig.features[instance.type].orEmpty().filterKeys { ModifierPartConfig.enabled(instance.config, it) }
+        val expanded = listOf(RigSourceBindingState.expandPart(instance).first()) + children.values.map { partChild(instance, it) }
+        val parameters = linkedMapOf<String, io.github.psd2live.format.model.Parameter>()
+        for (entry in expanded) {
+            for (parameter in RigLegacyBindings.definition(RigLegacyBindings.spec(entry.type), this).parameters(entry))
+                parameters[parameter.id] = parameter
+        }
+        return parameters.values.toList()
+    }
+
+    /** Capture sub-features against the same ordered virtual prefix the part executes. */
+    private fun partChild(part: RigModifierInstance, type: String): RigModifierInstance {
+        val preceding = activeBefore(part).toMutableList()
+        preceding += RigSourceBindingState.expandPart(part).first()
+        for ((flag, childType) in ModifierPartConfig.features[part.type].orEmpty()) {
+            if (!ModifierPartConfig.enabled(part.config, flag)) continue
+            val definitions = BuiltinModifierPlugins.definitions(null).associateBy { it.type }
+            val upstream = preceding.flatMap { entry ->
+                (setOf(entry.type) + definitions[entry.type]?.provides.orEmpty()).map { capability ->
+                    ModifierUpstreamCapability(capability, entry.type, entry.version, entry.targets, entry.id, entry.config)
+                }
+            }
+            val child = ModifierPartConfig.child(part, childType, upstream = upstream)
+            require(child.config["scaffold"] == part.config["scaffold"]) { "${part.id}: sub-feature $childType uses a different scaffold" }
+            require(child.id != part.id && preceding.none { it.id == child.id }) { "${part.id}: duplicate child identity ${child.id}" }
+            require(child.targets.all { it in part.targets }) { "${part.id}: sub-feature $childType targets must be covered by the part" }
+            activePrefixes[child.id] = preceding.toList()
+            if (childType == type) return child
+            preceding += child
+        }
+        error("${part.id}: disabled sub-feature $type")
+    }
+
     fun eyePartContext(instance: RigModifierInstance): ModifierAlgorithmContext {
         val mode = instance.config["mode"]?.jsonPrimitive?.content ?: "fitted"
         val baseContext = if (mode == "fitted") {
@@ -934,7 +968,7 @@ internal class RigModifierSource(
                 for ((flag, entry) in subBuilders) {
                     if (ModifierPartConfig.enabled(instance.config, flag)) {
                         val (subType, builder) = entry
-                        val subCtx = builder(instance)
+                        val subCtx = builder(partChild(instance, subType))
                         put(subType, subCtx.values)
                         for ((resKey, resVal) in subCtx.resources) {
                             extraResources["sub:$subType:$resKey"] = resVal
@@ -946,6 +980,7 @@ internal class RigModifierSource(
         val values = buildJsonObject {
             put("mode", mode)
             put("base_context", baseContext.values)
+            instance.config["subConfigs"]?.let { put("sub_configs", it) }
             if (subContexts.isNotEmpty()) put("sub_contexts", subContexts)
             put(ModifierParameterI18n.CONTEXT_KEY, io.github.psd2live.core.modifier.source.ModifierParameterContext.i18n(
                 mapOf(
@@ -972,7 +1007,7 @@ internal class RigModifierSource(
                 for ((flag, pair) in subs) {
                     if (ModifierPartConfig.enabled(instance.config, flag)) {
                         val (subType, provider) = pair
-                        val subCtx = provider(instance)
+                        val subCtx = provider(partChild(instance, subType))
                         put(subType, subCtx.values)
                         for ((resKey, resVal) in subCtx.resources) {
                             extraResources["sub:$subType:$resKey"] = resVal
@@ -984,6 +1019,7 @@ internal class RigModifierSource(
         val values = buildJsonObject {
             put("mode", mode)
             put("base_context", baseContext.values)
+            instance.config["subConfigs"]?.let { put("sub_configs", it) }
             if (subContexts.isNotEmpty()) put("sub_contexts", subContexts)
             put(ModifierParameterI18n.CONTEXT_KEY, io.github.psd2live.core.modifier.source.ModifierParameterContext.i18n(
                 mapOf(
@@ -1001,14 +1037,14 @@ internal class RigModifierSource(
         val extraResources = LinkedHashMap<String, ModifierAlgorithmResource>(baseContext.resources)
         val subContexts = buildJsonObject {
             if (mode == "legacy" && instance.config["depthTurn"]?.jsonPrimitive?.booleanOrNull == true) {
-                val subCtx = depthTurnContext(instance)
+                val subCtx = depthTurnContext(partChild(instance, "face.depth-turn"))
                 put("face.depth-turn", subCtx.values)
                 for ((resKey, resVal) in subCtx.resources) {
                     extraResources["sub:face.depth-turn:$resKey"] = resVal
                 }
             }
             if (instance.config["neck"]?.jsonPrimitive?.booleanOrNull == true) {
-                val subCtx = neckContext(instance)
+                val subCtx = neckContext(partChild(instance, "face.neck"))
                 put("face.neck", subCtx.values)
                 for ((resKey, resVal) in subCtx.resources) {
                     extraResources["sub:face.neck:$resKey"] = resVal
@@ -1018,6 +1054,7 @@ internal class RigModifierSource(
         val values = buildJsonObject {
             put("mode", mode)
             put("base_context", baseContext.values)
+            instance.config["subConfigs"]?.let { put("sub_configs", it) }
             if (subContexts.isNotEmpty()) put("sub_contexts", subContexts)
             put(ModifierParameterI18n.CONTEXT_KEY, io.github.psd2live.core.modifier.source.ModifierParameterContext.i18n(
                 mapOf(
@@ -1040,7 +1077,7 @@ internal class RigModifierSource(
             for ((flag, pair) in subs) {
                 if (ModifierPartConfig.enabled(instance.config, flag)) {
                     val (subType, provider) = pair
-                    val subCtx = provider(instance)
+                    val subCtx = provider(partChild(instance, subType))
                     put(subType, subCtx.values)
                     for ((resKey, resVal) in subCtx.resources) {
                         extraResources["sub:$subType:$resKey"] = resVal
@@ -1051,6 +1088,7 @@ internal class RigModifierSource(
         val values = buildJsonObject {
             put("mode", "legacy")
             put("base_context", baseContext.values)
+            instance.config["subConfigs"]?.let { put("sub_configs", it) }
             if (subContexts.isNotEmpty()) put("sub_contexts", subContexts)
             put(ModifierParameterI18n.CONTEXT_KEY, io.github.psd2live.core.modifier.source.ModifierParameterContext.i18n(
                 mapOf(
@@ -1121,7 +1159,16 @@ internal class RigModifierSource(
             else preceding + instance.copy(type = "mouth/fitted")
         val (native, context) = RigFittedMouthModuleSource.context(this, scaffold, precedingWithFitted, activeModule = null, neutralScaffold = true)
         val targetLayers = instance.targets.mapNotNull { t -> layersByMesh[t.id]?.let { layersById[it] }?.let { t.id to it } }.toMap()
-        return RigFittedMouthModuleSource.measure(this, native, context, precedingWithFitted, targetLayers)
+        val measured = RigFittedMouthModuleSource.measure(this, native, context, precedingWithFitted, targetLayers)
+        // Archived packages have a strict older input schema; retain their captured contract.
+        val pinned = instance.plugin
+        if (pinned != null && pinned.id.startsWith("builtin.") && BuiltinModifierPlugins.entry(pinned.id)?.reference != pinned)
+            return measured
+        val ordinary = sourceScaffoldContext(scaffold)
+        return ModifierAlgorithmContext(JsonObject(measured.values + mapOf(
+            ModifierParameterI18n.CONTEXT_KEY to partParameterContext(instance, "fitted").values.getValue(ModifierParameterI18n.CONTEXT_KEY),
+            io.github.psd2live.algorithms.binding.MouthFittedSourceAlgorithm.COARSE_CONTEXT to ordinary.values,
+        )), measured.resources + ordinary.resources.mapKeys { "ordinary:${it.key}" }, measured.upstream)
     }
 
     fun mouthLegacyContext(instance: RigModifierInstance): ModifierAlgorithmContext {
@@ -1145,15 +1192,21 @@ internal class RigModifierSource(
                 it.config["scaffold"] == instance.config["scaffold"]
         }?.id
         val targetLayers = instance.targets.mapNotNull { t -> layersByMesh[t.id]?.let { layersById[it] }?.let { t.id to it } }.toMap()
-        val owners = targetLayers.mapNotNull { (id, layer) ->
-            if (layer.semantic.tag !in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) || layer.semantic.role != null) null
-            else id to RigMouthOutlineSource.Owner(layer.source.id.raw, id, fittedProvider = fittedProvider, headOnMesh = headProvider != null)
-        }.toMap()
         val thickness = instance.config["values"]?.jsonObject?.get("thickness")?.jsonPrimitive?.floatOrNull ?: 1.5f
         val color = instance.config["color"]?.jsonPrimitive?.intOrNull
         val outlineConfig = activeRecipeConfig(instance).copy(mouthOutlineEnabled = true, mouthThickness = thickness, mouthColor = color)
+        val outlineRigContext by lazy { RigBuilder.rigContext(analysis, outlineConfig, meshCache) }
+        val owners = targetLayers.mapNotNull { (id, layer) ->
+            if (layer.semantic.tag !in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) || layer.semantic.role != null) null
+            else {
+                val parent = outlineRigContext.parentAndFrame(layer, outlineConfig).first
+                val carriedByFace = outlineRigContext.faceTurn(outlineConfig) != null &&
+                    (parent == io.github.psd2live.algorithms.binding.ScaffoldHead.faceId || parent in outlineRigContext.underFace)
+                id to RigMouthOutlineSource.Owner(layer.source.id.raw, id, fittedProvider = fittedProvider,
+                    headOnMesh = headProvider != null && io.github.psd2live.algorithms.binding.MouthOutlineOwner.headOnMesh(parent?.raw, carriedByFace))
+            }
+        }.toMap()
         val head = headProvider?.let { providerId ->
-            val outlineRigContext = RigBuilder.rigContext(analysis, outlineConfig, meshCache)
             io.github.psd2live.core.RigFittedFaceSource.headTurn(outlineRigContext, outlineConfig)?.let { turn ->
                 io.github.psd2live.algorithms.binding.MouthFittedInputs.Head(
                     providerId, turn.centerX, turn.centerY, turn.radiusX, turn.radiusY, turn.turn, turn.depth, turn.chinY,
@@ -1203,10 +1256,35 @@ internal class RigModifierSource(
             }
             else -> allTargetLayers
         }
-        val inner = RigFittedMouthModuleSource.measure(this, native, context, precedingWithFitted, targetLayers)
+        val measured = RigFittedMouthModuleSource.measure(this, native, context, precedingWithFitted, targetLayers)
+        val fittedProvider = preceding.lastOrNull {
+            it.type in setOf("mouth/fitted", "mouth") && it.config["scaffold"] == instance.config["scaffold"] &&
+                it.targets.containsAll(instance.targets)
+        }
+        val inner = if (fittedProvider == null) measured else {
+            val captured = io.github.psd2live.algorithms.binding.MouthFittedInputs.decode(measured)
+            val bound = io.github.psd2live.algorithms.binding.MouthFittedInputs.decode(mouthFittedContext(fittedProvider))
+            val motion = captured.source?.options
+            val binding = bound.source?.let { base -> if (motion == null) base else base.copy(options = base.options.copy(
+                vowels = motion.vowels, capture = motion.capture, jaw = motion.jaw, jawShare = motion.jawShare,
+                depth = motion.depth, depthAmount = motion.depthAmount, spring = motion.spring, tongue = motion.tongue,
+            )) }
+            // Add-ons capture motion options at their own position, but their source topology
+            // and base fit remain those emitted by their fitted provider. In particular,
+            // inserting outline ribbons cannot silently enable exactClose on the owner grid.
+            captured.copy(source = binding, chin = bound.chin,
+                layers = captured.layers.mapValues { (id, layer) -> layer.copy(frame = bound.layers.getValue(id).frame) },
+                sourceVertices = requireNotNull(bound.sourceVertices).let { vertices ->
+                    vertices.copy(targets = vertices.targets.filterKeys { it in captured.layers })
+                }).encode()
+        }
         val folder = io.github.psd2live.i18n.tr("model.group.mouth")
+        val boundInputs = io.github.psd2live.algorithms.binding.MouthFittedInputs.decode(inner)
+        val boundFitted = fitted?.let {
+            io.github.psd2live.core.fit.FittedMouth(it.result, boundInputs.source?.rig(), boundInputs.chin, analysis.layers, boundInputs.source)
+        }
         val followsOrNull = targetLayers.mapValues { (_, layer) ->
-            if (fitted != null && fitted.covers(layer)) fitted.follow(layer) else null
+            if (boundFitted != null && boundFitted.covers(layer)) boundFitted.follow(layer) else null
         }
         return when (module) {
             RigModules.MOUTH_VOWEL -> io.github.psd2live.algorithms.binding.MouthVowelAlgorithm.context(
@@ -1214,7 +1292,7 @@ internal class RigModifierSource(
             RigModules.MOUTH_CAPTURE -> io.github.psd2live.algorithms.binding.MouthCaptureAlgorithm.context(
                 inner, followsOrNull, lippedSkin, module.defines.associate { it.id to io.github.psd2live.i18n.tr(it.nameKey) }, folder)
             RigModules.MOUTH_TONGUE -> io.github.psd2live.algorithms.binding.MouthTongueAlgorithm.context(
-                inner, targetLayers.mapValues { (_, layer) -> requireNotNull(fitted).follow(layer) },
+                inner, targetLayers.mapValues { (_, layer) -> requireNotNull(boundFitted).follow(layer) },
                 io.github.psd2live.i18n.tr(module.defines.single().nameKey), folder)
             RigModules.MOUTH_SPRING -> io.github.psd2live.algorithms.binding.MouthSpringAlgorithm.context(
                 inner, lippedSkin, io.github.psd2live.i18n.tr(module.defines.single().nameKey), folder, io.github.psd2live.i18n.tr("model.physics.mouthSpring"))
@@ -1222,7 +1300,7 @@ internal class RigModifierSource(
                 put("schema", "mouth-depth/1")
                 put("source", inner.values)
                 put("interior", JsonObject(targetLayers.mapValues { (_, layer) ->
-                    val follow = fitted?.follow(layer)
+                    val follow = boundFitted?.follow(layer)
                     val depth = when (follow) {
                         io.github.psd2live.algorithms.binding.MouthRig.Follow.UPPER_TEETH -> 0.06f
                         io.github.psd2live.algorithms.binding.MouthRig.Follow.LOWER_TEETH -> 0.1f
@@ -1293,17 +1371,7 @@ internal class RigModifierSource(
             for ((flag, entry) in subFlagToModule) {
                 if (ModifierPartConfig.enabled(instance.config, flag)) {
                     val (subType, builder) = entry
-                    val subCfgObj = subConfigs[subType]?.jsonObject
-                    val subTargets = subCfgObj?.get("targets")?.jsonArray?.map {
-                        kotlinx.serialization.json.Json.decodeFromJsonElement(ModifierTarget.serializer(), it)
-                    } ?: instance.targets
-                    val subInstanceConfig = buildJsonObject {
-                        instance.config.forEach { (k, v) -> if (k != "values" && k != "tuning") put(k, v) }
-                        subCfgObj?.get("values")?.let { put("values", it) }
-                        subCfgObj?.get("tuning")?.let { put("tuning", it) }
-                        subCfgObj?.get("color")?.let { put("color", it) }
-                    }
-                    val subCtx = builder(instance.copy(type = subType, targets = subTargets, config = subInstanceConfig))
+                    val subCtx = builder(partChild(instance, subType))
                     put(subType, subCtx.values)
                     for ((resKey, resVal) in subCtx.resources) {
                         resources["sub:$subType:$resKey"] = resVal
@@ -1714,15 +1782,16 @@ internal class RigModifierSource(
     fun provider(instance: RigModifierInstance): RigModifierInstance {
         val id = instance.config.getValue("scaffold").jsonPrimitive.content
         val position = stack.instances.indexOfFirst { it.id == instance.id }
-        require(position >= 0 || stack.appliedCapabilities.any { it.id == instance.id && it.type == instance.type && it.version == instance.version }) {
+        require(position >= 0 || activePrefixes.containsKey(instance.id) || stack.appliedCapabilities.any { it.id == instance.id && it.type == instance.type && it.version == instance.version }) {
             "Unknown modifier: ${instance.id}"
         }
-        val preceding = stack.instances.take(position.coerceAtLeast(0)).singleOrNull { it.id == id && it.enabled && it.type == RigSourceModifiers.SCAFFOLD }
+        val preceding = (activePrefixes[instance.id] ?: stack.instances.take(position.coerceAtLeast(0))).singleOrNull { it.id == id && it.enabled && it.type == RigSourceModifiers.SCAFFOLD }
         val applied = stack.appliedCapabilities.singleOrNull { it.id == id && it.type == RigSourceModifiers.SCAFFOLD }
         val targets = preceding?.targets ?: requireNotNull(applied) { "${instance.id}: binding scaffold $id must precede this modifier" }.targets
         require(instance.targets.all { it in targets }) { "${instance.id}: scaffold $id does not cover all captured targets" }
         val aliases = preceding?.outputAliases ?: requireNotNull(applied).outputAliases
-        require((preceding?.version ?: applied?.version ?: 1) < 2 && aliases.keys.none { it.startsWith("shared/deformer:") } || instance.targets.toSet() == targets.toSet()) {
+        require(position < 0 && activePrefixes.containsKey(instance.id) ||
+            (preceding?.version ?: applied?.version ?: 1) < 2 && aliases.keys.none { it.startsWith("shared/deformer:") } || instance.targets.toSet() == targets.toSet()) {
             "${instance.id}: shared scaffold $id requires its complete target scope"
         }
         return preceding ?: RigModifierInstance(id, RigSourceModifiers.SCAFFOLD, requireNotNull(applied).version, targets,
@@ -1745,6 +1814,11 @@ internal object RigSourceModifiers {
     const val HAIR = "hair"
     const val MOUTH = "mouth"
 
+    private fun partUpstream(type: String): Set<String> = ModifierPartConfig.features[type].orEmpty().values.flatMap { child ->
+        val definition = RigLegacyBindings.definition(RigLegacyBindings.spec(child), null)
+        definition.requires + definition.optionalUpstream
+    }.toSet() - SCAFFOLD
+
     private fun partDefinitions(source: RigModifierSource?): List<RigModifierDefinition> = listOf(
         RigModifierDefinition(
             type = EYE,
@@ -1755,6 +1829,7 @@ internal object RigSourceModifiers {
             providers = { mapOf(SCAFFOLD to it.config.getValue("scaffold").jsonPrimitive.content) },
             upstreamInputs = true,
             appliedConfig = { it.config },
+            parameters = { requireNotNull(source).partParameters(it) },
             validate = { _, instance ->
                 require("scaffold" in instance.config) { "Specify eye's scaffold" }
                 val mode = instance.config["mode"]?.jsonPrimitive?.content ?: "fitted"
@@ -1765,7 +1840,9 @@ internal object RigSourceModifiers {
                 requireNotNull(source).provider(instance)
             },
             composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter", "physics"),
-            plugin = io.github.psd2live.algorithms.binding.EyePartAlgorithm(),
+            plugin = object : ChangingModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.EyePartAlgorithm(), ModifierOptionalUpstream {
+                override val optionalUpstream = partUpstream(EYE)
+            },
             changeWrites = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter", "physics"),
             authorContext = { requireNotNull(source).eyePartContext(it) },
         ),
@@ -1778,6 +1855,7 @@ internal object RigSourceModifiers {
             providers = { mapOf(SCAFFOLD to it.config.getValue("scaffold").jsonPrimitive.content) },
             upstreamInputs = true,
             appliedConfig = { it.config },
+            parameters = { requireNotNull(source).partParameters(it) },
             validate = { _, instance ->
                 require("scaffold" in instance.config) { "Specify brow's scaffold" }
                 val mode = instance.config["mode"]?.jsonPrimitive?.content ?: "fitted"
@@ -1789,7 +1867,7 @@ internal object RigSourceModifiers {
             },
             composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter", "physics"),
             plugin = object : ChangingModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.BrowPartAlgorithm(), ModifierOptionalUpstream {
-                override val optionalUpstream = setOf("eye/fitted")
+                override val optionalUpstream = setOf("eye/fitted") + partUpstream(BROW)
             },
             changeWrites = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter", "physics", "restPose"),
             authorContext = { requireNotNull(source).browPartContext(it) },
@@ -1803,6 +1881,7 @@ internal object RigSourceModifiers {
             providers = { mapOf(SCAFFOLD to it.config.getValue("scaffold").jsonPrimitive.content) },
             upstreamInputs = true,
             appliedConfig = { it.config },
+            parameters = { requireNotNull(source).partParameters(it) },
             validate = { _, instance ->
                 require("scaffold" in instance.config) { "Specify face's scaffold" }
                 val mode = instance.config["mode"]?.jsonPrimitive?.content ?: "fitted"
@@ -1813,7 +1892,9 @@ internal object RigSourceModifiers {
                 requireNotNull(source).provider(instance)
             },
             composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter"),
-            plugin = io.github.psd2live.algorithms.binding.FacePartAlgorithm(),
+            plugin = object : ChangingModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.FacePartAlgorithm(), ModifierOptionalUpstream {
+                override val optionalUpstream = partUpstream(FACE)
+            },
             changeWrites = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter"),
             authorContext = { requireNotNull(source).facePartContext(it) },
         ),
@@ -1826,6 +1907,7 @@ internal object RigSourceModifiers {
             providers = { mapOf(SCAFFOLD to it.config.getValue("scaffold").jsonPrimitive.content) },
             upstreamInputs = true,
             appliedConfig = { it.config },
+            parameters = { requireNotNull(source).partParameters(it) },
             validate = { _, instance ->
                 require("scaffold" in instance.config) { "Specify body's scaffold" }
                 require(instance.targets.all { it.kind == "mesh" && source?.hasMesh(it.id) == true }) {
@@ -1835,7 +1917,7 @@ internal object RigSourceModifiers {
             },
             composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter", "physics"),
             plugin = object : ChangingModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.BodyPartAlgorithm(), ModifierOptionalUpstream {
-                override val optionalUpstream = setOf("face/legacy", "face/fitted")
+                override val optionalUpstream = setOf("face/legacy", "face/fitted") + partUpstream(BODY)
             },
             changeWrites = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter", "physics"),
             authorContext = { requireNotNull(source).bodyPartContext(it) },
@@ -1849,6 +1931,7 @@ internal object RigSourceModifiers {
             providers = { mapOf(SCAFFOLD to it.config.getValue("scaffold").jsonPrimitive.content) },
             upstreamInputs = true,
             appliedConfig = { it.config },
+            parameters = { requireNotNull(source).partParameters(it) },
             validate = { _, instance ->
                 require("scaffold" in instance.config) { "Specify hair's scaffold" }
                 val mode = instance.config["mode"]?.jsonPrimitive?.content ?: "chains"
@@ -1872,6 +1955,7 @@ internal object RigSourceModifiers {
             providers = { mapOf(SCAFFOLD to it.config.getValue("scaffold").jsonPrimitive.content) },
             upstreamInputs = true,
             appliedConfig = { it.config },
+            parameters = { requireNotNull(source).partParameters(it) },
             validate = { _, instance ->
                 require("scaffold" in instance.config) { "Specify mouth's scaffold" }
                 val mode = instance.config["mode"]?.jsonPrimitive?.content ?: "fitted"
@@ -1881,10 +1965,10 @@ internal object RigSourceModifiers {
                 }
                 requireNotNull(source).provider(instance)
             },
-            composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter", "physics", "restPose", "textures", "authoring"),
+            composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter", "physics", "rest_pose", "textures", "authoring"),
             plugin = object : ChangingModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.MouthPartAlgorithm(), ModifierOptionalUpstream {
                 override val optionalUpstream = setOf("face/fitted", "face.depth-turn", "body/legacy", "face/legacy",
-                    "eye/fitted", "eye.smile", "eye.wide")
+                    "eye/fitted", "eye.smile", "eye.wide") + partUpstream(MOUTH)
             },
             changeWrites = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter", "physics", "restPose", "textures", "authoring"),
             authorContext = { requireNotNull(source).mouthPartContext(it) },

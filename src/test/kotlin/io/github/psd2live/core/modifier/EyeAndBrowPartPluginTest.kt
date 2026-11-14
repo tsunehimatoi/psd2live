@@ -38,14 +38,14 @@ class EyeAndBrowPartPluginTest {
             RigModifierInstance(
                 "eye-1",
                 "eye/fitted",
-                3,
+                1,
                 targets,
                 config = buildJsonObject { put("scaffold", "scaffold-1") },
             ),
             RigModifierInstance(
                 "eye-wide-1",
                 "eye.wide",
-                2,
+                1,
                 targets,
                 config = buildJsonObject {
                     put("scaffold", "scaffold-1")
@@ -55,7 +55,7 @@ class EyeAndBrowPartPluginTest {
             RigModifierInstance(
                 "eye-smile-1",
                 "eye.smile",
-                2,
+                1,
                 targets,
                 config = buildJsonObject {
                     put("scaffold", "scaffold-1")
@@ -72,7 +72,7 @@ class EyeAndBrowPartPluginTest {
             RigModifierInstance(
                 "brow-shape-1",
                 "brow.shape",
-                2,
+                1,
                 browTargets,
                 config = buildJsonObject {
                     put("scaffold", "scaffold-1")

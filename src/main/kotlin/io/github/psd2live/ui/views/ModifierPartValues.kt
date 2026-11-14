@@ -59,7 +59,7 @@ internal fun ModifierPartValues(instance: RigModifierInstance, state: PSD2LiveSt
             }) { open = !open }
         if (open) Column(Modifier.fillMaxWidth().padding(start = Spacing.Margin), verticalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
             var targetsOpen by rememberSaveable { mutableStateOf(false) }
-            val ownTargets = child.config.containsKey("targets")
+            val ownTargets = ModifierPartEditing.hasOwnTargets(instance, type)
             PresetFolderRow(tr(if (ownTargets) "modifier.part.ownTargets" else "modifier.part.inheritedTargets"),
                 tr("modifier.count", child.targets.size), targetsOpen, true) { targetsOpen = !targetsOpen }
             if (targetsOpen) child.targets.forEach { target ->

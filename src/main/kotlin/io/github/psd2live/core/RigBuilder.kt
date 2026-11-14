@@ -4388,7 +4388,8 @@ object RigBuilder {
             val target = normalized(MouthStrokeMesh.positions(path.map { p -> rig.point(p.first, p.second, pose) }, radius, joins))
             FloatArray(positions.size) { target[it] - positions[it] }
         }, visible = { opens -> if (opens) 1f else Float.NaN }).orEmpty()
-        val lipDrawable = ribbon.copy(blendShapes = neutralized(mouthShapes + headTurnShapes(layer, rawPositions, frame, turn.takeUnless { turnsWithMouth(owner.parentDeformerId) }), ribbon))
+        val lipDrawable = ribbon.copy(blendShapes = neutralized(mouthShapes + headTurnShapes(layer, rawPositions, frame,
+            turn.takeIf { MouthOutlineOwner.headOnMesh(owner.parentDeformerId?.raw) }), ribbon))
         val deformPath = if (columns.size >= 5) {
             val startIdx = overlap
             val endIdx = overlap + columns.lastIndex

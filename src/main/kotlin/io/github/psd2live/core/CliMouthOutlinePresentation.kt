@@ -63,11 +63,24 @@ internal object CliMouthOutlinePresentation {
         if (!modern) return preview.copy(rig = preview.rig.copy(puppet = sourceForms))
         val lowered = CubismBlendShapes.lawful(sourceForms)
         val output = lowered.drawables.filter { it.id in projected }.associateBy { it.id }
-        require(lowered.parameters == model.parameters && output.values.all { mesh ->
-            val before = projected.getValue(mesh.id)
-            mesh.parentDeformerId == before.parentDeformerId && mesh.mesh === before.mesh
-        }) { "CLI lip forms require mesh-local lowering" }
-        val adjusted = model.copy(drawables = model.drawables.map { output[it.id] ?: it })
+        require(lowered.parameters == model.parameters) { "CLI lip forms cannot retype source parameters" }
+        val existing = model.deformers.mapTo(hashSetOf()) { it.id }
+        val created = lowered.deformers.filterNot { it.id in existing }.associateBy { it.id }
+        val retained = linkedSetOf<org.umamo.runtime.model.DeformerId>()
+        for (mesh in output.values) {
+            val branch = hashSetOf<org.umamo.runtime.model.DeformerId>()
+            var parent = mesh.parentDeformerId
+            while (parent != null && parent !in existing) {
+                require(branch.add(parent)) { "Cyclic CLI lip carrier hierarchy" }
+                retained += parent
+                parent = created.getValue(parent).parent
+            }
+            require(parent == projected.getValue(mesh.id).parentDeformerId) {
+                "CLI lip carriers must remain under the source parent"
+            }
+        }
+        val adjusted = model.copy(drawables = model.drawables.map { output[it.id] ?: it },
+            deformers = model.deformers + lowered.deformers.filter { it.id in retained }).withDerivedRenderRoot()
         return preview.copy(rig = preview.rig.copy(puppet = adjusted))
     }
 

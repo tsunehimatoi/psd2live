@@ -7,6 +7,8 @@ import io.github.psd2live.application.WorkspaceInitialPreset
 import io.github.psd2live.application.WorkspacePresetInitialization
 import io.github.psd2live.application.WorkspaceRasterWork
 import io.github.psd2live.core.*
+import io.github.psd2live.core.recipe.RecipeSubject
+import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.core.sim.*
 import io.github.psd2live.format.model.*
 import io.github.psd2live.targets.cubism.PuppetIr
@@ -69,53 +71,12 @@ class NativeCoreBatchAndPresetE2ETest {
     private fun packNativeCore(workDir: Path, exePath: Path, withDep: Boolean = true, version: String = "1.0.0"): Path {
         val exeBytes = Files.readAllBytes(exePath)
         val exeName = exePath.fileName.toString()
-        val manifest = ModifierPluginManifest(
-            protocol = 2,
-            id = "psd2live.native.core",
-            name = "Core Native Modifiers (Rust)",
+        val sourceManifest = Json.parseToJsonElement(Files.readString(Path.of("plugins/native-core/plugin.manifest.json"))).jsonObject
+        val manifest = json.decodeFromJsonElement<ModifierPluginManifest>(JsonObject(sourceManifest +
+            ("files" to buildJsonObject { put(exeName, ModifierPluginStore.hash(exeBytes)) }))).copy(
             version = version,
-            dependencies = if (withDep) listOf(ModifierPluginDependency("psd2live.native.runtime")) else emptyList(),
             commands = mapOf(ModifierPluginStore.platform to listOf(exeName)),
-            files = mapOf(exeName to ModifierPluginStore.hash(exeBytes)),
-            algorithms = listOf(
-                ModifierPluginAlgorithm(
-                    type = "psd2live.native.core/physics",
-                    version = 1,
-                    name = "Pendulum Physics (Native)",
-                    category = "physics",
-                    targets = setOf("mesh", "deformer", "part", "layer"),
-                    reads = setOf("parameter", "physics"),
-                    writes = setOf("physics"),
-                    configSchema = buildJsonObject { },
-                    defaults = buildJsonObject { },
-                ),
-                ModifierPluginAlgorithm(
-                    type = "psd2live.native.core/motion",
-                    version = 1,
-                    name = "Motion Clip (Native)",
-                    category = "motion",
-                    targets = setOf("mesh", "deformer", "part", "layer"),
-                    reads = setOf("parameter", "motion", "relations"),
-                    writes = setOf("motion", "relations"),
-                    configSchema = buildJsonObject { },
-                    defaults = buildJsonObject { },
-                ),
-                ModifierPluginAlgorithm(
-                    type = "psd2live.native.core/skin-clip",
-                    authorContext = "face.skin-clip",
-                    version = 1,
-                    name = "Skin Clipping (Native)",
-                    category = "face",
-                    targets = setOf("mesh"),
-                    requires = setOf("rig.scaffold"),
-                    contextVersion = 2,
-                    reads = setOf("mesh", "relations"),
-                    writes = setOf("mesh", "relations"),
-                    composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter"),
-                    configSchema = buildJsonObject { put("type", "object") },
-                    defaults = buildJsonObject { },
-                ),
-            ),
+            dependencies = if (withDep) listOf(ModifierPluginDependency("psd2live.native.runtime")) else emptyList(),
         )
         val zipPath = workDir.resolve("psd2live-native-core.zip")
         ZipOutputStream(Files.newOutputStream(zipPath)).use { zip ->
@@ -158,7 +119,9 @@ class NativeCoreBatchAndPresetE2ETest {
     fun batchNativeCoreParityBenchmarkAndExtensibleDeps() {
         val exeName = if (ModifierPluginStore.platform.startsWith("windows")) "psd2live-native-core.exe" else "psd2live-native-core"
         val exePath = Path.of("plugins/native-core/target/release/$exeName").toAbsolutePath().normalize()
-        assumeTrue(Files.isRegularFile(exePath), "Native core Rust binary not built at $exePath")
+        if (System.getenv("PSD2LIVE_NATIVE_REQUIRED") == "1")
+            assertTrue(Files.isRegularFile(exePath), "Required native core binary not built at $exePath")
+        else assumeTrue(Files.isRegularFile(exePath), "Native core Rust binary not built at $exePath")
 
         val jvmPhysArt = assertNotNull(BundledAlgorithmArtifacts.find("physics", 1))
         val jvmMotArt = assertNotNull(BundledAlgorithmArtifacts.find("motion", 1))
@@ -322,14 +285,15 @@ class NativeCoreBatchAndPresetE2ETest {
     fun realPresetExecutesPhysicsMotionAndSkinClipThroughNativeCorePluginWithFullParity() {
         val exeName = if (ModifierPluginStore.platform.startsWith("windows")) "psd2live-native-core.exe" else "psd2live-native-core"
         val exePath = Path.of("plugins/native-core/target/release/$exeName").toAbsolutePath().normalize()
-        assumeTrue(Files.isRegularFile(exePath), "Native core Rust binary not built at $exePath")
+        if (System.getenv("PSD2LIVE_NATIVE_REQUIRED") == "1")
+            assertTrue(Files.isRegularFile(exePath), "Required native core binary not built at $exePath")
+        else assumeTrue(Files.isRegularFile(exePath), "Native core Rust binary not built at $exePath")
 
         val dir = Files.createTempDirectory("native-preset-e2e-")
         val store = ModifierPluginStore.shared
         var coreRef: ModifierPluginReference? = null
         try {
-            val packagedZip = Path.of("plugins/native-core/dist/psd2live.native.core-1.0.0.zip").toAbsolutePath().normalize()
-            val zipToInstall = if (Files.isRegularFile(packagedZip)) packagedZip else packNativeCore(dir, exePath, withDep = false)
+            val zipToInstall = packNativeCore(dir, exePath, withDep = false)
             val installed = store.install(zipToInstall.toString())
             coreRef = installed.reference
             // Bare legacy alias must remain owned by builtin/in-process, never hijacked by standalone package.
@@ -368,6 +332,13 @@ class NativeCoreBatchAndPresetE2ETest {
                 "brow.lid-coupling" to ("psd2live.native.core/brow-lid-coupling" to installed.reference),
                 "brow.blink" to ("psd2live.native.core/brow-blink" to installed.reference),
             )
+            // Derive required coverage from the input recipe, before inspecting either output stack.
+            val selectionConfig = artwork.rawConfig()
+            val selection = RecipeSubject.of(CharacterAnalyzer.analyze(artwork.source, selectionConfig))
+            val expectedOverrides = (RigModules.modules.filter { RigModules.builds(it, selectionConfig, selection) }
+                .map { it.id }.toSet() + setOf("physics", "motion")).intersect(overrides.keys)
+            assertTrue(expectedOverrides.containsAll(setOf("physics", "motion")),
+                "The fixture must exercise the requested native feature families")
             // Equal warmup for both paths before timing
             WorkspacePresetInitialization.prepare(
                 baseDoc,
@@ -401,27 +372,10 @@ class NativeCoreBatchAndPresetE2ETest {
 
             val baselineStack = RigModifierStack.fromJson(baselinePair.first.rigEdits.modifierStack!!)
             val nativeStack = RigModifierStack.fromJson(nativePair.first.rigEdits.modifierStack!!)
-            assertTrue(nativeStack.instances.any { it.type == "psd2live.native.core/physics" && it.plugin == installed.reference })
-            assertTrue(nativeStack.instances.any { it.type == "psd2live.native.core/motion" && it.plugin == installed.reference })
-            if (baselineStack.instances.any { it.type == "face.skin-clip" }) {
-                assertTrue(nativeStack.instances.any { it.type == "psd2live.native.core/skin-clip" && it.plugin == installed.reference })
-            }
-            if (baselineStack.instances.any { it.type == "eye.see-through" }) {
-                assertTrue(nativeStack.instances.any { it.type == "psd2live.native.core/eye-see-through" && it.plugin == installed.reference })
-            }
-            if (baselineStack.instances.any { it.type == "brow.see-through" }) {
-                assertTrue(nativeStack.instances.any { it.type == "psd2live.native.core/brow-see-through" && it.plugin == installed.reference })
-            }
-            assertTrue(baselineStack.instances.any { it.type == "eye" })
-            assertTrue(baselineStack.instances.any { it.type == "brow" })
-            for ((legacyType, nativeType) in overrides.mapValues { it.value.first }) {
-                if (nativeStack.instances.any { it.type == nativeType }) {
-                    assertTrue(
-                        nativeStack.instances.any { it.type == nativeType && it.plugin == installed.reference },
-                        "Expected $nativeType in native stack for $legacyType"
-                    )
-                }
-            }
+            val actualOverrides = nativeStack.instances.filter { it.type in overrides.values.map { value -> value.first } }
+            assertEquals(expectedOverrides.mapTo(sortedSetOf()) { overrides.getValue(it).first },
+                actualOverrides.mapTo(sortedSetOf()) { it.type }, "Native coverage must match the selected recipe")
+            assertTrue(actualOverrides.all { it.plugin == installed.reference }, "Every override must use the installed native package")
             assertTrue(baselineStack.instances.size <= nativeStack.instances.size)
 
             val baseIr = RigIrCompiler.compile(baselinePair.second)
