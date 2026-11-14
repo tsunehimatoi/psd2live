@@ -933,10 +933,12 @@ private fun Timeline(
 							else -> Unit
 						}
 
+                        var released = false
+                        try {
 						while (true) {
 							val event = awaitPointerEvent()
 							val change = event.changes.firstOrNull { it.id == down.id } ?: break
-							if (!change.pressed) break
+							if (!change.pressed) { released = true; break }
 							val position = change.position
 							if (!dragging && MotionTimelineGeometry.isDrag(start, position, slop)) {
 								dragging = true
@@ -973,6 +975,8 @@ private fun Timeline(
 								TimelinePress.LoopEnd -> loopEndDrag = snapTime(viewportAtPress.time(position.x)).coerceIn(0.1f, 600f)
 							}
 						}
+
+                        if (!released) return@awaitEachGesture
 
 						when (press) {
 							is TimelinePress.Key, is TimelinePress.Handle -> if (dragging) viewModel.endMotionKeyDrag()
@@ -1023,6 +1027,12 @@ private fun Timeline(
 									viewModel.updateMotionClipProperties(clipAtPress.id) { it.copy(duration = length) }
 							}
 						}
+                        } finally {
+                            viewModel.cancelMotionKeyDrag()
+                            box = null
+                            markerDrag = null
+                            loopEndDrag = null
+                        }
 					}
 				},
 		) {

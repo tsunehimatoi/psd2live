@@ -54,7 +54,8 @@ internal object RigModifierPipeline {
         val context = listOf(artwork, config.copy(atlasArrangement = null, rigEdits = config.rigEdits.copy(modifierStack = null)),
             base.atlas.placementByLayerId, base.atlas.fit, base.atlas.footprints, io.github.psd2live.i18n.I18n.currentLanguage, pipeline.rawSourceRotations)
         val result = ModifierPluginStore.shared.withArchivedBundles(stack.pluginReferences()) {
-            RigModifierAlgorithms.evaluator(source, stack, pipeline.rawSourceRotations).evaluate(
+            RigModifierAlgorithms.evaluator(source, stack, pipeline.rawSourceRotations,
+                workerSession = pipeline.modifierBuildOwner.workerSession()).evaluate(
                 input, stack, pipeline.modifierCache, context,
                 reuseCapturedAuthorInputs = true) {
                 if (Thread.currentThread().isInterrupted) throw CancellationException("Modifier evaluation cancelled")
@@ -82,7 +83,7 @@ internal object RigModifierPipeline {
                 it.modifierEvaluation = pipeline.modifierCache.snapshot
                 pipeline.modifierBase = ModifierBaseSnapshot(baseKey, base, input)
                 it.modifierBaseSnapshot = pipeline.modifierBase
-                it.modifierMeshCache = pipeline.meshCache
+                it.modifierBuildOwner = pipeline.modifierBuildOwner
             }
     }
 }
@@ -93,6 +94,26 @@ internal fun BuiltRig.withModifierMeshes(model: PuppetModel, assets: List<TileAr
     val layers = layerIdByDrawableId.toMutableMap()
     val pages = pageByDrawableId.toMutableMap()
     val bounds = sourceBoundsByDrawableId.toMutableMap()
+    // Split pieces keep their original tile but the original drawable has been removed. Resolve
+    // their source mapping from the authoring rig before following texture-source references.
+    val remaining = model.drawables.mapTo(HashSet()) { it.id }
+    val sourcesByTile = puppet.drawables.filter {
+        it.id !in remaining && it.atlasTileId != null && it.id.raw in layerIdByDrawableId
+    }.groupBy { it.atlasTileId }
+    val splitCopies = mutableSetOf<String>()
+    for (mesh in model.drawables) {
+        if (mesh.id.raw in layers) continue
+        val tileId = mesh.atlasTileId ?: continue
+        val originals = sourcesByTile[tileId] ?: continue
+        require(originals.map { original ->
+            Triple(layers[original.id.raw], pages[original.id.raw], bounds[original.id.raw])
+        }.distinct().size == 1) { "mesh.split.source_binding_ambiguous: mesh:${mesh.id.raw} tile:${tileId.raw}" }
+        val original = originals.first().id.raw
+        layers[original]?.let { layers[mesh.id.raw] = it }
+        pages[original]?.let { pages[mesh.id.raw] = it }
+        bounds[original]?.let { bounds[mesh.id.raw] = it }
+        splitCopies += mesh.id.raw
+    }
     for (mesh in generated) {
         val original = requireNotNull(mesh.textureSourceId).raw
         layers[original]?.let { layers[mesh.id.raw] = it }
@@ -112,6 +133,6 @@ internal fun BuiltRig.withModifierMeshes(model: PuppetModel, assets: List<TileAr
             (layer.left + layer.width).toFloat(), (layer.top + layer.height).toFloat())
     }
     return copy(puppet = model, layerIdByDrawableId = layers, pageByDrawableId = pages,
-        sourceBoundsByDrawableId = bounds, copiedDrawableIds = copiedDrawableIds + generated.map { it.id.raw },
+        sourceBoundsByDrawableId = bounds, copiedDrawableIds = copiedDrawableIds + generated.map { it.id.raw } + splitCopies,
         modifierRasterAssets = assets)
 }

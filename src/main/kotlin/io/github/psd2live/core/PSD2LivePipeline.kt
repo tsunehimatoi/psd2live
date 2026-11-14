@@ -40,11 +40,21 @@ class PSD2LivePipeline {
 	internal var rawSourceRotations = false
 	internal val modifierCache = io.github.psd2live.core.modifier.RigModifierEvaluationCache()
     internal var modifierBase: io.github.psd2live.core.modifier.ModifierBaseSnapshot? = null
-	internal var meshCache = PreviewMeshCache()
+    internal var modifierBuildOwner = ModifierBuildCacheOwner()
+        set(value) { field = value; value.attach(this) }
+    init { modifierBuildOwner.attach(this) }
+    internal val meshCache: PreviewMeshCache get() = modifierBuildOwner.meshCache()
+    internal fun releaseModifierInputs(owner: ModifierBuildCacheOwner) {
+        if (modifierBuildOwner !== owner) return
+        modifierCache.snapshot = null
+        modifierBase = null
+    }
     /** Carry content-keyed intermediates between isolated candidates, never a mutable document or worker. */
     internal fun reuseModifierInputs(current: RigPreviewModel?) {
+        if (modifierBuildOwner.isClosed) modifierBuildOwner = ModifierBuildCacheOwner()
         current ?: return
-        current.modifierMeshCache?.let { meshCache = it }
+        current.modifierBuildOwner?.takeUnless { it.isClosed }?.let { modifierBuildOwner = it }
+        if (modifierBuildOwner.isClosed) modifierBuildOwner = ModifierBuildCacheOwner()
         current.modifierEvaluation?.let { modifierCache.snapshot = it }
         current.modifierBaseSnapshot?.let { modifierBase = it }
     }
@@ -73,8 +83,20 @@ class PSD2LivePipeline {
 		progress: ProgressListener = ProgressListener { _, _ -> },
 		previousAtlas: PackedAtlas? = null,
 	): RigPreviewModel {
+        if (modifierBuildOwner.isClosed) modifierBuildOwner = ModifierBuildCacheOwner()
 		if (config.rigEdits.modifierStack != null) {
-			return io.github.psd2live.core.modifier.RigModifierPipeline.build(this, source, config, progress, previousAtlas)
+			return try {
+                io.github.psd2live.core.modifier.RigModifierPipeline.build(this, source, config, progress, previousAtlas).also {
+                    if (modifierBuildOwner.isClosed) {
+                        releaseModifierInputs(modifierBuildOwner)
+                        throw java.util.concurrent.CancellationException("Workspace build owner was closed")
+                    }
+                }
+            }
+            catch (failure: Throwable) {
+                if (!modifierBuildOwner.published) runCatching { modifierBuildOwner.close() }.exceptionOrNull()?.let(failure::addSuppressed)
+                throw failure
+            }
 		}
 		val analysis = if (config.rigEdits.importedCmo3 != null) Cmo3ModelImport.analysis(source, config)
 			else RigBuildProfile.stage("pipeline: analyze") { RigGenerationSource.analyze(source, config) }

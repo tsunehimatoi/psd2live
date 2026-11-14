@@ -543,11 +543,12 @@ data class RigPreviewModel(
 ) {
     /** Transient, immutable evaluation snapshot installed before publication; never document state. */
     internal var modifierEvaluation: io.github.psd2live.core.modifier.RigModifierEvaluationCache.Snapshot? = null
-    internal var modifierMeshCache: PreviewMeshCache? = null
+    /** A releasable service handle, never part of the immutable evaluated model. */
+    internal var modifierBuildOwner: ModifierBuildCacheOwner? = null
     internal var modifierBaseSnapshot: io.github.psd2live.core.modifier.ModifierBaseSnapshot? = null
     internal fun retainModifierCachesFrom(previous: RigPreviewModel): RigPreviewModel = apply {
         modifierEvaluation = previous.modifierEvaluation
-        modifierMeshCache = previous.modifierMeshCache
+        modifierBuildOwner = previous.modifierBuildOwner
         modifierBaseSnapshot = previous.modifierBaseSnapshot
     }
 	/**

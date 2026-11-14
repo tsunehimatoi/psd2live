@@ -237,7 +237,8 @@ internal class WorkspacePreviewBuilder {
         importedRecordsCheckpointed(buildModel(document, current, legacyDrawOrders), current).let { model ->
             // A model reused across a layer move carries the moved layers, so the canvas and paint read where they now are.
             if (model.analysis.source !== document.source && model.analysis.source != document.source &&
-                pipeline.sameArt(model.analysis.source, document.source, document.layout.referenceLayerIds)) model.copy(analysis = model.analysis.copy(source = document.source))
+                pipeline.sameArt(model.analysis.source, document.source, document.layout.referenceLayerIds))
+                model.copy(analysis = model.analysis.copy(source = document.source)).retainModifierCachesFrom(model)
             else model
         }
 

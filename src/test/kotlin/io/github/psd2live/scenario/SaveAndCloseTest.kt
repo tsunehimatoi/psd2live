@@ -733,4 +733,118 @@ class SaveAndCloseTest {
             vm.state.value.parameterValues).worldPositions.mapValues { it.value.toList() })
         assertFalse(vm.state.value.projectDirty)
     }
+    @Test fun timelineSamplesCommitOnceAndCancellationRestoresTheCommittedClip() = editor { vm, workspace ->
+        vm.createMotionClip()
+        idle(vm, workspace)
+        vm.addMotionCurve("ParamAngleX")
+        idle(vm, workspace)
+        val origin = vm.editingMotionClip()!!
+        val selection = vm.motionEditor.selection
+        val before = workspace.history().nodes.size
+        vm.beginMotionKeyDrag()
+        vm.dragMotionKeys(.1f)
+        vm.dragMotionKeys(.2f)
+        assertEquals(before, workspace.history().nodes.size)
+        vm.cancelMotionKeyDrag()
+        assertEquals(origin, vm.editingMotionClip())
+        assertEquals(selection, vm.motionEditor.selection)
+        assertEquals(before, workspace.history().nodes.size)
+        vm.beginMotionKeyDrag()
+        vm.dragMotionKeys(.1f)
+        vm.dragMotionKeys(.3f)
+        vm.endMotionKeyDrag()
+        vm.endMotionKeyDrag()
+        idle(vm, workspace)
+        assertEquals(before + 1, workspace.history().nodes.size)
+        assertEquals(.3f, vm.editingMotionClip()!!.curves.first().keys.first().time, .0001f)
+    }
+
+    @Test fun oldModifierCompletionCannotDismissOrFailANewDialog() = editor { vm, workspace ->
+        val callbacks = mutableListOf<(String?) -> Unit>()
+        val controller = ModifierController({ vm.state.value }, { workspace }, { workspace.stateToken() },
+            { emptyList() }, CoroutineScope(currentCoroutineContext()),
+            { _, _, _, callback -> callbacks += callback }, { vm.setErrorMessage(it) })
+        controller.openModifierAddition()
+        assertNotNull(controller.modifierAddition)
+        controller.switchModifierPreset("minimal")
+        controller.switchModifierPreset("minimal")
+        assertEquals(1, callbacks.size)
+        controller.previewModifierAddition("swing", null)
+        assertTrue(controller.modifierAddition!!.committing)
+        controller.dismissModifierAddition()
+        controller.openModifierAddition()
+        val reopened = controller.modifierAddition
+        callbacks.single()("old failure")
+        assertEquals(reopened, controller.modifierAddition)
+        controller.close()
+        assertNull(controller.modifierAddition)
+    }
+
+    @Test fun recoveryRetryPersistsCurrentVersionWithoutAddingHistory() = editor { _, workspace ->
+        val before = workspace.snapshot()
+        val nodes = workspace.history().nodes.size
+        workspace.retryPersistence()
+        val saved = withTimeout(20_000) { workspace.observePersistence().first {
+            it.state == before.state && it.phase == io.github.psd2live.application.WorkspacePersistencePhase.SAVED
+        } }
+        assertEquals(before.projectId, saved.projectId)
+        assertEquals(before.state, workspace.stateToken())
+        assertEquals(nodes, workspace.history().nodes.size)
+        assertTrue(workspace.hasUnsavedChanges(), "A recovery checkpoint is not the user's project archive")
+    }
+
+    @Test fun anOlderReferenceGestureCannotClearANewerIdenticalDraft() = editor { vm, workspace ->
+        val completions = mutableListOf<() -> Unit>()
+        val controller = MaterialController({ vm.state.value }, { workspace }, { false },
+            { finished, _ -> completions += finished }, {}, {}, {}, {},
+            FileDropRouter({ null }, { null }), { _, _ -> })
+        val target = ReferenceTarget.Image("reference")
+        controller.previewReferenceOpacity(target, .2f)
+        controller.commitReferenceOpacity(target, .2f)
+        controller.previewReferenceOpacity(target, .2f)
+        completions.single()()
+        assertNotNull(controller.referenceOpacityDraft.value)
+        controller.close()
+        assertNull(controller.referenceOpacityDraft.value)
+    }
+
+    @Test fun modifierPlanningKeepsOnlyTheLatestRequestedPlan() = editor { vm, workspace ->
+        val entered = CompletableDeferred<Unit>()
+        val release = CountDownLatch(1)
+        val queries = object : io.github.psd2live.application.WorkspaceReadPort by workspace {
+            override fun captureQueries(): io.github.psd2live.application.WorkspaceQueries {
+                val captured = workspace.captureQueries()
+                return object : io.github.psd2live.application.WorkspaceQueries by captured {
+                    override fun modifierPlan(request: JsonObject): JsonObject {
+                        val type = request.getValue("type").jsonPrimitive.content
+                        if (type == "slow") {
+                            entered.complete(Unit)
+                            check(release.await(10, TimeUnit.SECONDS))
+                        }
+                        return buildJsonObject {
+                            put("state", captured.stateToken())
+                            put("group", type)
+                            putJsonArray("entries") { add(buildJsonObject { put("type", type); putJsonObject("config") {} }) }
+                        }
+                    }
+                }
+            }
+        }
+        val previews = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+        val controller = ModifierController({ vm.state.value }, { queries }, { workspace.stateToken() },
+            { emptyList() }, previews, { _, _, _, _ -> fail("Planning must not submit") }, {})
+        try {
+            controller.openModifierAddition()
+            controller.previewModifierAddition("slow", null)
+            withTimeout(10_000) { entered.await() }
+            val obsolete = previews.coroutineContext[Job]!!.children.toSet()
+            controller.previewModifierAddition("fast", null)
+            withTimeout(10_000) { previews.coroutineContext[Job]!!.children.filter { it !in obsolete }.toList().joinAll() }
+            assertFalse(controller.modifierAddition!!.loading)
+            release.countDown()
+            withTimeout(10_000) { previews.coroutineContext[Job]!!.children.toList().joinAll() }
+            assertEquals("fast", controller.modifierAddition!!.plan!!.getValue("group").jsonPrimitive.content)
+        } finally { release.countDown(); controller.close(); previews.cancel() }
+    }
+
 }

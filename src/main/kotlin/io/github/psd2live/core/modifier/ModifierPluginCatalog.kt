@@ -5,7 +5,10 @@ internal object ModifierPluginCatalog {
     fun definitions(store: ModifierPluginStore = ModifierPluginStore.shared,
                     captured: List<RigModifierDefinition> = emptyList(),
                     resolveRasters: ModifierRasterResolver = RigModifierRasterAssets::resolve,
-                    references: Set<ModifierPluginReference>? = null): List<RigModifierDefinition> = store.runnablePackages()
+                    references: Set<ModifierPluginReference>? = null,
+                    workerSession: ModifierPluginWorkers.Session? = null): List<RigModifierDefinition> {
+        val defaults = store.defaultPackages().mapTo(HashSet()) { it.reference }
+        return store.runnablePackages()
         .filter { references == null || it.reference in references }.flatMap { entry ->
         val isBuiltin = entry.reference.id.startsWith("builtin.")
         entry.manifest.algorithms.flatMap { algorithm ->
@@ -37,7 +40,7 @@ internal object ModifierPluginCatalog {
                     override fun evaluate(input: io.github.psd2live.format.model.RigIR, instance: RigModifierInstance,
                                           context: ModifierAlgorithmContext, checkpoint: () -> Unit): io.github.psd2live.format.model.RigIR =
                         ModifierPluginWorkers.evaluate(entry, algorithm, input, instance, checkpoint, store,
-                            context = context, resolveRasters = resolveRasters, declaredParameters = adapter.parameters(native(instance)))
+                            context = context, resolveRasters = resolveRasters, declaredParameters = adapter.parameters(native(instance)), session = workerSession)
                 }
                 adapter.copy(type = type, pluginReference = entry.reference, plugin = worker,
                     parameters = { adapter.parameters(native(it)) },
@@ -51,7 +54,8 @@ internal object ModifierPluginCatalog {
                 val worker = object : ContextualModifierAlgorithmPlugin {
                     override fun evaluate(input: io.github.psd2live.format.model.RigIR, instance: RigModifierInstance,
                                           context: ModifierAlgorithmContext, checkpoint: () -> Unit): io.github.psd2live.format.model.RigIR =
-                        ModifierPluginWorkers.evaluate(entry, algorithm, input, instance, checkpoint, store, context = context, resolveRasters = resolveRasters)
+                        ModifierPluginWorkers.evaluate(entry, algorithm, input, instance, checkpoint, store, context = context,
+                            resolveRasters = resolveRasters, session = workerSession)
                 }
                 RigModifierDefinition(type, algorithm.version, requires = algorithm.requires, provides = algorithm.provides,
                 references = { before, after, _ -> ModifierPluginOutput.sidecars(before, after) },
@@ -63,14 +67,19 @@ internal object ModifierPluginCatalog {
                 },
                 pluginReference = entry.reference, plugin = worker, cacheReads = algorithm.reads + algorithm.writes, upstreamInputs = algorithm.contextVersion >= 2)
             }
-        } }
+        }.map { it.copy(defaultSelection = entry.reference in defaults) } }
+    }
     }
 
-    fun available(instance: RigModifierInstance): Boolean {
+    fun available(instance: RigModifierInstance, store: ModifierPluginStore = ModifierPluginStore.shared): Boolean {
+        instance.plugin?.let { exact ->
+            if (store.packages().any { it.reference == exact && it.manifest.algorithms.any { algorithm ->
+                    algorithm.version == instance.version && (algorithm.type == instance.type || instance.type in algorithm.aliases)
+                } }) return store.resolution(exact).available
+        }
         val resolvedVersion = BuiltinModifierPlugins.resolveVersion(instance.type, instance.version, instance.plugin)
         val builtin = BuiltinModifierPlugins.reference(instance.type, resolvedVersion)
         val reference = instance.plugin ?: builtin ?: return false
-        val store = ModifierPluginStore.shared
         val isBuiltin = reference == builtin || BuiltinModifierPlugins.matches(instance)
         if (!isBuiltin) {
             val manifest = store.packages().firstOrNull { it.reference == reference }?.manifest ?: return false
@@ -81,19 +90,23 @@ internal object ModifierPluginCatalog {
         return store.resolution(if (isBuiltin) (builtin ?: reference) else reference).available
     }
 
-    fun available(type: String, version: Int, plugin: ModifierPluginReference? = null): Boolean {
+    fun available(type: String, version: Int, plugin: ModifierPluginReference? = null,
+                  store: ModifierPluginStore = ModifierPluginStore.shared): Boolean {
+        if (plugin != null) store.packages().firstOrNull { it.reference == plugin }?.let { entry ->
+            if (entry.manifest.algorithms.any { it.version == version && (it.type == type || type in it.aliases) })
+                return store.resolution(plugin).available
+            if (!BuiltinModifierPlugins.isHistoricalBuiltinReference(type, version, plugin)) return false
+        }
         val resolvedVersion = BuiltinModifierPlugins.resolveVersion(type, version, plugin)
         val builtin = BuiltinModifierPlugins.reference(type, resolvedVersion)
         val reference = plugin?.takeUnless {
             it.id == "builtin" || BuiltinModifierPlugins.isHistoricalBuiltinReference(type, version, it)
         } ?: builtin
-        val store = ModifierPluginStore.shared
         return reference?.let { store.resolution(it).available } ?: store.builtinsEnabled()
     }
 
-    fun algorithm(type: String, version: Int? = null): Pair<InstalledModifierPlugin, ModifierPluginAlgorithm>? {
-        val store = ModifierPluginStore.shared
-        return store.runnablePackages().asSequence().flatMap { entry ->
+    fun algorithm(type: String, version: Int? = null, store: ModifierPluginStore = ModifierPluginStore.shared): Pair<InstalledModifierPlugin, ModifierPluginAlgorithm>? {
+        return store.defaultPackages().asSequence().flatMap { entry ->
             val matching = entry.manifest.algorithms.filter { it.type == type && (version == null || it.version == version) }
             if (matching.isEmpty() || !store.resolution(entry.reference).available) emptySequence()
             else matching.asSequence().map { entry to it }

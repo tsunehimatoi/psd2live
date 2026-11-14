@@ -27,11 +27,22 @@ internal object BuiltinModifierPlugins {
     private fun canonicalVersion(type: String, version: Int): Int =
         if (version > 1 && RigLegacyBindings.find(type) != null) 1 else version
 
-    fun isHistoricalBuiltinReference(type: String, version: Int, plugin: ModifierPluginReference): Boolean =
-        version > 1 && RigLegacyBindings.find(type) != null && (
-            plugin.id == "builtin." + java.util.HexFormat.of().formatHex(type.encodeToByteArray()) + ".v$version" ||
-                plugin == reference(type, 1)
-            )
+    // Compatibility fingerprints emitted by the host-only bindings before package archives existed.
+    // These are not payload digests. Keep the fixed inputs from the old writer, never accept an ID alone.
+    private val historicalBindingCode = listOf(
+        "f7f0972749d16f38edbaf8efbebc89d34e08a2bd1c35c28c0a320e281d4a2b2b",
+        "83da034405a01be0055bc59007c438750f78d5413c3a696a8e8c98f69c71280e",
+        "7e491e41ee392e64214cc16ca34edaf8278eca8de4043b7cf2ff64bb2db1af97",
+    )
+
+    fun isHistoricalBuiltinReference(type: String, version: Int, plugin: ModifierPluginReference): Boolean {
+        if (RigLegacyBindings.find(type) == null) return false
+        if (version > 1 && plugin == reference(type, 1)) return true
+        val id = "builtin." + java.util.HexFormat.of().formatHex(type.encodeToByteArray()) + ".v$version"
+        val packageVersion = "$version.0.0"
+        return plugin.id == id && plugin.version == packageVersion && plugin.dependencyDigests.isEmpty() &&
+            plugin.digest == ModifierPluginStore.hash((listOf(id, packageVersion) + historicalBindingCode).joinToString("\n").encodeToByteArray())
+    }
 
     fun resolveVersion(type: String, version: Int, plugin: ModifierPluginReference?): Int =
         if (version > 1 && RigLegacyBindings.find(type) != null &&

@@ -863,6 +863,11 @@ private fun StatusBar(
 			)
 		}
 
+        viewModel.projectSaveFeedback(state)?.let { feedback ->
+            Spacer(Modifier.width(12.dp))
+            io.github.psd2live.ui.components.ProjectSaveIndicator(feedback, viewModel::retryRecoveryPersistence)
+        }
+
 		if (task != null) {
 			Spacer(Modifier.width(12.dp))
 			Row(

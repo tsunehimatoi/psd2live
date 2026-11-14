@@ -19,7 +19,8 @@ internal object RigModifierAlgorithms {
         return catalog?.takeIf { it.first == revision }?.second ?: registryFor(null).also { catalog = revision to it }
     }
 
-    private fun registryFor(source: RigModifierSource?, stack: RigModifierStack? = null): RigModifierRegistry =
+    private fun registryFor(source: RigModifierSource?, stack: RigModifierStack? = null,
+                            workerSession: ModifierPluginWorkers.Session? = null): RigModifierRegistry =
         RigBuildProfile.stage("modifier source registry") {
             val builtins = BuiltinModifierPlugins.definitions(source)
             val resolveRasters = source?.let { it::resolveRasters } ?: RigModifierRasterAssets::resolve
@@ -35,16 +36,16 @@ internal object RigModifierAlgorithms {
                 }
             }
             val workers = if (references?.isEmpty() == true) emptyList() else ModifierPluginCatalog.definitions(
-                captured = builtins, resolveRasters = resolveRasters, references = references)
+                captured = builtins, resolveRasters = resolveRasters, references = references, workerSession = workerSession)
             RigModifierRegistry(builtins + workers)
         }
 
     fun evaluator(source: RigModifierSource? = null, stack: RigModifierStack? = null,
-                  rawSourceRotations: Boolean = false) = RigModifierEvaluator(
+                  rawSourceRotations: Boolean = false, workerSession: ModifierPluginWorkers.Session? = null) = RigModifierEvaluator(
         when {
             stack?.instances?.isEmpty() == true -> emptyRegistry
-            source == null -> registry
-            else -> registryFor(source, stack)
+            source == null && workerSession == null -> registry
+            else -> registryFor(source, stack, workerSession)
         },
         sourceTargetExists = { it.kind == "layer" && source?.hasLayer(it.id) == true },
         physicsOrder = source?.physicsOrder.orEmpty(),

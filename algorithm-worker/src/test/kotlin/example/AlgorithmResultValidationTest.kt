@@ -30,4 +30,18 @@ class AlgorithmResultValidationTest {
             AlgorithmResultValidation.validate(input.copy(meshes = listOf(input.meshes.single().copy(opacity = 2f))))
         }
     }
+    @Test fun rejectsDanglingAndDuplicateParameterTreeReferencesAndLinks() {
+        val rig = input.copy(parameters = listOf(Parameter("a", "A", -1f, 1f, 0f), Parameter("b", "B", -1f, 1f, 0f)),
+            parameterTree = listOf(ParameterNode.Group("group", "Group", true, listOf(ParameterNode.Param("b")))),
+            parameterLinks = listOf(ParameterLink("a", "b")))
+        AlgorithmResultValidation.validate(rig) // A partial tree is valid; unlisted parameters retain their order.
+        for (invalid in listOf(
+            rig.copy(parameterTree = listOf(ParameterNode.Param("missing"))),
+            rig.copy(parameterTree = rig.parameterTree + ParameterNode.Param("b")),
+            rig.copy(parameterTree = rig.parameterTree + rig.parameterTree),
+            rig.copy(parameterLinks = listOf(ParameterLink("a", "missing"))),
+            rig.copy(parameters = rig.parameters + rig.parameters.first()),
+        )) assertFailsWith<IllegalArgumentException> { AlgorithmResultValidation.validate(invalid) }
+    }
+
 }

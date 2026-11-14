@@ -70,5 +70,6 @@ internal object WorkspaceReferenceMeshes {
             Part(partId, PART_NAME, moved, isSketch = true)
         val roots = listOf<OrgChild>(OrgChild.Part(partId)) + keep(puppet.rootChildren).filterNot { it is OrgChild.Part && it.id == partId }
         return model.copy(rig = model.rig.copy(puppet = puppet.copy(parts = parts, rootChildren = roots).withDerivedRenderRoot()))
+            .retainModifierCachesFrom(model)
     }
 }

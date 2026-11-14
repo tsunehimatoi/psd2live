@@ -15,9 +15,15 @@ internal class WorkspacePersistenceReceipt internal constructor(
 }
 
 internal data class WorkspacePersistenceFailure(val version: String, val cause: Exception)
+internal data class WorkspacePersistenceDestinationStatus(
+    val requestedVersion: String,
+    val completedVersion: String? = null,
+    val pending: Int = 0,
+)
 internal data class WorkspacePersistenceStatus(
     val pending: Int = 0,
     val failures: Map<Any, WorkspacePersistenceFailure> = emptyMap(),
+    val destinations: Map<Any, WorkspacePersistenceDestinationStatus> = emptyMap(),
 )
 
 /** FIFO publication, complete-snapshot coalescing and destination-specific failure acknowledgements. */
@@ -46,7 +52,11 @@ internal class WorkspacePersistenceCoordinator(dispatcher: CoroutineDispatcher =
                 val before = mutableStatus.value
                 val failures = if (failure == null) before.failures - entry.destination
                     else before.failures + (entry.destination to WorkspacePersistenceFailure(work.first, failure))
-                mutableStatus.value = before.copy(pending = before.pending - 1, failures = failures)
+                val destination = before.destinations.getValue(entry.destination)
+                mutableStatus.value = before.copy(pending = before.pending - 1, failures = failures,
+                    destinations = before.destinations + (entry.destination to destination.copy(
+                        pending = destination.pending - 1,
+                        completedVersion = if (failure == null) work.first else destination.completedVersion)))
                 outstanding.removeAll(work.third.toSet())
             }
             work.third.forEach { receipt ->
@@ -61,6 +71,13 @@ internal class WorkspacePersistenceCoordinator(dispatcher: CoroutineDispatcher =
         val receipt = WorkspacePersistenceReceipt(destination, version)
         outstanding += receipt
         val previous = if (coalesce) waiting[destination] else null
+        val before = mutableStatus.value
+        val destinationStatus = before.destinations[destination]
+        mutableStatus.value = before.copy(
+            pending = before.pending + if (previous == null) 1 else 0,
+            destinations = before.destinations + (destination to WorkspacePersistenceDestinationStatus(
+                requestedVersion = version, completedVersion = destinationStatus?.completedVersion,
+                pending = (destinationStatus?.pending ?: 0) + if (previous == null) 1 else 0)))
         if (previous != null) {
             previous.version = version
             previous.write = write
@@ -68,7 +85,6 @@ internal class WorkspacePersistenceCoordinator(dispatcher: CoroutineDispatcher =
         } else {
             val entry = Entry(destination, version, write, mutableListOf(receipt))
             if (coalesce) waiting[destination] = entry
-            mutableStatus.value = mutableStatus.value.copy(pending = mutableStatus.value.pending + 1)
             check(queue.trySend(entry).isSuccess)
         }
         latest[destination] = receipt
