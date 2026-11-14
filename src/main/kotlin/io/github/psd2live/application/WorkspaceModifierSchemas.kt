@@ -59,69 +59,7 @@ internal object WorkspaceModifierSchemas {
             "names" to s.array(s.handle(), 1, 256),
         ), emptySet())
         "simulation" -> if (summary) s.obj(simFields, simRequired) else simulation
-        "eye" -> s.obj(mapOf(
-            "scaffold" to s.handle(),
-            "mode" to s.choices("fitted", "legacy"),
-            "wide" to s.boolean(),
-            "smile" to s.boolean(),
-            "emotion" to s.boolean(),
-            "gazeLid" to s.boolean(),
-            "highlight" to s.boolean(),
-            "lidFade" to s.boolean(),
-            "squash" to s.boolean(),
-            "aftershock" to s.boolean(),
-            "tuning" to s.dictionary(s.number()),
-            "values" to s.dictionary(s.number()),
-        ), setOf("scaffold"))
-        "face" -> s.obj(mapOf(
-            "scaffold" to s.handle(),
-            "mode" to s.choices("fitted", "legacy"),
-            "depthTurn" to s.boolean(),
-            "neck" to s.boolean(),
-            "strength" to s.number(0, 4),
-            "tuning" to s.dictionary(s.number()),
-            "values" to s.dictionary(s.number()),
-        ), setOf("scaffold"))
-        "body" -> s.obj(mapOf(
-            "scaffold" to s.handle(),
-            "bust" to s.boolean(),
-            "arms" to s.boolean(),
-            "strength" to s.number(0, 4),
-            "tuning" to s.dictionary(s.number()),
-            "values" to s.dictionary(s.number()),
-        ), setOf("scaffold"))
-        "hair" -> s.obj(mapOf(
-            "scaffold" to s.handle(),
-            "mode" to s.choices("chains", "legacy"),
-            "tuning" to s.dictionary(s.number()),
-            "values" to s.dictionary(s.number()),
-            "physicsEnabled" to s.boolean(),
-            "physics" to s.dictionary(physics),
-        ), setOf("scaffold"))
-        "brow" -> s.obj(mapOf(
-            "scaffold" to s.handle(),
-            "mode" to s.choices("fitted", "legacy"),
-            "shape" to s.boolean(),
-            "spring" to s.boolean(),
-            "blink" to s.boolean(),
-            "lidCoupling" to s.boolean(),
-            "tuning" to s.dictionary(s.number()),
-            "values" to s.dictionary(s.number()),
-        ), setOf("scaffold"))
-        "mouth" -> s.obj(mapOf(
-            "scaffold" to s.handle(),
-            "mode" to s.choices("fitted", "legacy"),
-            "tongue" to s.boolean(),
-            "vowel" to s.boolean(),
-            "capture" to s.boolean(),
-            "spring" to s.boolean(),
-            "depth" to s.boolean(),
-            "jaw" to s.boolean(),
-            "cheekLid" to s.boolean(),
-            "color" to s.integer(0, 0xffffff),
-            "tuning" to s.dictionary(s.number()),
-            "values" to s.dictionary(s.number()),
-        ), setOf("scaffold"))
+        "eye", "brow", "mouth", "face", "body", "hair" -> partConfiguration(type)
         else -> RigLegacyBindings.find(type)?.let { spec -> s.obj(mapOf("scaffold" to s.handle(),
             "tuning" to s.obj(spec.fields.associate { it.id to s.number(it.range.start, it.range.endInclusive) }, emptySet())) +
             (if (spec.module?.base != null) mapOf("base" to s.handle()) else emptyMap()) +
@@ -132,6 +70,47 @@ internal object WorkspaceModifierSchemas {
             (if (spec.mouthOutline) mapOf("color" to s.integer(0, 0xffffff)) else emptyMap()) +
             (if (spec.knobs.isNotEmpty()) mapOf("values" to s.obj(spec.knobs.associate { it.id to s.number(it.range.start, it.range.endInclusive) }, emptySet())) else emptyMap()), setOf("scaffold") + (if (spec.module?.base != null) setOf("base") else emptySet()) + (if (spec.related.isNotEmpty()) setOf("dependencies") else emptySet())) }
             ?: error("No modifier configuration schema: $type")
+    }
+
+    private val partBases = mapOf(
+        "eye" to listOf("eye/fitted", "eye/legacy"), "brow" to listOf("brow/fitted", "brow/legacy"),
+        "mouth" to listOf("mouth/fitted", "mouth/legacy"), "face" to listOf("face/fitted", "face/legacy"),
+        "body" to listOf("body/legacy"), "hair" to listOf("hair/chains", "hair/legacy"),
+    )
+
+    private fun partConfiguration(type: String): JsonObject {
+        // Reuse the real binding field constraints; only the part envelope is new.
+        val fields = linkedMapOf<String, JsonObject>()
+        for (base in partBases.getValue(type)) {
+            for ((key, value) in configuration(base).getValue("properties").jsonObject) {
+                val next = value.jsonObject
+                val previous = fields[key]
+                fields[key] = if (previous?.containsKey("properties") == true && next.containsKey("properties")) {
+                    s.obj((previous.getValue("properties").jsonObject + next.getValue("properties").jsonObject)
+                        .mapValues { it.value.jsonObject }, emptySet())
+                } else next
+            }
+        }
+        fields["mode"] = when (type) {
+            "hair" -> s.choices("chains", "legacy")
+            "body" -> s.choices("legacy")
+            else -> s.choices("fitted", "legacy")
+        }
+        val flags = io.github.psd2live.core.modifier.ModifierPartConfig.features[type].orEmpty()
+        flags.keys.forEach { fields[it] = s.boolean() }
+        if (type == "brow") {
+            fields["lid"] = s.boolean() // Historical spelling, canonical lidCoupling wins.
+            fields["physicsEnabled"] = s.boolean()
+        }
+        if (type == "mouth") fields["color"] = s.integer(0, 0xffffff)
+        if (flags.isNotEmpty()) fields["subConfigs"] = s.obj(flags.values.associateWith { child ->
+            val properties = configuration(child).getValue("properties").jsonObject.mapValues { it.value.jsonObject }
+            s.obj(properties + mapOf(
+                "targets" to s.array(target, 1, 4096), "id" to s.handle(), "version" to s.integer(1),
+                "outputAliases" to s.dictionary(s.handle()),
+            ), emptySet())
+        }, emptySet())
+        return s.obj(fields, setOf("scaffold"))
     }
 
     val types get() = RigModifierAlgorithms.registry.definitions.filter { it.pluginReference == null }.map { it.type }.distinct()

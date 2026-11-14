@@ -34,6 +34,42 @@ class WorkspaceModifierSchemasTest {
         putJsonArray("targets") { addJsonObject { put("kind", if (type == "swing") "deformer" else "mesh"); put("id", "target") } }
     }
 
+    @Test fun partSubConfigurationsRetainStrictBindingFieldsAcrossPublicUpdatesAndSerialization() {
+        for ((part, flags) in ModifierPartConfig.features) {
+            val config = buildJsonObject {
+                put("scaffold", "structure")
+                flags.forEach { (flag, _) -> put(flag, true) }
+                putJsonObject("subConfigs") {
+                    flags.values.forEach { child ->
+                        put(child, JsonObject(configuration(child) + mapOf(
+                            "targets" to Json.encodeToJsonElement(listOf(ModifierTarget("mesh", "separate-target"))),
+                            "id" to JsonPrimitive("original-child"), "version" to JsonPrimitive(2),
+                            "outputAliases" to buildJsonObject { put("local", "original-output") },
+                        )))
+                    }
+                }
+            }
+            val request = buildJsonObject {
+                put("id", "part"); put("type", part); put("state", "state"); put("config", config)
+            }
+            validateOperationSchema(request, WorkspaceModifierSchemas.request("modifier_update"))
+            val stack = RigModifierStack().add(part, 1, listOf(ModifierTarget("mesh", "base-target")), config, id = "part")
+            assertEquals(config, RigModifierStack.fromJson(Json.parseToJsonElement(stack.toJson().toString()).jsonObject).instances.single().config)
+            val first = flags.values.first()
+            val invalid = JsonObject(config + ("subConfigs" to buildJsonObject {
+                put(first, buildJsonObject { put("unknown", true) })
+            }))
+            assertFailsWith<WorkspaceValidationException> {
+                validateOperationSchema(JsonObject(request + ("config" to invalid)), WorkspaceModifierSchemas.request("modifier_update"))
+            }
+            assertFailsWith<WorkspaceValidationException> {
+                validateOperationSchema(JsonObject(request + ("config" to JsonObject(config + ("subConfigs" to buildJsonObject {
+                    put("unknown-child", JsonObject(emptyMap()))
+                })))), WorkspaceModifierSchemas.request("modifier_update"))
+            }
+        }
+    }
+
     @Test fun everyRegisteredAlgorithmHasAStrictConfigurationAndMutationSchema() {
         for (type in WorkspaceModifierSchemas.types) {
             val request = addition(type)
