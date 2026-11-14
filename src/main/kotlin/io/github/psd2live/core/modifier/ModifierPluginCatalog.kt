@@ -5,7 +5,8 @@ internal object ModifierPluginCatalog {
     fun definitions(store: ModifierPluginStore = ModifierPluginStore.shared,
                     captured: List<RigModifierDefinition> = emptyList(),
                     resolveRasters: ModifierRasterResolver = RigModifierRasterAssets::resolve,
-                    references: Set<ModifierPluginReference>? = null): List<RigModifierDefinition> = store.runnablePackages()
+                    references: Set<ModifierPluginReference>? = null,
+                    workerSession: ModifierPluginWorkers.Session? = null): List<RigModifierDefinition> = store.runnablePackages()
         .filter { references == null || it.reference in references }.flatMap { entry ->
         val isBuiltin = entry.reference.id.startsWith("builtin.")
         entry.manifest.algorithms.flatMap { algorithm ->
@@ -37,7 +38,7 @@ internal object ModifierPluginCatalog {
                     override fun evaluate(input: io.github.psd2live.format.model.RigIR, instance: RigModifierInstance,
                                           context: ModifierAlgorithmContext, checkpoint: () -> Unit): io.github.psd2live.format.model.RigIR =
                         ModifierPluginWorkers.evaluate(entry, algorithm, input, instance, checkpoint, store,
-                            context = context, resolveRasters = resolveRasters, declaredParameters = adapter.parameters(native(instance)))
+                            context = context, resolveRasters = resolveRasters, declaredParameters = adapter.parameters(native(instance)), session = workerSession)
                 }
                 adapter.copy(type = type, pluginReference = entry.reference, plugin = worker,
                     parameters = { adapter.parameters(native(it)) },
@@ -51,7 +52,8 @@ internal object ModifierPluginCatalog {
                 val worker = object : ContextualModifierAlgorithmPlugin {
                     override fun evaluate(input: io.github.psd2live.format.model.RigIR, instance: RigModifierInstance,
                                           context: ModifierAlgorithmContext, checkpoint: () -> Unit): io.github.psd2live.format.model.RigIR =
-                        ModifierPluginWorkers.evaluate(entry, algorithm, input, instance, checkpoint, store, context = context, resolveRasters = resolveRasters)
+                        ModifierPluginWorkers.evaluate(entry, algorithm, input, instance, checkpoint, store, context = context,
+                            resolveRasters = resolveRasters, session = workerSession)
                 }
                 RigModifierDefinition(type, algorithm.version, requires = algorithm.requires, provides = algorithm.provides,
                 references = { before, after, _ -> ModifierPluginOutput.sidecars(before, after) },
