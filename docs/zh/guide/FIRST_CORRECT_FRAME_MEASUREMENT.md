@@ -40,7 +40,7 @@ $env:PSD2LIVE_TOOLS = '1'
 
 ## 生产预览的窗口 GPU 完成回执
 
-生产路径已接线，真实窗口/GPU 功能证据见末节；尚未执行整合基线的 30 次正式性能采样。本节指标名称为**模型激活捕获至窗口 GPU 完成**。起点是 VM 准备激活模型、捕获已提交工作区之前，不是编辑命令发起时刻；模型构建已完成，不能据此计算完整编辑延迟。
+生产路径已接线，真实窗口/GPU 功能证据和整合基线的正式采样见末节。本节指标名称为**模型激活捕获至窗口 GPU 完成**。起点是 VM 准备激活模型、捕获已提交工作区之前，不是编辑命令发起时刻；模型构建已完成，不能据此计算完整编辑延迟。
 
 1. `refreshSdkSession` 记录单调时钟，使用 `captureTextures()` 的原子快照检查 `preview === capture.model`。只有匹配时才携带该快照的 `revision/state`。每次激活分配不可复用的 `candidate`；未知来源的编辑草稿仍有候选身份以拒绝过期帧，但不报告修订延迟。延迟加载保留原令牌。
 2. `PreviewSessions.load` 向 Cubism 和 P2LRT 传递相同令牌，包括后端回退和多窗口懒加载。Cubism 仅在加载/更新成功后安装令牌；P2LRT 从 `PendingModel` 携带到实际成功的 `Loaded`。失败不会将新身份赋给旧模型。
@@ -65,14 +65,14 @@ PresentationMeasurements.onCompleted = null
 - 接线仅证明同一已提交模型候选的预览纹理经过窗口消费及 GPU 完成，不自动验证像素颜色、裁剪可见区域、遮挡或业务视觉正确性；`verifyWindowPixels` 另行使用可区分修订的已知图案，检查实际窗口 Surface 的像素。编辑画布的离屏工具不因此变成窗口测量工具。
 - 不覆盖窗口交换、系统桌面合成或显示器扫描，不能称为“已显示到屏幕”。同步 GPU 等待的开销包含在本指标中。
 - `candidate` 是本次模型激活身份，不能直接当作 `RigBuildProfile.Operation` 的候选身份。新增公开编辑场景通过 `WorkspacePublishedObservation` 明确关联 editId、构建 ordinal、候选 revision 和最终发布，再计算请求到窗口的区间；没有这份观察关联的 activation 样本仍不能冒充完整编辑延迟。
-- 钩子依赖仓库当前 Skiko 0.144.6 的 `drawContent/picture/pictureLock`。结构变化或上下文不可用会关闭回执并记录原因，不回退成录制时间。真实驱动、窗口回放和反射接线已有功能检查证据；正式性能验收仍须在最终整合基线和独占窗口中执行。
+- 钩子依赖仓库当前 Skiko 0.144.6 的 `drawContent/picture/pictureLock`。结构变化或上下文不可用会关闭回执并记录原因，不回退成录制时间。真实驱动、窗口回放和反射接线已有功能检查证据；每次正式性能验收须固定整合基线并独占测量窗口。
 - 无已提交捕获、预览未挂载、软件绘制、无匹配帧或被更新修订淘汰时不产生成功样本，验收工具应将其记为未完成，不能记作零延迟。
 
-无 GPU 回归覆盖令牌淘汰、视图关闭/重开、逐次纹理身份、发布与 GPU 完成乱序、重复完成、关闭测量、未知修订及观察者异常隔离，并以模拟 Cubism API 检查实际 session 的相同 bundle 重载、旧交付淘汰和加载失败。P2LRT 和真实窗口接线已有下述功能检查证据；实际窗口像素通过下述独立 opt-in 入口验收，正式性能验收仍待执行。
+无 GPU 回归覆盖令牌淘汰、视图关闭/重开、逐次纹理身份、发布与 GPU 完成乱序、重复完成、关闭测量、未知修订及观察者异常隔离，并以模拟 Cubism API 检查实际 session 的相同 bundle 重载、旧交付淘汰和加载失败。P2LRT 和真实窗口接线已有下述功能检查证据；实际窗口像素通过下述独立 opt-in 入口验收，正式采样结果见末节。
 
 ## 独占窗口验收驱动
 
-`WindowActivationTool` 提供真实窗口功能检查与独立性能采样入口，已有功能证据见末节；正式性能采样仍需单独安排。它启动完整的 `PSD2LiveApp`，使用合成的四块彩色图案，经 `DesktopWorkspace` 安装原子工作区快照，再通过实际 VM、`WorkspaceRenderCoordinator`、P2LRT、`CanvasViewportComposable` 和 Skiko 的 `drawContent` 回放回执验收。它不调用离屏探针、不直接制造 GPU 完成回执。
+`WindowActivationTool` 提供真实窗口功能检查与独立性能采样入口，已有功能证据和独立正式性能采样见末节。它启动完整的 `PSD2LiveApp`，使用合成的四块彩色图案，经 `DesktopWorkspace` 安装原子工作区快照，再通过实际 VM、`WorkspaceRenderCoordinator`、P2LRT、`CanvasViewportComposable` 和 Skiko 的 `drawContent` 回放回执验收。它不调用离屏探针、不直接制造 GPU 完成回执。
 
 每个样本先生成模型，再安装不同颜色的源图；模型生成不计入 activation 指标。激活在同一 EDT turn 内连续执行两次，前一候选被取代；验收要求后一候选的 `revision/state/candidate/viewId/capturedAt` 完全匹配。上一轮真实帧还会重新送给 production coordinator 和 VM，确认不能覆盖新帧流。普通测试中的假回执仅用于身份校验和队列边界的无 GPU 单元测试，不进入窗口采样。
 
@@ -124,7 +124,7 @@ $env:PSD2LIVE_WINDOW_SAMPLES = '30'
 
 新增 `WindowActivationTool.verifyDocumentEdits` 功能入口，与原 activation 场景分开报告。先安装并预热四块图案，再对同一已挂载预览，通过 `DesktopWorkspace.applyDocumentEdits` 提交四个 `layer_replace_image` 操作的原子批次。PNG 输入在请求前准备；进入公开命令后的解码、候选构建、提交、生产 renderer 激活及首个窗口 GPU 完成均在链路内。提交后工具不手动 refresh/load 模型，依靠真实 `WorkspaceHost.modelPublished` 路径。
 
-起点来自 A1 的 `WorkspaceEditObservation`：`WorkspaceHost.applyDocumentEdits` 进入 `editMutex` 之前记录的 `requestedAtNanos`。进程内 `WorkspaceCapture.observation` 持有成功 CAS 的票据、最终状态/修订和发布时间；构建阶段保留独立 ordinal、候选 revision 及计时。规范化可能改变最终采用的文档修订，因此构建候选 revision 与发布 revision 分别保留，不强行视为相等。窗口激活的 `candidate` 仍是另一个身份空间，不拿 editId 或构建序号代替。
+起点来自 `WorkspaceEditObservation`：`WorkspaceHost.applyDocumentEdits` 进入 `editMutex` 之前记录的 `requestedAtNanos`。进程内 `WorkspaceCapture.observation` 持有成功 CAS 的票据、最终状态/修订和发布时间；构建阶段保留独立 ordinal、候选 revision 及计时。规范化可能改变最终采用的文档修订，因此构建候选 revision 与发布 revision 分别保留，不强行视为相等。窗口激活的 `candidate` 仍是另一个身份空间，不拿 editId 或构建序号代替。
 
 `WorkspaceTextureView.presentationOrigin` 只向同一个捕获模型对象复制观察数据，并核对项目、加载身份、状态和修订。VM 传给 token，原样随窗口 receipt 交付。`scheduleRuntimeBundleUpdate` 可能应用未提交设置、甚至重新构建纹理；得到的新模型副本不等于捕获模型时维持无关联，不能按 revision 猜测或继承旧票据。只有后续权威提交产生匹配捕获才可关联。
 
@@ -136,7 +136,7 @@ $env:PSD2LIVE_RUNTIME = (Resolve-Path 'build/tools/window-activation/native/p2l_
 $env:PSD2LIVE_COMPOSITOR = '1'
 .\gradlew.bat :test --tests '*WindowActivationTool.verifyDocumentEdits' --max-workers=2 '-Ppsd2live.testForks=1'
 # 保存报告和 PNG 后，设 PSD2LIVE_COMPOSITOR=0 单独验收。
-# 最终独占基线另行运行，当前功能验收不执行这一命令：
+# 正式采样单独运行：
 $env:PSD2LIVE_WINDOW_SAMPLES = '30'
 .\gradlew.bat :test --tests '*WindowActivationTool.measureDocumentEdits' --max-workers=2 '-Ppsd2live.testForks=1'
 ```
@@ -151,4 +151,19 @@ $env:PSD2LIVE_WINDOW_SAMPLES = '30'
 
 `verifyDocumentEdits` 在 compositor=1、0 两种模式均通过，各为 1 次预热编辑和 2 次检查编辑。每个真实批次包含四次 `layer_replace_image` 候选构建，合计 6 次编辑、24 次构建；每种模式始终使用同一挂载视口。成功 CAS 的观察、activation token、首个 GPU receipt 及窗口读回完全对应，6 张窗口图的 216 个像素检查通过，上一修订颜色被拒绝。14 次窗口观察者锁检查全部通过；32 项链路/来源/依赖定向测试及 2 项编辑计时指标测试通过。
 
-独立证据在 `build/architecture-acceptance/window-document-edits/compositor-1/`、`compositor-0/`，包含原始报告、PNG、日志及 JUnit XML；汇总为同级 `summary.json`。报告中每次编辑都有四个带 ordinal 的构建阶段，原始编辑事件及首帧回执完整保留。已核对编辑区间确实从请求时间开始，大于同一帧的 activation 区间。本轮 `benchmark=false`，没有生成性能分位数，也没有执行正式 5+30 次采样；正式入口交由最终无竞争基线另行运行。
+独立证据在 `build/architecture-acceptance/window-document-edits/compositor-1/`、`compositor-0/`，包含原始报告、PNG、日志及 JUnit XML；汇总为同级 `summary.json`。报告中每次编辑都有四个带 ordinal 的构建阶段，原始编辑事件及首帧回执完整保留。已核对编辑区间确实从请求时间开始，大于同一帧的 activation 区间。本轮 `benchmark=false`，没有生成性能分位数，也没有执行正式 5+30 次采样；后续整合基线的正式采样记录如下。
+
+
+### 2026-11-14 整合基线正式采样
+
+基线 `9bc79083ca58b2a1987bb8d95164c5c77b2641d2`，JDK 21.0.9、i9-14900HX、64 GiB、RTX 4080 Laptop／驱动 617.42；P2LRT 使用已核验源码树的 release DLL。各工作树的构建均结束后串行运行，两种 compositor 分别启动测试 JVM。独立目录 `build/architecture-acceptance/formal/run-20261114-212859/` 保存来源、JUnit、全部原始样本、每种模式的 PNG、独立统计审计和 `accepted.json`；窗口报告中记录的 live 输出路径会被后一个模式覆盖，查图应使用各自归档目录的同名 PNG。
+
+| 指标 | compositor 开：中位数／P95 | compositor 关：中位数／P95 |
+| --- | --- | --- |
+| 仅模型激活至窗口 GPU 完成 | 36.48／42.56 ms | 35.06／46.40 ms |
+| 四层纹理替换请求至正确窗口 GPU 帧 | 1,466.74／1,585.68 ms | 1,424.65／1,484.99 ms |
+| 上一行同次编辑的较晚激活区间 | 81.16／90.18 ms | 84.74／90.69 ms |
+
+每种指标／模式均为 5 次预热和 30 次测量，分布不混合工作负载；预先安装模型的 activation 样本与真实编辑样本的 activation 区间也不相互替代。真实编辑共 70 帧（含预热）、2,520 个像素、280 次候选构建和 142 次观察者锁检查通过。离屏三档冷／热 renderer 另有 180 个样本，大档热路径中位数 2.15 ms、P95 3.24 ms，仍不包含编辑或窗口链路。
+
+真实编辑中的四次候选构建合计中位数为 1,378.88／1,334.99 ms；同批次 `modifier author: wait for atlas pages` 累加中位数为 1,323.97／1,273.97 ms。该阶段是父阶段的子区间，不能再与父阶段相加。结果支持继续优化批量纹理替换的图集页面准备，不支持把仅激活或离屏时间宣传为完整编辑响应。GPU 同步、读回扰动、静态图案覆盖范围和未测屏幕交换等限制仍然成立。
