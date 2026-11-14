@@ -810,7 +810,8 @@ internal object RigStaticSourceCollector {
             val tag = layer.semantic.tag
             val observation = if (tag == SemanticTag.EYEWHITE || tag == SemanticTag.IRIDES) {
                 io.github.psd2live.algorithms.binding.EyeOpeningObservation(
-                    layer.source.id.raw,
+                    // Clipping refers to the drawable; matching still uses the source layer below.
+                    canonical,
                     layer.source.id.raw,
                     layer.semantic.side,
                     layer.bounds,
@@ -843,7 +844,8 @@ internal object RigStaticSourceCollector {
             val closedDrawing = tag == SemanticTag.EYE_CLOSE
             if (blink != null || iris != null || closedDrawing) {
                 legacyLayers[canonical] = EyeLegacyInputs.Layer(
-                    layer.semantic.side, frame, blink, iris, closedDrawing, masks, observation,
+                    layer.semantic.side, frame, blink, iris, closedDrawing, masks,
+                    observation.takeIf { tag == SemanticTag.IRIDES },
                 )
             }
         }

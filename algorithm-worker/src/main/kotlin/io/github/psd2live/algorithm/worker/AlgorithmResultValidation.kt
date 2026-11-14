@@ -104,7 +104,10 @@ object AlgorithmResultValidation {
         }
         rig.meshes.forEach { m ->
             require(m.parent == null || m.parent in deformers)
-            require(m.maskedBy.all { it in meshes && it != m.id } && (m.textureSource == null || m.textureSource in meshes))
+            require(m.maskedBy.all { it in meshes && it != m.id } && (m.textureSource == null || m.textureSource in meshes)) {
+                "Invalid output mesh references for ${m.id}: masks=${m.maskedBy.filter { it !in meshes || it == m.id }}, " +
+                    "textureSource=${m.textureSource?.takeIf { it !in meshes }}"
+            }
             finite(m.opacity, m.drawOrder); require(m.opacity in 0f..1f)
             channels(m.channels)
             m.geometry?.let { g ->
