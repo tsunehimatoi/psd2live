@@ -39,6 +39,24 @@ $env:PSD2LIVE_BASELINE_EDITS = '1000'
 
 仅检查工具流程时可设 `PSD2LIVE_BASELINE_SMOKE=1`，只跑小档、1 次交互样本和 3 次压力编辑，输出目录带 `-smoke` 且 `acceptance_run=false`。它不满足 30／1,000 次验收要求；正式测量前应删除该环境变量。
 
+## 构建计划与两类试点
+
+`WorkspaceBuildInputs` 捕获同一文档、配置、插件目录修订、语言及原始源坐标执行选项。`WorkspaceBuildPlanner` 仅为两类编辑授权检查已有缓存：一个部件子配置中单个 `values`／`tuning` 数值变化，以及在原栈末尾追加启用的 `mesh.split` v1。类型、版本、精确包身份和输入读取契约均须在已审查范围内；目标、依赖、资源设置或其他文档内容同时变化时不进入试点。
+
+计划中的 `CHECK_EXISTING_KEY` 表示允许核对已有缓存的完整键和前置条件，不表示直接跳过执行。试点保留未变化的修改器前缀，失效修改项及其后继，并重新处理图集和目标产物；它不交换修改器顺序。候选使用独立 pipeline，失败不替换已发布快照。普通编辑仍走既有 pipeline 和原有缓存检查，不因未纳入试点而全量清空缓存。显式关闭缓存使用新构建状态，作为语义对照。
+
+`WorkspacePartBuildPlanTool` 使用实际嘴部下颌子配置变化，比较完整 IR、打包 PNG 和规范 RGBA；`WorkspaceTopologyBuildPlanTool` 使用真实连通块拆分，包含遮罩、Glue、路径、顶点组及纹理来源。每次测量都核验缓存开启与关闭结果一致；正式模式交替两种执行顺序，先完成 5 对不计入统计的预热，再记录至少 30 对样本。输出分别为 `build/tools/workspace-part-build-plan/report.json` 和 `build/tools/workspace-topology-build-plan/report.json`。
+
+```powershell
+$env:PSD2LIVE_TOOLS = '1'
+$env:PSD2LIVE_BUILD_PLAN_FORMAL = '1'
+$env:PSD2LIVE_BUILD_PLAN_BASELINE = (git rev-parse HEAD).Trim()
+.\gradlew.bat :test --tests '*WorkspacePartBuildPlanTool' --max-workers=2 '-Ppsd2live.testForks=1'
+.\gradlew.bat :test --tests '*WorkspaceTopologyBuildPlanTool' --max-workers=2 '-Ppsd2live.testForks=1'
+```
+
+正式模式要求运行前后 HEAD 相同、工作区无受跟踪修改及未跟踪文件，报告必须同时满足 `complete=true` 和 `performance_acceptance=true`。默认模式仅执行 1 对正确性检查，不是性能证据。比较对象是当前实现的缓存开启／关闭，不是重构前的旧实现；结果不能用于声称相对旧版本的提速幅度，也不包含窗口呈现。
+
 ## 内存和所有权
 
 `ModifierGeometryCache` 是 identity LRU。默认每 worker 32 MiB，协议 1 与协议 2 只启用对应一种表示。记账包含强引用 key 的 positions、UV、indices 缓冲，编码 value 和保守对象开销。它是可解释的保留量估计，不是 JVM 对象布局的精确测量。超过预算的单条数据只服务当前请求，不进入缓存；淘汰仅移除引用，不清零或修改活动请求的数组。
