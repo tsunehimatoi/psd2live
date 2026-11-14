@@ -15,6 +15,8 @@ internal class WindowSurfaceReadback(
 
 /** Explicit development opt-in. Null callbacks allocate/read no window pixels in normal rendering. */
 internal object WindowPixelMeasurements {
+    /** Replay-context selection only: must be nonblocking and perform no I/O. */
     @Volatile var request: ((PresentationFrame) -> Boolean)? = null
+    /** Receives the owned CPU copy outside the explicit picture lock; bitmap is borrowed for this call only. */
     @Volatile var onReadback: ((WindowSurfaceReadback) -> Unit)? = null
 }

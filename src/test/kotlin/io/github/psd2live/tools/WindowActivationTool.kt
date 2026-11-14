@@ -70,6 +70,15 @@ class WindowActivationTool {
         val pixelRequests = ConcurrentHashMap<Long, Int>()
         val pixelResults = Channel<Result<JsonObject>>(Channel.UNLIMITED)
         val pixelEvidence = ArrayList<JsonObject>()
+        val observerLocks = AtomicReference<List<Pair<String, Any>>>(emptyList())
+        val observerLockChecks = java.util.concurrent.atomic.AtomicInteger()
+        val observerLockFailures = java.util.concurrent.ConcurrentLinkedQueue<String>()
+        fun observeLocks(callback: String) {
+            observerLockChecks.incrementAndGet()
+            observerLocks.get().forEach { (name, lock) ->
+                if (Thread.holdsLock(lock)) observerLockFailures.add("$callback held $name")
+            }
+        }
         val audit = WindowActivationAudit()
         val durations = ArrayList<Long>()
         fun report() {
@@ -83,6 +92,8 @@ class WindowActivationTool {
                 put("pixelCorrectnessValidated", pixels && failure == null && pixelEvidence.size == warmups + samples)
                 put("pixelReadbackEnabled", pixels); put("screenPresentationMeasured", false)
                 put("windowPixelEvidence", JsonArray(pixelEvidence))
+                put("observerLockChecks", observerLockChecks.get())
+                putJsonArray("observerLockFailures") { observerLockFailures.forEach { add(it) } }
                 if (pixels) put("pixelEndpoint", "actual Skiko window Surface after picture replay and GPU completion, before swap; four 3x3 patches inside the preview viewport")
                 put("workload", "four synthetic colored tiles; changing raster revision; no masks, physics or playback")
                 put("cacheMode", "warm JVM/window context; new model and remounted preview view per activation")
@@ -121,10 +132,11 @@ class WindowActivationTool {
             val viewModel = edt { PSD2LiveViewModel() }.also { vm = it }
             val desktop = DesktopWorkspace(viewModel, out.resolve("workspace").toPath()).also { workspace = it }
             edt { viewModel.attachWorkspace(desktop); viewModel.selectPreviewBackend(PreviewBackend.P2LRT) }
-            PresentationMeasurements.onCompleted = receipts::record
+            PresentationMeasurements.onCompleted = { observeLocks("receipt"); receipts.record(it) }
             if (pixels) {
                 WindowPixelMeasurements.request = { pixelRequests.containsKey(it.token.candidate) }
                 WindowPixelMeasurements.onReadback = { readback ->
+                    observeLocks("pixels")
                     val stamp = readback.frame
                     pixelRequests.remove(stamp.token.candidate)?.let { ordinal ->
                         pixelResults.trySend(runCatching {
@@ -173,6 +185,11 @@ class WindowActivationTool {
             val coordinator = PSD2LiveViewModel::class.java.getDeclaredField("renderCoordinator").run {
                 isAccessible = true; get(viewModel) as WorkspaceRenderCoordinator
             }
+            val coordinatorLock = WorkspaceRenderCoordinator::class.java.getDeclaredField("lock").run { isAccessible = true; get(coordinator) }
+            val windowGpu = checkNotNull(SkiaGpu.primary)
+            val layer = windowGpu.javaClass.getDeclaredField("layer").run { isAccessible = true; get(windowGpu) }
+            val pictureLock = org.jetbrains.skiko.SkiaLayer::class.java.getDeclaredField("pictureLock").run { isAccessible = true; get(layer) }
+            observerLocks.set(listOf("coordinator" to coordinatorLock, "picture" to pictureLock))
             val revisions = HashSet<String>()
             val states = HashSet<String>()
             var previousFrame: PreviewFrame? = null
@@ -268,6 +285,9 @@ class WindowActivationTool {
             }
             // Drain already delivered extras: duplicates/late obsolete callbacks cannot silently pass.
             check(receipts.extra() == null) { "Unexpected extra window receipt" }
+            check(observerLockChecks.get() >= warmups + samples && observerLockFailures.isEmpty()) {
+                "Observers ran under rendering/publication locks: $observerLockFailures"
+            }
             phase = "complete"
         } catch (error: Throwable) {
             failure = "${error.javaClass.name}: ${error.message}"

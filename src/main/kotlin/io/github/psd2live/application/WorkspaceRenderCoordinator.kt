@@ -38,15 +38,19 @@ internal class WorkspaceRenderCoordinator {
     }
 
     fun contains(key: String): Boolean = synchronized(lock) { key in frames }
-    fun publish(frame: PreviewFrame): Boolean = synchronized(lock) {
-        val stream = frames[frame.viewId] ?: return@synchronized false
-        if (frame.presentation?.current == false) return@synchronized false
-        presentation?.let { expected ->
-            val drawn = frame.presentation ?: return@synchronized false
-            if (drawn.token !== expected || !drawn.publish()) return@synchronized false
+    fun publish(frame: PreviewFrame): Boolean {
+        synchronized(lock) {
+            val stream = frames[frame.viewId] ?: return false
+            if (frame.presentation?.current == false) return false
+            presentation?.let { expected ->
+                val drawn = frame.presentation ?: return false
+                if (drawn.token !== expected) return false
+            }
+            stream.value = frame
         }
-        stream.value = frame
-        true
+        // Publication can finish a GPU-first receipt. Observers must see the stream and run without our lock.
+        // A concurrent invalidation/remount is checked again by publish; it cannot finish the old candidate.
+        return frame.presentation?.publish() != false
     }
 
     fun invalidateModel(token: io.github.psd2live.util.PresentationToken? = null) = synchronized(lock) {

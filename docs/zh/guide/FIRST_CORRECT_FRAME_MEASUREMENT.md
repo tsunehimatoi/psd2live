@@ -58,7 +58,7 @@ PresentationMeasurements.onCompleted = { receipts.add(it) }
 PresentationMeasurements.onCompleted = null
 ```
 
-默认关闭测量，不安装回放钩子、不等待 GPU。窗口像素还有独立的 `WindowPixelMeasurements.request/onReadback` 开关，默认 null，不分配窗口位图、不读回像素；仅在诊断回调内借用位图，回调结束后立即释放。观察者在 token/frame 锁外运行，异常被隔离，不能使正常帧发布或窗口绘制失败。
+默认关闭测量，不安装回放钩子、不等待 GPU。窗口像素还有独立的 `WindowPixelMeasurements.request/onReadback` 开关，默认 null，不分配窗口位图、不读回像素；仅在诊断回调内借用位图，回调结束后立即释放。完成观察者在 token/frame 锁外运行；coordinator 先更新帧流、退出自身锁，再标记发布。窗口钩子在 `pictureLock` 内完成真实 GPU 同步和 CPU 位图读回，退出该锁后才派发完成通知及像素回调，PNG 编码/校验也在此时执行。像素 `request` 是回放上下文内的轻量选择谓词，必须非阻塞且不做 I/O；不能把它描述成锁外回调。观察者异常被隔离。GPU 结束时钟在同步返回后立即捕获，像素传输、通知派发、校验和编码都不改变它；因此像素入口只用于功能验收，不能把该时钟称为 CPU 读回完成。
 
 边界与验收限制：
 
@@ -124,3 +124,10 @@ $env:PSD2LIVE_WINDOW_SAMPLES = '30'
 证据分别保存在当前工作树 `build/verification/window-pixel-smoke/compositor-1/` 和 `compositor-0/`，每组含 `report.json`、三个窗口 PNG、日志和 JUnit XML；汇总为同级 `summary.json`。这些是功能证据，未执行 30 次性能采样，不输出性能分位数。读回和 PNG 编码会扰动运行时间。
 
 本验收只证明静态四块已知图案在实际窗口目标中的颜色及定位，不覆盖整个模型的遮罩、变形、物理、所有遮挡情形，也不证明窗口交换或显示器扫描完成。公开编辑请求到候选构建/提交的关联尚待独立接入；本工具仍以模型激活捕获为起点，`fullEditLatencyMeasured=false`。
+
+
+### 回调上层锁复核
+
+随后发现 token/frame 自身解锁并不足以保证调用方解锁：coordinator 原先在 `synchronized(lock)` 内调用 `drawn.publish()`，GPU 结束通知也在 `pictureLock` 内派发。现已将 coordinator 的完成通知移至帧流发布和解锁之后；窗口完成数据与 CPU 像素在回放锁内固定，完成通知及像素观察者在解锁后消费，保存原 GPU 时间。候选在延迟派发前失效时仍不能完成。
+
+14 项相关无 GPU 测试通过。两种 compositor 模式重新运行实际窗口像素入口，各完成 3 帧和 6 次 `Thread.holdsLock` 观察者检查；receipt、pixel 回调均未持有 coordinator 锁或 pictureLock，像素及首帧身份检查保持通过。证据在 `build/verification/window-callback-locks/`。该结论覆盖这两个明确检查的上层锁；轻量 `request` 谓词及必需的 GPU 同步/读回仍在回放上下文，不作“所有回调均在所有锁外”的泛化承诺。

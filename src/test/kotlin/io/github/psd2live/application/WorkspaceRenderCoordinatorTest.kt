@@ -4,6 +4,26 @@ import io.github.psd2live.core.PreviewFrame
 import kotlin.test.*
 
 class WorkspaceRenderCoordinatorTest {
+    @Test fun gpuFirstObserverSeesPublishedStreamOutsideCoordinatorLock() {
+        val render = WorkspaceRenderCoordinator()
+        val stream = render.retain("view")
+        val lock = WorkspaceRenderCoordinator::class.java.getDeclaredField("lock").run { isAccessible = true; get(render) }
+        var observedLock: Boolean? = null
+        var observedFrame: PreviewFrame? = null
+        val token = io.github.psd2live.util.PresentationToken("r", "s", 10) {
+            observedLock = Thread.holdsLock(lock)
+            observedFrame = stream.value
+        }
+        render.invalidateModel(token)
+        val stamp = assertNotNull(token.frame("view"))
+        stamp.gpuCompleted(20)
+        val frame = PreviewFrame(8, 8, emptyMap(), viewId = "view", presentation = stamp)
+        assertTrue(render.publish(frame))
+        assertEquals(false, observedLock)
+        assertSame(frame, observedFrame)
+        render.close()
+    }
+
     @Test fun replacedCandidateCannotPublishAndMeasurementOffStillReloads() {
         val render = WorkspaceRenderCoordinator()
         val stream = render.retain("view")

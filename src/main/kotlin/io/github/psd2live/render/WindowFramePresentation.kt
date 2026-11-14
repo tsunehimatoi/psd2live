@@ -52,6 +52,8 @@ internal class WindowFramePresentation(
             @Suppress("UNCHECKED_CAST")
             val original = field.get(handler) as (Canvas) -> Unit
             field.set(handler, { canvas: Canvas ->
+                var completion: WindowPresentationCompletion? = null
+                var pixels: (() -> Unit)? = null
                 // SkiaLayer.draw uses the same reentrant lock. The receipt must describe the picture it replayed.
                 synchronized(pictureLock) {
                     val batch = recorded
@@ -61,40 +63,53 @@ internal class WindowFramePresentation(
                         batch === recorded && picture === pictureField.get(layer) && valid()) {
                         runCatching {
                             val skia = context() ?: return@runCatching
-                            val completedAt = completeWindowPresentation(batch.frames.mapNotNull { it.presentation },
+                            completion = prepareWindowPresentation(batch.frames.mapNotNull { it.presentation },
                                 stillCurrent = { stamp -> valid() && batch === recorded &&
                                     batch.frames.any { it.presentation === stamp && current(it) } },
                                 submit = { skia.flush(); skia.submit(true) })
-                            if (completedAt != null) readWindowPixels(batch, completedAt)
+                            completion?.let { pixels = readWindowPixels(batch, it.completedAtNanos) }
                         }.onFailure { System.err.println("Window presentation receipt failed: $it") }
                         if (batch === recorded) recorded = null
                     }
                 }
+                // Only GPU submission/readback need the replay lock. Receipt observers, pixel validation and
+                // PNG/report encoding run after releasing it. Delivery retains the original GPU timestamp.
+                try { completion?.dispatch() } finally { pixels?.invoke() }
             })
             true
         }.onFailure { System.err.println("Window presentation measurement unavailable: $it") }.getOrDefault(false)
         return installed == true
     }
 
-    private fun readWindowPixels(batch: Recording, completedAt: Long) {
-        val callback = WindowPixelMeasurements.onReadback ?: return
-        val request = WindowPixelMeasurements.request ?: return
-        val origins = batch.origins ?: return
+    private fun readWindowPixels(batch: Recording, completedAt: Long): (() -> Unit)? {
+        val callback = WindowPixelMeasurements.onReadback ?: return null
+        val request = WindowPixelMeasurements.request ?: return null
+        val origins = batch.origins ?: return null
         val offset = sceneOffset() ?: error("Window pixel measurement has no scene placement")
         val wanted = batch.frames.distinct().filter {
             it in origins && it.presentation?.camera != null && it.presentation.current && current(it) && request(it.presentation)
         }
-        if (wanted.isEmpty()) return
+        if (wanted.isEmpty()) return null
         val surface = surfaceField.get(handler) as? org.jetbrains.skia.Surface ?: error("Skiko window surface unavailable")
-        org.jetbrains.skia.Bitmap().use { bitmap ->
+        val bitmap = org.jetbrains.skia.Bitmap()
+        try {
             check(bitmap.allocPixels(org.jetbrains.skia.ImageInfo.makeN32Premul(surface.width, surface.height)))
             check(surface.readPixels(bitmap, 0, 0)) { "Actual window surface readback failed" }
-            for (frame in wanted) if (valid() && batch === recorded && current(frame) && frame.presentation?.current == true) {
+            val readbacks = wanted.mapNotNull { frame ->
+                if (!valid() || batch !== recorded || !current(frame) || frame.presentation?.current != true) return@mapNotNull null
                 val origin = origins.getValue(frame)
-                runCatching { callback(WindowSurfaceReadback(frame.presentation, origin.first + offset.first,
-                    origin.second + offset.second, completedAt, bitmap)) }
-                    .onFailure { System.err.println("Window pixel observer failed: $it") }
+                WindowSurfaceReadback(frame.presentation, origin.first + offset.first, origin.second + offset.second, completedAt, bitmap)
             }
+            return {
+                bitmap.use {
+                    readbacks.forEach { readback -> if (readback.frame.current) {
+                        runCatching { callback(readback) }.onFailure { System.err.println("Window pixel observer failed: $it") }
+                    } }
+                }
+            }
+        } catch (error: Throwable) {
+            bitmap.close()
+            throw error
         }
     }
 
@@ -114,16 +129,20 @@ internal class WindowFramePresentation(
 }
 
 /** The submission boundary is injectable so overwritten textures and failed GPU waits can be tested without GL. */
-internal fun completeWindowPresentation(
+internal fun prepareWindowPresentation(
     frames: List<PresentationFrame>,
     stillCurrent: (PresentationFrame) -> Boolean,
     submit: () -> Unit,
     clock: () -> Long = System::nanoTime,
-): Long? {
+): WindowPresentationCompletion? {
     val consumed = frames.filter { it.measured && stillCurrent(it) }
     if (consumed.isEmpty()) return null
     submit()
     val completedAt = clock()
-    consumed.forEach { if (stillCurrent(it)) it.gpuCompleted(completedAt) }
-    return completedAt
+    return WindowPresentationCompletion(consumed.filter(stillCurrent), completedAt)
+}
+
+/** Captured under the replay lock; observers are dispatched only after leaving it. */
+internal class WindowPresentationCompletion(private val frames: List<PresentationFrame>, val completedAtNanos: Long) {
+    fun dispatch() { frames.forEach { it.gpuCompleted(completedAtNanos) } }
 }
