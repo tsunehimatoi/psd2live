@@ -6,11 +6,14 @@ import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.rememberTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import io.github.psd2live.ui.theme.Corners
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.TooltipArea
@@ -377,44 +380,44 @@ internal fun FloatingMenu(
  * quicker than it came. [rise] for a menu that opens upward from its anchor.
  */
 @Composable
-internal fun Modifier.menuAppearance(visibility: MutableTransitionState<Boolean>, origin: TransformOrigin, rise: Boolean): Modifier {
-	val density = LocalDensity.current
+internal fun Modifier.menuAppearance(visibility: MutableTransitionState<Boolean>, origin: TransformOrigin, @Suppress("UNUSED_PARAMETER") rise: Boolean): Modifier {
 	val transition = rememberTransition(visibility, "menu")
 	val alpha by transition.animateFloat({
-		if (false isTransitioningTo true) tween(Motion.Fade, easing = LinearOutSlowInEasing) else tween(Motion.Instant, easing = FastOutLinearInEasing)
+		if (false isTransitioningTo true) spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 2400f)
+		else spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 3200f)
 	}, "alpha") { if (it) 1f else 0f }
 	val scale by transition.animateFloat({
-		if (false isTransitioningTo true) tween(Motion.Quick, easing = LinearOutSlowInEasing) else tween(Motion.Instant, easing = FastOutLinearInEasing)
-	}, "scale") { if (it) 1f else 0.92f }
-	val lift by transition.animateFloat({
-		if (false isTransitioningTo true) tween(Motion.Quick, easing = FastOutSlowInEasing) else tween(Motion.Instant, easing = FastOutLinearInEasing)
-	}, "lift") { if (it) 0f else 6f }
+		if (false isTransitioningTo true) spring(dampingRatio = 0.68f, stiffness = 2400f)
+		else spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 3200f)
+	}, "scale") { if (it) 1f else 0.94f }
 	return graphicsLayer {
 		this.alpha = alpha; scaleX = scale; scaleY = scale
-		translationY = (if (rise) lift else -lift) * density.density
 		transformOrigin = origin
 	}
 }
 
-/** The frosted panel every menu sits on. */
+/** The elevated panel every menu sits on. */
 @Composable
 internal fun Modifier.menuPanel(): Modifier {
 	val colors = LocalToolColors.current
-	val shape = RoundedCornerShape(7.dp)
-	return frostedGlass(shape, isHovered = true, elevation = 12.dp, baseColor = colors.panelElevated, alpha = 0.9f)
-		.border(0.5.dp, colors.borderHover.copy(alpha = 0.45f), shape)
+	val shape = RoundedCornerShape(Corners.Panel)
+	return this
+		.clip(shape)
+		.background(colors.panelElevated, shape)
+		.border(1.dp, colors.border, shape)
 }
 
-/** A menu row arriving in turn: [index] rows after the first, fading and sliding in from its side. */
+/** A menu row arriving with a crisp fade-in, without sliding movement. */
 @Composable
 internal fun Modifier.menuArrival(index: Int): Modifier {
 	val arrival = remember { androidx.compose.animation.core.Animatable(0f) }
 	// Staggered on the frame clock, so it keeps time with the frames that draw it.
-	LaunchedEffect(Unit) { arrival.animateTo(1f, tween(Motion.RowArrival, delayMillis = index * Motion.RowStagger, easing = FastOutSlowInEasing)) }
-	val density = LocalDensity.current
+	LaunchedEffect(Unit) {
+		if (index > 0) kotlinx.coroutines.delay((index * 8L).coerceAtMost(40L))
+		arrival.animateTo(1f, spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 2400f))
+	}
 	return graphicsLayer {
 		alpha = arrival.value
-		translationX = (1f - arrival.value) * -8f * density.density
 	}
 }
 
@@ -451,8 +454,8 @@ internal fun MenuGlide(modifier: Modifier = Modifier, content: @Composable () ->
 	val density = LocalDensity.current
 	val host = remember { MenuGlideHost() }
 	val target = host.target
-	val glow by animateFloatAsState(if (target != null) 1f else 0f, tween(Motion.Quick, easing = FastOutSlowInEasing))
-	val highlightColor by animateColorAsState(if (host.danger) colors.error.copy(alpha = 0.14f) else colors.controlHover.copy(alpha = 0.75f), tween(Motion.Instant))
+	val glow by animateFloatAsState(if (target != null) 1f else 0f, spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 3200f))
+	val highlightColor by animateColorAsState(if (host.danger) colors.error.copy(alpha = 0.14f) else colors.controlHover.copy(alpha = 0.75f), spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 3200f))
 	val left = remember { androidx.compose.animation.core.Animatable(0f) }
 	val top = remember { androidx.compose.animation.core.Animatable(0f) }
 	val width = remember { androidx.compose.animation.core.Animatable(0f) }
@@ -460,10 +463,10 @@ internal fun MenuGlide(modifier: Modifier = Modifier, content: @Composable () ->
 	LaunchedEffect(target) {
 		val rect = target ?: return@LaunchedEffect
 		val edges = listOf(left to rect.left, top to rect.top, width to rect.width, height to rect.height)
-		// Appearing, it starts on its row; moving, it glides there.
+		// Appearing, it starts on its row; moving, it glides there with a crisp slight rebound.
 		if (glow < 0.05f) edges.forEach { (edge, value) -> edge.snapTo(value) }
 		else kotlinx.coroutines.coroutineScope {
-			edges.forEach { (edge, value) -> launch { edge.animateTo(value, tween(Motion.Instant, easing = FastOutSlowInEasing)) } }
+			edges.forEach { (edge, value) -> launch { edge.animateTo(value, spring(dampingRatio = 0.76f, stiffness = 2800f)) } }
 		}
 	}
 	Box(modifier.onGloballyPositioned { host.coordinates = it }.onPointerEvent(PointerEventType.Exit) { host.target = null }) {
@@ -564,17 +567,15 @@ internal fun FloatingMenuRow(
 	val interactionSource = remember { MutableInteractionSource() }
 	val hovered by interactionSource.collectIsHoveredAsState()
 	val tint = when {
-		!enabled -> colors.textMuted.copy(alpha = 0.5f)
+		!enabled -> colors.textDisabled
 		danger -> colors.error
-		selected -> colors.textPrimary
-		hovered -> colors.textPrimary
-		else -> colors.textMuted
+		else -> colors.textPrimary
 	}
 	val glide = LocalMenuGlide.current
 	val background by animateColorAsState(if (hovered && enabled && !glide) {
 		if (danger) colors.error.copy(alpha = 0.14f) else colors.controlHover.copy(alpha = 0.75f)
-	} else Color.Transparent, tween(Motion.Instant))
-	val edge by animateFloatAsState(if (selected && bar) 1f else 0f, tween(Motion.Instant, easing = FastOutSlowInEasing))
+	} else Color.Transparent, spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 3200f))
+	val edge by animateFloatAsState(if (selected && bar) 1f else 0f, spring(dampingRatio = 0.78f, stiffness = 2800f))
 	Row(
 		Modifier
 			.glideRow(enabled, danger)
@@ -595,7 +596,7 @@ internal fun FloatingMenuRow(
 			Spacer(Modifier.width(7.dp))
 		} else Spacer(Modifier.width(2.dp))
 		Column(Modifier.weight(1f)) {
-			Text(label, color = if (enabled && !danger && (selected || hovered)) colors.textPrimary else tint, fontSize = 11.5.sp,
+			Text(label, color = tint, fontSize = 11.5.sp,
 				fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
 			if (hint != null) Text(hint, color = colors.textMuted.copy(alpha = 0.8f), fontSize = 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
 		}

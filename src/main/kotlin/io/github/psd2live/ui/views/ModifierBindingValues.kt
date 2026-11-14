@@ -19,11 +19,10 @@ import kotlinx.serialization.json.*
 internal fun ModifierBindingValues(instance: RigModifierInstance, enabled: Boolean, vm: PSD2LiveViewModel,
     commit: (JsonObject, String?, (String?) -> Unit) -> Unit) {
     val spec = RigLegacyBindings.find(instance.type) ?: return
-    if (spec.hasPhysics) Row(verticalAlignment = Alignment.CenterVertically) {
+    if (spec.hasPhysics) InspectorFormRow(tr("swing.physics")) {
         CompactCheckbox(instance.config["physicsEnabled"]?.jsonPrimitive?.booleanOrNull != false, { value ->
             commit(JsonObject(instance.config + ("physicsEnabled" to JsonPrimitive(value))), vm.modifierEditState()) {}
         }, enabled = enabled)
-        Text(tr("swing.physics"), style = LocalToolTypography.current.caption)
     }
     if (spec.mouthOutline) {
         val color = RigLegacyBindings.outlineColor(instance)
@@ -36,17 +35,19 @@ internal fun ModifierBindingValues(instance: RigModifierInstance, enabled: Boole
             val config = JsonObject(if (rgb == null) instance.config - "color" else instance.config + ("color" to JsonPrimitive(rgb)))
             commit(config, captured) { failure -> if (failure != null) hex = actual?.let { "%06X".format(it) }.orEmpty() }
         }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
-            CompactTextField(hex, { hex = it }, enabled = enabled, placeholder = "#RRGGBB", isMono = true,
-                modifier = Modifier.width(80.dp), height = 20.dp, endEditOnSettle = false,
-                onEditStart = { editing = true; expected = vm.modifierEditState() }, onEditEnd = {
-                    editing = false
-                    val digits = hex.trim().removePrefix("#")
-                    val rgb = digits.takeIf { it.length == 6 }?.toIntOrNull(16)?.takeIf { it in 0..0xffffff }
-                    if (rgb == null) hex = actual?.let { "%06X".format(it) }.orEmpty()
-                    else if (rgb != color) setColor(rgb, expected)
-                })
-            CompactButton(tr("mouth.autoColor"), { setColor(null, vm.modifierEditState()) }, enabled = enabled && color != null, height = 20.dp)
+        InspectorFormRow(tr("mouth.outline")) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
+                CompactTextField(hex, { hex = it }, enabled = enabled, placeholder = "#RRGGBB", isMono = true,
+                    modifier = Modifier.width(80.dp), height = 20.dp, endEditOnSettle = false,
+                    onEditStart = { editing = true; expected = vm.modifierEditState() }, onEditEnd = {
+                        editing = false
+                        val digits = hex.trim().removePrefix("#")
+                        val rgb = digits.takeIf { it.length == 6 }?.toIntOrNull(16)?.takeIf { it in 0..0xffffff }
+                        if (rgb == null) hex = actual?.let { "%06X".format(it) }.orEmpty()
+                        else if (rgb != color) setColor(rgb, expected)
+                    })
+                CompactButton(tr("mouth.autoColor"), { setColor(null, vm.modifierEditState()) }, enabled = enabled && color != null, height = 20.dp)
+            }
         }
     }
     fun config(field: String, key: String?, value: Float): JsonObject = if (key == null) JsonObject(instance.config + (field to JsonPrimitive(value)))

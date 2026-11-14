@@ -4,11 +4,17 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.Divider
+import androidx.compose.material.Surface
 import androidx.compose.material.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.rememberGraphicsLayer
@@ -27,11 +33,12 @@ import kotlinx.serialization.json.*
 import org.umamo.runtime.model.ParameterGroupId
 import org.umamo.runtime.model.ParameterNode
 
-@OptIn(ExperimentalComposeUiApi::class)
+@OptIn(ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class)
 @Composable
 internal fun ModifierStackList(stack: RigModifierStack, reports: Map<String, JsonObject>, vm: PSD2LiveViewModel,
     ordering: Boolean, enabled: Boolean, selectedId: String?, onSelect: (String) -> Unit) {
     val colors = LocalToolColors.current
+    val typography = LocalToolTypography.current
     val nodes = remember(stack) { RigModifierOrganization.nodes(stack) }
     val collapsed = remember { mutableStateMapOf<String, Boolean>() }
     var renaming by remember { mutableStateOf<String?>(null) }
@@ -44,6 +51,8 @@ internal fun ModifierStackList(stack: RigModifierStack, reports: Map<String, Jso
     val scroll = rememberScrollState()
     var container by remember { mutableStateOf<LayoutCoordinates?>(null) }
     var expected by remember { mutableStateOf<String?>(null) }
+    val folderIds = remember(nodes) { nodes.filter { it.name != null }.map { it.id } }
+
     LaunchedEffect(stack, enabled, ordering) { drag.clear() }
     fun organize(next: List<ModifierPanelNode>, state: String? = vm.modifierEditState()) {
         if (enabled && next != nodes) vm.editModifier("modifier_organize", buildJsonObject { put("nodes", RigModifierOrganization.encode(next)) }, state)
@@ -79,11 +88,41 @@ internal fun ModifierStackList(stack: RigModifierStack, reports: Map<String, Jso
         visit(null, 0)
     }
     Column(Modifier.fillMaxSize()) {
-        if (!ordering) PanelToolbar(labels = listOf(tr("parameters.newFolderShort")), iconCount = 1) { labels ->
-            PanelToolButton(tr("parameters.newFolderShort"), labels > 0, { newFolder(null) }, enabled, tr("parameters.newFolder")) { IconFolder() }
+        if (!ordering) {
+            PanelToolbar(labels = listOf(tr("parameters.newFolderShort")), iconCount = 3) { labels ->
+                PanelToolButton(tr("parameters.newFolderShort"), labels > 0, { newFolder(null) }, enabled, tr("parameters.newFolder")) { IconFolder() }
+                Spacer(Modifier.weight(1f))
+                PanelExpandCollapseButtons(
+                    onExpandAll = { folderIds.forEach { collapsed[it] = false } },
+                    onCollapseAll = { folderIds.forEach { collapsed[it] = true } },
+                    enabled = folderIds.isNotEmpty(),
+                )
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(24.dp)
+                    .background(colors.panelElevated)
+                    .padding(horizontal = Spacing.Margin),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = tr("modifier.reorder"),
+                    style = typography.caption.copy(fontSize = 10.sp),
+                    color = colors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Divider(color = colors.divider, thickness = 1.dp)
         }
-        if (stack.instances.isEmpty()) Text(tr("modifier.empty"), color = colors.textMuted, style = LocalToolTypography.current.caption,
-            modifier = Modifier.padding(Spacing.Margin))
+        if (stack.instances.isEmpty()) Text(
+            text = tr("modifier.empty"),
+            color = colors.textMuted,
+            style = typography.caption,
+            modifier = Modifier.padding(Spacing.Margin),
+        )
         Box(Modifier.weight(1f).fillMaxWidth().onGloballyPositioned { container = it }
             .onPointerEvent(PointerEventType.Move) { event -> event.changes.firstOrNull()?.let { drag.onMove(it.position, bounds.values) } }
             .onPointerEvent(PointerEventType.Release) { event ->
@@ -147,21 +186,85 @@ internal fun ModifierStackList(stack: RigModifierStack, reports: Map<String, Jso
                         else if (instance != null) {
                             val interaction = remember { MutableInteractionSource() }
                             val hovered by interaction.collectIsHoveredAsState()
+                            val isSelected = selectedId == instance.id
                             val status = reports[instance.id]?.get("status")?.jsonPrimitive?.content ?: "loading"
-                            Row(Modifier.fillMaxWidth().height(24.dp)
-                                .background(when { selectedId == instance.id -> colors.selection; hovered && !drag.isDragging -> colors.controlHover; else -> Color.Transparent })
-                                .hoverable(interaction).clickable(interactionSource = interaction, indication = null) {
-                                    if (drag.suppressClick) drag.suppressClick = false else onSelect(instance.id)
-                                }.padding(start = (4 + depth * 8).dp, end = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                            val guideColor = colors.divider.copy(alpha = 0.45f)
+                            val accentColor = colors.accent
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(25.dp)
+                                    .background(when {
+                                        isSelected -> colors.selection
+                                        hovered && !drag.isDragging -> colors.controlHover
+                                        else -> Color.Transparent
+                                    })
+                                    .drawBehind {
+                                        if (isSelected) {
+                                            drawRect(accentColor, topLeft = Offset.Zero, size = androidx.compose.ui.geometry.Size(2.dp.toPx(), size.height))
+                                        }
+                                        for (level in 1..depth) {
+                                            val x = (4 + (level - 1) * 8 + 4).dp.toPx()
+                                            drawLine(guideColor, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1.dp.toPx())
+                                        }
+                                    }
+                                    .hoverable(interaction)
+                                    .handCursor()
+                                    .clickable(interactionSource = interaction, indication = null) {
+                                        if (drag.suppressClick) drag.suppressClick = false else onSelect(instance.id)
+                                    }
+                                    .padding(start = (6 + depth * 8).dp, end = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                            ) {
+                                if (ordering) {
+                                    Text(
+                                        text = "${stack.index(instance.id) + 1}",
+                                        style = typography.caption.copy(fontSize = 9.5.sp),
+                                        color = colors.textMuted,
+                                        modifier = Modifier.widthIn(min = 14.dp),
+                                    )
+                                }
                                 CompactCheckbox(instance.enabled, { value -> vm.editModifier("modifier_enable", buildJsonObject {
                                     put("id", instance.id); put("enabled", value)
                                 }) }, enabled = enabled)
-                                Spacer(Modifier.width(Spacing.Gap))
-                                Text(name, style = LocalToolTypography.current.body.copy(fontSize = 11.sp),
+                                Text(
+                                    text = name,
+                                    style = typography.body.copy(fontSize = 11.sp),
                                     color = if (instance.enabled) colors.textPrimary else colors.textMuted,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                if (status != "active") Text(tr("modifier.status.$status"), style = LocalToolTypography.current.caption,
-                                    color = if (status == "missing_dependency" || status == "missing_plugin") colors.warning else colors.textMuted)
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                if (status != "active") {
+                                    val isWarning = status == "missing_dependency" || status == "missing_plugin"
+                                    val statusColor = if (isWarning) colors.warning else colors.textMuted
+                                    TooltipArea(
+                                        tooltip = {
+                                            Surface(
+                                                color = colors.panelElevated,
+                                                shape = RoundedCornerShape(Corners.Control),
+                                                border = BorderStroke(1.dp, colors.border),
+                                                elevation = 4.dp,
+                                            ) {
+                                                Text(
+                                                    text = tr("modifier.status.$status"),
+                                                    style = typography.caption.copy(fontSize = 10.sp),
+                                                    color = statusColor,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                                                )
+                                            }
+                                        },
+                                        delayMillis = Motion.TooltipDelay,
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(6.dp)
+                                                .clip(CircleShape)
+                                                .background(statusColor),
+                                        )
+                                    }
+                                }
                                 ParameterDragHandle({ position, row -> startDrag(layout, position, row) }, rowCoords)
                                 CompactIconButton({ vm.editModifier("modifier_remove", buildJsonObject { put("id", instance.id) }) },
                                     enabled = enabled, tooltip = tr("modifier.remove"), size = 20.dp) { IconClose() }

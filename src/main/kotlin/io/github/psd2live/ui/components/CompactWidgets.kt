@@ -632,7 +632,7 @@ fun CompactMenuItem(
 
 	val labelColor = when {
 		!enabled -> colors.textDisabled
-		danger -> if (isHovered) colors.error else colors.error.copy(alpha = 0.9f)
+		danger -> colors.error
 		active -> colors.accent
 		else -> colors.textPrimary
 	}

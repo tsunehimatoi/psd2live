@@ -15,7 +15,9 @@ import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
@@ -1204,7 +1206,7 @@ fun AppMenuItem(
 		highlighted -> colors.controlHover.copy(alpha = 0.5f)
 		isHovered && !glide -> colors.controlHover.copy(alpha = 0.75f)
 		else -> Color.Transparent
-	}, tween(Motion.Instant))
+	}, spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 3200f))
 	val contentColor = if (enabled) colors.textPrimary else colors.textDisabled
 
 	Row(

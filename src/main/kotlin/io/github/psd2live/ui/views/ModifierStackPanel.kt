@@ -1,16 +1,16 @@
 package io.github.psd2live.ui.views
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.FastOutLinearInEasing
-import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import io.github.psd2live.ui.views.texture.FloatingMenuRow
 import io.github.psd2live.ui.views.texture.FloatingMenuSection
 import io.github.psd2live.ui.views.texture.FloatingMenuDivider
+import io.github.psd2live.ui.views.texture.MenuGlide
+import io.github.psd2live.ui.views.texture.glideItem
 import io.github.psd2live.ui.views.tooloptions.GlidingColumn
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.Divider
@@ -19,9 +19,11 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -109,10 +111,94 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                 listRatio = (listRatio.coerceIn(minimum, maximum) + delta / extent).coerceIn(minimum, maximum)
             }.width(Spacing.Gap).fillMaxHeight())
             Column(Modifier.weight(1f - listRatio.coerceIn(minimum, maximum)).fillMaxHeight()) {
-                    if (selected != null) key(selected.id) {
-                        CompactTabBar(listOf(tr("modifier.adjust"), tr("modifier.targetList"), tr("modifier.details")), page, { page = it })
-                        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(Spacing.Margin), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            val report = reports[selected.id]
+                if (selected == null) {
+                    Box(Modifier.fillMaxSize().padding(Spacing.Margin), contentAlignment = Alignment.Center) {
+                        ModifierCard(Modifier.widthIn(max = 260.dp)) {
+                            Text(
+                                text = tr("modifier.empty"),
+                                style = LocalToolTypography.current.caption,
+                                color = colors.textMuted,
+                            )
+                            CompactButton(
+                                text = tr("modifier.add"),
+                                onClick = { vm.openModifierAddition() },
+                                enabled = enabled,
+                                height = 22.dp,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                } else key(selected.id) {
+                    val foldController = remember(selected.id) { ModifierFoldController() }
+                    val report = reports[selected.id]
+                    val status = report?.get("status")?.jsonPrimitive?.content ?: "loading"
+                    val customName = selected.config["name"]?.jsonPrimitive?.contentOrNull
+                    val displayName = customName ?: modifierName(selected.type)
+                    val typeSubtitle = if (customName != null) modifierName(selected.type) else null
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(colors.panelElevated)
+                            .padding(horizontal = Spacing.Margin, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.Gap),
+                    ) {
+                        CompactCheckbox(selected.enabled, { value ->
+                            vm.editModifier("modifier_enable", buildJsonObject {
+                                put("id", selected.id); put("enabled", value)
+                            })
+                        }, enabled = enabled)
+                        val titleColor = if (selected.enabled) colors.textPrimary else colors.textMuted
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = displayName,
+                                style = LocalToolTypography.current.body.copy(fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold),
+                                color = titleColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            if (typeSubtitle != null) {
+                                Text(
+                                    text = typeSubtitle,
+                                    style = LocalToolTypography.current.caption.copy(fontSize = 9.5.sp),
+                                    color = colors.textMuted,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                        if (status != "active" && status != "disabled") {
+                            ModifierStatusBadge(status)
+                        }
+                    }
+                    Divider(color = colors.divider, thickness = 1.dp)
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().background(colors.panelElevated),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CompactTabBar(
+                            listOf(tr("modifier.adjust"), tr("modifier.targetList"), tr("modifier.details")),
+                            page,
+                            { page = it },
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (page != 1) {
+                            Row(Modifier.padding(end = Spacing.Gap), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                                PanelExpandCollapseButtons(
+                                    onExpandAll = { foldController.expandAll() },
+                                    onCollapseAll = { foldController.collapseAll() },
+                                )
+                            }
+                        }
+                    }
+
+                    CompositionLocalProvider(LocalModifierFoldController provides foldController) {
+                        Column(
+                            Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(Spacing.Margin),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.Margin),
+                        ) {
                             val missing = report?.get("missing_dependencies")?.jsonArray.orEmpty()
                             if (missing.isNotEmpty()) InspectorHint(tr("modifier.dependencies", missing.joinToString { it.jsonPrimitive.content }), warning = true)
                             when (page) {
@@ -123,22 +209,84 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                                         vm.editModifier("modifier_update", buildJsonObject { put("id", selected.id); put("type", selected.type); put("config", config) }, captured, done)
                                     }
                                 }
-                                1 -> selected.targets.forEach { target ->
-                                    CompactButton(contentName(state, target.kind, target.id), { vm.locateModifierContent(target.kind, target.id) }, height = 20.dp)
+                                1 -> {
+                                    if (selected.targets.isEmpty()) {
+                                        ModifierCard {
+                                            Text(tr("modifier.targets.empty"), style = LocalToolTypography.current.caption, color = colors.textMuted)
+                                        }
+                                    } else {
+                                        for ((kind, targets) in selected.targets.groupBy { it.kind }) {
+                                            RememberedModifierSection(
+                                                stateKey = "${selected.id}:targets:$kind",
+                                                title = tr("modifier.kind.$kind"),
+                                                defaultExpanded = true,
+                                                summary = tr("modifier.count", targets.size),
+                                            ) {
+                                                MenuGlide(Modifier.fillMaxWidth()) {
+                                                    Column(Modifier.fillMaxWidth()) {
+                                                        targets.forEach { target ->
+                                                            Row(
+                                                                modifier = Modifier
+                                                                    .fillMaxWidth()
+                                                                    .height(24.dp)
+                                                                    .glideItem(enabled = true, spanWidth = true)
+                                                                    .handCursor()
+                                                                    .clickable(
+                                                                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                                                        indication = null,
+                                                                    ) { vm.locateModifierContent(target.kind, target.id) }
+                                                                    .padding(horizontal = 6.dp),
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                            ) {
+                                                                Text(
+                                                                    text = contentName(state, target.kind, target.id),
+                                                                    style = LocalToolTypography.current.caption,
+                                                                    color = colors.textPrimary,
+                                                                    maxLines = 1,
+                                                                    overflow = TextOverflow.Ellipsis,
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                                 2 -> {
-                                    ModifierBehaviorPreview(selected.type, selected.version)
-                                    ModifierDependencies(selected, stack, enabled, vm)
+                                    val hasBehavior = remember(selected.type, selected.version) {
+                                        val alg = (ModifierPluginCatalog.algorithm(selected.type, selected.version)
+                                            ?: ModifierPluginCatalog.algorithm(selected.type))?.second
+                                        alg != null && (alg.creates.isNotEmpty() || alg.modifies.isNotEmpty())
+                                    }
+                                    val hasDeps = RigLegacyBindings.find(selected.type)?.let { RigLegacyBindings.providers(selected).isNotEmpty() } == true
+                                    if (hasBehavior || hasDeps) {
+                                        RememberedModifierSection(
+                                            stateKey = "${selected.id}:behavior",
+                                            title = tr("modifier.section.behavior"),
+                                            defaultExpanded = true,
+                                        ) {
+                                            ModifierBehaviorPreview(selected.type, selected.version)
+                                            ModifierDependencies(selected, stack, enabled, vm)
+                                        }
+                                    }
                                     report?.let { ModifierContributions(it, state, vm) }
-                                    CompactButton(tr("modifier.apply"), { vm.editModifier("modifier_apply", buildJsonObject { put("id", selected.id) }) }, enabled = enabled, height = 22.dp)
+                                    CompactButton(
+                                        tr("modifier.apply"),
+                                        { vm.editModifier("modifier_apply", buildJsonObject { put("id", selected.id) }) },
+                                        enabled = enabled,
+                                        height = 24.dp,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
                                 }
                             }
                         }
                     }
-            }
+                }
             }
         }
     }
+}
 }
 
 @Composable
@@ -150,8 +298,7 @@ private fun ModifierDependencies(instance: RigModifierInstance, stack: RigModifi
         val candidates = capabilities.filter { cap -> RigModifierAlgorithms.registry.provides(cap, type) && cap.id != null && instance.targets.all { it in cap.targets } &&
             (type == RigSourceModifiers.SCAFFOLD || cap.config["scaffold"] == instance.config["scaffold"]) }
         val ids = (listOf(selected) + candidates.mapNotNull { it.id }).distinct()
-          Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
-            Text(modifierName(type), style = LocalToolTypography.current.caption, color = LocalToolColors.current.textMuted, modifier = Modifier.weight(1f))
+        InspectorFormRow(modifierName(type)) {
             CompactDropdown(ids, selected, { next ->
                 if (next != selected) {
                     val field = when (type) { RigSourceModifiers.SCAFFOLD -> "scaffold"; spec.module?.base -> "base"; else -> "dependencies" }
@@ -162,7 +309,7 @@ private fun ModifierDependencies(instance: RigModifierInstance, stack: RigModifi
                 if (candidates.none { it.id == id }) tr("modifier.provider.missing", id) else stack.instances.firstOrNull { it.id == id }?.let { provider ->
                     provider.config["name"]?.jsonPrimitive?.contentOrNull ?: "${modifierName(provider.type)} · ${stack.index(id) + 1}"
                 } ?: modifierName(type)
-            }, itemEnabled = { id -> candidates.any { it.id == id } }, enabled = enabled, height = 20.dp, modifier = Modifier.weight(1.5f))
+            }, itemEnabled = { id -> candidates.any { it.id == id } }, enabled = enabled, height = 20.dp, modifier = Modifier.fillMaxWidth())
         }
     }
 }
@@ -180,15 +327,26 @@ private fun ModifierModulePhysicsValues(instance: RigModifierInstance, report: J
         val group = groups[item.getValue("id").jsonPrimitive.content] ?: return@mapNotNull null
         slot to group
     }
-    var open by remember(instance.id) { mutableStateOf(false) }
-    PresetFolderRow(tr("swing.physics"), tr("modifier.count", candidates.size), open, true) { open = !open }
-    if (open) candidates.forEach { (slot, actual) ->
-        Text(actual.name, style = LocalToolTypography.current.caption, color = LocalToolColors.current.textMuted)
-        ModifierNativeValues("physics", io.github.psd2live.core.Physics3Json.setting(actual).toJson(), state, enabled, vm,
-            editName = actual.id == instance.outputId("physics:$slot")) { next, expected, done ->
-            val overrides = JsonObject(instance.config["physics"]?.jsonObject.orEmpty() + (slot to next))
-            vm.editModifier("modifier_update", buildJsonObject { put("id", instance.id); put("type", instance.type)
-                put("config", JsonObject(instance.config + ("physics" to overrides))) }, expected, done)
+    RememberedModifierSection(
+        stateKey = "${instance.id}:modulePhysics",
+        title = tr("swing.physics"),
+        defaultExpanded = false,
+        summary = tr("modifier.count", candidates.size),
+    ) {
+        candidates.forEach { (slot, actual) ->
+            RememberedModifierSection(
+                stateKey = "${instance.id}:modulePhysics:$slot",
+                title = actual.name,
+                defaultExpanded = true,
+                level = 1,
+            ) {
+                ModifierNativeValues("physics", io.github.psd2live.core.Physics3Json.setting(actual).toJson(), state, enabled, vm,
+                    editName = actual.id == instance.outputId("physics:$slot"), instanceId = "${instance.id}:physics:$slot") { next, expected, done ->
+                    val overrides = JsonObject(instance.config["physics"]?.jsonObject.orEmpty() + (slot to next))
+                    vm.editModifier("modifier_update", buildJsonObject { put("id", instance.id); put("type", instance.type)
+                        put("config", JsonObject(instance.config + ("physics" to overrides))) }, expected, done)
+                }
+            }
         }
     }
 }
@@ -196,28 +354,38 @@ private fun ModifierModulePhysicsValues(instance: RigModifierInstance, report: J
 @Composable
 private fun ModifierSourceValues(instance: RigModifierInstance, state: PSD2LiveState, enabled: Boolean, vm: PSD2LiveViewModel) {
     if (instance.plugin?.let { !it.id.startsWith("builtin.") } == true) {
-        ModifierPluginValues(instance, enabled, vm)
+        RememberedModifierSection(
+            stateKey = "${instance.id}:plugin",
+            title = modifierName(instance.type),
+            defaultExpanded = true,
+        ) {
+            ModifierPluginValues(instance, enabled, vm)
+        }
         return
     }
     if (instance.type == RigSourceModifiers.SCAFFOLD) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            CompactCheckbox(instance.config["featureDisplacement"]?.jsonPrimitive?.booleanOrNull == true, { value ->
-                vm.editModifier("modifier_update", buildJsonObject {
-                    put("id", instance.id); put("type", instance.type)
-                    put("config", JsonObject(instance.config + ("featureDisplacement" to JsonPrimitive(value))))
-                })
-            }, enabled = enabled)
-            Text(tr("model.deformer.featureDisplacement"), style = LocalToolTypography.current.caption)
-        }
-        for ((key, label) in listOf("frontHairSway" to "modifier.frontHairSway", "backHairSway" to "modifier.backHairSway")) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                CompactCheckbox(instance.config[key]?.jsonPrimitive?.booleanOrNull != false, { value ->
+        RememberedModifierSection(
+            stateKey = "${instance.id}:scaffold",
+            title = tr("modifier.scaffold"),
+            defaultExpanded = true,
+        ) {
+            InspectorFormRow(tr("model.deformer.featureDisplacement"), labelWidth = 110.dp) {
+                CompactCheckbox(instance.config["featureDisplacement"]?.jsonPrimitive?.booleanOrNull == true, { value ->
                     vm.editModifier("modifier_update", buildJsonObject {
                         put("id", instance.id); put("type", instance.type)
-                        put("config", JsonObject(instance.config + (key to JsonPrimitive(value))))
+                        put("config", JsonObject(instance.config + ("featureDisplacement" to JsonPrimitive(value))))
                     })
                 }, enabled = enabled)
-                Text(tr(label), style = LocalToolTypography.current.caption)
+            }
+            for ((key, label) in listOf("frontHairSway" to "modifier.frontHairSway", "backHairSway" to "modifier.backHairSway")) {
+                InspectorFormRow(tr(label), labelWidth = 110.dp) {
+                    CompactCheckbox(instance.config[key]?.jsonPrimitive?.booleanOrNull != false, { value ->
+                        vm.editModifier("modifier_update", buildJsonObject {
+                            put("id", instance.id); put("type", instance.type)
+                            put("config", JsonObject(instance.config + (key to JsonPrimitive(value))))
+                        })
+                    }, enabled = enabled)
+                }
             }
         }
         return
@@ -226,8 +394,16 @@ private fun ModifierSourceValues(instance: RigModifierInstance, state: PSD2LiveS
         ModifierPartValues(instance, state, enabled, vm)
         return
     }
-    ModifierBindingValues(instance, enabled, vm) { config, expected, done ->
-        vm.editModifier("modifier_update", buildJsonObject { put("id", instance.id); put("type", instance.type); put("config", config) }, expected, done)
+    if (RigLegacyBindings.find(instance.type) != null) {
+        RememberedModifierSection(
+            stateKey = "${instance.id}:binding",
+            title = modifierName(instance.type),
+            defaultExpanded = true,
+        ) {
+            ModifierBindingValues(instance, enabled, vm) { config, expected, done ->
+                vm.editModifier("modifier_update", buildJsonObject { put("id", instance.id); put("type", instance.type); put("config", config) }, expected, done)
+            }
+        }
     }
 }
 
@@ -280,40 +456,45 @@ internal fun ModifierNumber(label: String, value: Float, range: ClosedFloatingPo
 @Composable
 internal fun ModifierContributions(report: JsonObject, state: PSD2LiveState, vm: PSD2LiveViewModel) {
     val colors = LocalToolColors.current
-    val folded = remember(report.getValue("id")) { mutableStateMapOf<String, Boolean>() }
+    val reportId = report.getValue("id").jsonPrimitive.content
     val contributions = report.getValue("contributions").jsonArray.map { it.jsonObject }
     for ((kind, items) in contributions.groupBy { it.getValue("kind").jsonPrimitive.content }) {
-        val open = folded[kind] == true
-        PresetFolderRow(tr("modifier.kind.$kind"), tr("modifier.count", items.size), open, true) { folded[kind] = !open }
-        if (open) items.forEach { item ->
-            val id = item.getValue("id").jsonPrimitive.content
-            val mask = item["mask"]?.jsonObject
-            val target = mask?.getValue("target")?.jsonPrimitive?.content
-            val label = if (mask != null) tr("modifier.relation.mask", item["name"]?.jsonPrimitive?.content ?: contentName(state, "mesh", target!!))
-                else item["name"]?.jsonPrimitive?.content ?: contentName(state, kind, id)
-            val present = if (mask != null) state.previewModel?.rig?.puppet?.drawables?.any { it.id.raw == target } == true
-                else if (kind == "mesh") state.previewModel?.rig?.puppet?.drawables?.any { it.id.raw == id } == true
-                else when (kind) {
-                    "deformer" -> state.previewModel?.rig?.puppet?.deformers?.any { it.id.raw == id } == true
-                    "part" -> state.previewModel?.rig?.puppet?.parts?.any { it.id.raw == id } == true
-                    "parameter" -> state.previewModel?.rig?.puppet?.parameters?.any { it.id.raw == id } == true
-                    else -> false
+        RememberedModifierSection(
+            stateKey = "$reportId:contrib:$kind",
+            title = tr("modifier.kind.$kind"),
+            defaultExpanded = false,
+            summary = tr("modifier.count", items.size),
+        ) {
+            items.forEach { item ->
+                val id = item.getValue("id").jsonPrimitive.content
+                val mask = item["mask"]?.jsonObject
+                val target = mask?.getValue("target")?.jsonPrimitive?.content
+                val label = if (mask != null) tr("modifier.relation.mask", item["name"]?.jsonPrimitive?.content ?: contentName(state, "mesh", target!!))
+                    else item["name"]?.jsonPrimitive?.content ?: contentName(state, kind, id)
+                val present = if (mask != null) state.previewModel?.rig?.puppet?.drawables?.any { it.id.raw == target } == true
+                    else if (kind == "mesh") state.previewModel?.rig?.puppet?.drawables?.any { it.id.raw == id } == true
+                    else when (kind) {
+                        "deformer" -> state.previewModel?.rig?.puppet?.deformers?.any { it.id.raw == id } == true
+                        "part" -> state.previewModel?.rig?.puppet?.parts?.any { it.id.raw == id } == true
+                        "parameter" -> state.previewModel?.rig?.puppet?.parameters?.any { it.id.raw == id } == true
+                        else -> false
+                    }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
+                    Text(tr("modifier.change.${item.getValue("change").jsonPrimitive.content}"), color = colors.textMuted, style = LocalToolTypography.current.caption)
+                    if (present) CompactButton(label, { vm.locateModifierContent(if (mask != null) "mesh" else kind, target ?: id) }, height = 20.dp, modifier = Modifier.weight(1f))
+                    else Text(label, color = colors.textPrimary, style = LocalToolTypography.current.caption, modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
-              Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
-                Text(tr("modifier.change.${item.getValue("change").jsonPrimitive.content}"), color = colors.textMuted, style = LocalToolTypography.current.caption)
-                if (present) CompactButton(label, { vm.locateModifierContent(if (mask != null) "mesh" else kind, target ?: id) }, height = 20.dp, modifier = Modifier.weight(1f))
-                else Text(label, color = colors.textPrimary, style = LocalToolTypography.current.caption, modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-            if (mask != null) Column(Modifier.fillMaxWidth().padding(start = Spacing.Margin), verticalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
-                for (stage in listOf("before", "after")) {
-                    val sources = mask.getValue(stage).jsonArray.map { it.jsonPrimitive.content }
-                    Text(tr("modifier.relation.$stage") + if (mask.getValue(stage + "_inverted").jsonPrimitive.boolean) " · " + tr("inspector.invertMask") else "",
-                        color = colors.textMuted, style = LocalToolTypography.current.caption)
-                    if (sources.isEmpty()) Text(tr("modifier.relation.none"), color = colors.textMuted, style = LocalToolTypography.current.caption)
-                    sources.forEach { source ->
-                        if (state.previewModel?.rig?.puppet?.drawables?.any { it.id.raw == source } == true)
-                            CompactButton(contentName(state, "mesh", source), { vm.locateModifierContent("mesh", source) }, height = 20.dp)
-                        else Text(source, color = colors.textPrimary, style = LocalToolTypography.current.caption, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (mask != null) Column(Modifier.fillMaxWidth().padding(start = Spacing.Margin), verticalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
+                    for (stage in listOf("before", "after")) {
+                        val sources = mask.getValue(stage).jsonArray.map { it.jsonPrimitive.content }
+                        Text(tr("modifier.relation.$stage") + if (mask.getValue(stage + "_inverted").jsonPrimitive.boolean) " · " + tr("inspector.invertMask") else "",
+                            color = colors.textMuted, style = LocalToolTypography.current.caption)
+                        if (sources.isEmpty()) Text(tr("modifier.relation.none"), color = colors.textMuted, style = LocalToolTypography.current.caption)
+                        sources.forEach { source ->
+                            if (state.previewModel?.rig?.puppet?.drawables?.any { it.id.raw == source } == true)
+                                CompactButton(contentName(state, "mesh", source), { vm.locateModifierContent("mesh", source) }, height = 20.dp)
+                            else Text(source, color = colors.textPrimary, style = LocalToolTypography.current.caption, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        }
                     }
                 }
             }
@@ -321,20 +502,30 @@ internal fun ModifierContributions(report: JsonObject, state: PSD2LiveState, vm:
     }
     val forms = report.getValue("owned_keyforms").jsonArray
     if (forms.isNotEmpty()) {
-        val open = folded["keyforms"] == true
-        PresetFolderRow(tr("modifier.keyforms"), tr("modifier.count", forms.size), open, true) { folded["keyforms"] = !open }
-        if (open) forms.forEach { element -> val form = element.jsonObject
-            val kind = form.getValue("kind").jsonPrimitive.content; val id = form.getValue("id").jsonPrimitive.content
-            CompactButton("${form["object_name"]?.jsonPrimitive?.content ?: contentName(state, kind, id)} · ${form["parameter_name"]?.jsonPrimitive?.content ?: contentName(state, "parameter", form.getValue("parameter").jsonPrimitive.content)}" +
-                (form["key"]?.jsonObject?.let { key -> " · " + key.entries.joinToString { (parameter, value) -> contentName(state, "parameter", parameter) + ": " + value.jsonPrimitive.content } } ?: "") +
-                (form["channel"]?.let { channel ->
-                    val name = when (val raw = channel.jsonPrimitive.content) { "draw_order" -> "drawOrder"; "multiply_color" -> "multiplyColor"; "screen_color" -> "screenColor"; else -> raw }
-                    " · ${tr("keyform.channel.$name")}"
-                } ?: ""), { vm.locateModifierContent(kind, id) }, height = 20.dp)
+        RememberedModifierSection(
+            stateKey = "$reportId:keyforms",
+            title = tr("modifier.keyforms"),
+            defaultExpanded = false,
+            summary = tr("modifier.count", forms.size),
+        ) {
+            forms.forEach { element -> val form = element.jsonObject
+                val kind = form.getValue("kind").jsonPrimitive.content; val id = form.getValue("id").jsonPrimitive.content
+                CompactButton("${form["object_name"]?.jsonPrimitive?.content ?: contentName(state, kind, id)} · ${form["parameter_name"]?.jsonPrimitive?.content ?: contentName(state, "parameter", form.getValue("parameter").jsonPrimitive.content)}" +
+                    (form["key"]?.jsonObject?.let { key -> " · " + key.entries.joinToString { (parameter, value) -> contentName(state, "parameter", parameter) + ": " + value.jsonPrimitive.content } } ?: "") +
+                    (form["channel"]?.let { channel ->
+                        val name = when (val raw = channel.jsonPrimitive.content) { "draw_order" -> "drawOrder"; "multiply_color" -> "multiplyColor"; "screen_color" -> "screenColor"; else -> raw }
+                        " · ${tr("keyform.channel.$name")}"
+                    } ?: ""), { vm.locateModifierContent(kind, id) }, height = 20.dp, modifier = Modifier.fillMaxWidth())
+            }
         }
     }
-    report.getValue("override_issues").jsonArray.forEach { raw -> val issue = raw.jsonObject
-        Text(tr("modifier.override.${issue.getValue("kind").jsonPrimitive.content}", issue.getValue("target").jsonPrimitive.content), color = colors.warning, style = LocalToolTypography.current.caption)
+    val overrideIssues = report.getValue("override_issues").jsonArray
+    if (overrideIssues.isNotEmpty()) {
+        ModifierCard {
+            overrideIssues.forEach { raw -> val issue = raw.jsonObject
+                Text(tr("modifier.override.${issue.getValue("kind").jsonPrimitive.content}", issue.getValue("target").jsonPrimitive.content), color = colors.warning, style = LocalToolTypography.current.caption)
+            }
+        }
     }
 }
 
