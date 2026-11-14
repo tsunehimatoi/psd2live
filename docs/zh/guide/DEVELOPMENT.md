@@ -123,6 +123,7 @@ PSD2LIVE_TOOLS=1 PSD2LIVE_SAMPLE=ds ./gradlew test --tests "io.github.psd2live.t
 | `FirstCorrectFrameTool.verifyReadback` / `.measure` | 三档合成网格的已知像素检查与捕获修订至离屏编辑画布 GPU 读回完成的测量，分别覆盖新建和预热后的 renderer | `first-correct-frame-check/report.json`、`first-correct-frame/report.json` |
 | `WindowActivationTool.smoke` / `.measure` | 真实应用窗口中，P2LRT 模型激活捕获至窗口 GPU 完成的回执检查与测量；分别运行两种 compositor 模式 | `window-activation-smoke/report.json`、`window-activation/report.json` |
 | `WindowActivationTool.verifyWindowPixels` | 读回实际 Skiko 窗口 Surface，核对四块图案的修订颜色、视口位置及首个 GPU 回执身份；两种 compositor 模式分别执行，仅作功能验收 | `window-activation-pixels/report.json`、`window-activation-pixels/window-*.png` |
+| `WindowActivationTool.verifyDocumentEdits` / `.measureDocumentEdits` | 真实公开编辑请求，经候选构建与 CAS 到窗口正确帧；匹配编辑、构建、修订和实际像素，两种 compositor 模式分别执行 | `window-document-edits/report.json`、`window-document-edits-measure/report.json` |
 | `DeformerDeletionVisualTool` | 合成非对称网格在删除父变形器前后及 MOC3 导出读回后的剪影对照 | `deformer-deletion/comparison.png` |
 | `MotionSheetTool.motions` | 每个预设动作按时间展开的拼图、待机循环、呼吸前后与差分图、身体 Z | `motion-sheet/<示例>-*.png` |
 | `MotionSheetTool.body` | 身体 X × 身体 Y、腿部和上半身特写、前后倾、大小变、腿部姿势，分别为无骨架和自动骨架 | `motion-sheet/<示例>-{stance,lean,size,legposes}*.png` |

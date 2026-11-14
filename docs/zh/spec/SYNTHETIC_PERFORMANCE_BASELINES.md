@@ -6,6 +6,8 @@
 
 继续使用 `RigBuildProfile`。原有阶段汇总和 legacy 模板计数保留；`measure` / `measureSuspending` 返回单次操作样本，关联任务、起始修订、候选、场景和模型规模。挂起构建传播同一协程上下文，worker executor 显式传播样本。profiler 不持有历史样本或模型结果。
 
+`WorkspaceEditObservation.subscribe` 为开发测量按需启用真实编辑观察：公开批量入口在等待编辑锁前记录请求，隔离候选的每次构建携带同一 editId 和递增 ordinal，CAS 后记录最终采用的 state/revision。候选 revision 与采用 revision 分别保存。观察结果不进入文档、历史或缓存键；回调在提交锁和宿主编辑锁释放后发送，失败或取消不能伪造成功发布。`WorkspaceCapture.observation` 经严格模型身份和加载代次校验传给呈现令牌，窗口工具再核对 GPU 完成及实际像素。详见[首次正确帧测量](../guide/FIRST_CORRECT_FRAME_MEASUREMENT.md#真实公开编辑请求到窗口正确帧)。
+
 `algorithm-api` 的 `ModifierAlgorithmStages` 只提供同步阶段回调，不聚合数据，也不引用宿主。宿主开启 `RigBuildProfile.recording` 后将阶段归入同一 Operation，关闭则移除回调；禁用路径不采时。观察器失败不改变算法的返回值、异常或取消。真实 worker 不安装该宿主回调，本轮不增加计时 wire 字段。
 
 三部件阶段名统一为 `algorithm stage: part <eye|brow|mouth> <base|sub>: <algorithm-type>`，例如 `algorithm stage: part eye sub: eye.wide`；计数表示实际执行次数，求值缓存命中而未调用算法时不会产生该阶段。
@@ -75,5 +77,5 @@ JVM 退出同时处理 live pool 与退休队列保留的条目。shutdown 先�
 
 - JVM heap、committed heap、non-heap 与显式缓存计数分别记录；工具层另采 OS 进程内存，不能由几何预算推断 RSS／Working Set 有界。尚不采 worker 子进程堆或 retained-object heap dump；OS 真实采样数据仍须在正式窗口实际运行后验收。
 - 工作区工具保留历史，预期历史必需数据增长；关闭重开时故意持有一个捕获模型验证读取，再在下一次样本释放它。一次 GC 后的堆大小不作为泄漏判据。
-- 眼、眉、嘴折叠部件的进程内 base/sub 埋点计量 `changes` 调用，不包括应用变化与最终组合；展开栈阶段与折叠总阶段仍保留。真实 worker 不通过协议返回内部阶段时间，需与宿主端到端结果联合解读。GUI 首次正确呈现仍需携带模型修订的 renderer 回传，不能用任意首帧代替。
+- 眼、眉、嘴折叠部件的进程内 base/sub 埋点计量 `changes` 调用，不包括应用变化与最终组合；展开栈阶段与折叠总阶段仍保留。真实 worker 不通过协议返回内部阶段时间，需与宿主端到端结果联合解读。GUI 真实编辑工具已通过独立票据关联到窗口回执与像素；没有这份关联的激活或离屏样本仍不能替代完整编辑延迟。
 - 开发工具通过编译与常规单元回归，不等于已运行 30／1,000 次测量；是否实际运行及结果应由验收记录单独说明。
