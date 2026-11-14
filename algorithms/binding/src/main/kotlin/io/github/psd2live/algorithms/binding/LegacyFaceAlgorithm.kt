@@ -5,7 +5,7 @@ import io.github.psd2live.core.modifier.ModifierAlgorithmContext
 import io.github.psd2live.core.modifier.ModifierModelChanges
 import io.github.psd2live.core.modifier.RigModifierInstance
 import io.github.psd2live.format.model.RigIR
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import org.umamo.runtime.model.Parameter
 
 /** Standalone legacy face binding algorithm eliminating host before/after transition delegation. */

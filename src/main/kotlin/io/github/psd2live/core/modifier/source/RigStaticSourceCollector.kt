@@ -70,7 +70,7 @@ import io.github.psd2live.core.recipe.RecipeSubject
 import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.format.model.Deformer
 import io.github.psd2live.i18n.tr
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.*
 
 /**
@@ -1107,7 +1107,7 @@ internal object RigStaticSourceCollector {
         )
         val layers = LinkedHashMap<String, BustBindingInputs.Layer>()
         val targets = LinkedHashMap<String, String>()
-        val baseIr = io.github.psd2live.targets.cubism.PuppetIr.toIr(materialBase)
+        val baseIr = io.github.psd2live.bridge.PuppetIr.toIr(materialBase)
         val meshTiles = baseIr.meshes.associate { it.id to it.tile }
         for ((targetId, layerId) in targetLayers) {
             val layer = byLayer[layerId] ?: continue

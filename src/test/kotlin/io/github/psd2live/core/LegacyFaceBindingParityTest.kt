@@ -8,7 +8,7 @@ import io.github.psd2live.core.modifier.legacyFaceTuning
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.project.rawConfig
 import io.github.psd2live.scenario.Characters
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue

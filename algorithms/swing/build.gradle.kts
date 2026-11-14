@@ -15,7 +15,7 @@ java { withSourcesJar() }
 dependencies {
     api(project(":algorithm-api"))
     api(project(":umamo"))
-    implementation(project(":targets:cubism"))
+    implementation(project(":umamo-ir-bridge"))
     implementation(project(":algorithms:physics"))
     implementation(project(":algorithm-worker"))
     testImplementation(kotlin("test"))

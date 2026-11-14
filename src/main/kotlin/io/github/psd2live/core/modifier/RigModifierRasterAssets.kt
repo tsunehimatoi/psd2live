@@ -6,7 +6,7 @@ import io.github.psd2live.format.model.Bytes
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.format.model.TexturePage
 import io.github.psd2live.format.model.TileArt
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import org.umamo.runtime.model.DeformPath
 import org.umamo.runtime.model.Drawable
 import org.umamo.runtime.model.DrawableId

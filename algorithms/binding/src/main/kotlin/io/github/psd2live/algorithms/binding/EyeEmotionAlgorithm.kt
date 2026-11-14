@@ -3,7 +3,7 @@ package io.github.psd2live.algorithms.binding
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.format.model.*
 import io.github.psd2live.format.model.Parameter
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.*
 import org.umamo.render.eval.drawableSpaceMapping
 import org.umamo.runtime.eval.colorAt

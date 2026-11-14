@@ -14,7 +14,7 @@ import io.github.psd2live.core.modifier.ReadingModifierAlgorithmPlugin
 import io.github.psd2live.core.modifier.RigModifierInstance
 import io.github.psd2live.format.model.Parameter
 import io.github.psd2live.format.model.RigIR
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import org.umamo.runtime.model.ParameterGroupId
 import org.umamo.runtime.model.ParameterId
 import org.umamo.runtime.model.ParameterNode as PuppetParameterNode

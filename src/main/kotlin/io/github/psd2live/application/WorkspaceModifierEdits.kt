@@ -3,7 +3,7 @@ package io.github.psd2live.application
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.project.*
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.*
 
 /** Pure candidates shared by GUI commands, MCP jobs and atomic document batches. */

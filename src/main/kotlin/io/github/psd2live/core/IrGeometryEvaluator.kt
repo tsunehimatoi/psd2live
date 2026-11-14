@@ -4,7 +4,7 @@ import io.github.psd2live.format.compile.GeometryEvaluator
 import io.github.psd2live.format.compile.GeometrySession
 import io.github.psd2live.format.compile.PoseGeometry
 import io.github.psd2live.format.model.RigIR
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import org.umamo.render.eval.CpuDeformationEvaluator
 import org.umamo.runtime.model.ParameterId
 

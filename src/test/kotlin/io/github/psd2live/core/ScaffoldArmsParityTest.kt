@@ -6,7 +6,7 @@ import io.github.psd2live.core.modifier.RigModifierPipeline
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.project.rawConfig
 import io.github.psd2live.scenario.Characters
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import org.umamo.runtime.model.DeformerId
 import org.umamo.runtime.model.PartId
 import org.umamo.runtime.model.PuppetModel

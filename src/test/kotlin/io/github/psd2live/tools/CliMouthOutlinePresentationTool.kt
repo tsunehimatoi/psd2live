@@ -9,7 +9,7 @@ import io.github.psd2live.core.PipelineConfig
 import io.github.psd2live.core.modifier.RigModifierStack
 import io.github.psd2live.project.WorkspaceDocument
 import io.github.psd2live.project.WorkspaceSettingsCodec
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals

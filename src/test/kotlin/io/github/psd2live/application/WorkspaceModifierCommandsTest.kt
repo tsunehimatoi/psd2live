@@ -8,7 +8,7 @@ import io.github.psd2live.core.sim.*
 import io.github.psd2live.format.compile.ExportOptions
 import io.github.psd2live.project.*
 import io.github.psd2live.targets.cubism.Cmo3Target
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import io.github.psd2live.format.model.Deformer as IrDeformer
 import io.github.psd2live.format.model.Floats
 import io.github.psd2live.format.model.KeyGrid

@@ -8,7 +8,7 @@ import io.github.psd2live.core.PipelineConfig
 import io.github.psd2live.core.PipelineResult
 import io.github.psd2live.core.RigBuildProfile
 import io.github.psd2live.core.RigIrCompiler
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals

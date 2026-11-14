@@ -6,7 +6,7 @@ import io.github.psd2live.algorithms.binding.MoodBinding
 import io.github.psd2live.core.modifier.ModifierTarget
 import io.github.psd2live.core.modifier.RigModifierInstance
 import io.github.psd2live.format.model.*
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject

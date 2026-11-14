@@ -1,6 +1,6 @@
 package io.github.psd2live.core
 
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import org.umamo.edit.VertexSource
 import org.umamo.edit.withDeformerDeleted
 import org.umamo.edit.withDeformerMoved

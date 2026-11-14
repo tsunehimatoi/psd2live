@@ -5,7 +5,7 @@ import io.github.psd2live.core.*
 import io.github.psd2live.core.legacy.ReplayCheckpoints
 import io.github.psd2live.format.compile.document.ContentHash
 import io.github.psd2live.project.*
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
 import org.umamo.format.moc3.Moc3

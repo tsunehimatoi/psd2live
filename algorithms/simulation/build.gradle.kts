@@ -13,7 +13,7 @@ dependencies {
     api(project(":umamo"))
     implementation(project(":algorithms:swing"))
     implementation(project(":format-compile"))
-    implementation(project(":targets:cubism"))
+    implementation(project(":umamo-ir-bridge"))
     implementation(project(":algorithm-worker"))
     testImplementation(kotlin("test"))
 }

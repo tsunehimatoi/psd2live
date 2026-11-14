@@ -93,7 +93,7 @@ class PackagedPhysicsPluginTool {
     @Test fun scaffoldArchivesBuildFromUnboundSourcesWithoutTemplates() {
         requireTools()
         val input = testInput()
-        val material = io.github.psd2live.targets.cubism.PuppetIr.toPuppet(input)
+        val material = io.github.psd2live.bridge.PuppetIr.toPuppet(input)
         val bounds = Bounds(0f, 0f, 100f, 100f)
         val head = ScaffoldHead.Input(bounds, bounds, bounds, ScaffoldHead.Point(50f, 50f),
             ScaffoldHead.Point(50f, 50f), 0f, false, emptyList())
@@ -121,7 +121,7 @@ class PackagedPhysicsPluginTool {
     @Test fun scaffoldArchivesPreserveBothHierarchyVersionsThroughWorkers() {
         requireTools()
         val input = testInput()
-        val material = io.github.psd2live.targets.cubism.PuppetIr.toPuppet(input)
+        val material = io.github.psd2live.bridge.PuppetIr.toPuppet(input)
         val frame = org.umamo.runtime.model.DeformerId("frame")
         val part = org.umamo.runtime.model.PartId("body-part")
         val template = material.copy(
@@ -161,7 +161,7 @@ class PackagedPhysicsPluginTool {
             put("weights", JsonArray(listOf(JsonPrimitive(1f), JsonPrimitive(1f), JsonPrimitive(0f))))
         } }
         val config = JsonObject(edit.toJson() + ("automatic_weights" to weights))
-        val weighted = RigSimulationWeights.apply(io.github.psd2live.targets.cubism.PuppetIr.toPuppet(input), config)
+        val weighted = RigSimulationWeights.apply(io.github.psd2live.bridge.PuppetIr.toPuppet(input), config)
         val axis = SimBakedAxis("mode", floatArrayOf(-1f, 0f, 1f), mapOf("body" to listOf(
             floatArrayOf(0f, 0f, 0f, 0f, -2f, 0f), FloatArray(6), floatArrayOf(0f, 0f, 0f, 0f, 2f, 0f))))
         val bake = SimBakeResult(SimBake.fingerprint(weighted, edit),
@@ -261,10 +261,10 @@ class PackagedPhysicsPluginTool {
             val instance = RigModifierInstance("instance1", type, definition.version, listOf(ModifierTarget("mesh", "body")),
                 config = config, outputAliases = mapOf(type to "retained-output"), plugin = entry.reference)
             if (type == "swing") {
-                val model = io.github.psd2live.targets.cubism.PuppetIr.toPuppet(input)
+                val model = io.github.psd2live.bridge.PuppetIr.toPuppet(input)
                 val wrapped = io.github.psd2live.core.SwingWrapping.wrap(model, io.github.psd2live.core.RigSwingEdit.fromJson(config))
                 val replayed = wrapped.commands.fold(model) { current, command -> io.github.psd2live.core.RigAuthoringJournal.apply(current, command) }
-                assertEquals(io.github.psd2live.targets.cubism.PuppetIr.toIr(replayed), io.github.psd2live.targets.cubism.PuppetIr.toIr(wrapped.model))
+                assertEquals(io.github.psd2live.bridge.PuppetIr.toIr(replayed), io.github.psd2live.bridge.PuppetIr.toIr(wrapped.model))
             }
             val expected = evaluate(definition, input, instance)
             if (type == "rig.scaffold") {
@@ -286,13 +286,13 @@ class PackagedPhysicsPluginTool {
                 assertEquals(1, expected.physics.groups.size)
                 assertTrue(expected.parameters.any { it.id == instance.outputId("simulation:mode") })
                 assertTrue(expected.meshes.single().offsets != null || expected.meshes.single().shapes.isNotEmpty())
-                val model = io.github.psd2live.targets.cubism.PuppetIr.toPuppet(input)
+                val model = io.github.psd2live.bridge.PuppetIr.toPuppet(input)
                 val replayed = config.getValue("automatic_weights").jsonArray.fold(model) { current, command ->
                     io.github.psd2live.core.RigAuthoringJournal.apply(current, command.jsonObject)
                 }
-                assertEquals(io.github.psd2live.targets.cubism.PuppetIr.toIr(replayed),
-                    io.github.psd2live.targets.cubism.PuppetIr.toIr(RigSimulationWeights.apply(model, config)))
-                assertEquals(1, io.github.psd2live.targets.cubism.PuppetIr.toPuppet(expected).vertexGroups.size)
+                assertEquals(io.github.psd2live.bridge.PuppetIr.toIr(replayed),
+                    io.github.psd2live.bridge.PuppetIr.toIr(RigSimulationWeights.apply(model, config)))
+                assertEquals(1, io.github.psd2live.bridge.PuppetIr.toPuppet(expected).vertexGroups.size)
             }
             val prerequisites = definition.requires.map { RigModifierDefinition(it, 1, plugin = ModifierAlgorithmPlugin { rig, _, _ -> rig }) }
             fun registryFor(packages: ModifierPluginStore) = RigModifierRegistry(

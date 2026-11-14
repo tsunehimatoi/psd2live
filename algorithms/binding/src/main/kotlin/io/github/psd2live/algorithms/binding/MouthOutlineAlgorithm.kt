@@ -6,7 +6,7 @@ import io.github.psd2live.format.model.Mesh
 import io.github.psd2live.format.model.PathPoint
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.format.model.SourceLayer
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.*
 import org.umamo.runtime.eval.colorAt
 import org.umamo.runtime.eval.meshGridDefaultDeltas

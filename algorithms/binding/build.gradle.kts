@@ -19,7 +19,7 @@ dependencies {
     implementation(project(":format-compile"))
     api(project(":algorithms:physics"))
     implementation(project(":algorithm-worker"))
-    implementation(project(":targets:cubism"))
+    implementation(project(":umamo-ir-bridge"))
     testImplementation(kotlin("test"))
 }
 

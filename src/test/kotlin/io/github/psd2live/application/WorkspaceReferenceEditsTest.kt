@@ -138,7 +138,7 @@ class WorkspaceReferenceEditsTest {
                 val replayed = builder.build(current)
                 assertEquals(opacity, replayed.rig.puppet.drawables.single { replayed.rig.layerIdByDrawableId[it.id.raw] == "guide" }.opacity)
                 assertEquals(opacity, current.source.layers.single { it.id.raw == "guide" }.opacity)
-                val exported = io.github.psd2live.targets.cubism.PuppetIr.toPuppet(io.github.psd2live.targets.cubism.PuppetIr.toIr(replayed.rig.puppet))
+                val exported = io.github.psd2live.bridge.PuppetIr.toPuppet(io.github.psd2live.bridge.PuppetIr.toIr(replayed.rig.puppet))
                 assertEquals(opacity, exported.drawables.single { it.id == replayed.rig.puppet.drawables.single { d -> replayed.rig.layerIdByDrawableId[d.id.raw] == "guide" }.id }.opacity)
                 assertTrue(current.rigEdits.authoringJournal.none { WorkspaceLayoutPreview.MESH_PREFIX in it.toString() })
                 assertEquals(current, WorkspaceReferenceOpacity.apply(current, replayed, request), "The same value is a no-op")

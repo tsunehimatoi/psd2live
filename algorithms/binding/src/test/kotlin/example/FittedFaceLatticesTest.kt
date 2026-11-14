@@ -5,7 +5,7 @@ import io.github.psd2live.core.fit.FaceLandmarks
 import io.github.psd2live.core.fit.FaceTurn
 import io.github.psd2live.core.fit.Landmark
 import io.github.psd2live.core.fit.TurnStyle
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import org.umamo.runtime.model.*
 import kotlin.math.PI
 import kotlin.math.cos

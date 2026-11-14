@@ -5,7 +5,7 @@ import io.github.psd2live.algorithms.binding.GloomInputs
 import io.github.psd2live.algorithms.binding.MoodBinding
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.format.model.*
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import org.umamo.runtime.model.ParameterId
 import kotlin.test.*
 

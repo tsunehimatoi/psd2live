@@ -8,7 +8,7 @@ import io.github.psd2live.format.model.Parameter
 import io.github.psd2live.format.model.PhysicsGroup
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.format.model.Deformer as IrDeformer
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.*
 import org.umamo.runtime.model.*
 

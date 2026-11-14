@@ -12,7 +12,7 @@ import org.umamo.runtime.model.PuppetModel
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.project.rawConfig
 import io.github.psd2live.scenario.Characters
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.*
 import io.github.psd2live.core.recipe.BaseChoice
 import io.github.psd2live.core.recipe.ModuleChoice

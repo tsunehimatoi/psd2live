@@ -5,7 +5,7 @@ import io.github.psd2live.core.modifier.ModifierStatus
 import io.github.psd2live.core.modifier.RigLegacyBindings
 import io.github.psd2live.core.modifier.RigModifierSource
 import io.github.psd2live.format.compile.RigIrBinary
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import org.umamo.runtime.model.Deformer
 import org.umamo.runtime.model.DrawableMesh
 import org.umamo.runtime.model.MeshForm

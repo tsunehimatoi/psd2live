@@ -15,7 +15,7 @@ import io.github.psd2live.core.modifier.RigModifierStack
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.project.rawConfig
 import io.github.psd2live.scenario.Characters
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject

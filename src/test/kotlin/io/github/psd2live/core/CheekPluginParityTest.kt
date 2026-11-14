@@ -8,7 +8,7 @@ import io.github.psd2live.core.modifier.ModifierPluginWorkers
 import io.github.psd2live.core.modifier.ModifierTarget
 import io.github.psd2live.core.modifier.RigModifierInstance
 import io.github.psd2live.format.model.Channel
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import org.umamo.runtime.model.*
 import java.nio.file.Files
 import java.util.UUID

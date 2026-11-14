@@ -9,7 +9,7 @@ import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.*
 import io.github.psd2live.format.compile.RigIrBinary
 import io.github.psd2live.format.model.RigIR
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.*
 import org.umamo.runtime.model.*
 
@@ -570,7 +570,7 @@ internal class RigModifierSource(
             )
             val baseDrawable = primaryByLayer[layerId]?.let(materialById::get)
             neutral[target.id] = if (baseDrawable != null) {
-                io.github.psd2live.targets.cubism.PuppetIr.meshToIr(baseDrawable).copy(
+                io.github.psd2live.bridge.PuppetIr.meshToIr(baseDrawable).copy(
                     id = target.id, name = target.id, parent = null, geometry = null, offsets = null, shapes = emptyList(),
                 )
             } else {
@@ -598,7 +598,7 @@ internal class RigModifierSource(
         val poses = native.deformers.filterIsInstance<Deformer.Warp>().filter { warp ->
             warp.geometryGrid?.axes?.any { it.parameterId == StandardParameters.ANGLE_Y } == true &&
                 generateSequence(warp.parent) { byId[it]?.parent }.any { it == io.github.psd2live.algorithms.binding.ScaffoldHead.rotationId }
-        }.map(io.github.psd2live.targets.cubism.PuppetIr::deformerToIr)
+        }.map(io.github.psd2live.bridge.PuppetIr::deformerToIr)
         val pitch = if (poses.any { it.id == io.github.psd2live.algorithms.binding.ScaffoldHead.headId.raw }) {
             ModifierAlgorithmResource(RigIrBinary.encode(
                 io.github.psd2live.format.model.RigIR(io.github.psd2live.format.model.Canvas(0f, 0f), emptyList(), deformers = poses),

@@ -2,7 +2,7 @@ package io.github.psd2live.core.modifier
 
 import io.github.psd2live.core.RigAuthoringJournal
 import io.github.psd2live.format.model.RigIR
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.*
 import org.umamo.runtime.model.*
 
