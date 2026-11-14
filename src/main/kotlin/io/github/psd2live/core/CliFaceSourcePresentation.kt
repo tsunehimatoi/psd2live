@@ -1,11 +1,13 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.algorithms.binding.MouthOutlineInputs
 import io.github.psd2live.core.modifier.BuiltinModifierPlugins
+import io.github.psd2live.core.modifier.ModifierAlgorithmContext
 import io.github.psd2live.core.modifier.ModifierStatus
-import io.github.psd2live.core.modifier.RigLegacyBindings
 import io.github.psd2live.core.modifier.RigModifierSource
 import io.github.psd2live.format.compile.RigIrBinary
 import io.github.psd2live.targets.cubism.PuppetIr
+import kotlinx.serialization.json.JsonPrimitive
 import org.umamo.runtime.model.Deformer
 import org.umamo.runtime.model.DrawableMesh
 import org.umamo.runtime.model.MeshForm
@@ -96,10 +98,18 @@ internal object CliFaceSourcePresentation {
             it.status == ModifierStatus.ACTIVE && it.instance.type == "mouth.outline"
         }?.instance ?: return preview
         if (!BuiltinModifierPlugins.matches(outline)) return preview
+        return restoreBrowForms(source, preview, config, RigModifierSource.of(source).workerBindingContext(outline))
+    }
+
+    internal fun restoreBrowForms(source: RigPreviewModel, preview: RigPreviewModel, config: PipelineConfig,
+                                 context: ModifierAlgorithmContext): RigPreviewModel {
+        // Source outline workers only add mouth ribbons. They never replace the existing brow
+        // forms or see-through copies, so replaying a whole-model template would discard their state.
+        if (context.values["schema"] == JsonPrimitive(MouthOutlineInputs.SCHEMA)) return preview
+        // Historical contexts still need the before/after comparison; malformed ones must fail.
         val owner = RigModifierSource.of(source)
         val sourceBrows = owner.analysis.layers.filter { it.semantic.tag == SemanticTag.EYEBROW }
             .mapTo(hashSetOf()) { it.source.id.raw }
-        val context = owner.workerBindingContext(outline)
         fun phase(name: String) = RigIrBinary.decode(context.resources.getValue(name).read())
         val prior = phase("before").meshes.associateBy { it.id }
         val desired = phase("after")
