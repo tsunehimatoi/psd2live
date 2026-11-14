@@ -1686,6 +1686,17 @@ internal class WorkspaceHost<V>(
 
     private data class PersistenceDestination(val root: Path, val projectId: String?, val kind: String)
 
+    override fun observePersistence(): kotlinx.coroutines.flow.Flow<WorkspacePersistenceState> =
+        kotlinx.coroutines.flow.combine(runtime.state, persistence.status) { runtimeState, writes ->
+            val capture = runtimeState.capture
+            writes.projectState(capture?.projectId, capture?.state,
+                PersistenceDestination(workspaceStore.root, capture?.projectId, "recovery"))
+        }
+
+    override fun retryPersistence() {
+        scheduleRecoveryCheckpoint(runtime.read())
+    }
+
     private fun scheduleHistoryPersistence(projectId: String) {
         draftQueue.forgetRejected()
         val read = runtime.read()

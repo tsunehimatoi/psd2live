@@ -420,6 +420,7 @@ interface WorkspaceGenerationUpdatePort {
 
 /** Composition at the host boundary only. Command consumers depend on the relevant narrow port. */
 interface WorkspaceBackend :
+    WorkspacePersistencePort,
     WorkspaceEditorDraftPort,
     WorkspaceReadPort,
     WorkspaceSourcePort,
