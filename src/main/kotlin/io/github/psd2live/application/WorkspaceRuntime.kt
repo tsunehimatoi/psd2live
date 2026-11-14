@@ -96,6 +96,8 @@ internal class WorkspaceRuntime<M>(
     private var generation = 0L
     private var version = 0L
     private var tree: WorkspaceHistoryTree<WorkspaceDocument>? = null
+    private val buildCacheOwners = java.util.Collections.newSetFromMap(
+        java.util.IdentityHashMap<io.github.psd2live.core.ModifierBuildCacheOwner, Boolean>())
     private val mutableState = MutableStateFlow(WorkspaceRuntimeState<M>(token()))
     /** For tests: runs between a commit's [commitPrepared] beforeCommit and its publication. */
     @Volatile internal var beforePublish: (() -> Unit)? = null
@@ -147,6 +149,7 @@ internal class WorkspaceRuntime<M>(
             "Loaded document does not match history HEAD"
         }
         beforeInstall()
+        releaseBuildCachesExcept(model)
         generation++
         version = 0
         tree = replacement
@@ -173,6 +176,7 @@ internal class WorkspaceRuntime<M>(
             require(projectId.isNotBlank()) { "Project ID must not be blank" }
             if (mutableState.value.capture?.dirty == true && !discardUnsaved) throw WorkspaceUnsavedChanges()
             beforeInstall()
+            releaseBuildCachesExcept(model)
             generation++
             version = 0
             tree = replacement
@@ -184,6 +188,7 @@ internal class WorkspaceRuntime<M>(
     fun close(expectedState: String, discardUnsaved: Boolean = false) = synchronized(lock) {
         checkState(expectedState)
         if (mutableState.value.capture?.dirty == true && !discardUnsaved) throw WorkspaceUnsavedChanges()
+        releaseBuildCachesExcept(null)
         generation++
         version = 0
         tree = null
@@ -396,7 +401,21 @@ internal class WorkspaceRuntime<M>(
     }
 
     private fun token(): String = "$instanceId:$generation:$version"
+    /** Host shutdown also releases caches when the immutable runtime capture remains readable. */
+    fun releaseBuildCaches() = synchronized(lock) { releaseBuildCachesExcept(null) }
+
+    private fun releaseBuildCachesExcept(retainedModel: M?) {
+        val retained = (retainedModel as? io.github.psd2live.core.RigPreviewModel)?.modifierBuildOwner
+        val released = buildCacheOwners.filter { it !== retained }
+        buildCacheOwners.removeAll(released.toSet())
+        released.forEach { it.close() }
+    }
+
     private fun publish(capture: WorkspaceCapture<M>): WorkspaceCapture<M> = capture.also {
+        (it.model as? io.github.psd2live.core.RigPreviewModel)?.modifierBuildOwner?.let { owner ->
+            owner.published = true
+            buildCacheOwners.add(owner)
+        }
         val next = WorkspaceRuntimeState(it.state, it)
         publishedRead = WorkspaceReadCapture(next, tree?.state())
         mutableState.value = next

@@ -159,7 +159,10 @@ internal object WorkspaceModifierEdits {
                             id: String, work: WorkspaceRasterWork): WorkspaceDocument {
         work.progress(.1f, "Evaluating modifier prefix")
         val input = RigModifierPipeline.input(model)
-        val applied = RigModifierAlgorithms.evaluator(RigModifierSource.of(model), stack).applyThrough(input, stack, id, work::checkpoint)
+        val applied = ModifierPluginWorkers.openSession().use { session ->
+            RigModifierAlgorithms.evaluator(RigModifierSource.of(model), stack, workerSession = session)
+                .applyThrough(input, stack, id, work::checkpoint)
+        }
         val consumed = stack.instances.take(stack.index(id) + 1)
         val existingPhysics = document.rigEdits.physicsEdits
         val inputPhysics = input.physics.groups.associateBy { it.id }

@@ -1902,6 +1902,7 @@ internal class WorkspaceHost<V>(
     }
 	override fun close() {
 		if (!isClosed.compareAndSet(false, true)) return
+        runtime.releaseBuildCaches()
         discardEditorQueues()
         draftScope.cancel()
         val flushed = runCatching {
