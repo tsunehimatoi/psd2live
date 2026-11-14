@@ -2,6 +2,8 @@ package io.github.psd2live.tools
 
 import io.github.psd2live.application.*
 import io.github.psd2live.core.*
+import io.github.psd2live.core.modifier.ModifierPluginStore
+import io.github.psd2live.core.modifier.ModifierPluginWorkers
 import io.github.psd2live.format.compile.document.ContentHash
 import io.github.psd2live.project.*
 import kotlinx.coroutines.runBlocking
@@ -42,6 +44,11 @@ class SyntheticWorkspaceBaselineTool {
                 val commands = WorkspaceDocumentCommands(runtime)
                 var activeArchive: OpenedProject? = null
                 var ordinal = 0
+                val knownWorkers = linkedSetOf<Long>()
+                fun memory(phase: String, released: Boolean = false) {
+                    knownWorkers += ModifierPluginWorkers.cacheSnapshots(ModifierPluginStore.shared).map { it.pid }
+                    report.memory("$size/$phase", knownWorkers, released)
+                }
                 suspend fun measured(scenario: String, action: suspend () -> Unit) {
                     report.context("$size/$scenario/$ordinal")
                     val before = runtime.state.value.capture
@@ -67,14 +74,18 @@ class SyntheticWorkspaceBaselineTool {
                     check(runtime.capture().historyHead != before.historyHead) { "Benchmark command did not create an edit" }
                 }
                 try {
+                    memory("before-import")
                     measured("cold-import") {
                         WorkspaceSourceImporter(runtime, build = { builder.build(it) }).importPsd(psd, null, runtime.state.value.state,
                             initialConfig = PipelineConfig(atlasSize = 2048, generatePhysics = false, exportMoc3 = false),
                             modifiers = WorkspaceInitialModifiers.EMPTY)
                     }
+                    memory("after-import")
                     val target = runtime.capture().model.rig.puppet.drawables.first { it.mesh != null }.id.raw
                     repeat(5) { index -> measured("warmup") { command("rig_edit_structure", rename(target, "Warmup $index")) } }
+                    memory("after-warmup")
                     repeat(samples) { index -> measured("single-field") { command("rig_edit_structure", rename(target, "Sample $index")) } }
+                    memory("after-single-field")
                     // A real topology change, followed by history checkout to keep every sample's input comparable.
                     repeat(samples) {
                         val before = runtime.capture()
@@ -91,6 +102,7 @@ class SyntheticWorkspaceBaselineTool {
                         measured("redo") { runtime.capture().let { runtime.checkout(it.projectId, it.state, edited) } }
                         runtime.capture().let { runtime.checkout(it.projectId, it.state, before.historyHead) }
                     }
+                    memory("after-topology-history")
                     measured("stack-setup") {
                         command("parameter_create", buildJsonObject {
                             put("parameter_id", "ParamBenchmark"); put("name", "Benchmark")
@@ -112,9 +124,12 @@ class SyntheticWorkspaceBaselineTool {
                         try { assertEquals(RigIrCompiler.compile(cold), RigIrCompiler.compile(captured.model), "Reordered stack must equal cold rebuild") }
                         finally { cold.modifierBuildOwner?.close() }
                     }
-                    repeat(edits) { index -> measured("committed-edit") {
-                        command("rig_edit_structure", rename(target, "Stress $index"))
-                    } }
+                    memory("after-stack-reorder")
+                    repeat(edits) { index ->
+                        measured("committed-edit") { command("rig_edit_structure", rename(target, "Stress $index")) }
+                        if ((index + 1) % 100 == 0) memory("committed-edit/${index + 1}")
+                    }
+                    memory("after-committed-edits")
                     val expected = ContentHash.of(RigIrCompiler.compile(runtime.capture().model))
                     // Keep metadata, not the old selections/snapshots: close must be allowed to release their objects.
                     val expectedHead = runtime.history().headNodeId
@@ -130,7 +145,8 @@ class SyntheticWorkspaceBaselineTool {
                             ProjectRepository().save(ProjectSaveCapture(capture.projectId, runtime.history(),
                                 capture.auxiliary, psd, storage, auxiliary = capture.auxiliary), archive)
                         }
-                        repeat(5) {
+                        memory("after-save")
+                        repeat(5) { cycle ->
                             measured("close-reopen") {
                                 val captured = runtime.capture()
                                 runtime.close(captured.state, discardUnsaved = true)
@@ -163,15 +179,22 @@ class SyntheticWorkspaceBaselineTool {
                                     throw failure
                                 }
                             }
+                            memory("after-close-reopen/$cycle")
                         }
                         measured("cmo3-export") {
                             PSD2LivePipeline().export(runtime.capture().model, size, directory.resolve("$size-export"))
                         }
+                        memory("after-export")
                     } finally { io.github.psd2live.core.modifier.ModifierPluginStore.deleteTree(storage.root) }
                 } finally {
                     runtime.state.value.capture?.let { runtime.close(it.state, discardUnsaved = true) }
                     activeArchive?.close()
                 }
+                // Await termination without polling; session release itself remains asynchronous in production.
+                knownWorkers.forEach { pid -> ProcessHandle.of(pid).ifPresent {
+                    it.onExit().get(10, java.util.concurrent.TimeUnit.SECONDS)
+                } }
+                memory("after-final-close", released = true)
             }
             report.complete()
         } catch (failure: Throwable) {

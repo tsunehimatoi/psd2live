@@ -31,6 +31,8 @@ $env:PSD2LIVE_BASELINE_EDITS = '1000'
 
 报告默认 `complete=false`，启动时立即覆盖旧的成功状态。只有所有场景及关闭释放校验通过才写 `complete=true` 和分位数汇总；失败或未完成时保留已写样本、样本数、最后场景及可捕获的错误上下文，不输出 `scenarios` 成功汇总。`acceptance_run=true` 仅说明使用正式采样配置，不能代替 `complete=true`。
 
+`memory.jsonl` 单独记录阶段边界及每 100 次压力编辑后的宿主 JVM／已知 worker 进程快照，不放入操作计时块；每次快照批量采样所有 PID，另记采样耗时。Windows 通过系统 PowerShell 读取 `WorkingSet64` 和 `PrivateMemorySize64`（私有提交量）；Linux 读取 `/proc/PID/status` 的 `VmRSS` 和 `smaps_rollup` 私有驻留量，两平台的 private 指标不可直接等同。其他平台或读取失败显式写 `unavailable` 与空数值，存活状态仍由 `ProcessHandle` 检查。正常结束在释放后验证记录过的 worker 已退出；失败诊断写入后才抛错。采样器开销虽不进入延迟样本，仍可能影响后续执行；它不是零扰动测量。
+
 仅检查工具流程时可设 `PSD2LIVE_BASELINE_SMOKE=1`，只跑小档、1 次交互样本和 3 次压力编辑，输出目录带 `-smoke` 且 `acceptance_run=false`。它不满足 30／1,000 次验收要求；正式测量前应删除该环境变量。
 
 ## 内存和所有权
@@ -49,7 +51,7 @@ JVM 退出同时处理 live pool 与退休队列保留的条目。shutdown 先�
 
 ## 当前测量边界
 
-- JVM heap、committed heap、non-heap 与显式缓存计数分别记录；目前不采集操作系统 RSS、worker 子进程堆或 retained-object heap dump。
+- JVM heap、committed heap、non-heap 与显式缓存计数分别记录；工具层另采 OS 进程内存，不能由几何预算推断 RSS／Working Set 有界。尚不采 worker 子进程堆或 retained-object heap dump；OS 真实采样数据仍须在正式窗口实际运行后验收。
 - 工作区工具保留历史，预期历史必需数据增长；关闭重开时故意持有一个捕获模型验证读取，再在下一次样本释放它。一次 GC 后的堆大小不作为泄漏判据。
 - 部件工具可计量展开栈的独立子算法阶段与折叠后的部件总阶段；折叠部件内部的逐个子算法时间尚无独立埋点。GUI 首次正确呈现仍需携带模型修订的 renderer 回传，不能用任意首帧代替。
 - 开发工具通过编译与常规单元回归，不等于已运行 30／1,000 次测量；是否实际运行及结果应由验收记录单独说明。

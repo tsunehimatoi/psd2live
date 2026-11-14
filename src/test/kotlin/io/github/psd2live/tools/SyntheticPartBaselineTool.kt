@@ -69,7 +69,13 @@ class SyntheticPartBaselineTool {
                 val store = ModifierPluginStore(temporary.resolve("installed"), preferences)
                 val session = ModifierPluginWorkers.openSession(store)
                 val meshes = PreviewMeshCache()
+                val knownWorkers = linkedSetOf<Long>()
+                fun memory(phase: String, released: Boolean = false) {
+                    knownWorkers += ModifierPluginWorkers.cacheSnapshots(store).map { it.pid }
+                    report.memory("$label/$phase", knownWorkers, released)
+                }
                 try {
+                    memory("before-worker")
                     val installed = installWorker(artifact, temporary, store)
                     report.metadata("$label worker", "${installed.reference.id}@${installed.reference.version}:${installed.reference.digest}")
                     val caches = listOf("expanded", "folded", "worker-folded").associateWith { RigModifierEvaluationCache() }
@@ -124,14 +130,19 @@ class SyntheticPartBaselineTool {
                         if (cached) assertEquals(evaluate(expanded, "expanded", null), results.getValue("expanded"), "Cached result must equal cold replay")
                     }
                     compare("cold", 0, .63f, false)
+                    memory("after-cold")
                     repeat(5) { compare("warmup", it, .63f, true) }
+                    memory("after-warmup")
                     repeat(samples) { compare("warm-identical", it, .63f, true) }
+                    memory("after-warm-identical")
                     repeat(samples) { compare("local-subconfig", it, .25f + .5f * (it + 1) / (samples + 1), true) }
+                    memory("after-local-subconfig")
                 } finally {
                     session.close(); session.awaitReleased(); ModifierPluginWorkers.awaitRetirements(store)
                     preferences.removeNode()
                     ModifierPluginStore.deleteTree(temporary)
                 }
+                memory("after-final-release", released = true)
             }
             report.complete()
         } catch (failure: Throwable) {

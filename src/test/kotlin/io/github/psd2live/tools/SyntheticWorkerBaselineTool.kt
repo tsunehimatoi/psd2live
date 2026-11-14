@@ -29,7 +29,13 @@ class SyntheticWorkerBaselineTool {
                 val root = Files.createTempDirectory("synthetic-worker-$size-")
                 val preferences = Preferences.userRoot().node("psd2live-tools/baseline/${UUID.randomUUID()}")
                 val store = ModifierPluginStore(root.resolve("installed"), preferences)
+                val knownWorkers = linkedSetOf<Long>()
+                fun memory(phase: String, released: Boolean = false) {
+                    knownWorkers += ModifierPluginWorkers.cacheSnapshots(store).map { it.pid }
+                    report.memory("$size/$phase", knownWorkers, released)
+                }
                 try {
+                    memory("before-worker")
                     ModifierPluginWorkers.geometryBudget(store, 2L * 1024 * 1024)
                     val entry = store.install(createSyntheticPluginZip(root, "shared.one", "shared.one/op", 1).toString())
                     val algorithm = entry.manifest.algorithms.single()
@@ -53,32 +59,42 @@ class SyntheticWorkerBaselineTool {
                                 RigBuildProfile.gauge("worker pid", memory.pid)
                             }
                             report.append(sample)
+                            knownWorkers += sample.gauges.getValue("worker pid")
                         }
                         execute("cold-worker", 0, input)
+                        memory("after-cold")
                         repeat(5) { execute("warmup", it, input) }
+                        memory("after-warmup")
                         repeat(samples) { execute("warm-identical", it, input) }
+                        memory("after-warm-identical")
                         repeat(samples) { index ->
                             val first = input.meshes.first()
                             execute("single-field", index, input.copy(meshes = listOf(first.copy(drawOrder = index.toFloat())) + input.meshes.drop(1)))
                         }
+                        memory("after-single-field")
                         repeat(edits) { index ->
                             val first = input.meshes.first()
                             val geometry = first.geometry!!
                             val positions = geometry.positions.toArray().apply { this[0] += (index + 1) * .0001f }
                             execute("geometry-edit", index, input.copy(meshes = listOf(first.copy(
                                 geometry = geometry.copy(positions = Floats.wrap(positions)))) + input.meshes.drop(1)))
+                            if ((index + 1) % 100 == 0) memory("geometry-edit/${index + 1}")
                         }
+                        memory("after-geometry-edits")
                         repeat(5) { cycle ->
                             report.context("$size/release-before-reopen/$cycle")
                             session.close()
                             session.awaitReleased()
                             ModifierPluginWorkers.awaitRetirements(store)
                             assertTrue(ModifierPluginWorkers.cacheSnapshots(store).isEmpty())
+                            memory("released-before-reopen/$cycle", released = true)
                             session = ModifierPluginWorkers.openSession(store)
                             execute("reopen-worker", cycle, input)
+                            memory("after-reopen/$cycle")
                         }
                     } finally { session.close(); session.awaitReleased(); ModifierPluginWorkers.awaitRetirements(store) }
                     assertTrue(ModifierPluginWorkers.cacheSnapshots(store).isEmpty())
+                    memory("after-final-release", released = true)
                 } finally { preferences.removeNode(); ModifierPluginStore.deleteTree(root) }
             }
             report.complete()
@@ -102,8 +118,10 @@ class SyntheticWorkerBaselineTool {
 
 /** Streams samples without retaining their return values; summary keeps only elapsed times. */
 internal class SyntheticBaselineReport(name: String, scope: String,
-                                       private val directory: java.io.File = output(name)) : AutoCloseable {
+                                       private val directory: java.io.File = output(name),
+                                       private val memoryProvider: (Set<Long>) -> List<SyntheticProcessMemory.Sample> = SyntheticProcessMemory::snapshot) : AutoCloseable {
     private val samples = directory.resolve("samples.jsonl").bufferedWriter()
+    private val memorySamples = directory.resolve("memory.jsonl").bufferedWriter()
     private val times = linkedMapOf<String, MutableList<Double>>()
     private var complete = false
     private var closed = false
@@ -115,7 +133,9 @@ internal class SyntheticBaselineReport(name: String, scope: String,
         "cpu" to (System.getenv("PROCESSOR_IDENTIFIER") ?: "unavailable"),
         "max_heap_bytes" to Runtime.getRuntime().maxMemory().toString(),
         "cold_definition" to "new worker/session in the same JVM; not cold OS page cache or JVM startup",
-        "memory_scope" to "JVM heap/nonheap and explicit retained cache accounting; not process RSS or proof of no leak")
+        "memory_scope" to "samples.jsonl: JVM heap/nonheap and cache accounting; memory.jsonl: separate OS snapshots, not constrained by the geometry budget or proof of no leak",
+        "os_memory_scope" to "Windows resident=WorkingSet64/private=PrivateMemorySize64 (committed); Linux resident=VmRSS/private=smaps_rollup private resident; unsupported/failed reads explicitly unavailable",
+        "os_sampling_policy" to "outside timed operations, at stage boundaries and every 100 stress edits; sampler overhead excluded from latency but may perturb later measurements")
     init {
         // Invalidate an earlier successful report even if this run exits before close().
         writeSummary()
@@ -129,6 +149,28 @@ internal class SyntheticBaselineReport(name: String, scope: String,
     }
     fun metadata(key: String, value: String) { metadata[key] = value }
     fun context(value: String) { context = value }
+    fun memory(phase: String, workerPids: Set<Long> = emptySet(), expectWorkersExited: Boolean = false) {
+        context(phase)
+        val host = ProcessHandle.current().pid()
+        val requested = workerPids + host
+        val timestamp = java.time.Instant.now().toString()
+        val start = System.nanoTime()
+        val values = memoryProvider(requested)
+        check(values.map { it.pid }.toSet() == requested && values.size == requested.size) { "Incomplete OS memory snapshot" }
+        memorySamples.appendLine(buildJsonObject {
+            put("phase", phase); put("sampled_at", timestamp)
+            put("sampling_elapsed_ms", (System.nanoTime() - start) / 1e6)
+            put("expect_workers_exited", expectWorkersExited)
+            putJsonArray("processes") { values.forEach { value -> addJsonObject {
+                put("pid", value.pid); put("role", if (value.pid == host) "host-jvm" else "worker")
+                put("alive", value.alive); put("source", value.source)
+                put("resident_bytes", value.residentBytes); put("private_bytes", value.privateBytes)
+                put("private_kind", value.privateKind); put("unavailable", value.unavailable)
+            } } }
+        }.toString())
+        memorySamples.flush()
+        if (expectWorkersExited) check(values.none { it.pid in workerPids && it.alive }) { "Worker still alive after release: $phase" }
+    }
     fun complete() {
         check(!closed && failure == null)
         complete = true
@@ -156,7 +198,7 @@ internal class SyntheticBaselineReport(name: String, scope: String,
     override fun close() {
         if (closed) return
         closed = true
-        try { samples.close() } catch (error: Throwable) {
+        try { try { samples.close() } finally { memorySamples.close() } } catch (error: Throwable) {
             failed(error)
             try { writeSummary() } catch (reportError: Throwable) { error.addSuppressed(reportError) }
             throw error
