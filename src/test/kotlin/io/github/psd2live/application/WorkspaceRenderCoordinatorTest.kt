@@ -4,6 +4,34 @@ import io.github.psd2live.core.PreviewFrame
 import kotlin.test.*
 
 class WorkspaceRenderCoordinatorTest {
+    @Test fun replacedCandidateCannotPublishAndMeasurementOffStillReloads() {
+        val render = WorkspaceRenderCoordinator()
+        val stream = render.retain("view")
+        fun token() = io.github.psd2live.util.PresentationToken("r", "s", completed = null)
+        val old = token()
+        render.invalidateModel(old)
+        assertTrue(render.claimModelLoad(true))
+        val stale = PreviewFrame(8, 8, emptyMap(), viewId = "view", presentation = old.frame("view"))
+        assertTrue(render.publish(stale))
+        val next = token()
+        render.invalidateModel(next)
+        assertFalse(render.publish(stale))
+        assertTrue(render.claimModelLoad(true))
+        val fresh = stale.copy(presentation = next.frame("view"))
+        assertTrue(render.publish(fresh))
+        assertSame(fresh, stream.value)
+        render.releaseRetained("view")
+        render.retain("view")
+        assertFalse(render.publish(fresh))
+        assertTrue(render.publish(fresh.copy(presentation = next.frame("view"))))
+        // The legacy/unidentified load path is still supported, but old identified frames are revoked.
+        render.invalidateModel()
+        assertFalse(next.frame("view")?.current == true)
+        assertTrue(render.claimModelLoad(true))
+        assertTrue(render.publish(fresh.copy(presentation = null)))
+        render.close()
+    }
+
     @Test fun sharedViewReleasesOnceAndLateFramesCannotRecreateIt() {
         val render = WorkspaceRenderCoordinator()
         val key = "1/workspace/canvas/PREVIEW"

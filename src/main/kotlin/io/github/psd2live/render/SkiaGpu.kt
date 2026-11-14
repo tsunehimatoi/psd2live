@@ -176,6 +176,8 @@ class WindowGpu internal constructor(
 	/** The `HGLRC` or `GLXContext` Skia draws with. */
 	internal val glContext: Long get() = binding.context
 
+	private val presentation = WindowFramePresentation(layer, handler, ::directContext,
+		{ valid() && isCurrentContext() }, { frame -> frame.presentation?.let { resources.frame(it.viewId) === frame } == true })
 	private val tasks = ConcurrentLinkedQueue<(GpuResources) -> Unit>()
 	private var installed: SkikoRenderDelegate? = null
 	private var compositor: WindowCompositor? = null
@@ -361,26 +363,31 @@ class WindowGpu internal constructor(
 				if (!valid()) return inner.onRender(canvas, width, height, nanoTime)
 				// Replaced by a wrapper around this one (another delegate wrapped it meanwhile): that one does the work.
 				if (compositor !== composer) return inner.onRender(canvas, width, height, nanoTime)
-				val started = System.nanoTime()
-				pacing.frame(started)
-				resumeFrameWaiters(nanoTime)
-				// Compose records before Skiko makes the context current (on Linux another window's may be): the
-				// canvases drawing in this render need the window's own.
-				val current = makeCurrent()
-				drain()
-				if (compositor !== composer) return inner.onRender(canvas, width, height, nanoTime)
-				if (current) directContext()?.let(cacheBudget::apply)
-				val skia = if (GraphicsSettings.compositing && current) directContext() else null
-				val composited = skia != null && runCatching { composer.render(canvas, width, height, nanoTime, skia) }
-					.onFailure { System.err.println("Window compositor failed: $it") }.getOrDefault(false)
-				if (!composited && !multisampled.render(canvas, width, height) { inner.onRender(it, width, height, nanoTime) })
-					inner.onRender(canvas, width, height, nanoTime)
-				if (composited != _composited.value) {
-					_composited.value = composited
-					composer.invalidate()
-				}
-				frameStats.record(started, System.nanoTime())
-				if (GraphicsSettings.current.performanceOverlay) runCatching { PerformanceOverlay.draw(canvas, width, frameStats, contentScale, description) }
+				presentation.begin()
+				var presented = false
+				try {
+					val started = System.nanoTime()
+					pacing.frame(started)
+					resumeFrameWaiters(nanoTime)
+					// Compose records before Skiko makes the context current (on Linux another window's may be): the
+					// canvases drawing in this render need the window's own.
+					val current = makeCurrent()
+					drain()
+					if (compositor !== composer) return inner.onRender(canvas, width, height, nanoTime)
+					if (current) directContext()?.let(cacheBudget::apply)
+					val skia = if (GraphicsSettings.compositing && current) directContext() else null
+					val composited = skia != null && runCatching { composer.render(canvas, width, height, nanoTime, skia) }
+						.onFailure { presentation.end(false); System.err.println("Window compositor failed: $it") }.getOrDefault(false)
+					if (!composited && !multisampled.render(canvas, width, height) { inner.onRender(it, width, height, nanoTime) })
+						inner.onRender(canvas, width, height, nanoTime)
+					if (composited != _composited.value) {
+						_composited.value = composited
+						composer.invalidate()
+					}
+					frameStats.record(started, System.nanoTime())
+					if (GraphicsSettings.current.performanceOverlay) runCatching { PerformanceOverlay.draw(canvas, width, frameStats, contentScale, description) }
+					presented = true
+				} finally { presentation.end(presented) }
 			}
 		}
 		installed = wrapper

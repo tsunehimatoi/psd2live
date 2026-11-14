@@ -2743,6 +2743,7 @@ internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGpuFrame(frame
 		} else null
 		try {
 			canvas.nativeCanvas.drawImageRect(frame.image, rect, rect, org.jetbrains.skia.SamplingMode.DEFAULT, paint, true)
+            io.github.psd2live.render.WindowFramePresentation.consume(frame)
 		} finally {
 			paint?.close()
 		}

@@ -174,6 +174,10 @@ class WorkspaceTextureView internal constructor(private val capture: WorkspaceCa
     private val model get() = capture.model
     private val document get() = capture.document
 
+    /** Only the model in this atomic capture can carry its committed revision into the renderer. */
+    internal fun presentationOrigin(preview: RigPreviewModel): Pair<String, String>? =
+        if (preview === capture.model) capture.revision to capture.state else null
+
     private fun tile(id: String): WorkspaceAtlasTile? {
         val placement = model.atlas.placementByLayerId[id] ?: return null
         val override = document.textureOverrides[id] ?: TextureOverride()

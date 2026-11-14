@@ -11,6 +11,8 @@ internal class WorkspaceRenderCoordinator {
     private val frames = mutableMapOf<String, MutableStateFlow<PreviewFrame?>>()
     private val users = mutableMapOf<String, Int>()
     private var needsReload = false
+    var presentation: io.github.psd2live.util.PresentationToken? = null
+        private set
 
     fun frameFor(key: String): StateFlow<PreviewFrame?> = synchronized(lock) {
         frames.getOrPut(key) { MutableStateFlow(null) }.asStateFlow()
@@ -18,6 +20,7 @@ internal class WorkspaceRenderCoordinator {
 
     fun retain(key: String): StateFlow<PreviewFrame?> = synchronized(lock) {
         users[key] = (users[key] ?: 0) + 1
+        presentation?.retain(key)
         frameFor(key)
     }
 
@@ -25,22 +28,33 @@ internal class WorkspaceRenderCoordinator {
     fun releaseRetained(key: String): Boolean = synchronized(lock) {
         val count = users[key] ?: return@synchronized false
         if (count > 1) { users[key] = count - 1; false }
-        else { users.remove(key); true }
+        else { users.remove(key); presentation?.remove(key); true }
     }
 
     fun remove(key: String) = synchronized(lock) {
         users.remove(key)
+        presentation?.remove(key)
         frames.remove(key)?.value = null
     }
 
     fun contains(key: String): Boolean = synchronized(lock) { key in frames }
     fun publish(frame: PreviewFrame): Boolean = synchronized(lock) {
         val stream = frames[frame.viewId] ?: return@synchronized false
+        if (frame.presentation?.current == false) return@synchronized false
+        presentation?.let { expected ->
+            val drawn = frame.presentation ?: return@synchronized false
+            if (drawn.token !== expected || !drawn.publish()) return@synchronized false
+        }
         stream.value = frame
         true
     }
 
-    fun invalidateModel() = synchronized(lock) { needsReload = true }
+    fun invalidateModel(token: io.github.psd2live.util.PresentationToken? = null) = synchronized(lock) {
+        presentation?.invalidate()
+        presentation = token
+        users.keys.forEach { token?.retain(it) }
+        needsReload = true
+    }
 
     /** Headless captures don't activate a renderer; the first mounted live view claims the load. */
     fun claimModelLoad(live: Boolean): Boolean = synchronized(lock) {
@@ -53,6 +67,8 @@ internal class WorkspaceRenderCoordinator {
         clearFrames()
         frames.clear()
         users.clear()
+        presentation?.invalidate()
+        presentation = null
         needsReload = false
     }
 }

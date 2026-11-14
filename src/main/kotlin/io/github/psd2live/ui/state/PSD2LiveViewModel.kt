@@ -3362,15 +3362,20 @@ class PSD2LiveViewModel : AutoCloseable {
 	private var lastTick = System.nanoTime()
 	private var lastSdkParameterPublishNanos = 0L
 	private var lastSdkParameterCanvasId: String? = null
-	private fun refreshSdkSession(preview: RigPreviewModel) {
-		renderCoordinator.invalidateModel()
-		if (renderCoordinator.claimModelLoad(_state.value.previewLive)) sdkSession.load(preview)
+	private fun refreshSdkSession(preview: RigPreviewModel) = synchronized(stateLock) {
+		if (_state.value.previewModel !== preview) return@synchronized
+		val capturedAt = System.nanoTime()
+		val origin = runCatching { workspaceBackend?.captureTextures()?.presentationOrigin(preview) }.getOrNull()
+		// Drafts without a matching committed capture still reject stale frames, but cannot report revision latency.
+		val token = io.github.psd2live.util.PresentationToken(origin?.first, origin?.second, capturedAt)
+		renderCoordinator.invalidateModel(token)
+		if (renderCoordinator.claimModelLoad(_state.value.previewLive)) sdkSession.load(preview, token)
 	}
 
-	private fun ensureSdkSessionLoaded() {
+	private fun ensureSdkSessionLoaded() = synchronized(stateLock) {
 		val current = _state.value
-		val preview = current.previewModel ?: return
-		if (renderCoordinator.claimModelLoad(current.previewLive)) sdkSession.load(preview)
+		val preview = current.previewModel ?: return@synchronized
+		if (renderCoordinator.claimModelLoad(current.previewLive)) sdkSession.load(preview, renderCoordinator.presentation)
 	}
 
 	internal fun acceptSdkFrame(frame: PreviewFrame, nowNanos: Long = System.nanoTime()) {
@@ -3385,7 +3390,7 @@ class PSD2LiveViewModel : AutoCloseable {
 
 		// The image and information overlays follow their own view's frame stream. Publishing every
 		// frame through the document state makes every dock and every other canvas recompose.
-		renderCoordinator.publish(frame)
+		if (!renderCoordinator.publish(frame)) return
 		if (canvas == null || canvas.id == current.activeCanvas.id) {
 			_sdkFrame.value = frame
 		}
