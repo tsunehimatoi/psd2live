@@ -42,7 +42,7 @@ internal object SimulationCatalog {
         val stack = RigModifierStack.fromJson(requireNotNull(overlay.modifierStack))
         val prefix = stack.copy(instances = stack.instances.takeWhile { it.id != entry.id })
         val pipeline = io.github.psd2live.core.PSD2LivePipeline().apply { deferRuntimeBundles = true }
-        pipeline.modifierCache.snapshot = model.modifierEvaluation
+        pipeline.reuseModifierInputs(model)
         val before = pipeline.buildPreview(model.analysis.source, model.config.copy(rigEdits = overlay.copy(modifierStack = prefix.toJson())))
         val weighted = RigSimulationWeights.apply(before.rig.puppet, entry.config)
         val source = RigModifierAlgorithms.simulationOutputs(entry, RigSimEdit.fromJson(entry.config))
