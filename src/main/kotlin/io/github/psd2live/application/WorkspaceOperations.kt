@@ -32,6 +32,7 @@ internal class WorkspaceOperations(private val workspace: WorkspaceBackend,
         registerSidecarOperations(registry, workspace, workspace)
         registerModifierOperations(registry, workspace, jobs)
         registerPluginOperations(registry, jobs)
+        registerPluginDevOperations(registry, workspace, jobs)
         registerDocumentBatch(registry, workspace, workspace, jobs) { edits ->
             WorkspaceMotionIds.chosen(edits, workspace.captureQueries().motionClips(), workspace.savedProjectData().data.timelineAids)
         }

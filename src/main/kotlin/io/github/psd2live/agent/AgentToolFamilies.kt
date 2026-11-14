@@ -39,6 +39,7 @@ internal val AGENT_TOOL_FAMILIES = listOf(
     },
     AgentToolFamily("swing", "Create, replace or delete a regenerating swing on Warps or Meshes.") { it.startsWith("preview") },
     AgentToolFamily("modifier", "Inspect and edit explicit preset content: add independent instances or groups, adjust, enable, reorder, remove, or apply a prefix as ordinary content."),
+    AgentToolFamily("plugin_dev", "Discover host plugin contracts, scaffold standalone Kotlin/Gradle plugin projects, register, build, list, or detach local dev plugin sources."),
     AgentToolFamily("source_paint", "Paint one gesture on a source layer in canvas units: brush, pencil, eraser, bucket, shape or clear."),
     AgentToolFamily("snapshot", "Save, rename, delete, apply, read or list named parameter poses. Does not change rig history."),
     AgentToolFamily("history", "List the branching history, move HEAD to a node, or add an explicit checkpoint.") { it.startsWith("annotation") },

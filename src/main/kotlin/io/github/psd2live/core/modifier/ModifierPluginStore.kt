@@ -24,7 +24,8 @@ internal data class InstalledModifierPlugin(val manifest: ModifierPluginManifest
 
 /** Installation never executes package code. Payloads are immutable, and references pin their complete contents. */
 internal class ModifierPluginStore(val root: Path, private val preferences: Preferences,
-                                   private val bundledWorkers: Boolean = false) {
+                                   private val bundledWorkers: Boolean = false,
+                                   private val devArtifactResolver: (ModifierPluginReference) -> InstalledModifierPlugin? = PluginDevArtifactStore::resolve) {
     companion object {
         val shared by lazy {
             val prefs = Preferences.userRoot().node("io.github.psd2live.settings/algorithm-plugins")
@@ -78,6 +79,71 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
                 }
             } }
         }
+        internal fun inspectPackageDirectory(directory: Path, commit: String? = null,
+                                             enabledForDigest: (String) -> Boolean = { true }): InstalledModifierPlugin {
+            require(Files.size(directory.resolve("plugin.json")) <= 1024 * 1024) { "Plugin manifest is too large" }
+            val bytes = Files.readAllBytes(directory.resolve("plugin.json"))
+            require(bytes.size <= 1024 * 1024) { "Plugin manifest is too large" }
+            val manifest = codec.decodeFromString(ModifierPluginManifest.serializer(), bytes.decodeToString())
+            require(manifest.id != "builtin") { "The aggregate bundled identity is reserved" }
+            require(manifest.protocol in 1..2 && token.matches(manifest.id) && manifest.version.length <= 128) { "Unsupported plugin manifest" }
+            ModifierPluginVersion.parse(manifest.version, legacy = true)
+            for (relation in manifest.dependencies + manifest.conflicts) {
+                require(token.matches(relation.id) && relation.id != manifest.id) { "Invalid plugin relationship: ${relation.id}" }
+                relation.version.validate()
+            }
+            require(manifest.dependencies.map { it.id }.distinct().size == manifest.dependencies.size) { "Duplicate package dependency" }
+            require(manifest.name.isNotBlank() && manifest.algorithms.size in 1..128) { "A plugin must describe its algorithms" }
+            require(manifest.algorithms.map { it.type to it.version }.distinct().size == manifest.algorithms.size) { "Duplicate plugin algorithm" }
+            val entryKeys = manifest.algorithms.flatMap { algorithm ->
+                (algorithm.aliases + algorithm.type).map { it to algorithm.version }
+            }
+            require(entryKeys.distinct().size == entryKeys.size) { "Duplicate plugin algorithm alias" }
+            manifest.algorithms.forEach {
+                require(it.contextVersion in 1..2) { "Unsupported algorithm context version" }
+                require(it.provides.size <= 128 && it.provides.all { name -> name.isNotBlank() && name.length <= 256 && name.none(Char::isISOControl) }) { "Invalid provided capabilities" }
+                it.authorContext?.let { ctx -> require(ctx.isNotBlank() && ctx.length <= 256 && ctx.none(Char::isISOControl)) { "Invalid authorContext contract" } }
+                require(it.aliases.all { alias -> manifest.id == "builtin." + java.util.HexFormat.of().formatHex(alias.encodeToByteArray()) + ".v${it.version}" }) { "Only a matching bundled package may declare a legacy type" }
+                require(!manifest.id.startsWith("builtin.") || it.aliases.size == 1) { "Bundled archives require a stable algorithm alias" }
+                require(it.type.startsWith("${manifest.id}/") && it.version > 0 && it.name.isNotBlank()) { "Algorithm type must belong to its plugin namespace" }
+                require(it.targets.isNotEmpty() && it.targets.all { kind -> kind in setOf("mesh", "deformer", "part", "layer") }) { "Invalid algorithm targets" }
+                require((it.reads + it.writes + it.composableKinds).all { kind -> kind in ModifierPluginOutput.components }) { "Unknown plugin model component" }
+                require("*" !in it.creates && "*" !in it.modifies) { "Wildcard '*' is forbidden in creates/modifies declarations" }
+                require((it.creates + it.modifies).all { token ->
+                    token.isNotBlank() && token.length <= 128 && token.none(Char::isISOControl)
+                }) { "Invalid plugin creates/modifies declaration" }
+                require(it.derivedOutputs.size <= 128 && it.derivedOutputs.distinct().size == it.derivedOutputs.size &&
+                    it.derivedOutputs.all { rule -> rule.kind in setOf("mesh", "deformer", "part", "parameter", "physics", "motion", "glue") &&
+                        (rule.kind in it.writes || "*" in it.writes) }) { "Invalid derived output rules" }
+                ModifierPluginSchema.check(it.configSchema)
+                ModifierPluginSchema.validate(it.defaults, it.configSchema)
+                require(it.parameters.map { p -> p.id }.distinct().size == it.parameters.size && it.parameters.all { p ->
+                    p.id.isNotBlank() && p.name.isNotBlank() && p.min.isFinite() && p.max.isFinite() && p.default.isFinite() && p.min < p.max && p.default in p.min..p.max
+                }) { "Invalid plugin parameter definitions" }
+            }
+            val command = requireNotNull(manifest.commands[platform] ?: manifest.commands["jvm"]) { "Plugin has no runtime for $platform" }
+            require(command.isNotEmpty() && command.size <= 64) { "Invalid plugin command" }
+            require(manifest.files.size in 1..10000) { "Plugin payload is empty or too large" }
+            var size = 0L
+            val hashes = StringBuilder(hash(bytes))
+            manifest.files.toSortedMap().forEach { (name, expected) ->
+                checkCancelled()
+                val path = inside(directory, name)
+                require(digest.matches(expected) && Files.isRegularFile(path, NOFOLLOW_LINKS) && !Files.isSymbolicLink(path)) { "Missing plugin payload: $name" }
+                size += Files.size(path); require(size <= MAX_BYTES) { "Plugin payload exceeds size limit" }
+                require(hash(path) == expected) { "Plugin checksum mismatch: $name" }
+                hashes.append('\n').append(name).append(':').append(expected)
+            }
+            Files.walk(directory).use { paths -> paths.forEach { path ->
+                require(!Files.isSymbolicLink(path)) { "Plugin symlinks are not supported" }
+                val relative = directory.relativize(path).toString().replace('\\', '/')
+                if (Files.isRegularFile(path)) require(relative in manifest.files || relative in setOf("plugin.json", ".origin", ".dependencies")) { "Unlisted plugin payload: $relative" }
+            } }
+            require(command.first() == "\$JAVA" || command.first() in manifest.files) { "Plugin executable must be packaged" }
+            if (command.first() == "\$JAVA") require(command.size == 3 && command[1] == "-jar" && command[2] in manifest.files) { "JVM plugins must specify \$JAVA -jar payload.jar" }
+            val identity = ModifierPluginReference(manifest.id, manifest.version, hash(hashes.toString().encodeToByteArray()))
+            return InstalledModifierPlugin(manifest, identity, directory, enabledForDigest(identity.digest), commit)
+        }
     }
 
     private val lock = Any()
@@ -102,6 +168,8 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
     fun runnablePackages(): List<InstalledModifierPlugin> = synchronized(lock) {
         (shippedWorkers + installed).distinctBy { it.reference }
     }
+    fun findRunnable(reference: ModifierPluginReference): InstalledModifierPlugin? =
+        runnablePackages().firstOrNull { it.reference == reference } ?: devArtifactResolver(reference)
 
     /** Historical contents remain runnable only by exact reference, never as a new instance's default. */
     fun defaultPackages(): List<InstalledModifierPlugin> = runnablePackages().filter { entry ->
@@ -151,16 +219,26 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
         return CatalogSnapshot(changes.value, packages).also { catalogSnapshot = it }
     }
     fun packages(): List<InstalledModifierPlugin> = synchronized(lock) { catalog().packages }
-    fun resolution(reference: ModifierPluginReference): ModifierPluginResolution = synchronized(lock) {
+    fun resolution(reference: ModifierPluginReference, overlayPackages: List<InstalledModifierPlugin> = emptyList()): ModifierPluginResolution = synchronized(lock) {
         val snapshot = catalog()
-        snapshot.resolutions[reference]?.let {
-            io.github.psd2live.core.RigBuildProfile.count("plugin dependency cache hits")
-            return@synchronized it
+        if (overlayPackages.isEmpty()) {
+            snapshot.resolutions[reference]?.let {
+                io.github.psd2live.core.RigBuildProfile.count("plugin dependency cache hits")
+                return@synchronized it
+            }
         }
-        val result = ModifierPluginDependencies.resolve(reference, snapshot.packages)
-        // Queries may include missing historical references; bound these as well as installed packages.
-        if (snapshot.resolutions.size >= 256) snapshot.resolutions.remove(snapshot.resolutions.keys.first())
-        snapshot.resolutions[reference] = result
+        val devEntry = if (snapshot.packages.any { it.reference == reference }) null else devArtifactResolver(reference)
+        val candidates = if (overlayPackages.isEmpty() && devEntry == null) {
+            snapshot.packages
+        } else {
+            (snapshot.packages + overlayPackages + listOfNotNull(devEntry)).distinctBy { it.reference }
+        }
+        val result = ModifierPluginDependencies.resolve(reference, candidates)
+        if (overlayPackages.isEmpty() && devEntry == null) {
+            // Queries may include missing historical references; bound these as well as installed packages.
+            if (snapshot.resolutions.size >= 256) snapshot.resolutions.remove(snapshot.resolutions.keys.first())
+            snapshot.resolutions[reference] = result
+        }
         io.github.psd2live.core.RigBuildProfile.count("plugin dependency resolutions")
         result
     }
@@ -170,7 +248,9 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
         action()
     }
     fun verify(reference: ModifierPluginReference) = synchronized(lock) {
-        val entry = installed.single { it.reference == reference && it.enabled }
+        val entry = installed.singleOrNull { it.reference == reference && it.enabled }
+            ?: devArtifactResolver(reference)
+            ?: throw NoSuchElementException("Plugin reference is not installed or enabled: ${reference.id}@${reference.version}")
         require(inspectDirectory(entry.directory, entry.gitCommit).reference.copy(dependencyDigests = reference.dependencyDigests) == reference) { "Plugin contents changed after installation" }
         entry
     }
@@ -381,70 +461,8 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
         Result.failure(failure)
     }
 
-    private fun inspectDirectory(directory: Path, commit: String?): InstalledModifierPlugin {
-        require(Files.size(directory.resolve("plugin.json")) <= 1024 * 1024) { "Plugin manifest is too large" }
-        val bytes = Files.readAllBytes(directory.resolve("plugin.json"))
-        require(bytes.size <= 1024 * 1024) { "Plugin manifest is too large" }
-        val manifest = codec.decodeFromString(ModifierPluginManifest.serializer(), bytes.decodeToString())
-        require(manifest.id != "builtin") { "The aggregate bundled identity is reserved" }
-        require(manifest.protocol in 1..2 && token.matches(manifest.id) && manifest.version.length <= 128) { "Unsupported plugin manifest" }
-        ModifierPluginVersion.parse(manifest.version, legacy = true)
-        for (relation in manifest.dependencies + manifest.conflicts) {
-            require(token.matches(relation.id) && relation.id != manifest.id) { "Invalid plugin relationship: ${relation.id}" }
-            relation.version.validate()
-        }
-        require(manifest.dependencies.map { it.id }.distinct().size == manifest.dependencies.size) { "Duplicate package dependency" }
-        require(manifest.name.isNotBlank() && manifest.algorithms.size in 1..128) { "A plugin must describe its algorithms" }
-        require(manifest.algorithms.map { it.type to it.version }.distinct().size == manifest.algorithms.size) { "Duplicate plugin algorithm" }
-        val entryKeys = manifest.algorithms.flatMap { algorithm ->
-            (algorithm.aliases + algorithm.type).map { it to algorithm.version }
-        }
-        require(entryKeys.distinct().size == entryKeys.size) { "Duplicate plugin algorithm alias" }
-        manifest.algorithms.forEach {
-            require(it.contextVersion in 1..2) { "Unsupported algorithm context version" }
-            require(it.provides.size <= 128 && it.provides.all { name -> name.isNotBlank() && name.length <= 256 && name.none(Char::isISOControl) }) { "Invalid provided capabilities" }
-            it.authorContext?.let { ctx -> require(ctx.isNotBlank() && ctx.length <= 256 && ctx.none(Char::isISOControl)) { "Invalid authorContext contract" } }
-            require(it.aliases.all { alias -> manifest.id == "builtin." + java.util.HexFormat.of().formatHex(alias.encodeToByteArray()) + ".v${it.version}" }) { "Only a matching bundled package may declare a legacy type" }
-            require(!manifest.id.startsWith("builtin.") || it.aliases.size == 1) { "Bundled archives require a stable algorithm alias" }
-            require(it.type.startsWith("${manifest.id}/") && it.version > 0 && it.name.isNotBlank()) { "Algorithm type must belong to its plugin namespace" }
-            require(it.targets.isNotEmpty() && it.targets.all { kind -> kind in setOf("mesh", "deformer", "part", "layer") }) { "Invalid algorithm targets" }
-            require((it.reads + it.writes + it.composableKinds).all { kind -> kind in ModifierPluginOutput.components }) { "Unknown plugin model component" }
-            require("*" !in it.creates && "*" !in it.modifies) { "Wildcard '*' is forbidden in creates/modifies declarations" }
-            require((it.creates + it.modifies).all { token ->
-                token.isNotBlank() && token.length <= 128 && token.none(Char::isISOControl)
-            }) { "Invalid plugin creates/modifies declaration" }
-            require(it.derivedOutputs.size <= 128 && it.derivedOutputs.distinct().size == it.derivedOutputs.size &&
-                it.derivedOutputs.all { rule -> rule.kind in setOf("mesh", "deformer", "part", "parameter", "physics", "motion", "glue") &&
-                    (rule.kind in it.writes || "*" in it.writes) }) { "Invalid derived output rules" }
-            ModifierPluginSchema.check(it.configSchema)
-            ModifierPluginSchema.validate(it.defaults, it.configSchema)
-            require(it.parameters.map { p -> p.id }.distinct().size == it.parameters.size && it.parameters.all { p ->
-                p.id.isNotBlank() && p.name.isNotBlank() && p.min.isFinite() && p.max.isFinite() && p.default.isFinite() && p.min < p.max && p.default in p.min..p.max
-            }) { "Invalid plugin parameter definitions" }
-        }
-        val command = requireNotNull(manifest.commands[platform] ?: manifest.commands["jvm"]) { "Plugin has no runtime for $platform" }
-        require(command.isNotEmpty() && command.size <= 64) { "Invalid plugin command" }
-        require(manifest.files.size in 1..10000) { "Plugin payload is empty or too large" }
-        var size = 0L
-        val hashes = StringBuilder(hash(bytes))
-        manifest.files.toSortedMap().forEach { (name, expected) ->
-            checkCancelled()
-            val path = inside(directory, name)
-            require(digest.matches(expected) && Files.isRegularFile(path, NOFOLLOW_LINKS) && !Files.isSymbolicLink(path)) { "Missing plugin payload: $name" }
-            size += Files.size(path); require(size <= MAX_BYTES) { "Plugin payload exceeds size limit" }
-            require(hash(path) == expected) { "Plugin checksum mismatch: $name" }
-            hashes.append('\n').append(name).append(':').append(expected)
-        }
-        Files.walk(directory).use { paths -> paths.forEach { path ->
-            require(!Files.isSymbolicLink(path)) { "Plugin symlinks are not supported" }
-            val relative = directory.relativize(path).toString().replace('\\', '/')
-            if (Files.isRegularFile(path)) require(relative in manifest.files || relative in setOf("plugin.json", ".origin", ".dependencies")) { "Unlisted plugin payload: $relative" }
-        } }
-        require(command.first() == "\$JAVA" || command.first() in manifest.files) { "Plugin executable must be packaged" }
-        if (command.first() == "\$JAVA") require(command.size == 3 && command[1] == "-jar" && command[2] in manifest.files) { "JVM plugins must specify \$JAVA -jar payload.jar" }
-        val identity = ModifierPluginReference(manifest.id, manifest.version, hash(hashes.toString().encodeToByteArray()))
-        return InstalledModifierPlugin(manifest, identity, directory, preferences.getBoolean(identity.digest, true), commit)
-    }
+    private fun inspectDirectory(directory: Path, commit: String?): InstalledModifierPlugin =
+        inspectPackageDirectory(directory, commit) { digest -> preferences.getBoolean(digest, true) }
 
     private fun <T> stage(source: String, ref: String?, action: (Path, String?) -> T): T {
         Files.createDirectories(root)

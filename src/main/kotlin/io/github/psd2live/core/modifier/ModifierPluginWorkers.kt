@@ -12,6 +12,7 @@ import io.github.psd2live.bridge.PuppetIr
 import org.umamo.runtime.model.ChannelValue
 import org.umamo.runtime.model.FormChannel
 import org.umamo.runtime.model.visibleDrawableIds
+import kotlinx.coroutines.asContextElement
 import kotlinx.serialization.json.*
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -35,9 +36,10 @@ internal object ModifierPluginWorkers {
         io.github.psd2live.algorithm.worker.AlgorithmChanges.RASTER_CAPABILITY,
     )).sorted().map(::JsonPrimitive))
 
-    private data class WorkerKey(val storeRoot: Path, val protocol: Int, val command: List<String>, val files: Map<String, String>, val dependencies: List<ModifierPluginReference>)
+    private data class WorkerKey(val storeRoot: Path, val protocol: Int, val command: List<String>, val files: Map<String, String>,
+                                 val dependencies: List<ModifierPluginReference>, val executionGeneration: Long = 0L)
 
-    private fun workerKey(store: ModifierPluginStore, entry: InstalledModifierPlugin): WorkerKey {
+    private fun workerKey(store: ModifierPluginStore, entry: InstalledModifierPlugin, executionGeneration: Long = 0L): WorkerKey {
         val raw = entry.manifest.commands[ModifierPluginStore.platform] ?: entry.manifest.commands.getValue("jvm")
         val normalized = raw.mapIndexed { index, value ->
             when {
@@ -48,8 +50,15 @@ internal object ModifierPluginWorkers {
             }
         }
         val dependencies = store.resolution(entry.reference).dependencies
-        return WorkerKey(store.root.toAbsolutePath().normalize(), entry.manifest.protocol, normalized, entry.manifest.files, dependencies)
+        return WorkerKey(store.root.toAbsolutePath().normalize(), entry.manifest.protocol, normalized, entry.manifest.files,
+            dependencies, executionGeneration)
     }
+
+    private val nextGeneration = java.util.concurrent.atomic.AtomicLong(1L)
+    private val currentGeneration = ThreadLocal<Long?>()
+    fun nextExecutionGeneration(): Long = nextGeneration.getAndIncrement()
+    fun generationContext(generation: Long): kotlin.coroutines.CoroutineContext =
+        currentGeneration.asContextElement(generation)
 
     private val workers = ConcurrentHashMap<WorkerKey, Worker>()
     private val workerKeys = ConcurrentHashMap<ModifierPluginReference, WorkerKey>()
@@ -70,13 +79,14 @@ internal object ModifierPluginWorkers {
 
     /** A workspace owner, distinct from package availability. Closing one owner never stops another's worker. */
     class Session internal constructor(internal val store: ModifierPluginStore,
-                                       internal val retirementQueue: WorkerRetirementQueue) : AutoCloseable {
+                                       internal val retirementQueue: WorkerRetirementQueue,
+                                       val executionGeneration: Long = 0L) : AutoCloseable {
         private val closed = java.util.concurrent.atomic.AtomicBoolean()
         private val keys = ConcurrentHashMap.newKeySet<WorkerKey>()
         private val released = java.util.concurrent.CompletableFuture<Unit>()
         internal fun acquire(entry: InstalledModifierPlugin): Worker {
             check(!closed.get()) { "Plugin worker session is closed" }
-            val key = workerKey(store, entry)
+            val key = workerKey(store, entry, executionGeneration)
             keys.add(key)
             val worker = acquireWorker(store, entry, key, this)
             if (closed.get()) {
@@ -111,7 +121,8 @@ internal object ModifierPluginWorkers {
         fun awaitReleased(timeoutMillis: Long = 10_000) { released.get(timeoutMillis, TimeUnit.MILLISECONDS) }
     }
     fun openSession(store: ModifierPluginStore = ModifierPluginStore.shared,
-                    retirementQueue: WorkerRetirementQueue = retirements) = Session(store, retirementQueue)
+                    retirementQueue: WorkerRetirementQueue = retirements,
+                    executionGeneration: Long = currentGeneration.get() ?: 0L) = Session(store, retirementQueue, executionGeneration)
 
     data class CacheSnapshot(val pid: Long, val geometry: ModifierGeometryCache.Snapshot,
                              val protocolBlobBytes: Long, val readEntries: Int)
@@ -168,10 +179,11 @@ internal object ModifierPluginWorkers {
                  timeoutMillis: Long = 120_000, context: ModifierAlgorithmContext = ModifierAlgorithmContext.Empty,
                  declaredParameters: List<io.github.psd2live.format.model.Parameter> = emptyList(),
                  resolveRasters: ModifierRasterResolver = RigModifierRasterAssets::resolve,
-                 session: Session? = null): RigIR {
+                 session: Session? = null,
+                 executionGeneration: Long = session?.executionGeneration ?: 0L): RigIR {
         require(timeoutMillis > 0)
         store.requireAvailable(entry.reference)
-        val key = workerKey(store, entry)
+        val key = workerKey(store, entry, executionGeneration)
         require(session == null || session.store === store) { "Worker session belongs to another store" }
         val worker = session?.acquire(entry) ?: acquireWorker(store, entry, key, null)
         workerKeys[entry.reference] = key
@@ -242,9 +254,8 @@ internal object ModifierPluginWorkers {
                 copyFiles(launchEntry.directory, dir, launchEntry.manifest.files)
                 if (resolvedDeps.isNotEmpty()) {
                     val depsRoot = Files.createDirectories(dir.resolve(".deps"))
-                    val byRef = store.snapshot().associateBy { it.reference }
                     val manifestEntries = resolvedDeps.mapNotNull { depRef ->
-                        byRef[depRef]?.let { depPkg ->
+                        store.findRunnable(depRef)?.let { depPkg ->
                             val depDir = Files.createDirectories(depsRoot.resolve(depRef.id))
                             copyFiles(depPkg.directory, depDir, depPkg.manifest.files)
                             buildJsonObject {

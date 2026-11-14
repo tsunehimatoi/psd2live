@@ -101,6 +101,7 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
     var selectedId by remember { mutableStateOf<String?>(null) }
     var page by remember { mutableIntStateOf(0) }
     var editOrder by rememberSaveable { mutableStateOf(false) }
+    var updatingCodeFor by remember { mutableStateOf<RigModifierInstance?>(null) }
     val selected = stack.instances.firstOrNull { it.id == selectedId } ?: stack.instances.firstOrNull()
     val enabled = !state.isBusy && !state.workspaceEditBusy && !state.editorDraftBusy
     var listRatio by rememberSaveable { mutableFloatStateOf(0.38f) }
@@ -187,7 +188,7 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                             if (missing.isNotEmpty()) InspectorHint(tr("modifier.dependencies", missing.joinToString { it.jsonPrimitive.content }), warning = true)
                             when (page) {
                                 0 -> {
-                                    ModifierSourceValues(selected, state, enabled, vm)
+                                    ModifierSourceValues(selected, state, enabled, vm) { updatingCodeFor = it }
                                     ModifierModulePhysicsValues(selected, report, state, enabled, vm)
                                     ModifierNativeValues(selected.type, selected.config, state, enabled, vm, instanceId = selected.id) { config, captured, done ->
                                         vm.editModifier("modifier_update", buildJsonObject { put("id", selected.id); put("type", selected.type); put("config", config) }, captured, done)
@@ -271,6 +272,9 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
             }
         }
     }
+    updatingCodeFor?.let { target ->
+        ModifierCodeUpdateDialog(target, stack, state, vm) { updatingCodeFor = null }
+    }
 }
 }
 
@@ -302,10 +306,11 @@ private fun ModifierInfoTab(
     ) {
         val store = ModifierPluginStore.shared
         val packages = store.runnablePackages()
+        val devArtifact = instance.plugin?.let(PluginDevArtifactStore::resolve)
         val installed = instance.plugin?.let { ref -> packages.firstOrNull { it.reference == ref } }
             ?: ModifierPluginCatalog.algorithm(instance.type, instance.version, store)?.first
             ?: ModifierPluginCatalog.algorithm(instance.type, store = store)?.first
-        val alg = installed?.manifest?.algorithms?.firstOrNull {
+        val alg = (installed?.manifest ?: devArtifact?.manifest)?.algorithms?.firstOrNull {
             it.version == instance.version && (it.type == instance.type || instance.type in it.aliases)
         } ?: ModifierPluginCatalog.algorithm(instance.type, instance.version, store)?.second
             ?: ModifierPluginCatalog.algorithm(instance.type, store = store)?.second
@@ -535,7 +540,13 @@ private fun ModifierModulePhysicsValues(instance: RigModifierInstance, report: J
 }
 
 @Composable
-private fun ModifierSourceValues(instance: RigModifierInstance, state: PSD2LiveState, enabled: Boolean, vm: PSD2LiveViewModel) {
+private fun ModifierSourceValues(
+    instance: RigModifierInstance,
+    state: PSD2LiveState,
+    enabled: Boolean,
+    vm: PSD2LiveViewModel,
+    onUpdateCode: (RigModifierInstance) -> Unit,
+) {
     if (instance.plugin?.let { !it.id.startsWith("builtin.") } == true) {
         RememberedModifierSection(
             stateKey = "${instance.id}:plugin",
@@ -543,6 +554,14 @@ private fun ModifierSourceValues(instance: RigModifierInstance, state: PSD2LiveS
             defaultExpanded = true,
         ) {
             ModifierPluginValues(instance, enabled, vm)
+            Spacer(Modifier.height(6.dp))
+            CompactButton(
+                text = tr("modifier.plugin.updateCode"),
+                onClick = { onUpdateCode(instance) },
+                enabled = enabled,
+                height = 22.dp,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
         return
     }
@@ -777,9 +796,35 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
     fun categoryName(id: String): String = when (id) {
         "advanced" -> tr("modifier.advanced")
         "plugins" -> tr("plugins.title")
+        "custom_extension" -> tr("modifier.customExtension")
         else -> tr("settings.rig.area.$id")
     }
-    data class AddRow(val type: String, val preset: String?, val label: String, val description: String?, val count: Int, val conflict: ModifierConflict)
+    data class CustomExtensionEntry(
+        val artifact: PluginDevArtifact,
+        val packageRef: ModifierPluginReference,
+        val algorithm: ModifierPluginAlgorithm,
+    )
+    val customExtensions = remember(pluginRevision, dialog.targets) {
+        PluginDevArtifactStore.list().flatMap { artifact ->
+            artifact.manifest.algorithms
+                .filter { alg -> dialog.targets.all { it.kind in alg.targets } }
+                .mapNotNull { alg ->
+                    val pkgRef = artifact.packages.firstOrNull { it.id == artifact.manifest.id }
+                        ?: artifact.packages.firstOrNull()
+                        ?: return@mapNotNull null
+                    CustomExtensionEntry(artifact, pkgRef, alg)
+                }
+        }
+    }
+    data class AddRow(
+        val type: String,
+        val preset: String?,
+        val label: String,
+        val description: String?,
+        val count: Int,
+        val conflict: ModifierConflict,
+        val customExtension: CustomExtensionEntry? = null,
+    )
     fun rowsFor(cat: String): List<AddRow> {
         val rows = mutableListOf<AddRow>()
         fun add(type: String, preset: String?, label: String) {
@@ -811,12 +856,26 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                 add("motion", preset, label)
             }
         }
+        if (cat == "custom_extension") {
+            customExtensions.forEach { ext ->
+                rows += AddRow(
+                    type = ext.algorithm.type,
+                    preset = ext.artifact.artifactId,
+                    label = "${ext.algorithm.name} (${ext.packageRef.version})",
+                    description = ext.artifact.manifest.name.takeIf { it.isNotBlank() } ?: ext.packageRef.id,
+                    count = 0,
+                    conflict = ModifierConflict.NONE,
+                    customExtension = ext,
+                )
+            }
+            return rows
+        }
         visibleAvailable.filter { category(it) == cat }.forEach { type ->
             add(type, null, modifierName(type))
         }
         return rows
     }
-    val categoryOrder = listOf("face", "eye", "brow", "mouth", "body", "hair", "outfit", "expression", "motion", "advanced", "plugins")
+    val categoryOrder = listOf("face", "eye", "brow", "mouth", "body", "hair", "outfit", "expression", "motion", "advanced", "plugins", "custom_extension")
     val rowsByCategory = categoryOrder.associateWith(::rowsFor).filterValues { it.isNotEmpty() }
     val categories = rowsByCategory.keys.toList()
     var selectedCategory by remember(categories) {
@@ -852,16 +911,20 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                             val row = activeRows[index]
                             if (!dialog.committing && (selectedRow?.type != row.type || selectedRow?.preset != row.preset)) {
                                 selectedRow = row
-                                vm.previewModifierAddition(row.type, null, preset = row.preset)
+                                if (row.customExtension == null) {
+                                    vm.previewModifierAddition(row.type, null, preset = row.preset)
+                                }
                             }
                         }) { index ->
                         val row = activeRows[index]
-                        val isSelected = dialog.type == row.type && dialog.preset == row.preset
+                        val isSelected = if (row.customExtension != null) selectedRow === row else (dialog.type == row.type && dialog.preset == row.preset)
                         FloatingMenuRow(
                             label = row.label,
                             onClick = {
                                 selectedRow = row
-                                vm.previewModifierAddition(row.type, null, preset = row.preset)
+                                if (row.customExtension == null) {
+                                    vm.previewModifierAddition(row.type, null, preset = row.preset)
+                                }
                             },
                             selected = isSelected,
                             bar = false,
@@ -875,13 +938,16 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
             }
         }
         val detailColumn: @Composable () -> Unit = {
-            if (activeType != null) {
-                val activeTitle = selectedRow?.takeIf { it.type == activeType && it.preset == activePreset }?.label
-                    ?: modifierName(activeType)
-                val activeDesc = selectedRow?.takeIf { it.type == activeType && it.preset == activePreset }?.description
-                    ?: modifierDescription(activeType, activePreset)
-                val activeConflict = selectedRow?.takeIf { it.type == activeType && it.preset == activePreset }?.conflict
-                    ?: state.previewModel?.let { ModifierConflictAnalysis.additionConflict(it, dialog.targets, activeType, activePreset) }
+            val selectedCustom = selectedRow?.customExtension
+            if (activeType != null || selectedCustom != null) {
+                val displayType = selectedCustom?.algorithm?.type ?: activeType!!
+                val activeTitle = selectedRow?.takeIf { it.type == displayType && it.preset == activePreset }?.label
+                    ?: selectedCustom?.algorithm?.name
+                    ?: modifierName(displayType)
+                val activeDesc = selectedRow?.takeIf { it.type == displayType && it.preset == activePreset }?.description
+                    ?: modifierDescription(displayType, activePreset)
+                val activeConflict = selectedRow?.takeIf { it.type == displayType && it.preset == activePreset }?.conflict
+                    ?: state.previewModel?.let { ModifierConflictAnalysis.additionConflict(it, dialog.targets, displayType, activePreset) }
                     ?: ModifierConflict.NONE
                 Column(Modifier.width(228.dp).height(paneHeight)) {
                     Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -959,10 +1025,30 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                     }
                     FloatingMenuDivider()
                     Box(Modifier.fillMaxWidth().padding(6.dp)) {
+                        val customExt = selectedRow?.customExtension
                         CompactButton(
                             text = tr("modifier.add"),
-                            onClick = vm::confirmModifierAddition,
-                            enabled = !dialog.loading && dialog.error == null && dialog.plan?.get("entries")?.jsonArray?.isNotEmpty() == true,
+                            onClick = {
+                                if (customExt != null) {
+                                    vm.editModifier("modifier_add", buildJsonObject {
+                                        put("type", customExt.algorithm.type)
+                                        put("version", customExt.algorithm.version)
+                                        put("config", customExt.algorithm.defaults)
+                                        put("plugin", Json.encodeToJsonElement(ModifierPluginReference.serializer(), customExt.packageRef))
+                                        putJsonArray("targets") {
+                                            dialog.targets.forEach { t ->
+                                                addJsonObject { put("kind", t.kind); put("id", t.id) }
+                                            }
+                                        }
+                                    }) { failure ->
+                                        if (failure == null) vm.dismissModifierAddition()
+                                    }
+                                } else {
+                                    vm.confirmModifierAddition()
+                                }
+                            },
+                            enabled = if (customExt != null) !dialog.committing
+                            else !dialog.loading && dialog.error == null && dialog.plan?.get("entries")?.jsonArray?.isNotEmpty() == true,
                             isPrimary = true,
                             height = 24.dp,
                             modifier = Modifier.fillMaxWidth(),
@@ -973,7 +1059,7 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
         }
         Row(Modifier.height(IntrinsicSize.Min)) {
             if (opensLeft) {
-                if (activeType != null) {
+                if (activeType != null || selectedRow?.customExtension != null) {
                     detailColumn()
                     Box(Modifier.width(1.dp).fillMaxHeight().background(colors.divider))
                 }
@@ -988,7 +1074,7 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                     Box(Modifier.width(1.dp).fillMaxHeight().background(colors.divider))
                     itemColumn()
                 }
-                if (activeType != null) {
+                if (activeType != null || selectedRow?.customExtension != null) {
                     Box(Modifier.width(1.dp).fillMaxHeight().background(colors.divider))
                     detailColumn()
                 }

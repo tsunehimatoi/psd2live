@@ -6,9 +6,12 @@ internal object ModifierPluginCatalog {
                     captured: List<RigModifierDefinition> = emptyList(),
                     resolveRasters: ModifierRasterResolver = RigModifierRasterAssets::resolve,
                     references: Set<ModifierPluginReference>? = null,
-                    workerSession: ModifierPluginWorkers.Session? = null): List<RigModifierDefinition> {
+                    workerSession: ModifierPluginWorkers.Session? = null,
+                    overlayPackages: List<InstalledModifierPlugin> = emptyList()): List<RigModifierDefinition> {
         val defaults = store.defaultPackages().mapTo(HashSet()) { it.reference }
-        return store.runnablePackages()
+        val devResolved = if (references == null) emptyList() else references.mapNotNull { store.findRunnable(it) }
+        val candidates = (overlayPackages + devResolved + store.runnablePackages()).distinctBy { it.reference }
+        return candidates
         .filter { references == null || it.reference in references }.flatMap { entry ->
         val isBuiltin = entry.reference.id.startsWith("builtin.")
         entry.manifest.algorithms.flatMap { algorithm ->
@@ -71,31 +74,43 @@ internal object ModifierPluginCatalog {
     }
     }
 
-    fun available(instance: RigModifierInstance, store: ModifierPluginStore = ModifierPluginStore.shared): Boolean {
+    fun available(instance: RigModifierInstance, store: ModifierPluginStore = ModifierPluginStore.shared,
+                  overlayPackages: List<InstalledModifierPlugin> = emptyList()): Boolean {
         instance.plugin?.let { exact ->
-            if (store.packages().any { it.reference == exact && it.manifest.algorithms.any { algorithm ->
+            val matched = overlayPackages.firstOrNull { it.reference == exact }
+                ?: store.packages().firstOrNull { it.reference == exact }
+                ?: store.findRunnable(exact)
+            if (matched != null && matched.manifest.algorithms.any { algorithm ->
                     algorithm.version == instance.version && (algorithm.type == instance.type || instance.type in algorithm.aliases)
-                } }) return store.resolution(exact).available
+                }) return store.resolution(exact, overlayPackages).available
         }
         val resolvedVersion = BuiltinModifierPlugins.resolveVersion(instance.type, instance.version, instance.plugin)
         val builtin = BuiltinModifierPlugins.reference(instance.type, resolvedVersion)
         val reference = instance.plugin ?: builtin ?: return false
         val isBuiltin = reference == builtin || BuiltinModifierPlugins.matches(instance)
         if (!isBuiltin) {
-            val manifest = store.packages().firstOrNull { it.reference == reference }?.manifest ?: return false
+            val manifest = (overlayPackages.firstOrNull { it.reference == reference }
+                ?: store.packages().firstOrNull { it.reference == reference }
+                ?: store.findRunnable(reference))?.manifest ?: return false
             if (manifest.algorithms.none {
                     it.version == instance.version && (it.type == instance.type || instance.type in it.aliases)
                 }) return false
         }
-        return store.resolution(if (isBuiltin) (builtin ?: reference) else reference).available
+        return store.resolution(if (isBuiltin) (builtin ?: reference) else reference, overlayPackages).available
     }
 
     fun available(type: String, version: Int, plugin: ModifierPluginReference? = null,
-                  store: ModifierPluginStore = ModifierPluginStore.shared): Boolean {
-        if (plugin != null) store.packages().firstOrNull { it.reference == plugin }?.let { entry ->
-            if (entry.manifest.algorithms.any { it.version == version && (it.type == type || type in it.aliases) })
-                return store.resolution(plugin).available
-            if (!BuiltinModifierPlugins.isHistoricalBuiltinReference(type, version, plugin)) return false
+                  store: ModifierPluginStore = ModifierPluginStore.shared,
+                  overlayPackages: List<InstalledModifierPlugin> = emptyList()): Boolean {
+        if (plugin != null) {
+            val entry = overlayPackages.firstOrNull { it.reference == plugin }
+                ?: store.packages().firstOrNull { it.reference == plugin }
+                ?: store.findRunnable(plugin)
+            if (entry != null) {
+                if (entry.manifest.algorithms.any { it.version == version && (it.type == type || type in it.aliases) })
+                    return store.resolution(plugin, overlayPackages).available
+                if (!BuiltinModifierPlugins.isHistoricalBuiltinReference(type, version, plugin)) return false
+            }
         }
         val resolvedVersion = BuiltinModifierPlugins.resolveVersion(type, version, plugin)
         val builtin = BuiltinModifierPlugins.reference(type, resolvedVersion)

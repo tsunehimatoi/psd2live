@@ -56,7 +56,7 @@ internal object WorkspaceDocumentEdits {
         // Every document operation, not only journal edits: a copy over the bangs is made anew on each build.
         refuseCopies(model, request)
         return when (operation.operation) {
-            in WorkspaceModifierEdits.supported -> WorkspaceModifierEdits.apply(operation, document, model, rasterWork, draftInputs)
+            in WorkspaceModifierEdits.supported, "modifier_rebind" -> WorkspaceModifierEdits.apply(operation, document, model, rasterWork, draftInputs)
             WorkspaceDrawOrderEdits.OP -> WorkspaceDrawOrderEdits.apply(document, model, request)
             WorkspaceLayerTransform.OP -> WorkspaceLayerTransform.apply(document, model, request)
             WorkspaceRasterEdits.REBUILD_MESH -> WorkspaceRasterEdits.rebuildMesh(document, model, request.text("layer_id"), rasterWork)

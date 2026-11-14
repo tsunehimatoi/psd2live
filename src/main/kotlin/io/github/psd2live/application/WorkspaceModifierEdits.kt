@@ -46,6 +46,12 @@ internal object WorkspaceModifierEdits {
                 captureParameterProviders(instance.copy(config = JsonObject(
                     instance.config.filterKeys { it == "automatic_weights" } + config)), model)
             }
+            "modifier_rebind" -> {
+                val plugin = Json.decodeFromJsonElement(ModifierPluginReference.serializer(), request.getValue("plugin"))
+                val version = request["version"]?.jsonPrimitive?.intOrNull
+                val current = stack.instances[stack.index(requireNotNull(id))]
+                stack.rebind(current.id, plugin, version ?: current.version)
+            }
             "modifier_enable" -> stack.update(requireNotNull(id)) { it.copy(enabled = request.getValue("enabled").jsonPrimitive.boolean) }
             "modifier_remove" -> stack.remove(requireNotNull(id))
             "modifier_move" -> stack.move(requireNotNull(id), request.getValue("index").jsonPrimitive.int)
@@ -111,15 +117,27 @@ internal object WorkspaceModifierEdits {
             ModifierTarget(it.getValue("kind").jsonPrimitive.content, it.getValue("id").jsonPrimitive.content)
         } }
         val type = request.getValue("type").jsonPrimitive.content
-        val registry = RigModifierAlgorithms.registry
+        val requestedPlugin = request["plugin"]?.let { Json.decodeFromJsonElement(ModifierPluginReference.serializer(), it) }
+        val devEntry = requestedPlugin?.let { PluginDevArtifactStore.resolve(it) }
+        val registry = if (devEntry != null) {
+            RigModifierRegistry(ModifierPluginCatalog.definitions(references = setOf(requestedPlugin), overlayPackages = listOf(devEntry)))
+        } else {
+            RigModifierAlgorithms.registry
+        }
         val stored = registry.storedType(type)
         val config = request.getValue("config").jsonObject
         val requestedVersion = request["version"]?.jsonPrimitive?.int
-        val version = requestedVersion ?: registry.defaultDefinition(type)?.version
+        val version = requestedVersion
+            ?: devEntry?.manifest?.algorithms?.firstOrNull { it.type == type }?.version
+            ?: registry.defaultDefinition(type)?.version
             ?: error("Unknown modifier algorithm: $type")
+        val resolvedPlugin = requestedPlugin ?: ModifierPluginCatalog.algorithm(type, version)?.first?.reference
+        if (devEntry != null) {
+            PluginDevArtifactStore.adoptByReference(devEntry.reference, request["project_id"]?.jsonPrimitive?.contentOrNull ?: "workspace")
+        }
         val candidate = stack.add(stored, version, targets, config,
             request["group"]?.jsonPrimitive?.content, request["id"]?.jsonPrimitive?.content,
-            plugin = request["plugin"]?.let { Json.decodeFromJsonElement(ModifierPluginReference.serializer(), it) } ?: ModifierPluginCatalog.algorithm(type, version)?.first?.reference)
+            plugin = resolvedPlugin)
         val instance = candidate.instances.last()
         registry.definition(instance)
         val captured = if (model == null) candidate else candidate.update(instance.id) { captureParameterProviders(it, model) }

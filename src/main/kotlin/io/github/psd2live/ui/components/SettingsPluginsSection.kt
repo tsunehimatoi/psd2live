@@ -8,6 +8,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import io.github.psd2live.application.WorkspacePluginManagement
 import io.github.psd2live.core.modifier.ModifierPluginStore
+import io.github.psd2live.core.modifier.PluginDevArtifactStore
+import io.github.psd2live.core.modifier.PluginDevRetention
+import io.github.psd2live.core.modifier.PluginDevSourceStore
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.theme.LocalToolTypography
 import io.github.psd2live.ui.utils.NativeFilePicker
@@ -23,6 +26,9 @@ internal fun SettingsPluginsSection() {
     var ref by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<String?>(null) }
+    var devRevision by remember { mutableIntStateOf(0) }
+    val devSources = remember(devRevision) { PluginDevSourceStore.shared.list() }
+    val devArtifacts = remember(devRevision) { PluginDevArtifactStore.list() }
     fun execute(operation: String, request: JsonObject) {
         busy = true; failure = null
         scope.launch {
@@ -67,6 +73,45 @@ internal fun SettingsPluginsSection() {
                 }, enabled = !busy)
             }
             entry.getValue("issues").jsonArray.forEach { SettingsHint(it.jsonPrimitive.content, indent = false) }
+        }
+    }
+    SettingsGroup(tr("plugins.dev.sources")) {
+        SettingsHint(tr("plugins.dev.detachNote"), indent = false)
+        if (devSources.isEmpty()) {
+            SettingsHint(tr("plugins.dev.sources.empty"), indent = false)
+        } else {
+            for (devSource in devSources) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text(devSource.source.fileName?.toString() ?: devSource.source.toString(), style = LocalToolTypography.current.body)
+                        Text(devSource.source.toString(), style = LocalToolTypography.current.caption)
+                    }
+                    Text("${devSource.mode.name.lowercase()} · ${devSource.status}", style = LocalToolTypography.current.caption)
+                    CompactButton(tr("plugins.dev.detach"), {
+                        PluginDevSourceStore.shared.detach(devSource.sourceId)
+                        devRevision++
+                    }, enabled = !busy)
+                }
+            }
+        }
+    }
+    SettingsGroup(tr("plugins.dev.artifacts")) {
+        if (devArtifacts.isEmpty()) {
+            SettingsHint(tr("plugins.dev.artifacts.empty"), indent = false)
+        } else {
+            for (artifact in devArtifacts) {
+                val retentionLabel = tr(
+                    if (artifact.retention == PluginDevRetention.ADOPTED) "plugins.dev.retention.adopted"
+                    else "plugins.dev.retention.candidate"
+                )
+                val version = artifact.packages.firstOrNull()?.version ?: artifact.manifest.version
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(artifact.manifest.name, style = LocalToolTypography.current.body, modifier = Modifier.weight(1f))
+                    Text(version, style = LocalToolTypography.current.caption)
+                    Text(retentionLabel, style = LocalToolTypography.current.caption)
+                    Text(artifact.buildDigest.take(12), style = LocalToolTypography.current.caption)
+                }
+            }
         }
     }
 }

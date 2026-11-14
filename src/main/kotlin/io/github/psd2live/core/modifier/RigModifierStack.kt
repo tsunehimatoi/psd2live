@@ -66,6 +66,13 @@ internal data class RigModifierStack(
         return copy(instances = instances.toMutableList().apply { set(index, updated) })
     }
 
+    /** Rebind an existing modifier instance to a compatible package revision while preserving identity, config, targets, order, and overrides. */
+    fun rebind(id: String, plugin: ModifierPluginReference, version: Int = instances[index(id)].version): RigModifierStack {
+        val idx = index(id)
+        val updated = instances[idx].copy(plugin = plugin, version = version)
+        return copy(instances = instances.toMutableList().apply { set(idx, updated) })
+    }
+
     fun remove(id: String): RigModifierStack {
         index(id)
         return copy(instances = instances.filterNot { it.id == id }, retiredIds = retiredIds + id)

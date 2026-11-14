@@ -20,7 +20,8 @@ internal object RigModifierAlgorithms {
     }
 
     private fun registryFor(source: RigModifierSource?, stack: RigModifierStack? = null,
-                            workerSession: ModifierPluginWorkers.Session? = null): RigModifierRegistry =
+                            workerSession: ModifierPluginWorkers.Session? = null,
+                            overlayPackages: List<InstalledModifierPlugin> = emptyList()): RigModifierRegistry =
         RigBuildProfile.stage("modifier source registry") {
             val builtins = BuiltinModifierPlugins.definitions(source)
             val resolveRasters = source?.let { it::resolveRasters } ?: RigModifierRasterAssets::resolve
@@ -35,17 +36,19 @@ internal object RigModifierAlgorithms {
                     it.appliedCapabilities.forEach { provider -> include(provider.type, provider.version, provider.plugin) }
                 }
             }
-            val workers = if (references?.isEmpty() == true) emptyList() else ModifierPluginCatalog.definitions(
-                captured = builtins, resolveRasters = resolveRasters, references = references, workerSession = workerSession)
+            val workers = if (references?.isEmpty() == true && overlayPackages.isEmpty()) emptyList() else ModifierPluginCatalog.definitions(
+                captured = builtins, resolveRasters = resolveRasters, references = references, workerSession = workerSession,
+                overlayPackages = overlayPackages)
             RigModifierRegistry(builtins + workers)
         }
 
     fun evaluator(source: RigModifierSource? = null, stack: RigModifierStack? = null,
-                  rawSourceRotations: Boolean = false, workerSession: ModifierPluginWorkers.Session? = null) = RigModifierEvaluator(
+                  rawSourceRotations: Boolean = false, workerSession: ModifierPluginWorkers.Session? = null,
+                  overlayPackages: List<InstalledModifierPlugin> = emptyList()) = RigModifierEvaluator(
         when {
             stack?.instances?.isEmpty() == true -> emptyRegistry
-            source == null && workerSession == null -> registry
-            else -> registryFor(source, stack, workerSession)
+            source == null && workerSession == null && overlayPackages.isEmpty() -> registry
+            else -> registryFor(source, stack, workerSession, overlayPackages)
         },
         sourceTargetExists = { it.kind == "layer" && source?.hasLayer(it.id) == true },
         physicsOrder = source?.physicsOrder.orEmpty(),
