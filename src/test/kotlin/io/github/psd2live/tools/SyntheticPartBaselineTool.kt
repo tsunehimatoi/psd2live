@@ -26,7 +26,7 @@ class SyntheticPartBaselineTool {
             "source-context capture and modifier evaluation; expanded/folded/real worker; no workspace CAS, export or GUI")
         report.metadata("acceptance_run", (!smoke).toString())
         report.metadata("identity_policy", "fresh synthetic instances have explicit stable ids and no pre-existing plugin locks; compare complete RigIR without id normalization")
-        report.metadata("timing_scope", "expanded child stages and aggregate folded stage; folded internal child timing is not separately exposed")
+        report.metadata("timing_scope", "in-process folded base/sub changes calls; excludes applying changes and final composition; real worker remains host end-to-end without internal stage wire fields")
         val wasRecording = RigBuildProfile.recording
         RigBuildProfile.recording = true
         try {

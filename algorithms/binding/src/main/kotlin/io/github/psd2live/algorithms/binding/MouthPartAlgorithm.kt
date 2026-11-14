@@ -1,6 +1,7 @@
 package io.github.psd2live.algorithms.binding
 
 import io.github.psd2live.core.modifier.ModifierPartConfig
+import io.github.psd2live.core.modifier.ModifierAlgorithmStages
 import io.github.psd2live.core.modifier.ChangingModifierAlgorithmPlugin
 import io.github.psd2live.core.modifier.ModifierAlgorithmContext
 import io.github.psd2live.core.modifier.ModifierAlgorithmPlugin
@@ -55,11 +56,13 @@ class MouthPartAlgorithm : ChangingModifierAlgorithmPlugin {
         val upstream = context.upstream.toMutableList()
         val baseContext = ModifierAlgorithmContext(baseValues, context.resources.filterKeys { !it.startsWith("sub:") }, upstream)
 
-        var current = if (mode == "fitted") {
-            MouthFittedSourceAlgorithm().changes(input, baseInstance, baseContext, checkpoint).apply(input, checkpoint)
-        } else {
-            MouthLegacyAlgorithm().changes(input, baseInstance, baseContext, checkpoint).apply(input, checkpoint)
-        }
+        var current = ModifierAlgorithmStages.stage("part mouth base: $baseType") {
+            if (mode == "fitted") {
+                MouthFittedSourceAlgorithm().changes(input, baseInstance, baseContext, checkpoint)
+            } else {
+                MouthLegacyAlgorithm().changes(input, baseInstance, baseContext, checkpoint)
+            }
+        }.apply(input, checkpoint)
 
         upstream += ModifierUpstreamCapability(
             capability = baseType,
@@ -85,10 +88,12 @@ class MouthPartAlgorithm : ChangingModifierAlgorithmPlugin {
                 .filterKeys { it.startsWith(subPrefix) }
                 .mapKeys { it.key.removePrefix(subPrefix) }
             val subCtx = ModifierAlgorithmContext(subContextObj, subResources, upstream)
-            val stepChanges = when (val plugin = feature.plugin) {
-                is ReadingModifierAlgorithmPlugin -> plugin.changes(ModifierEvaluationInput(current, subCtx), subInstance.copy(version = feature.version), checkpoint)
-                is ChangingModifierAlgorithmPlugin -> plugin.changes(current, subInstance, subCtx, checkpoint)
-                else -> error("Unsupported mouth sub-feature plugin: ${feature.type}")
+            val stepChanges = ModifierAlgorithmStages.stage("part mouth sub: ${feature.type}") {
+                when (val plugin = feature.plugin) {
+                    is ReadingModifierAlgorithmPlugin -> plugin.changes(ModifierEvaluationInput(current, subCtx), subInstance.copy(version = feature.version), checkpoint)
+                    is ChangingModifierAlgorithmPlugin -> plugin.changes(current, subInstance, subCtx, checkpoint)
+                    else -> error("Unsupported mouth sub-feature plugin: ${feature.type}")
+                }
             }
             rasters += stepChanges.rasters
             current = stepChanges.copy(rasters = emptyList()).apply(current, checkpoint)

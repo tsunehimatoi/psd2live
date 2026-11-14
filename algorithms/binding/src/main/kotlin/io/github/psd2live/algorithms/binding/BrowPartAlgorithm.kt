@@ -1,6 +1,7 @@
 package io.github.psd2live.algorithms.binding
 
 import io.github.psd2live.core.modifier.ModifierPartConfig
+import io.github.psd2live.core.modifier.ModifierAlgorithmStages
 import io.github.psd2live.core.modifier.ChangingModifierAlgorithmPlugin
 import io.github.psd2live.core.modifier.ModifierAlgorithmContext
 import io.github.psd2live.core.modifier.ModifierEvaluationInput
@@ -50,12 +51,14 @@ class BrowPartAlgorithm : ChangingModifierAlgorithmPlugin {
         val upstream = context.upstream.toMutableList()
         val baseContext = ModifierAlgorithmContext(baseValues, context.resources.filterKeys { !it.startsWith("sub:") }, upstream)
 
-        var current = if (mode == "fitted") {
-            BrowFittedAlgorithm().changes(input, baseInstance, baseContext, checkpoint).apply(input, checkpoint)
-        } else {
-            val evalInput = ModifierEvaluationInput(input, baseContext)
-            BrowLegacyAlgorithm().changes(evalInput, baseInstance, checkpoint).apply(input, checkpoint)
-        }
+        var current = ModifierAlgorithmStages.stage("part brow base: $baseType") {
+            if (mode == "fitted") {
+                BrowFittedAlgorithm().changes(input, baseInstance, baseContext, checkpoint)
+            } else {
+                val evalInput = ModifierEvaluationInput(input, baseContext)
+                BrowLegacyAlgorithm().changes(evalInput, baseInstance, checkpoint)
+            }
+        }.apply(input, checkpoint)
 
         if (mode == "legacy") {
             require(ModifierPartConfig.features.getValue(TYPE).keys.none { ModifierPartConfig.enabled(instance.config, it) }) { "${instance.id}: sub-features require fitted mode" }
@@ -87,7 +90,9 @@ class BrowPartAlgorithm : ChangingModifierAlgorithmPlugin {
                 .mapKeys { it.key.removePrefix(prefix) }
             val subContext = ModifierAlgorithmContext(subValues, subResources, upstream)
             val evalInput = ModifierEvaluationInput(current, subContext)
-            current = subPlugin.changes(evalInput, subInstance.copy(version = 2), checkpoint).apply(current, checkpoint)
+            current = ModifierAlgorithmStages.stage("part brow sub: $subType") {
+                subPlugin.changes(evalInput, subInstance.copy(version = 2), checkpoint)
+            }.apply(current, checkpoint)
             upstream += ModifierUpstreamCapability(
                 capability = subType,
                 type = subType,
