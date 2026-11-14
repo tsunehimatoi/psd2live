@@ -7,7 +7,7 @@ import kotlinx.serialization.json.*
 
 /** Captured insertion: resolve dependencies without changing or silently sorting existing entries. */
 internal object WorkspaceModifierPlan {
-    val sourceTypes get() = listOf(RigSourceModifiers.SCAFFOLD) + RigLegacyBindings.specs.map { it.type }.filterNot { it == "face.depth-turn" }
+    val sourceTypes get() = listOf(RigSourceModifiers.SCAFFOLD) + RigSourceModifiers.PART_TYPES + RigLegacyBindings.specs.map { it.type }.filterNot { it == "face.depth-turn" }
     const val NATURAL_MOTION_PREFIX = "natural:"
     val motionPresetIds = MotionClips.BUILTIN_NAMES + MotionClips.BASIC_NAMES.map { NATURAL_MOTION_PREFIX + it }
     val nativeTypes = listOf("swing", "physics", "motion", "simulation")
@@ -158,6 +158,12 @@ internal object WorkspaceModifierPlan {
                 val algorithm = packaged.second
                 algorithm.requires.forEach { ensure(it) }
                 request["config"]?.jsonObject ?: algorithm.defaults
+            } else if (wanted in RigSourceModifiers.PART_TYPES) {
+                val structure = scaffold ?: requireNotNull(ensure(RigSourceModifiers.SCAFFOLD).id)
+                for (required in definition.requires - RigSourceModifiers.SCAFFOLD) {
+                    ensure(required, scaffold = structure, equivalent = true)
+                }
+                buildJsonObject { put("scaffold", structure) }
             } else if (spec == null) JsonObject(emptyMap()) else {
                 val structure = scaffold ?: requireNotNull(ensure(RigSourceModifiers.SCAFFOLD).id)
                 // The selected version may require additional preceding capabilities without changing the legacy config shape.

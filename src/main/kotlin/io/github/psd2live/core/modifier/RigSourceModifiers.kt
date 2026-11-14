@@ -1816,6 +1816,7 @@ internal object RigSourceModifiers {
     const val BODY = "body"
     const val HAIR = "hair"
     const val MOUTH = "mouth"
+    val PART_TYPES = listOf(FACE, EYE, BROW, MOUTH, BODY, HAIR)
 
     private fun partUpstream(type: String): Set<String> = ModifierPartConfig.features[type].orEmpty().values.flatMap { child ->
         val definition = RigLegacyBindings.definition(RigLegacyBindings.spec(child), null)

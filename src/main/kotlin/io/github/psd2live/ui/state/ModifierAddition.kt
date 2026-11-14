@@ -15,6 +15,7 @@ internal data class ModifierAddition(
     val targets: List<ModifierTarget>,
     val type: String? = null,
     val group: String? = null,
+    val preset: String? = null,
     val configuration: JsonObject? = null,
     val plan: JsonObject? = null,
     val preview: JsonObject? = null,

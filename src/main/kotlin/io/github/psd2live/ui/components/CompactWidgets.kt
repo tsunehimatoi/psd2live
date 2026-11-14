@@ -722,6 +722,8 @@ fun CompactMenuDivider() {
 	)
 }
 
+internal val LocalMenuOpensLeft = androidx.compose.runtime.compositionLocalOf { false }
+
 /**
  * The panels' context menu, opened at the click ([clickOffset] in the holding layout; under its left edge when zero),
  * flipping to the left of it or above it where the window runs out. It looks and moves as the canvas's context menu
@@ -736,6 +738,7 @@ fun TreeContextMenu(
 	modifier: Modifier = Modifier,
 	minWidth: Dp = 200.dp,
 	maxWidth: Dp = 270.dp,
+	preferredMaxWidth: Dp? = null,
 	content: @Composable ColumnScope.() -> Unit,
 ) {
 	val expandedStates = remember { MutableTransitionState(false) }
@@ -747,7 +750,8 @@ fun TreeContextMenu(
 	val density = LocalDensity.current
 	// The corner of the menu at the click, which it grows from.
 	var corner by remember { mutableStateOf(TransformOrigin(0f, 0f)) }
-	val positionProvider = remember(clickOffset, density) {
+	var lockedLeft by remember(expanded) { mutableStateOf<Boolean?>(null) }
+	val positionProvider = remember(clickOffset, density, preferredMaxWidth) {
 		object : PopupPositionProvider {
 			override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
 				val marginPx = with(density) { 8.dp.roundToPx() }
@@ -755,7 +759,18 @@ fun TreeContextMenu(
 				val mouseX = anchorBounds.left + if (clickOffset != Offset.Zero) clickOffset.x.roundToInt() else with(density) { 24.dp.roundToPx() }
 				val mouseY = if (clickOffset != Offset.Zero) anchorBounds.top + clickOffset.y.roundToInt() else anchorBounds.bottom
 				var x = mouseX + cursorPaddingPx
-				val left = x + popupContentSize.width > windowSize.width - marginPx
+				val left = lockedLeft ?: run {
+					val decided = if (preferredMaxWidth != null) {
+						val neededPx = with(density) { preferredMaxWidth.roundToPx() }
+						val rightSpace = windowSize.width - marginPx - x
+						val leftSpace = (mouseX - cursorPaddingPx) - marginPx
+						rightSpace < neededPx && leftSpace > rightSpace
+					} else {
+						x + popupContentSize.width > windowSize.width - marginPx
+					}
+					if (preferredMaxWidth != null) lockedLeft = decided
+					decided
+				}
 				if (left) x = mouseX - popupContentSize.width - cursorPaddingPx
 				x = x.coerceIn(marginPx, max(marginPx, windowSize.width - popupContentSize.width - marginPx))
 				var y = mouseY + cursorPaddingPx
@@ -772,7 +787,12 @@ fun TreeContextMenu(
 	}
 
 	Popup(popupPositionProvider = positionProvider, onDismissRequest = onDismissRequest, properties = PopupProperties(focusable = true)) {
-		androidx.compose.runtime.CompositionLocalProvider(LocalDensity provides density, LocalToolColors provides colors, LocalToolTypography provides typography) {
+		androidx.compose.runtime.CompositionLocalProvider(
+			LocalDensity provides density,
+			LocalToolColors provides colors,
+			LocalToolTypography provides typography,
+			LocalMenuOpensLeft provides (corner.pivotFractionX == 1f),
+		) {
 			Column(
 				modifier
 					.menuAppearance(expandedStates, corner, rise = corner.pivotFractionY == 1f)

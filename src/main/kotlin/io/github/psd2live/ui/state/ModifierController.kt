@@ -35,11 +35,7 @@ internal class ModifierController(
         if (ids.isEmpty()) return
         modifierAddition = ModifierAddition(expected, if (warp != null) listOf(io.github.psd2live.core.modifier.ModifierTarget("deformer", warp))
             else ids.map { io.github.psd2live.core.modifier.ModifierTarget("mesh", it) })
-        val dialog = requireNotNull(modifierAddition)
-        val first = io.github.psd2live.core.modifier.RigLegacyBindings.specs
-            .sortedBy { it.type.endsWith("/legacy") && it.type != "body/legacy" }
-            .firstOrNull { it.type != "face.depth-turn" && !dialog.availability(model, it.type).hidden }?.type
-        modifierAddition = modifierAddition?.copy(type = if (group) null else if (warp != null) "swing" else first,
+        modifierAddition = modifierAddition?.copy(type = if (group) null else if (warp != null) "swing" else null,
             group = if (group) io.github.psd2live.application.WorkspaceModifierPlan.RECOMMENDED_GROUP else null)
     }
 
@@ -51,7 +47,7 @@ internal class ModifierController(
         val workspace = readPort() ?: return
         modifierPreviewJob?.cancel()
         val sequence = ++modifierPreviewSequence
-        modifierAddition = dialog.copy(type = type, group = group, configuration = configuration, plan = null, preview = null, loading = true, error = null)
+        modifierAddition = dialog.copy(type = type, group = group, preset = preset, configuration = configuration, plan = null, preview = null, loading = true, error = null)
         modifierPreviewJob = scope.launch {
             try {
                 val (plan, preview) = withContext(Dispatchers.Default) {

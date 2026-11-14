@@ -42,10 +42,10 @@ internal fun modifierName(type: String): String {
     val registry = RigModifierAlgorithms.registry
     val stored = registry.storedType(type)
     if (stored != type) return tr("modifier.algorithm.version", modifierName(stored), requireNotNull(registry.defaultDefinition(type)).version)
-    if (type in setOf(RigSourceModifiers.EYE, RigSourceModifiers.BROW, RigSourceModifiers.MOUTH, RigSourceModifiers.FACE, RigSourceModifiers.BODY, RigSourceModifiers.HAIR)) {
+    if (type in RigSourceModifiers.PART_TYPES) {
         return tr("settings.rig.area.$type")
     }
-    ModifierPluginCatalog.algorithm(type)?.let { return it.second.name }
+    ModifierPluginCatalog.algorithm(type)?.takeUnless { it.first.reference.id.startsWith("builtin.") }?.let { return it.second.name }
     return when {
         type == RigSourceModifiers.SCAFFOLD -> tr("modifier.scaffold")
         '/' in type && RigLegacyBindings.find(type) == null -> type
@@ -53,6 +53,23 @@ internal fun modifierName(type: String): String {
         '.' in type -> tr("settings.rig.module.$type")
         else -> tr("modifier.type.$type")
     }
+}
+
+private fun modifierDescription(type: String, preset: String? = null): String? = when {
+    type == "simulation" && preset in setOf("front_hair", "back_hair") -> tr("modifier.simulation.$preset.hint")
+    type == "simulation" && preset == "clothing" -> tr("modifier.clothing.simulation.hint")
+    type == "physics" && preset == io.github.psd2live.core.PhysicsGenerator.EYE_JELLY_ID -> tr("settings.rig.module.eye.jelly.hint")
+    type == "physics" && preset == io.github.psd2live.core.PhysicsGenerator.FRONT_HAIR_ID -> tr("model.physics.frontHair.hint")
+    type == "physics" && preset == io.github.psd2live.core.PhysicsGenerator.BACK_HAIR_ID -> tr("model.physics.backHair.hint")
+    type == "motion" && preset != null -> if (preset.startsWith(WorkspaceModifierPlan.NATURAL_MOTION_PREFIX)) {
+        tr("settings.rig.base.motion.natural.hint")
+    } else {
+        tr("modifier.motion.preset.hint")
+    }
+    type in RigSourceModifiers.PART_TYPES -> tr("settings.rig.area.$type.hint")
+    '.' in type && RigLegacyBindings.find(type) != null -> tr("settings.rig.module.$type.hint")
+    type in WorkspaceModifierPlan.nativeTypes -> tr("modifier.type.$type.hint")
+    else -> null
 }
 
 internal fun contentName(state: PSD2LiveState, kind: String, id: String): String {
@@ -547,107 +564,248 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
         }
         return
     }
-    val available = if (groups) WorkspaceModifierPlan.groupCatalog.map { it.id }
-        else if (dialog.targets.all { it.kind == "mesh" }) WorkspaceModifierPlan.types.filterNot { it == RigSourceModifiers.SCAFFOLD } else listOf("swing") + ModifierPluginStore.shared.runnablePackages().filter { ModifierPluginStore.shared.resolution(it.reference).available }.flatMap { it.manifest.algorithms }.filter { algorithm -> dialog.targets.all { it.kind in algorithm.targets } }.map { it.type }
     val pluginRevision by ModifierPluginStore.shared.revision.collectAsState()
-    val foldedLegacyUiTypes = setOf(
-        "eye/fitted", "eye/legacy", "eye.wide", "eye.smile", "eye.emotion", "eye.gaze-lid",
-        "eye.highlight", "eye.lid-fade", "eye.squash", "eye.aftershock",
-        "brow/fitted", "brow/legacy", "brow.shape", "brow.spring", "brow.blink", "brow.lid-coupling",
-        "face/fitted", "face/legacy", "face.depth-turn", "face.neck",
-        "body/legacy", "body.bust", "body.arms",
-        "hair/chains", "hair/legacy",
-    )
-    val hideFoldedLegacy = !groups && RigSourceModifiers.EYE in available
+    val externalPlugins = remember(pluginRevision, dialog.targets) {
+        ModifierPluginStore.shared.runnablePackages()
+            .filter { !it.reference.id.startsWith("builtin.") && ModifierPluginStore.shared.resolution(it.reference).available }
+            .flatMap { it.manifest.algorithms }
+            .filter { algorithm -> dialog.targets.all { it.kind in algorithm.targets } }
+            .map { it.type }
+            .distinct()
+    }
+    val isMeshTarget = remember(dialog.targets) { dialog.targets.all { it.kind == "mesh" } }
+    val available = remember(isMeshTarget, externalPlugins) {
+        val builtins = if (isMeshTarget) {
+            (WorkspaceModifierPlan.sourceTypes + WorkspaceModifierPlan.nativeTypes)
+                .filterNot { it == RigSourceModifiers.SCAFFOLD }
+                .filter { ModifierPluginStore.shared.builtinsEnabled() }
+        } else {
+            WorkspaceModifierPlan.nativeTypes.filter { ModifierPluginStore.shared.builtinsEnabled() }
+        }
+        (builtins + externalPlugins).distinct()
+    }
+    val foldedLegacyUiTypes = remember {
+        ModifierPartConfig.features.values.flatMapTo(HashSet()) { it.values } + setOf(
+            "eye/fitted", "eye/legacy",
+            "brow/fitted", "brow/legacy",
+            "mouth/fitted", "mouth/legacy",
+            "face/fitted", "face/legacy", "face.depth-turn",
+            "body/legacy",
+            "hair/chains", "hair/legacy",
+        )
+    }
+    val hideFoldedLegacy = RigSourceModifiers.PART_TYPES.any { it in available }
     val visibleAvailable = available.filter { type ->
-        (groups || state.previewModel?.let { !dialog.availability(it, type).hidden } != false) &&
+        (state.previewModel?.let { !dialog.availability(it, type).hidden } != false) &&
             (!hideFoldedLegacy || type !in foldedLegacyUiTypes)
     }
     fun category(type: String): String = when {
-        groups -> type.substringBefore('-')
-        type == RigSourceModifiers.SCAFFOLD -> "structure"
-        type == "physics" || type == "simulation" || type == "swing" -> "advanced"
-        type == "motion" -> "expression"
-        type in setOf(RigSourceModifiers.EYE, RigSourceModifiers.BROW, RigSourceModifiers.MOUTH, RigSourceModifiers.FACE, RigSourceModifiers.BODY, RigSourceModifiers.HAIR) -> type
+        type in WorkspaceModifierPlan.nativeTypes -> "advanced"
+        type in RigSourceModifiers.PART_TYPES -> type
         else -> RigLegacyBindings.find(RigModifierAlgorithms.registry.storedType(type))?.area ?: "plugins"
     }
-    fun categoryName(id: String): String = when {
-        id == "legacy" || groups -> tr("modifier.algorithm.$id")
-        id == "structure" -> tr("modifier.scaffold")
-        id == "advanced" -> tr("modifier.advanced")
-        id == "plugins" -> tr("plugins.title")
-        id in WorkspaceModifierPlan.nativeTypes -> tr("modifier.type.$id")
+    fun categoryName(id: String): String = when (id) {
+        "advanced" -> tr("modifier.advanced")
+        "plugins" -> tr("plugins.title")
         else -> tr("settings.rig.area.$id")
     }
-    val categories = (visibleAvailable.map(::category) + listOf("hair", "eye", "expression", "outfit")).distinct().sortedBy { it == "advanced" }
-    var selectedCategory by remember { mutableStateOf(category(dialog.group ?: dialog.type ?: visibleAvailable.firstOrNull() ?: "simulation")) }
+    data class AddRow(val type: String, val preset: String?, val label: String, val description: String?, val count: Int)
+    fun rowsFor(cat: String): List<AddRow> {
+        val rows = mutableListOf<AddRow>()
+        fun add(type: String, preset: String?, label: String) {
+            val availability = state.previewModel?.let { dialog.availability(it, type, preset) }
+            if (availability?.hidden != true) {
+                rows += AddRow(type, preset, label, modifierDescription(type, preset), availability?.existingCount ?: 0)
+            }
+        }
+        if (isMeshTarget && cat == "outfit") {
+            add("simulation", "clothing", tr("modifier.clothing.simulation"))
+        }
+        if (isMeshTarget && cat == "hair") {
+            for (preset in listOf("front_hair", "back_hair")) {
+                add("simulation", preset, tr("modifier.simulation.$preset"))
+            }
+        }
+        if (isMeshTarget && cat in setOf("hair", "eye")) {
+            WorkspaceModifierPlan.physicsPresets().filter { preset ->
+                (preset.id == io.github.psd2live.core.PhysicsGenerator.EYE_JELLY_ID) == (cat == "eye")
+            }.forEach { preset ->
+                add("physics", preset.id, preset.name)
+            }
+        }
+        if (isMeshTarget && cat == "motion") {
+            state.previewModel?.let(WorkspaceModifierPlan::selectableMotionPresets).orEmpty().forEach { preset ->
+                val name = preset.removePrefix(WorkspaceModifierPlan.NATURAL_MOTION_PREFIX)
+                val label = if (name == preset) builtinMotionTitle(name) else "${tr("settings.rig.base.motion.natural")} · ${builtinMotionTitle(name)}"
+                add("motion", preset, label)
+            }
+        }
+        visibleAvailable.filter { category(it) == cat }.forEach { type ->
+            add(type, null, modifierName(type))
+        }
+        return rows
+    }
+    val categoryOrder = listOf("face", "eye", "brow", "mouth", "body", "hair", "outfit", "expression", "motion", "advanced", "plugins")
+    val rowsByCategory = categoryOrder.associateWith(::rowsFor).filterValues { it.isNotEmpty() }
+    val categories = rowsByCategory.keys.toList()
+    var selectedCategory by remember(categories) {
+        mutableStateOf(dialog.type?.let(::category)?.takeIf { it in rowsByCategory })
+    }
+    var selectedRow by remember { mutableStateOf<AddRow?>(null) }
+    val activeRows = selectedCategory?.let { rowsByCategory[it] }.orEmpty()
+    val activeType = dialog.type ?: selectedRow?.type
+    val activePreset = if (dialog.type != null) dialog.preset else selectedRow?.preset
+    val colors = LocalToolColors.current
+    val typography = LocalToolTypography.current
+    val paneHeight = 320.dp
     PressMenu(expanded = true, press = Offset.Zero,
-        onDismissRequest = { if (!dialog.committing) vm.dismissModifierAddition() }, width = 440.dp) {
-        Row(Modifier.fillMaxWidth().heightIn(max = 340.dp)) {
-            GlidingColumn(Modifier.width(132.dp).verticalScroll(rememberScrollState()), categories.size,
+        onDismissRequest = { if (!dialog.committing) vm.dismissModifierAddition() },
+        preferredMaxWidth = 540.dp) {
+        val opensLeft = LocalMenuOpensLeft.current
+        val categoryColumn: @Composable () -> Unit = {
+            GlidingColumn(Modifier.width(108.dp).heightIn(max = paneHeight).verticalScroll(rememberScrollState()), categories.size,
                 highlights = { !dialog.committing },
                 onHover = { if (!dialog.committing) selectedCategory = categories[it] }) { index ->
                 val id = categories[index]
                 FloatingMenuRow(categoryName(id), { selectedCategory = id }, selected = selectedCategory == id, bar = false,
                     enabled = !dialog.committing)
             }
-            key(selectedCategory) {
-                data class AddRow(val label: String, val action: () -> Unit, val selected: Boolean, val count: Int)
-                val rows = mutableListOf<AddRow>()
-                fun add(type: String, preset: String?, label: String, selected: Boolean = false, action: () -> Unit) {
-                    val availability = state.previewModel?.let { dialog.availability(it, type, preset) }
-                    if (availability?.hidden != true) rows += AddRow(label, action, selected, availability?.existingCount ?: 0)
-                }
-                if (selectedCategory == "outfit") add("simulation", "clothing", tr("modifier.clothing.simulation")) { vm.previewModifierAddition("simulation", null, preset = "clothing") }
-                if (selectedCategory == "hair") for (preset in listOf("front_hair", "back_hair")) {
-                    add("simulation", preset, tr("modifier.simulation.$preset")) { vm.previewModifierAddition("simulation", null, preset = preset) }
-                }
-                if (!groups && selectedCategory in setOf("hair", "eye")) {
-                    WorkspaceModifierPlan.physicsPresets().filter { preset ->
-                        (preset.id == io.github.psd2live.core.PhysicsGenerator.EYE_JELLY_ID) == (selectedCategory == "eye")
-                    }.forEach { preset ->
-                        add("physics", preset.id, preset.name) { vm.previewModifierAddition("physics", null, preset = preset.id) }
+        }
+        val itemColumn: @Composable () -> Unit = {
+            val cat = selectedCategory
+            if (cat != null) {
+                key(cat) {
+                    GlidingColumn(Modifier.width(188.dp).heightIn(max = paneHeight).verticalScroll(rememberScrollState()), activeRows.size,
+                        highlights = { !dialog.committing },
+                        onHover = { index ->
+                            val row = activeRows[index]
+                            if (!dialog.committing && (selectedRow?.type != row.type || selectedRow?.preset != row.preset)) {
+                                selectedRow = row
+                                vm.previewModifierAddition(row.type, null, preset = row.preset)
+                            }
+                        }) { index ->
+                        val row = activeRows[index]
+                        val isSelected = dialog.type == row.type && dialog.preset == row.preset
+                        FloatingMenuRow(
+                            label = row.label,
+                            onClick = {
+                                selectedRow = row
+                                vm.previewModifierAddition(row.type, null, preset = row.preset)
+                            },
+                            selected = isSelected,
+                            bar = false,
+                            enabled = !dialog.committing,
+                            trailing = if (row.count > 0) tr("modifier.add.existing", row.count) else null,
+                        )
                     }
-                }
-                if (!groups && selectedCategory == "expression") {
-                    val presets = remember(state.previewModel) { state.previewModel?.let(WorkspaceModifierPlan::selectableMotionPresets).orEmpty() }
-                    presets.forEach { preset ->
-                        val name = preset.removePrefix(WorkspaceModifierPlan.NATURAL_MOTION_PREFIX)
-                        add("motion", preset, if (name == preset) builtinMotionTitle(name) else "${tr("settings.rig.base.motion.natural")} · ${builtinMotionTitle(name)}") { vm.previewModifierAddition("motion", null, preset = preset) }
-                    }
-                }
-                visibleAvailable.filter { category(it) == selectedCategory }.forEach { type ->
-                    add(type, null, if (groups) tr("modifier.richness.${type.substringAfter('-')}") else modifierName(type),
-                        dialog.plan != null && (dialog.group ?: dialog.type) == type) {
-                        vm.previewModifierAddition(if (groups) null else type, if (groups) type else null)
-                    }
-                }
-                GlidingColumn(Modifier.weight(1f).verticalScroll(rememberScrollState()), rows.size,
-                    highlights = { !dialog.committing }) { index ->
-                    val (label, action, selected, count) = rows[index]
-                    FloatingMenuRow(label, action, selected = selected, bar = false, enabled = !dialog.committing,
-                        trailing = if (count > 0) tr("modifier.add.existing", count) else null)
                 }
             }
         }
-        if (dialog.loading) FloatingMenuSection(tr(if (dialog.committing) "modifier.adding" else "modifier.previewing"))
-        dialog.error?.let { FloatingMenuRow(tr("modifier.add"), {}, enabled = false, hint = it) }
-        val planned = dialog.plan?.get("plan")?.jsonArray.orEmpty()
-        if (planned.isNotEmpty()) {
-            FloatingMenuDivider()
-            Column(Modifier.fillMaxWidth().heightIn(max = 120.dp).verticalScroll(rememberScrollState())) {
-                planned.forEach { raw -> val item = raw.jsonObject
-                    FloatingMenuRow(modifierName(item.getValue("type").jsonPrimitive.content), {}, enabled = false,
-                        trailing = tr("modifier.plan.${item.getValue("disposition").jsonPrimitive.content}"))
+        val detailColumn: @Composable () -> Unit = {
+            if (activeType != null) {
+                val activeTitle = selectedRow?.takeIf { it.type == activeType && it.preset == activePreset }?.label
+                    ?: modifierName(activeType)
+                val activeDesc = selectedRow?.takeIf { it.type == activeType && it.preset == activePreset }?.description
+                    ?: modifierDescription(activeType, activePreset)
+                Column(Modifier.width(228.dp).height(paneHeight)) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(
+                            text = activeTitle,
+                            style = typography.body.copy(fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold),
+                            color = colors.textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (!activeDesc.isNullOrBlank()) {
+                            Text(
+                                text = activeDesc,
+                                style = typography.caption.copy(fontSize = 10.sp, lineHeight = 13.5.sp),
+                                color = colors.textMuted,
+                            )
+                        }
+                    }
+                    FloatingMenuDivider()
+                    Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(vertical = 4.dp)) {
+                        if (dialog.loading) {
+                            FloatingMenuSection(tr(if (dialog.committing) "modifier.adding" else "modifier.previewing"))
+                        }
+                        dialog.error?.let {
+                            Text(
+                                text = it,
+                                style = typography.caption.copy(fontSize = 10.sp),
+                                color = colors.warning,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            )
+                        }
+                        val planned = dialog.plan?.get("plan")?.jsonArray.orEmpty()
+                        if (planned.isNotEmpty()) {
+                            FloatingMenuSection(tr("modifier.details"))
+                            planned.forEach { raw ->
+                                val item = raw.jsonObject
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Text(
+                                        text = modifierName(item.getValue("type").jsonPrimitive.content),
+                                        style = typography.caption.copy(fontSize = 10.5.sp),
+                                        color = colors.textPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    Text(
+                                        text = tr("modifier.plan.${item.getValue("disposition").jsonPrimitive.content}"),
+                                        style = typography.caption.copy(fontSize = 9.5.sp),
+                                        color = colors.textMuted,
+                                        modifier = Modifier.padding(start = 6.dp),
+                                    )
+                                }
+                            }
+                            (dialog.type ?: planned.lastOrNull()?.jsonObject?.get("type")?.jsonPrimitive?.contentOrNull)?.let { previewType ->
+                                Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp)) {
+                                    ModifierBehaviorPreview(previewType)
+                                }
+                            }
+                        }
+                    }
+                    FloatingMenuDivider()
+                    Box(Modifier.fillMaxWidth().padding(6.dp)) {
+                        CompactButton(
+                            text = tr("modifier.add"),
+                            onClick = vm::confirmModifierAddition,
+                            enabled = !dialog.loading && dialog.error == null && dialog.plan?.get("entries")?.jsonArray?.isNotEmpty() == true,
+                            isPrimary = true,
+                            height = 24.dp,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
             }
-            (dialog.type ?: planned.lastOrNull()?.jsonObject?.get("type")?.jsonPrimitive?.contentOrNull)?.let { previewType ->
-                Box(Modifier.fillMaxWidth().padding(horizontal = Spacing.Margin)) {
-                    ModifierBehaviorPreview(previewType)
+        }
+        Row(Modifier.height(IntrinsicSize.Min)) {
+            if (opensLeft) {
+                if (activeType != null) {
+                    detailColumn()
+                    Box(Modifier.width(1.dp).fillMaxHeight().background(colors.divider))
+                }
+                if (selectedCategory != null) {
+                    itemColumn()
+                    Box(Modifier.width(1.dp).fillMaxHeight().background(colors.divider))
+                }
+                categoryColumn()
+            } else {
+                categoryColumn()
+                if (selectedCategory != null) {
+                    Box(Modifier.width(1.dp).fillMaxHeight().background(colors.divider))
+                    itemColumn()
+                }
+                if (activeType != null) {
+                    Box(Modifier.width(1.dp).fillMaxHeight().background(colors.divider))
+                    detailColumn()
                 }
             }
-            FloatingMenuRow(tr("modifier.add"), vm::confirmModifierAddition,
-                enabled = !dialog.loading && dialog.error == null && dialog.plan?.get("entries")?.jsonArray?.isNotEmpty() == true)
         }
     }
 }

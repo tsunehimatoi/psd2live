@@ -50,10 +50,11 @@ internal fun PressMenu(
     press: Offset,
     onDismissRequest: () -> Unit,
     width: Dp? = null,
+    preferredMaxWidth: Dp? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     TreeContextMenu(expanded, onDismissRequest, clickOffset = press, modifier = Modifier.heightIn(max = 560.dp),
-        minWidth = width ?: 0.dp, maxWidth = width ?: Dp.Unspecified) {
+        minWidth = width ?: 0.dp, maxWidth = width ?: Dp.Unspecified, preferredMaxWidth = preferredMaxWidth) {
         Column(Modifier.verticalScroll(rememberScrollState()), content = content)
     }
 }
