@@ -113,9 +113,18 @@ class MouthCheekLidAlgorithm : ReadingModifierAlgorithmPlugin {
             val carrier = carrierNames.getValue(target.id).jsonObject
             val nativeId = carrier.getValue("id").jsonPrimitive.content
             val name = carrier.getValue("name").jsonPrimitive.content
+            val branch = input.parentsOfMesh(target.id).mapTo(hashSetOf()) { it.id }
+            // Shared gaze is keyed on the iris carriers, which need not be ancestors
+            // of this lid. Retain those ordinary axes as read-only lowering context.
+            val contextDeformers = input.deformers.map { deformer ->
+                if (deformer.id in branch) deformer else when (deformer) {
+                    is Deformer.Warp -> deformer.copy(shapes = emptyList())
+                    is Deformer.Rotation -> deformer.copy(shapes = emptyList())
+                }
+            }
             val model = PuppetIr.toPuppet(RigIR(input.canvas, parameters,
                 meshes = listOf(mesh.copy(id = nativeId), mouthMesh.copy(shapes = emptyList())),
-                deformers = input.parentsOfMesh(target.id)))
+                deformers = contextDeformers))
             val drawable = model.drawables.first()
             val mapping = requireNotNull(drawableSpaceMapping(model, emptyMap(), drawable.id))
             val world = mapping.localToWorld(requireNotNull(mesh.geometry).positions.shared())
@@ -136,7 +145,9 @@ class MouthCheekLidAlgorithm : ReadingModifierAlgorithmPlugin {
             val lowered = BlendShapeLowering({ _, _ -> name }, checkpoint).lawful(model.copy(
                 drawables = listOf(drawable.copy(blendShapes = drawable.blendShapes + newShapes)) + model.drawables.drop(1)))
             require(lowered.parameters == model.parameters && lowered.deformers.take(model.deformers.size) == model.deformers) {
-                "Cheek and lid v2 cannot change existing parameter kinds or parent deformers"
+                "Cheek and lid v2 cannot change existing parameter kinds or parent deformers: " +
+                    "parameters=${lowered.parameters.filter { it !in model.parameters }.map { it.id }}, " +
+                    "deformers=${lowered.deformers.take(model.deformers.size).filter { it !in model.deformers }.map { it.id }}"
             }
             val added = lowered.deformers.drop(model.deformers.size)
             val remap = ModelIdRemap(deformers = added.associate {

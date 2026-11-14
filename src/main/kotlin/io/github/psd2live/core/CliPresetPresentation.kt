@@ -6,6 +6,7 @@ import io.github.psd2live.core.modifier.ModifierStatus
 import io.github.psd2live.core.modifier.RigModifierStack
 import org.umamo.runtime.model.DeformerId
 import org.umamo.runtime.model.ParameterId
+import org.umamo.runtime.model.PuppetModel
 
 /** Adapts a transient raw PSD result to its public export layout. */
 internal object CliPresetPresentation {
@@ -39,7 +40,11 @@ internal object CliPresetPresentation {
     private fun restoreGeneratedFrameIds(preview: RigPreviewModel): RigPreviewModel {
         val stack = RigModifierStack.fromJson(requireNotNull(preview.config.rigEdits.modifierStack))
         val rig = preview.rig
-        val model = rig.puppet
+        val restored = restoreGeneratedFrameIds(rig.puppet, stack)
+        return if (restored === rig.puppet) preview else preview.copy(rig = rig.copy(puppet = restored))
+    }
+
+    internal fun restoreGeneratedFrameIds(model: PuppetModel, stack: RigModifierStack): PuppetModel {
         // Lowered mesh carriers are discovered during evaluation. Apply their historical names only
         // to the export graph, leaving the stack's own intermediate references intact.
         val aliases = model.deformers.mapNotNull { deformer ->
@@ -50,11 +55,22 @@ internal object CliPresetPresentation {
             require(!canonical.startsWith("SourceChain:")) { "Missing source alias for $canonical" }
             deformer.id to DeformerId(canonical)
         }.toMap()
-        if (aliases.isEmpty()) return preview
-        require(model.deformers.map { aliases[it.id] ?: it.id }.distinct().size == model.deformers.size) {
+        if (aliases.isEmpty()) return model
+        // Independently scoped bindings may lower the same mesh more than once.
+        // Keep every carrier and allocate export names in stable graph order,
+        // reserving existing and requested names before numbering duplicates.
+        val used = model.deformers.mapNotNullTo(hashSetOf()) { it.id.takeUnless(aliases::containsKey) }
+        val reserved = used + aliases.values
+        val unique = aliases.mapValues { (_, canonical) ->
+            if (used.add(canonical)) canonical else {
+                generateSequence(2) { it + 1 }.map { DeformerId("${canonical.raw}_$it") }
+                    .first { it !in reserved && used.add(it) }
+            }
+        }
+        require(model.deformers.map { unique[it.id] ?: it.id }.distinct().size == model.deformers.size) {
             "Raw PSD export frame IDs conflict"
         }
-        return preview.copy(rig = rig.copy(puppet = ModelIdRemap(deformers = aliases).model(model)))
+        return ModelIdRemap(deformers = unique).model(model)
     }
 
     private fun orderExportMetadata(preview: RigPreviewModel, moduleIds: List<ParameterId>, config: PipelineConfig): RigPreviewModel {

@@ -155,9 +155,11 @@ class WorkspaceLegacyBindingTest {
         val source = unsided.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
         val (initialized, preview) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
         val stack = RigModifierStack.fromJson(assertNotNull(initialized.rigEdits.modifierStack))
-        assertEquals(1, stack.instances.single { it.type == "face" }.version)
-        assertEquals(1, stack.instances.single { it.type == "eye" }.version)
-        assertTrue(stack.instances.any { it.type == "brow" })
+        // Coupled consumers may require individual child capabilities, so safe
+        // initialization need not fold every base into a part facade.
+        assertEquals(1, stack.instances.single { it.type in setOf("face", "face/fitted") }.version)
+        assertEquals(1, stack.instances.single { it.type in setOf("eye", "eye/fitted") }.version)
+        assertTrue(stack.instances.any { it.type in setOf("brow", "brow/fitted") })
         assertEquals(setOf("iris", "iris-right"), preview.rig.layerIdByDrawableId.values.filter { it.startsWith("iris") }.toSet())
         assertTrue(preview.rig.puppet.drawables.isNotEmpty())
         for (model in listOf(preview, native(source, source.config().recipe))) {

@@ -1295,7 +1295,10 @@ internal class RigModifierSource(
                 inner, targetLayers.mapValues { (_, layer) -> requireNotNull(boundFitted).follow(layer) },
                 io.github.psd2live.i18n.tr(module.defines.single().nameKey), folder)
             RigModules.MOUTH_SPRING -> io.github.psd2live.algorithms.binding.MouthSpringAlgorithm.context(
-                inner, lippedSkin, io.github.psd2live.i18n.tr(module.defines.single().nameKey), folder, io.github.psd2live.i18n.tr("model.physics.mouthSpring"))
+                // Spring captures only the jaw overshoot. Tongue motion belongs to its own
+                // binding and does not affect the neutral/open jaw poses used by spring.
+                boundInputs.copy(source = boundInputs.source?.let { it.copy(options = it.options.copy(tongue = false)) }).encode(),
+                lippedSkin, io.github.psd2live.i18n.tr(module.defines.single().nameKey), folder, io.github.psd2live.i18n.tr("model.physics.mouthSpring"))
             RigModules.MOUTH_DEPTH -> ModifierAlgorithmContext(buildJsonObject {
                 put("schema", "mouth-depth/1")
                 put("source", inner.values)

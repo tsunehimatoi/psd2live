@@ -205,6 +205,14 @@ class WorkspacePresetInitializeTest {
             )
             val stack = RigModifierStack.fromJson(requireNotNull(initialized.rigEdits.modifierStack))
             assertTrue(stack.instances.isNotEmpty(), "Expected non-empty stack for $mode")
+            if (mode == WorkspaceInitialModifiers.RECOMMENDED) {
+                val model = builder.build(initialized).rig.puppet
+                val parameters = model.parameters.mapTo(hashSetOf()) { it.id.raw }
+                assertTrue("ParamTongueOut" in parameters, "Spring capture must preserve the enabled tongue binding")
+                assertTrue("ParamMouthSpring" in parameters, "Tongue capture must preserve the enabled spring binding")
+                assertTrue(model.drawables.any { drawable -> drawable.blendShapes.any { it.parameterId.raw == "ParamTongueOut" } },
+                    "The tongue binding must still emit motion")
+            }
         }
     }
 

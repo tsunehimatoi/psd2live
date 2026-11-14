@@ -292,9 +292,11 @@ internal object RigLegacyBindings {
             spec.type == "brow.lid-coupling" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
                 io.github.psd2live.algorithms.binding.BrowLidAlgorithm(),
                 io.github.psd2live.algorithms.binding.BrowLidAlgorithm.VERSION)
-            spec.type == "brow.blink" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+            spec.type == "brow.blink" -> object : ContextualModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
                 io.github.psd2live.algorithms.binding.BrowBlinkAlgorithm(),
-                io.github.psd2live.algorithms.binding.BrowBlinkAlgorithm.VERSION)
+                io.github.psd2live.algorithms.binding.BrowBlinkAlgorithm.VERSION), ModifierOptionalUpstream {
+                override val optionalUpstream = io.github.psd2live.algorithms.binding.BrowBlinkAlgorithm.optionalUpstream
+            }
             spec.type == "body/legacy" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
                 io.github.psd2live.algorithms.binding.LegacyBodyAlgorithm(), 1)
             spec.type == "body.bust" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
