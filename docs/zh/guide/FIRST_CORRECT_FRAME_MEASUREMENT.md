@@ -36,11 +36,11 @@ $env:PSD2LIVE_TOOLS = '1'
 
 结果分别位于 `build/tools/first-correct-frame-check/report.json` 和 `build/tools/first-correct-frame/report.json`。普通 `FirstCorrectFrameProbeTest` 不初始化 GLFW，检查过期修订、候选和模型身份、错误像素、重复完成及统计规则。
 
-工具仅调用已有 `RigBuildProfile.stage/add`，不修改 B 会话正在扩展的 profiler。单样本报告已携带 `task/startRevision/candidate/scenario/meshes/vertices`；集成 B 的 `measure(Operation(...))` 时，可在 `sample` 中捕获快照后包围后续渲染。捕获耗时仍由工具的起始时间覆盖，不应把 `measure` 的较晚起点冒充完整捕获延迟。
+离屏工具通过 `RigBuildProfile.stage/add` 记录阶段，单样本报告携带 `task/startRevision/candidate/scenario/meshes/vertices`。阶段计时和工具的完整区间起点不同：捕获耗时由工具起始时间覆盖，不能把捕获之后开始的 profiler 区间当作完整捕获延迟。
 
 ## 生产预览的窗口 GPU 完成回执
 
-生产路径已接线，当前工作树已运行真实窗口/GPU 功能 smoke（见末节），尚未执行整合基线的 30 次正式采样。本节指标名称为**模型激活捕获至窗口 GPU 完成**。起点是 VM 准备激活模型、捕获已提交工作区之前，不是编辑命令发起时刻；模型构建已完成，不能据此计算完整编辑延迟。
+生产路径已接线，真实窗口/GPU 功能证据见末节；尚未执行整合基线的 30 次正式性能采样。本节指标名称为**模型激活捕获至窗口 GPU 完成**。起点是 VM 准备激活模型、捕获已提交工作区之前，不是编辑命令发起时刻；模型构建已完成，不能据此计算完整编辑延迟。
 
 1. `refreshSdkSession` 记录单调时钟，使用 `captureTextures()` 的原子快照检查 `preview === capture.model`。只有匹配时才携带该快照的 `revision/state`。每次激活分配不可复用的 `candidate`；未知来源的编辑草稿仍有候选身份以拒绝过期帧，但不报告修订延迟。延迟加载保留原令牌。
 2. `PreviewSessions.load` 向 Cubism 和 P2LRT 传递相同令牌，包括后端回退和多窗口懒加载。Cubism 仅在加载/更新成功后安装令牌；P2LRT 从 `PendingModel` 携带到实际成功的 `Loaded`。失败不会将新身份赋给旧模型。
@@ -65,14 +65,14 @@ PresentationMeasurements.onCompleted = null
 - 接线仅证明同一已提交模型候选的预览纹理经过窗口消费及 GPU 完成，不自动验证像素颜色、裁剪可见区域、遮挡或业务视觉正确性；`verifyWindowPixels` 另行使用可区分修订的已知图案，检查实际窗口 Surface 的像素。编辑画布的离屏工具不因此变成窗口测量工具。
 - 不覆盖窗口交换、系统桌面合成或显示器扫描，不能称为“已显示到屏幕”。同步 GPU 等待的开销包含在本指标中。
 - `candidate` 是本次模型激活身份，尚未与 `RigBuildProfile.Operation` 的候选身份建立映射；不能拼接两者得到完整编辑延迟。`revision/state` 可以用于诊断，但不能替代这种关联。
-- 钩子依赖仓库当前 Skiko 0.144.6 的 `drawContent/picture/pictureLock`。结构变化或上下文不可用会关闭回执并记录原因，不回退成录制时间。当前工作树已完成真实驱动、窗口回放和反射接线的功能 smoke；最终整合基线仍须在独占窗口中验收。
+- 钩子依赖仓库当前 Skiko 0.144.6 的 `drawContent/picture/pictureLock`。结构变化或上下文不可用会关闭回执并记录原因，不回退成录制时间。真实驱动、窗口回放和反射接线已有功能检查证据；正式性能验收仍须在最终整合基线和独占窗口中执行。
 - 无已提交捕获、预览未挂载、软件绘制、无匹配帧或被更新修订淘汰时不产生成功样本，验收工具应将其记为未完成，不能记作零延迟。
 
-无 GPU 回归覆盖令牌淘汰、视图关闭/重开、逐次纹理身份、发布与 GPU 完成乱序、重复完成、关闭测量、未知修订及观察者异常隔离，并以模拟 Cubism API 检查实际 session 的相同 bundle 重载、旧交付淘汰和加载失败。P2LRT 和真实窗口接线已另行完成下述功能 smoke；实际窗口像素通过下述独立 opt-in 入口验收，正式性能验收仍待执行。
+无 GPU 回归覆盖令牌淘汰、视图关闭/重开、逐次纹理身份、发布与 GPU 完成乱序、重复完成、关闭测量、未知修订及观察者异常隔离，并以模拟 Cubism API 检查实际 session 的相同 bundle 重载、旧交付淘汰和加载失败。P2LRT 和真实窗口接线已有下述功能检查证据；实际窗口像素通过下述独立 opt-in 入口验收，正式性能验收仍待执行。
 
 ## 独占窗口验收驱动
 
-`WindowActivationTool` 已完成下述真实窗口功能 smoke，正式性能采样仍需单独安排。它启动完整的 `PSD2LiveApp`，使用合成的四块彩色图案，经 `DesktopWorkspace` 安装原子工作区快照，再通过实际 VM、`WorkspaceRenderCoordinator`、P2LRT、`CanvasViewportComposable` 和 Skiko 的 `drawContent` 回放回执验收。它不调用离屏探针、不直接制造 GPU 完成回执。
+`WindowActivationTool` 提供真实窗口功能检查与独立性能采样入口，已有功能证据见末节；正式性能采样仍需单独安排。它启动完整的 `PSD2LiveApp`，使用合成的四块彩色图案，经 `DesktopWorkspace` 安装原子工作区快照，再通过实际 VM、`WorkspaceRenderCoordinator`、P2LRT、`CanvasViewportComposable` 和 Skiko 的 `drawContent` 回放回执验收。它不调用离屏探针、不直接制造 GPU 完成回执。
 
 每个样本先生成模型，再安装不同颜色的源图；模型生成不计入 activation 指标。激活在同一 EDT turn 内连续执行两次，前一候选被取代；验收要求后一候选的 `revision/state/candidate/viewId/capturedAt` 完全匹配。上一轮真实帧还会重新送给 production coordinator 和 VM，确认不能覆盖新帧流。普通测试中的假回执仅用于身份校验和队列边界的无 GPU 单元测试，不进入窗口采样。
 
@@ -101,33 +101,20 @@ $env:PSD2LIVE_WINDOW_SAMPLES = '30'
 # 普通 Compose 回放路径另跑一轮，先保存前一轮报告，再设 PSD2LIVE_COMPOSITOR=0。
 ```
 
-`PSD2LIVE_WINDOW_TIMEOUT_SECONDS` 默认 30，允许 5–120 秒。准备的 DLL 来自主检出已有产物，仅作只读复制，ABI 已检查为 1.4（当前绑定最低 1.1），SHA-256 为 `09c517548a6daae7ac2f900f387ca89011a3d1bc1e432592de32402cbf1eab15`；主检出已在修订 `175b1672d8ab081ec9e9578296b46b6ea186f0b1`、runtime tree `cd24a07e9e018d894ffd718cfe7fb42422cbb5e3` 上成功执行 `cargo build --release --lib --locked -j 2`，Cargo 确认 optimized release 产物对当前源码和锁文件为 fresh，产物哈希与本地副本一致。来源记录在同目录 `provenance.json`，构建证据位于主检出的 `build/architecture-acceptance/runtime-build.log` 和 `runtime-provenance.json`。这项校验只确认 native 构建来源；实际窗口、GPU 及像素验收仍须分别执行。
+`PSD2LIVE_WINDOW_TIMEOUT_SECONDS` 默认 30，允许 5–120 秒。正式采样前核对 `PSD2LIVE_RUNTIME` 指向的 native DLL、ABI 与源码来源，并保留构建及哈希记录；native 来源校验不代替实际窗口、GPU 或像素验收。下述功能检查使用的构建来源记录位于主检出的 `build/architecture-acceptance/runtime-build.log` 和 `runtime-provenance.json`。
 
-## 2026-11-14 功能 smoke 证据
+## 2026-11-14 窗口功能验收证据
 
-在 `07574b8e` 基础上执行功能检查，并修正工具的 compositor 初始化顺序：`GraphicsSettings` 在首次访问时读取启动属性，故 `psd2live.compositor` 必须在 `SkiaGpu.requestOpenGl()` 之前设置。工具现在同时检查并记录请求值、实际 `composited` 状态和合成帧计数；曾出现的“请求关闭但实际开启”结果作为失败证据保留，未计为关闭路径通过。
+功能证据集中归档在主检出的 `build/architecture-acceptance/window-callback-locks/`：`summary.json` 汇总两种模式，`compositor-1/` 与 `compositor-0/` 各保存 `report.json`、三张窗口 PNG、运行日志和 JUnit XML；根目录另保存相关无 GPU 检查的日志与 XML。报告中的原始工作树路径是采样时的来源记录，查阅归档文件使用上述相对目录。
 
-- 离屏 `FirstCorrectFrameTool.verifyReadback`：三个规模、两种模式共 12 帧通过已知像素校验。
-- `WindowActivationTool.smoke`：compositor=1 和 0 分别执行，均完成 1 次预热和 2 次检查激活，回执身份、被取代候选和旧帧拒绝检查通过，实际模式与请求一致，窗口自动关闭。
-- GPU 为 NVIDIA RTX 4080 Laptop，驱动报告 617.42；P2LRT DLL 哈希与上述已验证构建相同。本轮 `preActivationReceipts` 为空，未复现导入前回执竞态。
-- 检查期间有并行 CPU 构建，所有时间均不作性能验收数据，不输出性能分位数。窗口 smoke 只证明 activation→window GPU 身份及完成回执；窗口像素仍未核验，不能与离屏像素检查合称完整 first correct frame 验收。
+本轮复核在 coordinator 和窗口回放锁的回调边界修正后执行。coordinator 先更新帧流并解锁，再标记发布；窗口钩子在 `pictureLock` 内固定 GPU 完成时间与 CPU 像素，解锁后派发完成通知和像素观察者。迟到通知仍须通过候选有效性检查。轻量 `request` 谓词及必需的 GPU 同步／读回仍位于回放上下文。
 
-独立报告、日志、JUnit 结果与失败留档位于当前工作树 `build/verification/window-functional-smoke/`。`PSD2LIVE_TOOLS=1` 已使 Gradle 测试任务禁用缓存和 up-to-date 替代，不需要用 `--rerun-tasks` 重编译全部依赖。正式 30 次采样仍等待最终整合基线及独占窗口。
+- 14 项相关无 GPU 检查通过。
+- `WindowActivationTool.verifyWindowPixels` 在 compositor=1、0 下分别完成 1 次预热和 2 次检查激活；两份报告均为 `complete=true`、`benchmark=false`，实际后端为 P2LRT。
+- 共保留 6 张实际窗口 Surface 读回图，每种模式检查 108 个像素，共 216 个。每块图案的颜色、视口位置及首帧回执身份通过检查，并拒绝上一修订颜色；没有用后续正确帧替代首帧。
+- 每种模式各进行 6 次 `Thread.holdsLock` 观察者检查，receipt 和 pixel 回调均未持有 coordinator 锁或 `pictureLock`。结论仅覆盖这两个明确检查的锁，不泛化为所有回调均在所有锁外。
+- 两轮 `preActivationReceipts` 均为空，未在这些样本中复现导入前回执竞态。请求与实际 compositor 模式一致；启动配置须在 `SkiaGpu.requestOpenGl()` 之前设置。
 
+这些是静态四块已知图案的功能证据，不覆盖整个模型的遮罩、变形、物理、所有遮挡情形，也不证明窗口交换或显示器扫描完成。未执行至少 30 次的正式性能采样，不提供性能分位数；像素读回和 PNG 编码会扰动时间。
 
-## 2026-11-14 实际窗口像素功能验收
-
-在上述 smoke 之后新增 `verifyWindowPixels` 并分别执行 compositor=1、0。两次均通过：各 1 次预热和 2 次检查激活，共 6 张实际窗口 Surface 读回图、24 个图案区域、216 个像素检查。每块中心颜色与预期完全相同，3×3 区域均通过每通道容差 2；上一修订颜色均被拒绝。每次像素证据均匹配原始首个 GPU 回执的修订、状态、候选、视图和 GPU 完成时间，没有用后续帧替代。
-
-窗口 Surface 为 1779×1144，预览视口为 `(308,78)` 起的 754×724 区域。完整 PNG 已查看，确认包含实际应用面板、视口及图案，而非离屏预览纹理。两种模式请求值与实际值一致；关闭模式的合成帧计数为零。两轮 `preActivationReceipts` 仍为空，窗口均自动关闭。无 GPU 的 17 项检查也通过，覆盖像素错误、旧修订、平移后的视口、裁剪拒绝、帧身份和依赖边界。
-
-证据分别保存在当前工作树 `build/verification/window-pixel-smoke/compositor-1/` 和 `compositor-0/`，每组含 `report.json`、三个窗口 PNG、日志和 JUnit XML；汇总为同级 `summary.json`。这些是功能证据，未执行 30 次性能采样，不输出性能分位数。读回和 PNG 编码会扰动运行时间。
-
-本验收只证明静态四块已知图案在实际窗口目标中的颜色及定位，不覆盖整个模型的遮罩、变形、物理、所有遮挡情形，也不证明窗口交换或显示器扫描完成。公开编辑请求到候选构建/提交的关联尚待独立接入；本工具仍以模型激活捕获为起点，`fullEditLatencyMeasured=false`。
-
-
-### 回调上层锁复核
-
-随后发现 token/frame 自身解锁并不足以保证调用方解锁：coordinator 原先在 `synchronized(lock)` 内调用 `drawn.publish()`，GPU 结束通知也在 `pictureLock` 内派发。现已将 coordinator 的完成通知移至帧流发布和解锁之后；窗口完成数据与 CPU 像素在回放锁内固定，完成通知及像素观察者在解锁后消费，保存原 GPU 时间。候选在延迟派发前失效时仍不能完成。
-
-14 项相关无 GPU 测试通过。两种 compositor 模式重新运行实际窗口像素入口，各完成 3 帧和 6 次 `Thread.holdsLock` 观察者检查；receipt、pixel 回调均未持有 coordinator 锁或 pictureLock，像素及首帧身份检查保持通过。证据在 `build/verification/window-callback-locks/`。该结论覆盖这两个明确检查的上层锁；轻量 `request` 谓词及必需的 GPU 同步/读回仍在回放上下文，不作“所有回调均在所有锁外”的泛化承诺。
+公开编辑请求已有 `WorkspaceEditCorrelation`、`WorkspaceBuildCorrelation` 和发布观测身份，但本工具仍在模型构建完成后从激活捕获开始，报告为 `fullEditLatencyMeasured=false`、`editStartedAtNanos=null`。不能将编辑、构建或发布观测与本次 activation 样本直接拼接成完整 edit→window 延迟；真实编辑链路的性能结果须由独立验收提供。

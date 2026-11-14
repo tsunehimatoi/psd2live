@@ -116,12 +116,13 @@ PSD2LIVE_TOOLS=1 PSD2LIVE_SAMPLE=ds ./gradlew test --tests "io.github.psd2live.t
 
 首帧工具的测量范围不同：离屏工具包含 GPU 同步和读回，不包含模型生成、GL context 创建、Compose 合成或窗口呈现；`renderer_cold` 仅指新建 renderer，不是进程冷启动。窗口工具经真实应用、视口和 Skiko 回放取得 GPU 完成回执，当前限定 P2LRT；模型生成已完成，JVM 与窗口已热，不覆盖窗口交换、系统桌面合成或显示器扫描。两项指标均不是完整编辑延迟，也不能直接与算法生成耗时拼接。
 
-`verifyReadback` 和 `smoke` 用于功能检查，不输出性能分位数；`measure` 每种场景／模式采集至少 30 个有效样本，预热样本不纳入统计。超时或校验失败不记作零延迟，不输出成功统计。窗口工具须在图形初始化前配置 `PSD2LIVE_COMPOSITOR=1` 或 `0`，分别运行并核对实际模式，切换前保存报告。GPU／性能采样应独占运行，避免与构建或其他性能任务并行。入口参数与完整边界见[首个正确画面的测量边界](FIRST_CORRECT_FRAME_MEASUREMENT.md)。
+`verifyReadback`、`smoke` 和 `verifyWindowPixels` 用于功能检查，不输出性能分位数；`measure` 每种场景／模式采集至少 30 个有效样本，预热样本不纳入统计。超时或校验失败不记作零延迟，不输出成功统计。窗口工具须在图形初始化前配置 `PSD2LIVE_COMPOSITOR=1` 或 `0`，分别运行并核对实际模式，切换前保存报告。窗口像素读回及 PNG 编码会扰动耗时，该入口不作为性能样本，也不测量窗口交换或显示器扫描。GPU／性能采样应独占运行，避免与构建或其他性能任务并行。入口参数与完整边界见[首个正确画面的测量边界](FIRST_CORRECT_FRAME_MEASUREMENT.md)。
 
 | 工具 | 内容 | 输出 |
 | --- | --- | --- |
 | `FirstCorrectFrameTool.verifyReadback` / `.measure` | 三档合成网格的已知像素检查与捕获修订至离屏编辑画布 GPU 读回完成的测量，分别覆盖新建和预热后的 renderer | `first-correct-frame-check/report.json`、`first-correct-frame/report.json` |
 | `WindowActivationTool.smoke` / `.measure` | 真实应用窗口中，P2LRT 模型激活捕获至窗口 GPU 完成的回执检查与测量；分别运行两种 compositor 模式 | `window-activation-smoke/report.json`、`window-activation/report.json` |
+| `WindowActivationTool.verifyWindowPixels` | 读回实际 Skiko 窗口 Surface，核对四块图案的修订颜色、视口位置及首个 GPU 回执身份；两种 compositor 模式分别执行，仅作功能验收 | `window-activation-pixels/report.json`、`window-activation-pixels/window-*.png` |
 | `DeformerDeletionVisualTool` | 合成非对称网格在删除父变形器前后及 MOC3 导出读回后的剪影对照 | `deformer-deletion/comparison.png` |
 | `MotionSheetTool.motions` | 每个预设动作按时间展开的拼图、待机循环、呼吸前后与差分图、身体 Z | `motion-sheet/<示例>-*.png` |
 | `MotionSheetTool.body` | 身体 X × 身体 Y、腿部和上半身特写、前后倾、大小变、腿部姿势，分别为无骨架和自动骨架 | `motion-sheet/<示例>-{stance,lean,size,legposes}*.png` |
