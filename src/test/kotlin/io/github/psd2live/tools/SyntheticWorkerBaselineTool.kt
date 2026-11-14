@@ -25,6 +25,7 @@ class SyntheticWorkerBaselineTool {
         try {
             for ((size, meshes, vertices) in listOf(Triple("small", 4, 64), Triple("medium", 16, 256), Triple("large", 64, 1024))) {
                 if (smoke && size != "small") continue
+                report.context("$size/setup")
                 val root = Files.createTempDirectory("synthetic-worker-$size-")
                 val preferences = Preferences.userRoot().node("psd2live-tools/baseline/${UUID.randomUUID()}")
                 val store = ModifierPluginStore(root.resolve("installed"), preferences)
@@ -39,6 +40,7 @@ class SyntheticWorkerBaselineTool {
                     var session = ModifierPluginWorkers.openSession(store)
                     try {
                         fun execute(label: String, ordinal: Int, rig: RigIR) {
+                            report.context("$size/$label/$ordinal")
                             val sample = RigBuildProfile.measure(RigBuildProfile.Operation("$size-$label-$ordinal", "$ordinal",
                                 "${ordinal + 1}", "$size/$label", meshes, meshes.toLong() * vertices)) {
                                 val result = ModifierPluginWorkers.evaluate(entry, algorithm, rig, instance, {}, store, session = session)
@@ -67,6 +69,7 @@ class SyntheticWorkerBaselineTool {
                                 geometry = geometry.copy(positions = Floats.wrap(positions)))) + input.meshes.drop(1)))
                         }
                         repeat(5) { cycle ->
+                            report.context("$size/release-before-reopen/$cycle")
                             session.close()
                             session.awaitReleased()
                             ModifierPluginWorkers.awaitRetirements(store)
@@ -78,6 +81,10 @@ class SyntheticWorkerBaselineTool {
                     assertTrue(ModifierPluginWorkers.cacheSnapshots(store).isEmpty())
                 } finally { preferences.removeNode(); ModifierPluginStore.deleteTree(root) }
             }
+            report.complete()
+        } catch (failure: Throwable) {
+            report.failed(failure)
+            throw failure
         } finally { RigBuildProfile.recording = wasRecording; report.close() }
     }
 
@@ -94,10 +101,14 @@ class SyntheticWorkerBaselineTool {
 }
 
 /** Streams samples without retaining their return values; summary keeps only elapsed times. */
-internal class SyntheticBaselineReport(name: String, scope: String) : AutoCloseable {
-    private val directory = output(name)
+internal class SyntheticBaselineReport(name: String, scope: String,
+                                       private val directory: java.io.File = output(name)) : AutoCloseable {
     private val samples = directory.resolve("samples.jsonl").bufferedWriter()
     private val times = linkedMapOf<String, MutableList<Double>>()
+    private var complete = false
+    private var closed = false
+    private var context = "initialization"
+    private var failure: JsonObject? = null
     private val metadata = linkedMapOf("scope" to scope, "jdk" to System.getProperty("java.runtime.version"),
         "os" to "${System.getProperty("os.name")} ${System.getProperty("os.version")} ${System.getProperty("os.arch")}",
         "processors" to Runtime.getRuntime().availableProcessors().toString(),
@@ -106,6 +117,8 @@ internal class SyntheticBaselineReport(name: String, scope: String) : AutoClosea
         "cold_definition" to "new worker/session in the same JVM; not cold OS page cache or JVM startup",
         "memory_scope" to "JVM heap/nonheap and explicit retained cache accounting; not process RSS or proof of no leak")
     init {
+        // Invalidate an earlier successful report even if this run exits before close().
+        writeSummary()
         fun git(vararg args: String): String {
             val process = ProcessBuilder(listOf("git") + args).redirectErrorStream(true).start()
             check(process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) { "Git metadata timed out" }
@@ -115,6 +128,18 @@ internal class SyntheticBaselineReport(name: String, scope: String) : AutoClosea
         metadata["tracked_source_dirty"] = git("status", "--porcelain", "--untracked-files=no").isNotBlank().toString()
     }
     fun metadata(key: String, value: String) { metadata[key] = value }
+    fun context(value: String) { context = value }
+    fun complete() {
+        check(!closed && failure == null)
+        complete = true
+    }
+    fun failed(error: Throwable) {
+        complete = false
+        failure = buildJsonObject {
+            put("context", context); put("type", error.javaClass.name)
+            put("message", error.message); put("stack_trace", error.stackTraceToString())
+        }
+    }
     fun append(sample: RigBuildProfile.Measurement<*>) {
         times.getOrPut(sample.operation.scenario) { arrayListOf() }.add(sample.elapsedMillis)
         samples.appendLine(buildJsonObject {
@@ -129,10 +154,23 @@ internal class SyntheticBaselineReport(name: String, scope: String) : AutoClosea
         samples.flush()
     }
     override fun close() {
-        samples.close()
+        if (closed) return
+        closed = true
+        try { samples.close() } catch (error: Throwable) {
+            failed(error)
+            try { writeSummary() } catch (reportError: Throwable) { error.addSuppressed(reportError) }
+            throw error
+        }
+        writeSummary()
+    }
+    private fun writeSummary() {
         directory.resolve("summary.json").writeText(buildJsonObject {
+            put("complete", complete)
+            put("last_context", context)
+            put("observed_samples", times.values.sumOf { it.size })
+            failure?.let { put("failure", it) }
             putJsonObject("metadata") { metadata.forEach { (key, value) -> put(key, value) } }
-            putJsonObject("scenarios") { times.forEach { (name, values) ->
+            if (complete) putJsonObject("scenarios") { times.forEach { (name, values) ->
                 val sorted = values.sorted()
                 putJsonObject(name) {
                     put("samples", values.size); put("median_ms", sorted[sorted.size / 2])

@@ -31,6 +31,7 @@ class SyntheticWorkspaceBaselineTool {
         try {
             for ((size, layers, edge) in listOf(Triple("small", 4, 64), Triple("medium", 16, 128), Triple("large", 64, 256))) {
                 if (smoke && size != "small") continue
+                report.context("$size/setup")
                 val source = source(layers, edge)
                 val psd = directory.resolve("$size.psd")
                 Files.write(psd, PsdWriter.write(source))
@@ -42,6 +43,7 @@ class SyntheticWorkspaceBaselineTool {
                 var activeArchive: OpenedProject? = null
                 var ordinal = 0
                 suspend fun measured(scenario: String, action: suspend () -> Unit) {
+                    report.context("$size/$scenario/$ordinal")
                     val before = runtime.state.value.capture
                     val mesh = before?.model?.rig?.puppet?.drawables?.mapNotNull { it.mesh }.orEmpty()
                     val sample = RigBuildProfile.measureSuspending(RigBuildProfile.Operation("$size-${ordinal++}",
@@ -171,6 +173,10 @@ class SyntheticWorkspaceBaselineTool {
                     activeArchive?.close()
                 }
             }
+            report.complete()
+        } catch (failure: Throwable) {
+            report.failed(failure)
+            throw failure
         } finally { RigBuildProfile.recording = wasRecording; report.close() }
     }
 

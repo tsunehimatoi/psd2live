@@ -36,6 +36,7 @@ class SyntheticPartBaselineTool {
             for (case in cases) for ((size, spacing) in listOf("small" to 40, "medium" to 20, "large" to 10)) {
                 if (smoke && (case.name != "eye-wide" || size != "small")) continue
                 val label = "${case.name}/$size"
+                report.context("$label/setup")
                 val config = RigModifierPipeline.ordinaryConfig(case.document.rawConfig()).copy(meshSpacing = spacing)
                 val analysis = CharacterAnalyzer.analyze(case.document.source, config)
                 val atlas = AtlasLayout.pack(analysis.layers, config)
@@ -88,6 +89,7 @@ class SyntheticPartBaselineTool {
                         return RigModifierEvaluator(registry, resolveRasters = source::resolveRasters).evaluate(input, stack, cache).rig
                     }
                     fun compare(scenario: String, ordinal: Int, fraction: Float, cached: Boolean) {
+                        report.context("$label/$scenario/$ordinal")
                         val expanded = expanded(fraction)
                         val folded = folded(expanded)
                         val results = caches.keys.associateWith { variant ->
@@ -131,6 +133,10 @@ class SyntheticPartBaselineTool {
                     ModifierPluginStore.deleteTree(temporary)
                 }
             }
+            report.complete()
+        } catch (failure: Throwable) {
+            report.failed(failure)
+            throw failure
         } finally { RigBuildProfile.recording = wasRecording; report.close() }
     }
 

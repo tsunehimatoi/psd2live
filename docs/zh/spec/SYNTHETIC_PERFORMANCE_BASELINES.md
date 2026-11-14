@@ -29,6 +29,8 @@ $env:PSD2LIVE_BASELINE_EDITS = '1000'
 
 每个工具写 `samples.jsonl`（每次立即落盘）与 `summary.json`（样本数、中位数、P95、最大值和大于中位数三倍的样本）。报告记录 JDK、操作系统、处理器数量、最大堆、输入或插件 digest。当前冷样本是同 JVM 的新会话／worker，不是操作系统冷缓存或 JVM 冷启动；需要进程冷启动数据时单独重启测试进程。
 
+报告默认 `complete=false`，启动时立即覆盖旧的成功状态。只有所有场景及关闭释放校验通过才写 `complete=true` 和分位数汇总；失败或未完成时保留已写样本、样本数、最后场景及可捕获的错误上下文，不输出 `scenarios` 成功汇总。`acceptance_run=true` 仅说明使用正式采样配置，不能代替 `complete=true`。
+
 仅检查工具流程时可设 `PSD2LIVE_BASELINE_SMOKE=1`，只跑小档、1 次交互样本和 3 次压力编辑，输出目录带 `-smoke` 且 `acceptance_run=false`。它不满足 30／1,000 次验收要求；正式测量前应删除该环境变量。
 
 ## 内存和所有权
