@@ -24,13 +24,11 @@ import io.github.psd2live.util.PresentationMeasurements
 import io.github.psd2live.util.PresentationReceipt
 import io.github.psd2live.util.PresentationToken
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.*
 import org.umamo.format.art.*
 import java.io.File
 import java.security.MessageDigest
-import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicReference
 import javax.swing.SwingUtilities
 import kotlin.test.Test
@@ -49,8 +47,8 @@ class WindowActivationTool {
         val warmups = if (benchmark) 5 else 1
         val out = output(if (benchmark) "window-activation" else "window-activation-smoke")
         val rows = ArrayList<JsonObject>()
-        val raw = ConcurrentLinkedQueue<PresentationReceipt>()
-        val receipts = Channel<PresentationReceipt>(Channel.UNLIMITED)
+        val receipts = WindowReceiptInbox()
+        val beforeActivation = ArrayList<JsonObject>()
         val exit = AtomicReference<(() -> Unit)?>()
         val stopped = CompletableDeferred<Unit>()
         val windowReady = CompletableDeferred<java.awt.Window>()
@@ -81,7 +79,10 @@ class WindowActivationTool {
                 put("timeoutMs", timeoutMs)
                 putJsonObject("environment") { environment.forEach { (key, value) -> put(key, value) } }
                 put("samples", JsonArray(rows))
-                putJsonArray("rawReceipts") { raw.forEach { add(receiptJson(it)) } }
+                put("preActivationReceipts", JsonArray(beforeActivation))
+                putJsonArray("rawReceipts") { receipts.raw().forEach { received -> add(buildJsonObject {
+                    receiptJson(received.receipt).forEach { (key, value) -> put(key, value) }; put("sequence", received.sequence); put("receivedAtNanos", received.receivedAtNanos)
+                }) } }
                 if (benchmark && failure == null && successful == samples) {
                     val stats = firstFrameDistribution(durations)
                     putJsonObject("summary") { put("medianMs", stats.medianMs); put("p95Ms", stats.p95Ms); put("maxMs", stats.maxMs) }
@@ -107,7 +108,7 @@ class WindowActivationTool {
             val viewModel = edt { PSD2LiveViewModel() }.also { vm = it }
             val desktop = DesktopWorkspace(viewModel, out.resolve("workspace").toPath()).also { workspace = it }
             edt { viewModel.attachWorkspace(desktop); viewModel.selectPreviewBackend(PreviewBackend.P2LRT) }
-            PresentationMeasurements.onCompleted = { raw.add(it); receipts.trySend(it) }
+            PresentationMeasurements.onCompleted = receipts::record
             phase = "window_startup"
             Thread({
                 try {
@@ -152,6 +153,19 @@ class WindowActivationTool {
                     viewModel.setAnimationEnabled(false)
                     val captured = desktop.captureTextures()
                     check(revisions.add(captured.revision) && states.add(captured.state)) { "Synthetic installation did not create a distinct revision/state" }
+                    val boundary = receipts.beforeActivation()
+                    boundary.received.forEach { received ->
+                        // Never archive a known superseded candidate, even if it arrived before this later cut.
+                        audit.archiveBeforeActivation(received, boundary.atNanos)
+                        beforeActivation += buildJsonObject {
+                            receiptJson(received.receipt).forEach { (key, value) -> put(key, value) }; put("sequence", received.sequence)
+                            put("receivedAtNanos", received.receivedAtNanos); put("boundaryAtNanos", boundary.atNanos)
+                            put("beforeOrdinal", ordinal)
+                        }
+                    }
+                    // Retire the previously active token too, not only the throwaway token below. Its later
+                    // deliveries must not be archived at a subsequent sample's boundary under another view ID.
+                    coordinator.presentation?.let(audit::supersede)
                     viewModel.refreshWorkspaceRenderer(model)
                     val superseded = checkNotNull(coordinator.presentation)
                     audit.supersede(superseded)
@@ -171,7 +185,7 @@ class WindowActivationTool {
                     Triple(audit.expect(wanted, captured.revision, captured.state, key, installStarted), superseded.candidate, rejected)
                 }
                 val expected = activation.first
-                val receipt = withTimeoutOrNull(timeoutMs) { receipts.receive() }
+                val receipt = withTimeoutOrNull(timeoutMs) { receipts.receive().receipt }
                 if (receipt == null) {
                     if (index > 0) rows += row(index, expected, activation.second, activation.third, "timeout_no_window_receipt", null)
                     report()
@@ -192,7 +206,7 @@ class WindowActivationTool {
                 } else { warmedUp++; report() }
             }
             // Drain already delivered extras: duplicates/late obsolete callbacks cannot silently pass.
-            check(receipts.tryReceive().isFailure) { "Unexpected extra window receipt" }
+            check(receipts.extra() == null) { "Unexpected extra window receipt" }
             phase = "complete"
         } catch (error: Throwable) {
             failure = "${error.javaClass.name}: ${error.message}"
@@ -208,7 +222,7 @@ class WindowActivationTool {
             if (exit.get() != null) withContext(NonCancellable) {
                 if (withTimeoutOrNull(10_000) { stopped.await(); true } != true) failure = failure ?: "Window shutdown timed out"
             }
-            if (failure == null && receipts.tryReceive().isSuccess) failure = "Unexpected late window receipt during shutdown"
+            if (failure == null && receipts.extra() != null) failure = "Unexpected late window receipt during shutdown"
             report()
         }
         check(failure == null && warmedUp == warmups && successful == samples) { failure ?: "Incomplete window acceptance" }

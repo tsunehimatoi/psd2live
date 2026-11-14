@@ -9,8 +9,17 @@ internal class WindowActivationAudit {
         val capturedAtNanos: Long, val installStartedAtNanos: Long)
     private val forbidden = mutableSetOf<Long>()
     private val accepted = mutableSetOf<Long>()
+    private val observedViews = mutableSetOf<Pair<Long, String>>()
 
     fun supersede(token: PresentationToken) { forbidden += token.candidate }
+
+    fun archiveBeforeActivation(received: WindowReceiptInbox.Received, boundary: Long) {
+        val receipt = received.receipt
+        check(receipt.candidate !in forbidden) { "Superseded candidate arrived before the next activation: ${receipt.candidate}" }
+        check(receipt.capturedAtNanos <= receipt.gpuCompletedAtNanos && receipt.gpuCompletedAtNanos <= received.receivedAtNanos &&
+            received.receivedAtNanos <= boundary) { "Receipt does not belong before the activation boundary" }
+        check(observedViews.add(receipt.candidate to receipt.viewId)) { "Duplicate receipt before activation" }
+    }
 
     fun expect(token: PresentationToken, revision: String, state: String, viewId: String, installStarted: Long): Expected {
         check(token.revision == revision && token.state == state) { "Activation did not capture the installed revision/state" }
@@ -26,6 +35,7 @@ internal class WindowActivationAudit {
             receipt.candidate == expected.candidate && receipt.viewId == expected.viewId &&
             receipt.capturedAtNanos == expected.capturedAtNanos) { "Window receipt identity mismatch: $receipt; expected $expected" }
         check(receipt.gpuCompletedAtNanos >= expected.capturedAtNanos) { "GPU endpoint precedes activation" }
+        check(observedViews.add(receipt.candidate to receipt.viewId)) { "Receipt was already observed before activation" }
         accepted += receipt.candidate
         return receipt.gpuCompletedAtNanos - expected.capturedAtNanos
     }

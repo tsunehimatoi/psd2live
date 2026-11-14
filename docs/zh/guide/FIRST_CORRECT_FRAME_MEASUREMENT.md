@@ -74,7 +74,9 @@ PresentationMeasurements.onCompleted = null
 
 `WindowActivationTool` 已准备并通过编译，真实窗口执行仍需单独安排。它启动完整的 `PSD2LiveApp`，使用合成的四块彩色图案，经 `DesktopWorkspace` 安装原子工作区快照，再通过实际 VM、`WorkspaceRenderCoordinator`、P2LRT、`CanvasViewportComposable` 和 Skiko 的 `drawContent` 回放回执验收。它不调用离屏探针、不直接制造 GPU 完成回执。
 
-每个样本先生成模型，再安装不同颜色的源图；模型生成不计入 activation 指标。激活在同一 EDT turn 内连续执行两次，前一候选被取代；验收要求后一候选的 `revision/state/candidate/viewId/capturedAt` 完全匹配。上一轮真实帧还会重新送给 production coordinator 和 VM，确认不能覆盖新帧流。普通测试中的假回执只用于 `WindowActivationAuditTest`，不进入窗口采样。
+每个样本先生成模型，再安装不同颜色的源图；模型生成不计入 activation 指标。激活在同一 EDT turn 内连续执行两次，前一候选被取代；验收要求后一候选的 `revision/state/candidate/viewId/capturedAt` 完全匹配。上一轮真实帧还会重新送给 production coordinator 和 VM，确认不能覆盖新帧流。普通测试中的假回执仅用于身份校验和队列边界的无 GPU 单元测试，不进入窗口采样。
+
+导入本身在 `recoverLegacy=false` 时不直接发布 renderer 模型，但 UI 状态变化会重挂载视口、重启预览请求，静态检查不能保证显式激活前没有已到达回执；这尚未在真实窗口中复现。工具在两次显式 refresh 前建立原子队列边界，将此前已到达的回执单独列入 `preActivationReceipts`，所有回执仍完整保留在 `rawReceipts`，包含到达时间和序号。边界后到达的回执不按较早的 GPU 时间过滤，仍必须严格匹配当前候选；任何已标记 superseded 的回执及重复回执，即使在下一轮边界前到达，也会失败，不能通过归档掩盖。
 
 - `smoke`：1 次预热、2 次正式激活，仅作实际窗口、native 及反射接线的初验，无性能分位数。
 - `measure`：5 次预热、至少 30 次正式激活；预热也必须通过身份与回执校验，预热耗时不纳入统计。报告记录要求和完成的预热次数；所有样本身份正确才输出中位数、最近秩 P95、最大值。
