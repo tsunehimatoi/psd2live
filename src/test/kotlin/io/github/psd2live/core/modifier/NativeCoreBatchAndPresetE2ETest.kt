@@ -360,6 +360,13 @@ class NativeCoreBatchAndPresetE2ETest {
                 "eye.squash" to ("psd2live.native.core/eye-squash" to installed.reference),
                 "brow.shape" to ("psd2live.native.core/brow-shape" to installed.reference),
                 "brow.spring" to ("psd2live.native.core/brow-spring" to installed.reference),
+                "eye.wide" to ("psd2live.native.core/eye-wide" to installed.reference),
+                "eye.smile" to ("psd2live.native.core/eye-smile" to installed.reference),
+                "eye.emotion" to ("psd2live.native.core/eye-emotion" to installed.reference),
+                "eye.aftershock" to ("psd2live.native.core/eye-aftershock" to installed.reference),
+                "eye.gaze-lid" to ("psd2live.native.core/eye-gaze-lid" to installed.reference),
+                "brow.lid-coupling" to ("psd2live.native.core/brow-lid-coupling" to installed.reference),
+                "brow.blink" to ("psd2live.native.core/brow-blink" to installed.reference),
             )
             // Equal warmup for both paths before timing
             WorkspacePresetInitialization.prepare(
@@ -404,6 +411,14 @@ class NativeCoreBatchAndPresetE2ETest {
             }
             if (baselineStack.instances.any { it.type == "brow.see-through" }) {
                 assertTrue(nativeStack.instances.any { it.type == "psd2live.native.core/brow-see-through" && it.plugin == installed.reference })
+            }
+            for ((legacyType, nativeType) in overrides.mapValues { it.value.first }) {
+                if (baselineStack.instances.any { it.type == legacyType }) {
+                    assertTrue(
+                        nativeStack.instances.any { it.type == nativeType && it.plugin == installed.reference },
+                        "Expected $nativeType in native stack for $legacyType"
+                    )
+                }
             }
             assertEquals(baselineStack.instances.size, nativeStack.instances.size)
 

@@ -18,6 +18,7 @@ internal object RigDepthTurnSource {
         parentFrames: Map<DeformerId, Bounds>,
         scaffoldMeshes: ModifierAlgorithmResource? = null,
         scaffoldMeshIds: Map<String, String> = emptyMap(),
+        scaffoldHead: io.github.psd2live.algorithms.binding.ScaffoldHead.Input? = null,
     ): DepthTurnInputs {
         val fitted = context.fittedMouth(config)
         val face = context.faceRig
@@ -49,8 +50,9 @@ internal object RigDepthTurnSource {
                 Side.NONE -> null
             }
         }
-        return DepthTurnInputs(context.head, context.face,
-            DepthTurnMotion.Container(face.centerX, face.mouthLineY, config.headTurnStrength,
+        return DepthTurnInputs(scaffoldHead?.headFrame ?: context.head, scaffoldHead?.faceFrame ?: context.face,
+            DepthTurnMotion.Container(scaffoldHead?.alignedPivot?.x ?: face.centerX,
+                scaffoldHead?.alignedPivot?.y ?: face.mouthLineY, config.headTurnStrength,
                 tuning.headShellTurn, tuning.headShellCrown, tuning.headShellTilt),
             face.centerY, face.radiusX, face.radiusY, face.chinY,
             config.recipe.value(module, "turn") / 100f * config.headTurnStrength,

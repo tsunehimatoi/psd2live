@@ -1059,7 +1059,7 @@ internal object RigStaticSourceCollector {
         }
         return io.github.psd2live.core.RigDepthTurnSource.capture(
             context, config, layers, parents, frameById,
-            scaffoldContext.resources["source_meshes"], scaffoldMeshIds,
+            scaffoldContext.resources["source_meshes"], scaffoldMeshIds, headFrame,
         ).encode()
     }
 

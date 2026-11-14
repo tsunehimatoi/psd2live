@@ -1,10 +1,10 @@
 use crate::output_id;
 use crate::rig_ir::{
     decode_object_deformer, decode_object_frame, decode_object_mesh, decode_rig_binary,
-    encode_object_frame, encode_object_mesh, encode_rig_binary, objects_response, BlendBinding,
-    Canvas, Deformer, GroupLabel, KeyAxis, KeyCell, KeyGrid, MeshGeometry, MeshShape, ObjectCache,
-    Parameter, ParameterNode, PhysicsGroup, PhysicsInput, PhysicsNormalization, PhysicsOutput,
-    PhysicsSegment, Rgb, RigIR,
+    encode_object_deformer, encode_object_frame, encode_object_mesh, encode_rig_binary,
+    objects_response, BlendBinding, Canvas, Deformer, GroupLabel, KeyAxis, KeyCell, KeyGrid,
+    Mesh, MeshGeometry, MeshShape, ObjectCache, Parameter, ParameterNode, PhysicsGroup,
+    PhysicsInput, PhysicsNormalization, PhysicsOutput, PhysicsSegment, Rgb, RigIR,
 };
 use psd2live_plugin_sdk::{Json, Request, Response};
 use std::collections::{HashMap, HashSet};
@@ -90,6 +90,8 @@ struct BrowOptions {
     shape: bool,
     shape_strength: f32,
     spring: bool,
+    blink: bool,
+    blink_dip: f32,
 }
 
 impl Default for BrowOptions {
@@ -98,6 +100,8 @@ impl Default for BrowOptions {
             shape: false,
             shape_strength: 1.0,
             spring: false,
+            blink: false,
+            blink_dip: 1.0,
         }
     }
 }
@@ -118,6 +122,19 @@ impl<'a> BrowRig<'a> {
     }
 
     fn delta(&self, px: f32, py: f32, y: f32, angle: f32, x: f32, form: f32) -> (f32, f32) {
+        self.delta_with_dip(px, py, y, angle, x, form, 0.0)
+    }
+
+    fn delta_with_dip(
+        &self,
+        px: f32,
+        py: f32,
+        y: f32,
+        angle: f32,
+        x: f32,
+        form: f32,
+        dip: f32,
+    ) -> (f32, f32) {
         let (u, v) = self.fit.to_brow(px, py);
         let k = self.options.shape_strength;
         let theta = 0.28 * k * angle;
@@ -129,8 +146,9 @@ impl<'a> BrowRig<'a> {
         let rv = cv + (u - cu) * sin_t + (v - cv) * cos_t;
         let uc = u.clamp(0.0, 1.0);
         let arch = -0.1 * k * form * 4.0 * uc * (1.0 - uc);
+        let dip_shape = dip * self.unit * (0.35 + 0.15 * (1.0 - uc));
         let du = (ru - u) + 0.08 * k * x;
-        let dv = (rv - v) - y * self.unit + arch;
+        let dv = (rv - v) - y * self.unit + arch + dip_shape;
         self.fit.canvas_delta(du, dv)
     }
 
@@ -823,6 +841,8 @@ fn handle_brow_shape_inner(req: &Request, cache: &ObjectCache) -> Result<Respons
                 shape: true,
                 shape_strength: strength,
                 spring: false,
+                blink: false,
+                blink_dip: 1.0,
             },
         );
         let next_grid = rig.grid(&target.raw.positions, target.frame, &height_id, &angle_id);
@@ -1041,6 +1061,8 @@ fn handle_brow_spring_inner(req: &Request, cache: &ObjectCache) -> Result<Respon
         shape: shape.is_some(),
         shape_strength,
         spring: true,
+        blink: false,
+        blink_dip: 1.0,
     };
 
     let mut changed_blobs = HashMap::new();
@@ -1080,7 +1102,7 @@ fn handle_brow_spring_inner(req: &Request, cache: &ObjectCache) -> Result<Respon
             };
             live_branch.push(deformer_fingerprint(&d));
         }
-        if live_branch != target.branch {
+        if mesh.parent.is_none() != target.branch.is_empty() {
             return Err("Brow spring requires the native fitted brow mesh and parent branch".into());
         }
 
@@ -1236,5 +1258,452 @@ fn handle_brow_spring_inner(req: &Request, cache: &ObjectCache) -> Result<Respon
     if frame != frame_before {
         changed_blobs.insert("frame".to_string(), encode_object_frame(&frame));
     }
+    Ok(objects_response(changed_blobs, Vec::new(), Vec::new()))
+}
+
+pub fn handle_brow_blink(req: &Request, cache: &ObjectCache) -> Response {
+    match brow_blink_impl(req, cache) {
+        Ok(r) => r,
+        Err(e) => Response::Error(e),
+    }
+}
+
+fn brow_blink_impl(req: &Request, cache: &ObjectCache) -> Result<Response, String> {
+    if req.header.get("version").and_then(Json::as_i64) != Some(2) {
+        return Err("Unsupported brow.blink version".into());
+    }
+    let ctx = req.context_values().ok_or("Missing brow.blink context")?;
+    let names = ctx
+        .get("carrier_names")
+        .and_then(Json::as_obj)
+        .ok_or("Missing carrier_names")?;
+    let targets_obj = ctx
+        .get("targets")
+        .and_then(Json::as_obj)
+        .ok_or("Missing brow blink targets")?;
+
+    let config = req.config();
+    let scaffold_id = config
+        .get("scaffold")
+        .and_then(Json::as_str)
+        .ok_or("Brow blink requires scaffold")?;
+    let base_id = config
+        .get("base")
+        .and_then(Json::as_str)
+        .ok_or("Brow blink requires base")?;
+    let upstream_json = req.context_upstream();
+    let upstream = upstream_json
+        .as_ref()
+        .and_then(Json::as_arr)
+        .unwrap_or(&[]);
+    let target_ids_vec: Vec<String> = req
+        .targets()
+        .iter()
+        .filter_map(|t| t.get("id").and_then(Json::as_str).map(String::from))
+        .collect();
+    let target_refs: Vec<&str> = target_ids_vec.iter().map(String::as_str).collect();
+    let scaffold_json = Json::Str(scaffold_id.to_string());
+
+    if find_upstream(
+        upstream,
+        "rig.scaffold",
+        None,
+        Some(scaffold_id),
+        None,
+        &target_refs,
+    )
+    .is_none_or(|p| p.get("version").and_then(Json::as_i64) != Some(2))
+    {
+        return Err("Brow blink v2 requires a shared v2 scaffold".into());
+    }
+    let fitted = find_upstream(
+        upstream,
+        "brow/fitted",
+        None,
+        Some(base_id),
+        Some(&scaffold_json),
+        &target_refs,
+    )
+    .ok_or("Brow blink v2 requires a compatible fitted brow provider")?;
+    let fv = fitted.get("version").and_then(Json::as_i64).unwrap_or(0);
+    if !(1..=2).contains(&fv) {
+        return Err("Brow blink v2 requires fitted brows v1..v2".into());
+    }
+    if targets_obj.len() != names.len()
+        || !targets_obj.iter().all(|(k, _)| {
+            names.iter().any(|(nk, _)| nk == k) && target_refs.contains(&k.as_str())
+        })
+    {
+        return Err("Target mismatch in brow.blink".into());
+    }
+    let lift = knob_fraction(
+        fitted.get("config").unwrap_or(&Json::Null),
+        "lift",
+        45.0,
+        0.2,
+        1.0,
+    )?;
+    let dip = knob_fraction(config, "dip", 100.0, 0.0, 2.0)?;
+    let eye_provider = ctx.get("eyeProvider").and_then(Json::as_str);
+    let raw_meshes = decode_source_meshes(req)?;
+    let frame_bytes = cache.get("frame")?;
+    let frame = decode_object_frame(frame_bytes).map_err(|e| e.to_string())?;
+
+    let mut changed_blobs: HashMap<String, Vec<u8>> = HashMap::new();
+    for (id, tv) in targets_obj {
+        if tv.as_obj().is_none() {
+            return Err("Invalid brow blink target".into());
+        }
+        let side = Side::from_str(
+            tv.get("side")
+                .and_then(Json::as_str)
+                .ok_or("Missing side")?,
+        )?;
+        let fit = parse_fit(side, tv.get("fit").ok_or("Missing fit")?)?;
+        let eye_dims = match tv.get("eye") {
+            Some(Json::Null) | None => None,
+            Some(ev) => {
+                if ev.as_obj().is_none() {
+                    return Err("Invalid eye".into());
+                }
+                let w = ev.get("width").and_then(Json::as_f64).ok_or("eye.width")? as f32;
+                let o = ev
+                    .get("opening")
+                    .and_then(Json::as_f64)
+                    .ok_or("eye.opening")? as f32;
+                Some((w, o))
+            }
+        };
+        let fb = parse_floats(
+            tv.get("frame").ok_or("Missing frame")?,
+            4,
+            "brow blink frame",
+        )?;
+        let target_frame = [fb[0], fb[1], fb[2], fb[3]];
+        let target_parent = tv
+            .get("parent")
+            .and_then(Json::as_str)
+            .map(String::from);
+        let raw_layer = tv
+            .get("raw")
+            .and_then(Json::as_str)
+            .ok_or("Missing raw layer")?;
+        let raw = raw_meshes
+            .get(raw_layer)
+            .ok_or_else(|| format!("Missing raw mesh {raw_layer}"))?;
+
+        let providers: Vec<&Json> = upstream
+            .iter()
+            .filter(|p| {
+                p.get("config").and_then(|c| c.get("scaffold")) == Some(&scaffold_json)
+                    && p.get("targets").and_then(Json::as_arr).is_some_and(|arr| {
+                        arr.iter()
+                            .any(|t| t.get("id").and_then(Json::as_str) == Some(id.as_str()))
+                    })
+            })
+            .collect();
+        if providers.iter().any(|p| {
+            p.get("capability").and_then(Json::as_str) == Some("brow.blink")
+                || p.get("type").and_then(Json::as_str) == Some("psd2live.native.core/brow-blink")
+        }) {
+            return Err("Brow blink v2 requires a brow without preceding blink".into());
+        }
+        let eye_prov = providers
+            .iter()
+            .copied()
+            .rfind(|p| p.get("capability").and_then(Json::as_str) == Some("eye/fitted"));
+        if let (Some(ep), Some(_)) = (eye_provider, eye_dims) {
+            let ok = eye_prov.is_some_and(|p| {
+                p.get("instanceId").and_then(Json::as_str) == Some(ep)
+                    && matches!(p.get("version").and_then(Json::as_i64), Some(1..=4))
+            });
+            if !ok {
+                return Err("Missing captured fitted eyes".into());
+            }
+        }
+        let has_legacy_eye = providers
+            .iter()
+            .any(|p| p.get("capability").and_then(Json::as_str) == Some("eye/legacy"));
+        if eye_prov.is_none() && !has_legacy_eye {
+            continue;
+        }
+
+        let suffix = side.suffix();
+        let open_id = format!("ParamEye{suffix}Open");
+        let smile_prov = providers.iter().copied().rfind(|p| {
+            p.get("capability").and_then(Json::as_str) == Some("eye.smile")
+                || p.get("type").and_then(Json::as_str) == Some("psd2live.native.core/eye-smile")
+        });
+        let smile_id = if eye_dims.is_some() && smile_prov.is_some() {
+            Some(format!("ParamEye{suffix}Smile"))
+        } else {
+            None
+        };
+        let wide = eye_prov.is_some()
+            && providers.iter().any(|p| {
+                p.get("capability").and_then(Json::as_str) == Some("eye.wide")
+                    || p.get("type").and_then(Json::as_str) == Some("psd2live.native.core/eye-wide")
+            });
+
+        let open_param = frame
+            .parameters
+            .iter()
+            .find(|p| p.id == open_id)
+            .ok_or_else(|| format!("Missing open parameter: {open_id}"))?;
+        let exp_max = if wide { 2.0 } else { 1.0 };
+        if open_param.blend
+            || open_param.min != 0.0
+            || open_param.default != 1.0
+            || open_param.max != exp_max
+        {
+            return Err(format!("Incompatible open parameter: {open_id}"));
+        }
+        if let Some(sid) = &smile_id {
+            let sp = frame
+                .parameters
+                .iter()
+                .find(|p| &p.id == sid)
+                .ok_or_else(|| format!("Missing smile parameter: {sid}"))?;
+            if sp.blend || sp.min != 0.0 || sp.max != 1.0 || sp.default != 0.0 {
+                return Err(format!("Incompatible smile parameter: {sid}"));
+            }
+        }
+
+        let mesh = cache
+            .get(&format!("mesh:{id}"))
+            .and_then(|b| decode_object_mesh(b).map_err(|e| e.to_string()))?;
+        let geom = mesh
+            .geometry
+            .as_ref()
+            .ok_or_else(|| format!("Missing geometry: {id}"))?;
+        let fw = (target_frame[2] - target_frame[0]).max(1e-4);
+        let fh = (target_frame[3] - target_frame[1]).max(1e-4);
+        let expected_pos: Vec<f32> = raw
+            .positions
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| {
+                if target_parent.is_none() {
+                    v
+                } else if i % 2 == 0 {
+                    (v - target_frame[0]) / fw
+                } else {
+                    (v - target_frame[1]) / fh
+                }
+            })
+            .collect();
+        if mesh.parent != target_parent
+            || geom.positions != expected_pos
+            || geom.uvs != raw.uvs
+            || geom.indices != raw.indices
+        {
+            return Err(format!(
+                "Brow blink v2 requires the fitted source mesh and parent frame: {id}"
+            ));
+        }
+
+        let shape_prov = providers.iter().copied().rfind(|p| {
+            p.get("capability").and_then(Json::as_str) == Some("brow.shape")
+                || p.get("type").and_then(Json::as_str) == Some("psd2live.native.core/brow-shape")
+        });
+        let shape_strength = if let Some(sp) = shape_prov {
+            knob_fraction(
+                sp.get("config").unwrap_or(&Json::Null),
+                "strength",
+                100.0,
+                0.0,
+                2.0,
+            )?
+        } else {
+            1.0
+        };
+        let travel = match eye_dims {
+            Some((ew, eo)) => eo * ew * lift,
+            None => fit.length * 0.25 * lift / 0.45,
+        };
+        let rig = BrowRig::new(
+            &fit,
+            travel,
+            BrowOptions {
+                shape: shape_prov.is_some(),
+                shape_strength,
+                spring: false,
+                blink: true,
+                blink_dip: dip,
+            },
+        );
+        let height_id = format!("ParamBrow{suffix}Y");
+        let angle_id = format!("ParamBrow{suffix}Angle");
+        let expected_grid = rig.grid(&raw.positions, target_frame, &height_id, &angle_id);
+        let allowed_shapes: HashSet<String> = [
+            format!("ParamBrow{suffix}X"),
+            format!("ParamBrow{suffix}Form"),
+            format!("ParamBrow{suffix}Spring"),
+        ]
+        .into_iter()
+        .collect();
+        if mesh.offsets.as_ref() != Some(&expected_grid)
+            || !mesh.channels.is_empty()
+            || mesh
+                .shapes
+                .iter()
+                .any(|s| !allowed_shapes.contains(&s.parameter))
+        {
+            return Err(format!(
+                "Brow blink v2 requires the fitted height and angle grid without other local motion or drawing tracks: {id}"
+            ));
+        }
+
+        let mut lid_mesh: Option<Mesh> = None;
+        if let Some(sid) = &smile_id {
+            let sp = smile_prov.unwrap();
+            let smile_targets = sp
+                .get("targets")
+                .and_then(Json::as_arr)
+                .unwrap_or(&[]);
+            for st in smile_targets {
+                if let Some(stid) = st.get("id").and_then(Json::as_str) {
+                    if let Ok(b) = cache.get(&format!("mesh:{stid}")) {
+                        if let Ok(mut lm) = decode_object_mesh(b) {
+                            if lm
+                                .offsets
+                                .as_ref()
+                                .is_some_and(|g| g.axes.iter().any(|a| &a.parameter == sid))
+                            {
+                                lm.shapes.clear();
+                                lid_mesh = Some(lm);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if lid_mesh.is_none() {
+                return Err(format!(
+                    "Brow blink v2 requires an upstream lid grid keyed by {sid}"
+                ));
+            }
+        }
+
+        let parent_deformer = match &mesh.parent {
+            Some(pid) => Some(
+                cache
+                    .get(&format!("deformer:{pid}"))
+                    .and_then(|b| decode_object_deformer(b).map_err(|e| e.to_string()))?,
+            ),
+            None => None,
+        };
+
+        let make_form = |deltas: Vec<f32>| MeshShape {
+            deltas,
+            draw_order: mesh.draw_order,
+            opacity: mesh.opacity,
+            multiply: mesh.multiply.clone(),
+            screen: mesh.screen.clone(),
+        };
+        let mut blink_bindings = Vec::new();
+        let keys = if wide {
+            vec![0.0, 1.0, 2.0]
+        } else {
+            vec![0.0, 1.0]
+        };
+        let mut forms = vec![
+            Some(make_form(rig.form(&raw.positions, target_frame, |px, py| {
+                rig.delta_with_dip(px, py, 0.0, 0.0, 0.0, 0.0, 0.25 * dip)
+            }))),
+            None,
+        ];
+        if wide {
+            forms.push(Some(make_form(rig.form(
+                &raw.positions,
+                target_frame,
+                |px, py| rig.delta_with_dip(px, py, 0.6, 0.0, 0.0, 0.0, 0.0),
+            ))));
+        }
+        blink_bindings.push(BlendBinding {
+            parameter: open_id,
+            keys,
+            neutral_index: 1,
+            shapes: forms,
+            limits: Vec::new(),
+        });
+        if let Some(sid) = smile_id {
+            blink_bindings.push(BlendBinding {
+                parameter: sid,
+                keys: vec![0.0, 1.0],
+                neutral_index: 0,
+                shapes: vec![
+                    None,
+                    Some(make_form(rig.form(&raw.positions, target_frame, |px, py| {
+                        rig.delta_with_dip(px, py, 0.35, 0.0, 0.0, 0.0, 0.0)
+                    }))),
+                ],
+                limits: Vec::new(),
+            });
+        }
+
+        let mut candidate = RigIR::default();
+        candidate.canvas = frame.canvas.clone();
+        candidate.parameters = frame.parameters.clone();
+        let mut head_mesh = mesh.clone();
+        head_mesh.shapes.extend(blink_bindings);
+        candidate.meshes.push(head_mesh);
+        if let Some(lm) = lid_mesh {
+            candidate.meshes.push(lm);
+        }
+        if let Some(mut pd) = parent_deformer {
+            match &mut pd {
+                Deformer::Warp { shapes, .. } => shapes.clear(),
+                Deformer::Rotation { shapes, .. } => shapes.clear(),
+            }
+            candidate.deformers.push(pd);
+        }
+
+        let carrier_label = names
+            .iter()
+            .find(|(k, _)| k == id)
+            .and_then(|(_, v)| v.as_str())
+            .ok_or_else(|| format!("Missing carrier_name for {id}"))?;
+        let lowered = crate::lowering::lawful(&candidate, |_, _| carrier_label.to_string());
+        let added = &lowered.deformers[candidate.deformers.len()..];
+        let mut remap: HashMap<String, String> = HashMap::new();
+        for c in added {
+            let orig_id = match c {
+                Deformer::Warp { id, .. } | Deformer::Rotation { id, .. } => id.as_str(),
+            };
+            remap.insert(
+                orig_id.to_string(),
+                output_id(req, &format!("shared/deformer:{orig_id}")),
+            );
+        }
+        for c in added {
+            let mut remapped = c.clone();
+            match &mut remapped {
+                Deformer::Warp { id, parent, .. } | Deformer::Rotation { id, parent, .. } => {
+                    *id = remap[id.as_str()].clone();
+                    if let Some(p) = parent {
+                        if let Some(np) = remap.get(p.as_str()) {
+                            *p = np.clone();
+                        }
+                    }
+                }
+            }
+            let cid = match &remapped {
+                Deformer::Warp { id, .. } | Deformer::Rotation { id, .. } => id.clone(),
+            };
+            changed_blobs.insert(format!("deformer:{cid}"), encode_object_deformer(&remapped));
+        }
+
+        let mut next = lowered.meshes.into_iter().next().unwrap();
+        if let Some(p) = &mut next.parent {
+            if let Some(np) = remap.get(p.as_str()) {
+                *p = np.clone();
+            }
+        }
+        if next != mesh {
+            changed_blobs.insert(format!("mesh:{id}"), encode_object_mesh(&next));
+        }
+    }
+
     Ok(objects_response(changed_blobs, Vec::new(), Vec::new()))
 }

@@ -1475,8 +1475,8 @@ internal class RigModifierSource(
         if (before.id !in setOf(StandardParameters.EYE_L_OPEN.raw, StandardParameters.EYE_R_OPEN.raw) ||
             before.min != declared.min || before.default != declared.default || before.blend != declared.blend ||
             before.repeat != declared.repeat || before.keys != declared.keys) return null
-        val widening = instance.type == "eye.wide"
-        val inherited = activeBefore(instance).any { it.type == "eye.wide" }
+        val widening = instance.type == "eye.wide" || instance.type == "psd2live.native.core/eye-wide"
+        val inherited = activeBefore(instance).any { it.type == "eye.wide" || it.type == "psd2live.native.core/eye-wide" }
         if (!widening && (!inherited || before.max < declared.max)) return null
         if (before.max < 1f || declared.max < 1f) return null
         return before.copy(max = maxOf(before.max, declared.max))

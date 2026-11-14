@@ -126,8 +126,20 @@ internal object RigFittedEyeSource {
         val canonical = ordinary.values.getValue("canonical_targets").jsonObject
         val layers = canonical.entries.associate { owner.layersByMesh.getValue(it.key) to it.value.jsonPrimitive.content }
         val meshes = RigBuilder.scaffoldMeshInputs(owner.analysis, owner.atlas, fitted, owner.meshCache, layers)
+        val ordinaryFrames = ordinary.values.getValue("frames").jsonObject
+        val ordinaryHead = ordinaryFrames.getValue("head").jsonObject
+        val fittedHead = source.frames.getValue("head").jsonObject
+        val eyeFeatures = setOf("EYE", "IRIS")
+        val mergedRegions = kotlinx.serialization.json.JsonArray(
+            ordinaryHead.getValue("regions").jsonArray.filter {
+                it.jsonObject["feature"]?.jsonPrimitive?.content !in eyeFeatures
+            } + fittedHead.getValue("regions").jsonArray.filter {
+                it.jsonObject["feature"]?.jsonPrimitive?.content in eyeFeatures
+            },
+        )
+        val mergedFrames = JsonObject(ordinaryFrames + ("head" to JsonObject(ordinaryHead + ("regions" to mergedRegions))))
         val refined = ModifierAlgorithmContext(JsonObject(ordinary.values + mapOf(
-            "frames" to source.frames, "branches" to source.branches, "mesh_inputs" to meshes.values.getValue("mesh_inputs"),
+            "frames" to mergedFrames, "branches" to source.branches, "mesh_inputs" to meshes.values.getValue("mesh_inputs"),
         )), ordinary.resources + meshes.resources)
         val eye = capture(instance, structure, owner.analysis, fitted, refined, requireNotNull(source.eyes),
             owner.layersByMesh, owner.primaryByLayer)

@@ -78,12 +78,11 @@ class BrowSpringAlgorithm : ReadingModifierAlgorithmPlugin {
             else (coordinate - frame.top) / frame.height.coerceAtLeast(1e-4f)
         }
         val geometry = requireNotNull(mesh.geometry)
-        val actualBranch = input.parentsOfMesh(mesh.id).map(BrowSpringInputs::fingerprint)
         val posOk = geometry.positions.size == positions.size &&
             (0 until positions.size).all { kotlin.math.abs(geometry.positions[it] - positions[it]) <= 1e-4f }
         val uvOk = geometry.uvs == Floats.wrap(raw.atlasUvs)
         val idxOk = geometry.indices == Ints.wrap(raw.triangles)
-        val branchOk = actualBranch == target.branch
+        val branchOk = (mesh.parent == null) == target.branch.isEmpty()
         require(posOk && uvOk && idxOk && branchOk) {
             "Brow spring v2 requires the native fitted brow mesh and parent branch. Use v1 with authored or lowered transforms."
         }

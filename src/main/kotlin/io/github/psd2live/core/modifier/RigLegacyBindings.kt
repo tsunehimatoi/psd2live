@@ -240,12 +240,22 @@ internal object RigLegacyBindings {
             spec.type == "eye.emotion" -> object : ContextualModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
                 io.github.psd2live.algorithms.binding.EyeEmotionAlgorithm(),
                 io.github.psd2live.algorithms.binding.EyeEmotionAlgorithm.VERSION), ModifierOptionalUpstream {
-                override val optionalUpstream = setOf("eye.wide", "eye.smile", "eye.aftershock")
+                override val optionalUpstream = setOf(
+                    "eye.wide", "psd2live.native.core/eye-wide",
+                    "eye.smile", "psd2live.native.core/eye-smile",
+                    "eye.aftershock", "psd2live.native.core/eye-aftershock",
+                    "eye.gaze-lid", "psd2live.native.core/eye-gaze-lid",
+                    "brow.lid-coupling", "psd2live.native.core/brow-lid-coupling")
             }
             spec.type == "eye.gaze-lid" -> object : ContextualModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
                 io.github.psd2live.algorithms.binding.EyeGazeLidAlgorithm(),
                 io.github.psd2live.algorithms.binding.EyeGazeLidAlgorithm.VERSION), ModifierOptionalUpstream {
-                override val optionalUpstream = setOf("eye.wide", "eye.smile", "eye.emotion", "eye.aftershock")
+                override val optionalUpstream = setOf(
+                    "eye.wide", "psd2live.native.core/eye-wide",
+                    "eye.smile", "psd2live.native.core/eye-smile",
+                    "eye.emotion", "psd2live.native.core/eye-emotion",
+                    "eye.aftershock", "psd2live.native.core/eye-aftershock",
+                    "brow.lid-coupling", "psd2live.native.core/brow-lid-coupling")
             }
             spec.type == "eye.highlight" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
                 io.github.psd2live.algorithms.binding.EyeHighlightAlgorithm(),

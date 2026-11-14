@@ -1,6 +1,9 @@
 mod brow;
+mod eye_modules;
+mod eye_rig;
 mod eye_squash;
 mod lid_fade;
+mod lowering;
 mod mood;
 mod rig_ir;
 mod simulation;
@@ -919,6 +922,13 @@ fn main() {
             "psd2live.native.core/eye-squash" => eye_squash::handle_eye_squash(req, &cache),
             "psd2live.native.core/brow-shape" => brow::handle_brow_shape(req, &cache),
             "psd2live.native.core/brow-spring" => brow::handle_brow_spring(req, &cache),
+            "psd2live.native.core/brow-blink" => brow::handle_brow_blink(req, &cache),
+            "psd2live.native.core/eye-wide" => eye_modules::handle_eye_wide(req, &cache),
+            "psd2live.native.core/eye-smile" => eye_modules::handle_eye_smile(req, &cache),
+            "psd2live.native.core/eye-emotion" => eye_modules::handle_eye_emotion(req, &cache),
+            "psd2live.native.core/eye-aftershock" => eye_modules::handle_eye_aftershock(req, &cache),
+            "psd2live.native.core/eye-gaze-lid" => eye_modules::handle_eye_gaze_lid(req, &cache),
+            "psd2live.native.core/brow-lid-coupling" => eye_modules::handle_brow_lid_coupling(req, &cache),
             "psd2live.native.core/swing" => swing::handle_swing(req, &cache, output_id),
             "psd2live.native.core/simulation" => simulation::handle_simulation(req, &cache, output_id),
             other => Response::Error(format!("Unknown native algorithm: {other}")),
