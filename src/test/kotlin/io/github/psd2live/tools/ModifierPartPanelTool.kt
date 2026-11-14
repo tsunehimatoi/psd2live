@@ -38,11 +38,13 @@ class ModifierPartPanelTool {
     @Test fun mouthPanelAtNarrowAndWideSizes() = runBlocking {
         val previous = I18n.currentLanguage
         try {
+            I18n.setLanguage(AppLanguage.ENGLISH, persist = false)
             PSD2LiveViewModel().use { vm ->
                 vm.setStateForTest(vm.state.value.copy(atlasSize = 256, exportMoc3 = false, generatePhysics = false))
                 DesktopWorkspace(vm, temp.resolve("store")).use { workspace ->
                     vm.attachWorkspace(workspace)
                     workspace.importPsd(Characters.mouthPsd(temp).toString(), true, WorkspaceInitialModifiers.RECOMMENDED)
+                    assertEquals(I18n.text("model.parameter.mouthOpen"), vm.state.value.previewModel!!.rig.puppet.parameters.single { it.id.raw == "ParamMouthOpenY" }.name)
                     val stack = RigModifierStack.fromJson(requireNotNull(vm.state.value.rigEdits.modifierStack))
                     val mouth = stack.instances.single { it.type == "mouth" }
                     val outline = ModifierPartEditing.child(mouth, "mouth.outline")

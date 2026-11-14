@@ -950,7 +950,7 @@ internal class RigModifierSource(
             put(ModifierParameterI18n.CONTEXT_KEY, io.github.psd2live.core.modifier.source.ModifierParameterContext.i18n(
                 mapOf(
                     "ParamMouthForm" to io.github.psd2live.i18n.tr("model.parameter.mouthForm"),
-                    "ParamMouthOpenY" to io.github.psd2live.i18n.tr("model.parameter.mouthOpenY"),
+                    "ParamMouthOpenY" to io.github.psd2live.i18n.tr("model.parameter.mouthOpen"),
                 )
             ).toJsonElement())
         }
@@ -988,7 +988,7 @@ internal class RigModifierSource(
             put(ModifierParameterI18n.CONTEXT_KEY, io.github.psd2live.core.modifier.source.ModifierParameterContext.i18n(
                 mapOf(
                     "ParamMouthForm" to io.github.psd2live.i18n.tr("model.parameter.mouthForm"),
-                    "ParamMouthOpenY" to io.github.psd2live.i18n.tr("model.parameter.mouthOpenY"),
+                    "ParamMouthOpenY" to io.github.psd2live.i18n.tr("model.parameter.mouthOpen"),
                 )
             ).toJsonElement())
         }
@@ -1022,7 +1022,7 @@ internal class RigModifierSource(
             put(ModifierParameterI18n.CONTEXT_KEY, io.github.psd2live.core.modifier.source.ModifierParameterContext.i18n(
                 mapOf(
                     "ParamMouthForm" to io.github.psd2live.i18n.tr("model.parameter.mouthForm"),
-                    "ParamMouthOpenY" to io.github.psd2live.i18n.tr("model.parameter.mouthOpenY"),
+                    "ParamMouthOpenY" to io.github.psd2live.i18n.tr("model.parameter.mouthOpen"),
                 )
             ).toJsonElement())
         }
@@ -1055,7 +1055,7 @@ internal class RigModifierSource(
             put(ModifierParameterI18n.CONTEXT_KEY, io.github.psd2live.core.modifier.source.ModifierParameterContext.i18n(
                 mapOf(
                     "ParamMouthForm" to io.github.psd2live.i18n.tr("model.parameter.mouthForm"),
-                    "ParamMouthOpenY" to io.github.psd2live.i18n.tr("model.parameter.mouthOpenY"),
+                    "ParamMouthOpenY" to io.github.psd2live.i18n.tr("model.parameter.mouthOpen"),
                 )
             ).toJsonElement())
         }
@@ -1107,7 +1107,7 @@ internal class RigModifierSource(
             put(ModifierParameterI18n.CONTEXT_KEY, io.github.psd2live.core.modifier.source.ModifierParameterContext.i18n(
                 mapOf(
                     "ParamMouthForm" to io.github.psd2live.i18n.tr("model.parameter.mouthForm"),
-                    "ParamMouthOpenY" to io.github.psd2live.i18n.tr("model.parameter.mouthOpenY"),
+                    "ParamMouthOpenY" to io.github.psd2live.i18n.tr("model.parameter.mouthOpen"),
                 )
             ).toJsonElement())
         }
@@ -1319,7 +1319,7 @@ internal class RigModifierSource(
             put(ModifierParameterI18n.CONTEXT_KEY, io.github.psd2live.core.modifier.source.ModifierParameterContext.i18n(
                 mapOf(
                     "ParamMouthForm" to io.github.psd2live.i18n.tr("model.parameter.mouthForm"),
-                    "ParamMouthOpenY" to io.github.psd2live.i18n.tr("model.parameter.mouthOpenY"),
+                    "ParamMouthOpenY" to io.github.psd2live.i18n.tr("model.parameter.mouthOpen"),
                 )
             ).toJsonElement())
         }
@@ -1332,7 +1332,7 @@ internal class RigModifierSource(
             put(ModifierParameterI18n.CONTEXT_KEY, io.github.psd2live.core.modifier.source.ModifierParameterContext.i18n(
                 mapOf(
                     "ParamMouthForm" to io.github.psd2live.i18n.tr("model.parameter.mouthForm"),
-                    "ParamMouthOpenY" to io.github.psd2live.i18n.tr("model.parameter.mouthOpenY"),
+                    "ParamMouthOpenY" to io.github.psd2live.i18n.tr("model.parameter.mouthOpen"),
                 )
             ).toJsonElement())
         })
