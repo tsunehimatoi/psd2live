@@ -38,6 +38,8 @@ worker Session 与包引用是两种所有权。关闭一个 Session 立即拒�
 
 `retirementSnapshots(store)` 报告 pending/running/failed、尝试数与错误；失败保留待回收对象，`retryRetirements(store)` 可重试，不将失败冒充释放成功。工具可显式调用 `Session.awaitReleased()`、`awaitRetirements(store)` 验证实际退出，产品的关闭和发布路径不等待。兼容的无 Session 调用仍按进程生命周期保留；包卸载／禁用继续使用同步 `stop(reference)`，确保包文件句柄已释放。
 
+JVM 退出同时处理 live pool 与退休队列保留的条目。shutdown 先请求终止进程及已记录的后代，再用独立 daemon 平台线程回收资源，等待窗口为 5 秒；超过窗口或失败的 PID／状态／错误写到 stderr。它不依赖普通虚拟线程继续保活，也不将超时清理报告为成功。
+
 ## 当前测量边界
 
 - JVM heap、committed heap、non-heap 与显式缓存计数分别记录；目前不采集操作系统 RSS、worker 子进程堆或 retained-object heap dump。

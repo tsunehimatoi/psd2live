@@ -57,7 +57,16 @@ internal object ModifierPluginWorkers {
     private val executor = Executors.newVirtualThreadPerTaskExecutor()
     internal val retirements = WorkerRetirementQueue()
     private class QueuedFailure(val original: Throwable) : RuntimeException(original)
-    init { Runtime.getRuntime().addShutdownHook(Thread { workers.values.forEach { it.close() } }) }
+    init { Runtime.getRuntime().addShutdownHook(Thread {
+        workers.entries.toList().forEach { (key, worker) ->
+            runCatching { worker.retire(key.storeRoot) }.onFailure {
+                System.err.println("Plugin worker retirement could not be queued: ${it.message}")
+            }
+        }
+        retirements.shutdown(5_000).forEach {
+            System.err.println("Plugin worker shutdown incomplete (pid=${it.pid}, state=${it.state}): ${it.failure}")
+        }
+    }) }
 
     /** A workspace owner, distinct from package availability. Closing one owner never stops another's worker. */
     class Session internal constructor(internal val store: ModifierPluginStore,
@@ -286,10 +295,18 @@ internal object ModifierPluginWorkers {
         @Volatile private var closed = false
         val isClosed: Boolean get() = closed || !process.isAlive
         private val requests = java.util.concurrent.locks.ReentrantLock(true)
+        private val disposal = Any()
+        private val descendantHandles = ConcurrentHashMap.newKeySet<ProcessHandle>()
 
         fun retire(storeRoot: Path) {
             closed = true
-            retirementQueue.enqueue(WorkerRetirementQueue.Key(storeRoot, process.pid())) { close() }
+            retirementQueue.enqueue(WorkerRetirementQueue.Key(storeRoot, process.pid()), forceStop = ::forceStop) { close() }
+        }
+
+        private fun forceStop() {
+            descendantHandles.addAll(process.descendants().toList())
+            descendantHandles.forEach { it.destroyForcibly() }
+            process.destroyForcibly()
         }
 
         fun cacheSnapshot() = CacheSnapshot(process.pid(),
@@ -656,22 +673,20 @@ internal object ModifierPluginWorkers {
             is JsonArray -> JsonArray(value.map { expand(it, responseBlobs) })
             else -> value
         }
-        override fun close() {
+        override fun close(): Unit = synchronized(disposal) {
             closed = true
             releaseCaches()
             val interrupted = Thread.interrupted()
             try {
-                val descendants = process.descendants().toList()
-                descendants.forEach { it.destroyForcibly() }
-                process.destroyForcibly()
+                forceStop()
                 // On Windows executable/JAR handles remain locked until the process actually exits.
                 check(process.waitFor(5, TimeUnit.SECONDS)) { "Plugin worker did not exit; package remains installed" }
-                descendants.forEach { runCatching { it.onExit().get(5, TimeUnit.SECONDS) } }
+                descendantHandles.forEach { it.onExit().get(5, TimeUnit.SECONDS) }
                 stderr.cancel(true)
                 runCatching { process.inputStream.close() }
                 runCatching { process.outputStream.close() }
                 runCatching { process.errorStream.close() }
-                runCatching { ModifierPluginStore.deleteTree(resources) }
+                ModifierPluginStore.deleteTree(resources)
             } finally { if (interrupted) Thread.currentThread().interrupt() }
         }
     }
