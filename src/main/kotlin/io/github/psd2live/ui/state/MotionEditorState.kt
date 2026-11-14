@@ -39,14 +39,6 @@ internal class MotionEditorState {
 	/** Copied keys, times relative to the earliest. */
 	var clipboard: List<Pair<String, MotionKey>> = emptyList()
 
-	/** The clip a key drag started from; every drag sample is applied to it, not to the previous sample. */
-	var dragOrigin: MotionClip? = null
-	var dragSelection: Set<MotionKeyRef> = emptySet()
-	var dragState: String? = null
-	var dragClips: List<MotionClip> = emptyList()
-	var dragMode: String = "move_keys"
-	var dragRequest: kotlinx.serialization.json.JsonObject? = null
-
 	companion object {
 		private const val PRESET_PREFIX = "preset:"
 

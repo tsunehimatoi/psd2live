@@ -456,6 +456,7 @@ data class PSD2LiveState(
     val projectDirty: Boolean = false,
     val projectSaving: Boolean = false,
     val projectSaveError: String? = null,
+    val recoveryPersistence: io.github.psd2live.application.WorkspacePersistenceState? = null,
     val showProjectLocationDialog: Boolean = false,
     val showExportDialog: Boolean = false,
     val showExportPsdDialog: Boolean = false,
