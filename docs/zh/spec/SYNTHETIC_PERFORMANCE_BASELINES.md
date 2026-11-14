@@ -6,11 +6,15 @@
 
 继续使用 `RigBuildProfile`。原有阶段汇总和 legacy 模板计数保留；`measure` / `measureSuspending` 返回单次操作样本，关联任务、起始修订、候选、场景和模型规模。挂起构建传播同一协程上下文，worker executor 显式传播样本。profiler 不持有历史样本或模型结果。
 
+`algorithm-api` 的 `ModifierAlgorithmStages` 只提供同步阶段回调，不聚合数据，也不引用宿主。宿主开启 `RigBuildProfile.recording` 后将阶段归入同一 Operation，关闭则移除回调；禁用路径不采时。观察器失败不改变算法的返回值、异常或取消。真实 worker 不安装该宿主回调，本轮不增加计时 wire 字段。
+
 worker 记录排队、输入序列化、便携模型转换、请求编码、写入、读取与 worker 等待、响应解码与应用，以及几何命中、失效、淘汰和传输载荷字节。`read and worker` 是合并阶段，不应称为纯算法时间；载荷字节不包括协议 framing。嵌套阶段不能直接相加当作总耗时。
 
 `SyntheticWorkerBaselineTool` 是协议 2 的真实子进程微基准。三档规模为 4×64、16×256、64×1024（网格数×每网格顶点数）。每档分别记录新 worker 首次请求、5 次预热、至少 30 次热请求与单字段变更、至少 1,000 次几何变更，以及 5 次 worker 关闭重开。使用实际 worker 几何缓存并断言字节预算，最后一个租约释放后断言进程池中不再保留该 worker。
 
-`SyntheticWorkspaceBaselineTool` 是无窗口工作区工具，经真实 PSD 导入、文档命令、候选重建、CAS、历史、归档和导出。三档为 4×64²、16×128²、64×256² 的合成图层；实际输出网格／顶点数写入样本。每档记录导入、预热、至少 30 次字段修改、拓扑编辑与撤销重做、至少 1,000 次正式编辑、保存、5 次关闭重开及 CMO3 导出。保留所有正式编辑及拓扑分支，不丢弃历史来降低内存。
+`SyntheticWorkspaceBaselineTool` 是无窗口工作区工具，经真实 PSD 导入、文档命令、候选重建、CAS、历史、归档和导出。三档为 4×64²、16×128²、64×256² 的合成图层；实际输出网格／顶点数写入样本。每档记录导入、预热、至少 30 次字段修改、拓扑编辑与撤销重做、两个 motion 修改器的至少 30 次重排、至少 1,000 次正式编辑、保存、5 次关闭重开及 CMO3 导出。重排与冷重建逐次比较完整 RigIR。保留所有正式编辑及拓扑分支，不丢弃历史来降低内存；每次重开恢复完整 history、辅助状态，断言节点元数据、HEAD 和叶分支身份不变。解压目录在其惰性历史仍被工作区持有期间保持有效。
+
+`SyntheticPartBaselineTool` 复用合成眼、眉、嘴输入和部件等价验收设计，以 meshSpacing 40／20／10 形成三档并报告实际网格／顶点数。每档对眼睁大、眉形、嘴描边记录冷执行、预热、至少 30 次热命中和至少 30 次单个子配置变化，逐次比较展开栈、折叠栈和真实 worker 的完整 RigIR，并与冷重放对照。夹具使用固定原子实例 ID，不删除、归一化或忽略 ID／顺序／引用／资源来获取等价结果。工具须在 A5 的身份与子配置修复基线上运行；编译通过不代表旧基线具备这些语义保证。
 
 PowerShell 运行示例（仅在没有其他构建和测量竞争时运行）：
 
@@ -20,6 +24,7 @@ $env:PSD2LIVE_BASELINE_SAMPLES = '30'
 $env:PSD2LIVE_BASELINE_EDITS = '1000'
 .\gradlew.bat test --tests '*SyntheticWorkerBaselineTool' --max-workers=2 '-Ppsd2live.testForks=1'
 .\gradlew.bat test --tests '*SyntheticWorkspaceBaselineTool' --max-workers=2 '-Ppsd2live.testForks=1'
+.\gradlew.bat test --tests '*SyntheticPartBaselineTool' --max-workers=2 '-Ppsd2live.testForks=1'
 ```
 
 每个工具写 `samples.jsonl`（每次立即落盘）与 `summary.json`（样本数、中位数、P95、最大值和大于中位数三倍的样本）。报告记录 JDK、操作系统、处理器数量、最大堆、输入或插件 digest。当前冷样本是同 JVM 的新会话／worker，不是操作系统冷缓存或 JVM 冷启动；需要进程冷启动数据时单独重启测试进程。
@@ -44,5 +49,5 @@ JVM 退出同时处理 live pool 与退休队列保留的条目。shutdown 先�
 
 - JVM heap、committed heap、non-heap 与显式缓存计数分别记录；目前不采集操作系统 RSS、worker 子进程堆或 retained-object heap dump。
 - 工作区工具保留历史，预期历史必需数据增长；关闭重开时故意持有一个捕获模型验证读取，再在下一次样本释放它。一次 GC 后的堆大小不作为泄漏判据。
-- 当前工作区工具使用空修改器栈。部件折叠／展开对照、栈重排、纯子算法耗时与 GUI 首次正确呈现尚未覆盖，不能据本工具宣布整个 B1 验收完成。
+- 部件工具可计量展开栈的独立子算法阶段与折叠后的部件总阶段；折叠部件内部的逐个子算法时间尚无独立埋点。GUI 首次正确呈现仍需携带模型修订的 renderer 回传，不能用任意首帧代替。
 - 开发工具通过编译与常规单元回归，不等于已运行 30／1,000 次测量；是否实际运行及结果应由验收记录单独说明。

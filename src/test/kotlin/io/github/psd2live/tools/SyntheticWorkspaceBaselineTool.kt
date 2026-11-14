@@ -4,7 +4,6 @@ import io.github.psd2live.application.*
 import io.github.psd2live.core.*
 import io.github.psd2live.format.compile.document.ContentHash
 import io.github.psd2live.project.*
-import io.github.psd2live.targets.cubism.PuppetIr
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
 import org.umamo.format.art.*
@@ -22,7 +21,7 @@ class SyntheticWorkspaceBaselineTool {
         val samples = if (smoke) 1 else setting("PSD2LIVE_BASELINE_SAMPLES", "30").toInt().also { require(it >= 30) }
         val edits = if (smoke) 3 else setting("PSD2LIVE_BASELINE_EDITS", "1000").toInt().also { require(it >= 1000) }
         val report = SyntheticBaselineReport(if (smoke) "synthetic-workspace-smoke" else "synthetic-workspace",
-            "headless workspace commands and history; empty modifier stack; no GUI presentation or folded/expanded part comparison")
+            "headless workspace commands and history; starts with empty stack then reorders two motion modifiers; no GUI presentation")
         report.metadata("acceptance_run", (!smoke).toString())
         report.metadata("history_policy", "Retain every committed edit and topology undo branch until close; persistent history growth is expected")
         report.metadata("retained_readers", "The close-reopen sample deliberately holds one immutable reader to verify validity; later samples release it. No forced GC leak claim")
@@ -90,10 +89,31 @@ class SyntheticWorkspaceBaselineTool {
                         measured("redo") { runtime.capture().let { runtime.checkout(it.projectId, it.state, edited) } }
                         runtime.capture().let { runtime.checkout(it.projectId, it.state, before.historyHead) }
                     }
+                    measured("stack-setup") {
+                        command("parameter_create", buildJsonObject {
+                            put("parameter_id", "ParamBenchmark"); put("name", "Benchmark")
+                            put("min", -1); put("max", 1); put("default", 0)
+                        })
+                        for (id in listOf("motion-a", "motion-b")) command("modifier_add", buildJsonObject {
+                            put("id", id); put("type", "motion"); put("version", 1)
+                            put("config", MotionClips.toJson(MotionClip("template", id, curves = listOf(
+                                MotionCurve("ParamBenchmark", listOf(MotionKey(0f, 0f), MotionKey(1f, .5f)))))))
+                            putJsonArray("targets") { addJsonObject { put("kind", "mesh"); put("id", target) } }
+                        })
+                    }
+                    repeat(samples) { index ->
+                        measured("stack-reorder") {
+                            command("modifier_move", buildJsonObject { put("id", "motion-b"); put("index", if (index % 2 == 0) 0 else 1) })
+                        }
+                        val captured = runtime.capture()
+                        val cold = WorkspacePreviewBuilder().build(captured.document)
+                        try { assertEquals(RigIrCompiler.compile(cold), RigIrCompiler.compile(captured.model), "Reordered stack must equal cold rebuild") }
+                        finally { cold.modifierBuildOwner?.close() }
+                    }
                     repeat(edits) { index -> measured("committed-edit") {
                         command("rig_edit_structure", rename(target, "Stress $index"))
                     } }
-                    val expected = ContentHash.of(PuppetIr.toIr(runtime.capture().model.rig.puppet))
+                    val expected = ContentHash.of(RigIrCompiler.compile(runtime.capture().model))
                     // Keep metadata, not the old selections/snapshots: close must be allowed to release their objects.
                     val expectedHead = runtime.history().headNodeId
                     val expectedNodes = runtime.history().selections.associate { it.node.id to it.node }
@@ -112,7 +132,7 @@ class SyntheticWorkspaceBaselineTool {
                             measured("close-reopen") {
                                 val captured = runtime.capture()
                                 runtime.close(captured.state, discardUnsaved = true)
-                                assertEquals(expected, ContentHash.of(PuppetIr.toIr(captured.model.rig.puppet)),
+                                assertEquals(expected, ContentHash.of(RigIrCompiler.compile(captured.model)),
                                     "Releasing caches changed an active immutable reader")
                                 captured.model.modifierBuildOwner?.let { owner ->
                                     assertTrue(owner.isClosed && !owner.retainsMeshCache)
@@ -123,7 +143,7 @@ class SyntheticWorkspaceBaselineTool {
                                 try {
                                     val document = opened.history.head().snapshot
                                     val model = builder.build(document)
-                                    assertEquals(expected, ContentHash.of(PuppetIr.toIr(model.rig.puppet)))
+                                    assertEquals(expected, ContentHash.of(RigIrCompiler.compile(model)))
                                     assertEquals(captured.projectId, opened.projectId)
                                     runtime.install(runtime.state.value.state, opened.projectId, document, model,
                                         history = opened.history.state(), auxiliary = opened.presentation)
