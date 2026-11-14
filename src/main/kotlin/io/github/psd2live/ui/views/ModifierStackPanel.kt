@@ -118,13 +118,13 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
             }
             PresetLibraryControls(state, null, enabled)
         }
-        CompactTabBar(listOf(tr("modifier.mode.settings"), tr("modifier.mode.ordering")), if (editOrder) 1 else 0, { editOrder = it == 1 })
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val extent = with(density) { maxWidth.toPx() }.coerceAtLeast(1f)
             val minimum = (with(density) { 120.dp.toPx() } / extent).coerceAtMost(0.4f)
             val maximum = 1f - (with(density) { 180.dp.toPx() } / extent).coerceAtMost(0.4f)
             Row(Modifier.fillMaxSize()) {
             Column(Modifier.weight(listRatio.coerceIn(minimum, maximum)).fillMaxHeight()) {
+                CompactTabBar(listOf(tr("modifier.mode.settings"), tr("modifier.mode.ordering")), if (editOrder) 1 else 0, { editOrder = it == 1 })
                 ModifierStackList(stack, reports, vm, editOrder, enabled, selected?.id) { selectedId = it; page = 0 }
             }
             Box(Modifier.panelDivider(horizontal = true) { delta ->
@@ -152,54 +152,18 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                     val foldController = remember(selected.id) { ModifierFoldController() }
                     val report = reports[selected.id]
                     val status = report?.get("status")?.jsonPrimitive?.content ?: "loading"
-                    val customName = selected.config["name"]?.jsonPrimitive?.contentOrNull
-                    val displayName = customName ?: modifierName(selected.type)
-                    val typeSubtitle = if (customName != null) modifierName(selected.type) else null
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(colors.panelElevated)
-                            .padding(horizontal = Spacing.Margin, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(Spacing.Gap),
-                    ) {
-                        CompactCheckbox(selected.enabled, { value ->
-                            vm.editModifier("modifier_enable", buildJsonObject {
-                                put("id", selected.id); put("enabled", value)
-                            })
-                        }, enabled = enabled)
-                        val titleColor = if (selected.enabled) colors.textPrimary else colors.textMuted
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                text = displayName,
-                                style = LocalToolTypography.current.body.copy(fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold),
-                                color = titleColor,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            if (typeSubtitle != null) {
-                                Text(
-                                    text = typeSubtitle,
-                                    style = LocalToolTypography.current.caption.copy(fontSize = 9.5.sp),
-                                    color = colors.textMuted,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-                        if (status != "active" && status != "disabled") {
-                            ModifierStatusBadge(status)
-                        }
-                    }
-                    Divider(color = colors.divider, thickness = 1.dp)
 
                     Row(
                         modifier = Modifier.fillMaxWidth().background(colors.panelElevated),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         CompactTabBar(
-                            listOf(tr("modifier.adjust"), tr("modifier.targetList"), tr("modifier.details")),
+                            listOf(
+                                tr("modifier.adjust"),
+                                tr("modifier.targetList"),
+                                tr("modifier.details"),
+                                tr("modifier.info"),
+                            ),
                             page,
                             { page = it },
                             modifier = Modifier.weight(1f),
@@ -299,6 +263,7 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                                         modifier = Modifier.fillMaxWidth(),
                                     )
                                 }
+                                3 -> ModifierInfoTab(selected, stack, reports, report, status)
                             }
                         }
                     }
@@ -307,6 +272,204 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
         }
     }
 }
+}
+
+private fun formatVersionRange(range: ModifierPluginVersionRange): String = when {
+    range.exact != null -> "= ${range.exact}"
+    range.minimum != null && range.maximum != null -> ">= ${range.minimum}, < ${range.maximum}"
+    range.minimum != null -> ">= ${range.minimum}"
+    range.maximum != null -> "< ${range.maximum}"
+    else -> "*"
+}
+
+@Composable
+private fun ModifierInfoTab(
+    instance: RigModifierInstance,
+    stack: RigModifierStack,
+    reports: Map<String, JsonObject>,
+    report: JsonObject?,
+    status: String,
+) {
+    val colors = LocalToolColors.current
+    val typography = LocalToolTypography.current
+    val pluginRevision by ModifierPluginStore.shared.revision.collectAsState()
+    val (installedPlugin, algorithm, resolution) = remember(
+        instance.id,
+        instance.type,
+        instance.version,
+        instance.plugin,
+        pluginRevision,
+    ) {
+        val store = ModifierPluginStore.shared
+        val packages = store.runnablePackages()
+        val installed = instance.plugin?.let { ref -> packages.firstOrNull { it.reference == ref } }
+            ?: ModifierPluginCatalog.algorithm(instance.type, instance.version, store)?.first
+            ?: ModifierPluginCatalog.algorithm(instance.type, store = store)?.first
+        val alg = installed?.manifest?.algorithms?.firstOrNull {
+            it.version == instance.version && (it.type == instance.type || instance.type in it.aliases)
+        } ?: ModifierPluginCatalog.algorithm(instance.type, instance.version, store)?.second
+            ?: ModifierPluginCatalog.algorithm(instance.type, store = store)?.second
+        val res = (instance.plugin ?: installed?.reference)?.let { store.resolution(it) }
+        Triple(installed, alg, res)
+    }
+
+    val pluginId = instance.plugin?.id ?: installedPlugin?.reference?.id
+    val pluginVersion = instance.plugin?.version ?: installedPlugin?.reference?.version
+    val isBuiltin = pluginId == null || pluginId.startsWith("builtin.")
+    val description = modifierDescription(instance.type, instance.config["id"]?.jsonPrimitive?.contentOrNull)
+
+    RememberedModifierSection(
+        stateKey = "${instance.id}:info:plugin",
+        title = tr("modifier.info.plugin"),
+        defaultExpanded = true,
+    ) {
+        InspectorFormRow(tr("modifier.info.status")) {
+            ModifierStatusBadge(status)
+        }
+        InspectorFormRow(tr("modifier.info.source")) {
+            Text(
+                text = tr(if (isBuiltin) "modifier.info.source.builtin" else "modifier.info.source.external"),
+                style = typography.caption,
+                color = colors.textPrimary,
+            )
+        }
+        if (installedPlugin != null && !isBuiltin) {
+            InspectorFormRow(tr("modifier.info.plugin")) {
+                Text(
+                    text = installedPlugin.manifest.name,
+                    style = typography.caption,
+                    color = colors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (pluginId != null) {
+            InspectorFormRow(tr("modifier.info.pluginId")) {
+                Text(
+                    text = pluginId,
+                    style = typography.caption,
+                    color = colors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (pluginVersion != null) {
+            InspectorFormRow(tr("modifier.info.pluginVersion")) {
+                Text(
+                    text = pluginVersion,
+                    style = typography.caption,
+                    color = colors.textPrimary,
+                )
+            }
+        }
+        InspectorFormRow(tr("modifier.info.algorithmVersion")) {
+            Text(
+                text = "v${instance.version}",
+                style = typography.caption,
+                color = colors.textPrimary,
+            )
+        }
+        if (description != null) {
+            InspectorHint(description)
+        }
+    }
+
+    val pluginDeps = installedPlugin?.manifest?.dependencies.orEmpty()
+    val missingDeps = report?.get("missing_dependencies")?.jsonArray.orEmpty().map { it.jsonPrimitive.content }
+    val requires = algorithm?.requires.orEmpty()
+    val provides = algorithm?.provides.orEmpty()
+    val resolutionIssues = resolution?.issues.orEmpty()
+
+    RememberedModifierSection(
+        stateKey = "${instance.id}:info:dependencies",
+        title = tr("modifier.info.dependencies"),
+        defaultExpanded = true,
+    ) {
+        for (dep in pluginDeps) {
+            InspectorFormRow(dep.id) {
+                Text(
+                    text = formatVersionRange(dep.version),
+                    style = typography.caption,
+                    color = colors.textPrimary,
+                )
+            }
+        }
+        for (issue in resolutionIssues) {
+            InspectorHint(issue, warning = true)
+        }
+        if (requires.isNotEmpty()) {
+            InspectorFormRow(tr("modifier.info.requires")) {
+                Text(
+                    text = requires.joinToString(),
+                    style = typography.caption,
+                    color = colors.textPrimary,
+                )
+            }
+        }
+        if (provides.isNotEmpty()) {
+            InspectorFormRow(tr("modifier.info.provides")) {
+                Text(
+                    text = provides.joinToString(),
+                    style = typography.caption,
+                    color = colors.textMuted,
+                )
+            }
+        }
+        if (missingDeps.isNotEmpty()) {
+            InspectorHint(tr("modifier.dependencies", missingDeps.joinToString()), warning = true)
+        }
+        if (pluginDeps.isEmpty() && requires.isEmpty() && provides.isEmpty() && missingDeps.isEmpty() && resolutionIssues.isEmpty()) {
+            Text(
+                text = tr("modifier.info.noDependencies"),
+                style = typography.caption,
+                color = colors.textMuted,
+            )
+        }
+    }
+
+    val stackConflict = remember(stack, reports, instance.id) {
+        ModifierConflictAnalysis.stackConflicts(stack, reports)[instance.id] ?: ModifierConflict.NONE
+    }
+    val declaredConflicts = installedPlugin?.manifest?.conflicts.orEmpty()
+    val overrideIssues = report?.get("override_issues")?.jsonArray.orEmpty().mapNotNull {
+        it.jsonObject["message"]?.jsonPrimitive?.contentOrNull ?: it.jsonObject["kind"]?.jsonPrimitive?.contentOrNull
+    }
+
+    RememberedModifierSection(
+        stateKey = "${instance.id}:info:conflicts",
+        title = tr("modifier.info.conflicts"),
+        defaultExpanded = true,
+    ) {
+        if (stackConflict.severity != ModifierConflictSeverity.NONE) {
+            val conflictText = stackConflict.messageKey?.let { tr(it) } ?: tr("modifier.status.$status")
+            Text(
+                text = conflictText,
+                style = typography.caption,
+                color = if (stackConflict.severity == ModifierConflictSeverity.HARD) colors.error else colors.warning,
+            )
+        }
+        for (conflict in declaredConflicts) {
+            InspectorFormRow(conflict.id) {
+                Text(
+                    text = formatVersionRange(conflict.version),
+                    style = typography.caption,
+                    color = colors.textPrimary,
+                )
+            }
+        }
+        for (issue in overrideIssues) {
+            InspectorHint(issue, warning = true)
+        }
+        if (stackConflict.severity == ModifierConflictSeverity.NONE && declaredConflicts.isEmpty() && overrideIssues.isEmpty()) {
+            Text(
+                text = tr("modifier.info.noConflicts"),
+                style = typography.caption,
+                color = colors.textMuted,
+            )
+        }
+    }
 }
 
 @Composable
