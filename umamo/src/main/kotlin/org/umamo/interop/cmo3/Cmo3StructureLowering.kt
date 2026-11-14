@@ -569,9 +569,8 @@ internal class Cmo3StructureLowering(
 			_extensions = CArrayList<Any?>()
 			labelColor = Cmo3SkeletonBuilder.undefinedLabelColor()
 			guid = glueGuid
-			// The model keys glues by mesh pair + ordinal (they carry no id of their own), so the
-			// minted idstr only needs uniqueness within the document.
-			id = freshIdLike(template?.id as? Id, "CAffecterId", "Glue_${editedGlue.meshA.raw}_${editedGlue.meshB.raw}_$ordinal")
+			// Keep authored IDs; anonymous glues get a deterministic mesh-pair/ordinal fallback.
+			id = freshIdLike(template?.id as? Id, "CAffecterId", editedGlue.id ?: "Glue_${editedGlue.meshA.raw}_${editedGlue.meshB.raw}_$ordinal")
 			// CMO3: ACAffecterSource field targetDeformerGuid - the editor's fixed root-deformer
 			// sentinel (uuid identical in every corpus file; the editor writes it even for glues
 			// whose meshes have real deformer parents).
