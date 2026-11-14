@@ -1,5 +1,6 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.core.modifier.ModifierAlgorithmStages
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.asContextElement
@@ -11,6 +12,12 @@ import kotlinx.coroutines.withContext
  */
 internal object RigBuildProfile {
 	@Volatile var recording: Boolean = false
+		set(value) {
+			field = value
+			ModifierAlgorithmStages.observer = if (value) { name, elapsed ->
+				if (recording) add("algorithm stage: $name", elapsed)
+			} else null
+		}
 	private val nanos = ConcurrentHashMap<String, AtomicLong>()
 	private val calls = ConcurrentHashMap<String, AtomicLong>()
 	private val modifierConsumer = ThreadLocal<String>()

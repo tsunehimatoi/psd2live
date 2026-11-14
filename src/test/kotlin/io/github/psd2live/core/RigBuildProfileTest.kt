@@ -1,5 +1,6 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.core.modifier.ModifierAlgorithmStages
 import java.util.concurrent.Executors
 import kotlin.test.*
 
@@ -64,5 +65,40 @@ class RigBuildProfileTest {
             assertEquals(2L, result.stages.getValue("mesh").second)
             assertEquals(1L, result.stages.getValue("build").second)
         }
+    }
+
+    @Test fun algorithmStagesShareOperationAcrossExecutorsAndCoroutines() = recording {
+        Executors.newSingleThreadExecutor().use { executor ->
+            kotlinx.coroutines.runBlocking {
+                val sample = RigBuildProfile.measureSuspending(identity("algorithm")) {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                        ModifierAlgorithmStages.stage("base") { }
+                        val work = RigBuildProfile.propagate { ModifierAlgorithmStages.stage("child") { } }
+                        executor.submit<Unit> { work() }.get()
+                    }
+                }
+                assertEquals(1L, sample.stages.getValue("algorithm stage: base").second)
+                assertEquals(1L, sample.stages.getValue("algorithm stage: child").second)
+                val next = RigBuildProfile.measure(identity("next")) {
+                    executor.submit<Unit> { ModifierAlgorithmStages.stage("unrelated") { } }.get()
+                }
+                assertTrue(next.stages.isEmpty())
+            }
+        }
+    }
+
+    @Test fun nestedAlgorithmSamplesRemainIsolatedAndDisableDetachesObserver() = recording {
+        val outer = RigBuildProfile.measure(identity("outer")) {
+            ModifierAlgorithmStages.stage("outer") { }
+            val inner = RigBuildProfile.measure(identity("inner")) { ModifierAlgorithmStages.stage("inner") { } }
+            assertEquals(setOf("algorithm stage: inner"), inner.stages.keys)
+            ModifierAlgorithmStages.stage("after") { }
+        }
+        assertEquals(setOf("algorithm stage: outer", "algorithm stage: after"), outer.stages.keys)
+        RigBuildProfile.recording = false
+        assertNull(ModifierAlgorithmStages.observer)
+        RigBuildProfile.reset()
+        ModifierAlgorithmStages.stage("disabled") { }
+        assertTrue(RigBuildProfile.snapshot().isEmpty())
     }
 }
