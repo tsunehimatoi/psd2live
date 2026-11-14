@@ -1,19 +1,23 @@
 [
   {
-    "id": "legacy",
-    "name": "Classic",
-    "nameKey": "modifier.baseline.legacy",
-    "baseline": "legacy"
-  },
-  {
     "id": "modern",
-    "name": "Expressive",
+    "name": "Stylized Rig · Clothing Simulation (Recommended)",
     "nameKey": "modifier.baseline.modern",
     "baseline": "modern"
   },
   {
+    "id": "modern-dynamic",
+    "name": "Stylized Rig · Full Simulation",
+    "nameKey": "modifier.preset.modernDynamic",
+    "baseline": "modern",
+    "choices": {
+      "frontHair": "SIMULATION",
+      "backHair": "SIMULATION"
+    }
+  },
+  {
     "id": "modern-light",
-    "name": "Expressive · Light",
+    "name": "Stylized Rig · No Simulation",
     "nameKey": "modifier.preset.modernLight",
     "baseline": "modern",
     "choices": {
@@ -27,19 +31,14 @@
     }
   },
   {
-    "id": "modern-dynamic",
-    "name": "Expressive · Dynamic",
-    "nameKey": "modifier.preset.modernDynamic",
-    "baseline": "modern",
-    "choices": {
-      "frontHair": "SIMULATION",
-      "backHair": "SIMULATION",
-      "featureDisplacement": true
-    }
+    "id": "legacy",
+    "name": "Classic Amplitude Rig · Clothing Simulation",
+    "nameKey": "modifier.baseline.legacy",
+    "baseline": "legacy"
   },
   {
     "id": "legacy-light",
-    "name": "Classic · Light",
+    "name": "Classic Amplitude Rig · No Simulation",
     "nameKey": "modifier.preset.legacyLight",
     "baseline": "legacy",
     "choices": {
@@ -54,7 +53,7 @@
   },
   {
     "id": "empty",
-    "name": "Empty",
+    "name": "Empty (Meshes Only)",
     "nameKey": "modifier.baseline.empty",
     "baseline": "empty"
   }

@@ -555,12 +555,16 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
     val dialog = vm.modifierAddition ?: return
     val groups = dialog.group != null
     if (groups) {
-        PressMenu(expanded = true, press = Offset.Zero, onDismissRequest = { if (!dialog.committing) vm.dismissModifierAddition() }, width = 260.dp) {
+        PressMenu(expanded = true, press = Offset.Zero, onDismissRequest = { if (!dialog.committing) vm.dismissModifierAddition() }, width = 340.dp) {
             FloatingMenuSection(tr("modifier.switch.description"))
             val baselines by io.github.psd2live.application.WorkspaceModelPresetLibrary.shared.state.collectAsState()
             GlidingColumn(Modifier.fillMaxWidth(), baselines.size, highlights = { !dialog.committing }) { index ->
                 val entry = baselines[index]
-                FloatingMenuRow(entry.nameKey?.let { tr(it) } ?: entry.name, { vm.switchModifierPreset(entry.id) }, enabled = !dialog.committing, bar = false)
+                val hint = entry.nameKey?.let { key ->
+                    val hintKey = "$key.hint"
+                    tr(hintKey).takeUnless { it == hintKey }
+                }
+                FloatingMenuRow(entry.nameKey?.let { tr(it) } ?: entry.name, { vm.switchModifierPreset(entry.id) }, enabled = !dialog.committing, hint = hint, bar = false)
             }
             if (dialog.committing) FloatingMenuSection(tr("modifier.adding"))
             dialog.error?.let { FloatingMenuRow(tr("modifier.switch"), {}, enabled = false, hint = it) }

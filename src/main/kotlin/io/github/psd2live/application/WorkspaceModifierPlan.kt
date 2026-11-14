@@ -13,6 +13,7 @@ internal object WorkspaceModifierPlan {
     val nativeTypes = listOf("swing", "physics", "motion", "simulation")
     val types get() = (sourceTypes + nativeTypes).filter { ModifierPluginStore.shared.builtinsEnabled() } + ModifierPluginStore.shared.runnablePackages().filter { ModifierPluginStore.shared.resolution(it.reference).available }.flatMap { it.manifest.algorithms.map { it.type } }.distinct()
     const val RECOMMENDED_GROUP = "modern-standard"
+    val PRESET_EXCLUDED_MODULES = setOf("face.depth-turn", "outfit.skirt", "eye.squash")
     data class Group(val id: String, val algorithm: String, val richness: String, val types: List<String>)
     val groupCatalog: List<Group> = listOf("legacy", "modern").flatMap { algorithm ->
         listOf("minimal", "standard", "full").map { richness ->
@@ -24,7 +25,7 @@ internal object WorkspaceModifierPlan {
                 else -> io.github.psd2live.core.recipe.ModuleTier.entries.toSet()
             }
             val modules = RigLegacyBindings.specs.mapNotNull { it.module }.filter { module ->
-                module.id != "face.depth-turn" && module.tier in tiers &&
+                module.id !in PRESET_EXCLUDED_MODULES && module.tier in tiers &&
                     (richness == "full" || module.setting == null) &&
                     (module.base == null || module.base in bases) &&
                     (algorithm == "modern" || RigLegacyBindings.spec(module.id).related.none { '/' in it && it !in bases })

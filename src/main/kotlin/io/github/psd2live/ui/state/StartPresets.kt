@@ -106,9 +106,9 @@ internal enum class StartQuickPreset(val key: String, val choices: StartPresetCh
 	)),
 	/** Both motion groups, classic hair sway, loose clothing simulated and the eye jelly. */
 	DEFAULT("start.quick.default", StartPresetChoices()),
-	/** The default with simulated hair and feature displacement. */
+	/** The default with simulated hair. */
 	FULL("start.quick.full", StartPresetChoices(
-		featureDisplacement = true, frontHair = HairMode.SIMULATION, backHair = HairMode.SIMULATION,
+		frontHair = HairMode.SIMULATION, backHair = HairMode.SIMULATION,
 	)),
 }
 

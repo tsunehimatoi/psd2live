@@ -75,7 +75,7 @@ internal object WorkspacePresetInitialization {
             // Finish base frame changes before mouth source topology is consumed by add-ons.
             for (area in listOf("eye", "brow", "face", "body", "hair", "mouth"))
                 add(if (area == "face" && fittedFace) RigLegacyBindings.FITTED_FACE else config.recipe.base(area).id)
-            addAll(RigModules.modules.filter { RigModules.builds(it, config, subject) && it != RigModules.FACE_DEPTH_TURN }
+            addAll(RigModules.modules.filter { RigModules.builds(it, config, subject) && it.id !in WorkspaceModifierPlan.PRESET_EXCLUDED_MODULES }
                 .map { it.id }.filter { RigLegacyBindings.find(it) != null })
         }
         val group = if (config.recipe.modern) "modern" else "legacy"
