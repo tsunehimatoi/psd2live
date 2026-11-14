@@ -118,7 +118,7 @@ internal object PluginDevArtifactStore {
 
         fun adoptByReference(reference: ModifierPluginReference, projectId: String): PluginDevArtifact? = synchronized(lock) {
             val match = entries.values.firstOrNull { (artifact, _) ->
-                artifact.packages.any { it == reference || (it.id == reference.id && it.version == reference.version && it.digest == reference.digest) }
+                artifact.packages.any { matchesReference(it, reference) }
             }?.first ?: return null
             adopt(match.artifactId, projectId)
         }
@@ -135,13 +135,9 @@ internal object PluginDevArtifactStore {
                 .map { it.first }
                 .filter { !isExpired(it, now) || isLeased(it.artifactId) }
                 .firstOrNull { artifact ->
-                    artifact.packages.any {
-                        it == reference || (it.id == reference.id && it.version == reference.version && it.digest == reference.digest)
-                    }
+                    artifact.packages.any { matchesReference(it, reference) }
                 } ?: return null
-            val resolvedRef = match.packages.first {
-                it.id == reference.id && it.version == reference.version && it.digest == reference.digest
-            }
+            val resolvedRef = match.packages.first { matchesReference(it, reference) }
             val depsFile = match.directory.resolve(".dependencies")
             val depLock = if (Files.isRegularFile(depsFile)) {
                 runCatching {
@@ -227,7 +223,12 @@ internal object PluginDevArtifactStore {
                         if (!Files.isRegularFile(metaFile) || !Files.isDirectory(payloadDir)) return@runCatching
                         val meta = codec.decodeFromString(StoredArtifactMetadata.serializer(), Files.readString(metaFile))
                         val checked = ModifierPluginStore.inspectPackageDirectory(payloadDir)
-                        require(checked.reference.digest == meta.buildDigest) { "Dev artifact digest mismatch: ${meta.artifactId}" }
+                        val depDigests = meta.packages.firstOrNull()?.dependencyDigests.orEmpty()
+                        val expectedBuildDigest = computeBuildDigest(checked.reference.digest, depDigests)
+                        require(
+                            meta.buildDigest == expectedBuildDigest ||
+                                (depDigests.isEmpty() && meta.buildDigest == checked.reference.digest),
+                        ) { "Dev artifact digest mismatch: ${meta.artifactId}" }
                         val artifact = PluginDevArtifact(
                             artifactId = meta.artifactId,
                             sourceId = meta.sourceId,
@@ -264,6 +265,12 @@ internal object PluginDevArtifactStore {
                 }
             }
         }
+
+        private fun matchesReference(candidate: ModifierPluginReference, requested: ModifierPluginReference): Boolean =
+            candidate.id == requested.id &&
+                candidate.version == requested.version &&
+                candidate.digest == requested.digest &&
+                candidate.dependencyDigests == requested.dependencyDigests
 
         private fun computeBuildDigest(payloadDigest: String, dependencyDigests: Map<String, String>): String {
             if (dependencyDigests.isEmpty()) return payloadDigest

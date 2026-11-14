@@ -317,8 +317,9 @@ class PluginDevSwapAndIsolationTest {
     }
 
     @Test
-    fun `sealing same payload with different dependency locks produces distinct artifacts`(@TempDir tempDir: Path) {
-        val devStore = PluginDevArtifactStore.Store(tempDir.resolve("dev-artifacts"))
+    fun `sealing same payload with different dependency locks produces distinct artifacts and survives reload`(@TempDir tempDir: Path) {
+        val storeRoot = tempDir.resolve("dev-artifacts")
+        val devStore = PluginDevArtifactStore.Store(storeRoot)
         val staged = tempDir.resolve("staged")
         writeStagedPlugin(staged, "custom.dep", "1.0.0+dev.1", "custom.dep/op")
 
@@ -327,10 +328,22 @@ class PluginDevSwapAndIsolationTest {
 
         val art1 = devStore.seal(staged, "src-dep", dependencyLock = listOf(depV1), ttlMillis = 60_000L)
         val art2 = devStore.seal(staged, "src-dep", dependencyLock = listOf(depV2), ttlMillis = 60_000L)
+        val ref1 = art1.packages.single()
+        val ref2 = art2.packages.single()
 
         assertNotEquals(art1.artifactId, art2.artifactId)
         assertNotEquals(art1.buildDigest, art2.buildDigest)
-        assertEquals(mapOf("builtin.base@1.0.0" to "1".repeat(64)), art1.packages.single().dependencyDigests)
-        assertEquals(mapOf("builtin.base@2.0.0" to "2".repeat(64)), art2.packages.single().dependencyDigests)
+        assertEquals(mapOf("builtin.base@1.0.0" to "1".repeat(64)), ref1.dependencyDigests)
+        assertEquals(mapOf("builtin.base@2.0.0" to "2".repeat(64)), ref2.dependencyDigests)
+
+        devStore.adopt(art1.artifactId, "proj-1")
+        devStore.adopt(art2.artifactId, "proj-1")
+
+        // Simulate host restart by opening a fresh Store on the same directory
+        val reloaded = PluginDevArtifactStore.Store(storeRoot)
+        assertEquals(2, reloaded.list().size)
+        assertEquals(ref1, reloaded.resolve(ref1)?.reference)
+        assertEquals(ref2, reloaded.resolve(ref2)?.reference)
+        assertEquals(art2.artifactId, reloaded.adoptByReference(ref2, "proj-2")?.artifactId)
     }
 }
