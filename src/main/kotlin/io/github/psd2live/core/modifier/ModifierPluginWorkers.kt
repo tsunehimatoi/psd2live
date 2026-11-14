@@ -27,7 +27,7 @@ import java.util.concurrent.TimeoutException
 internal object ModifierPluginWorkers {
     // The manifest names the component separately from the structured IR field.
     private fun typedWrites(writes: Set<String>): Set<String> =
-        if ("rest_pose" in writes) writes + "restPose" else writes
+        writes + listOfNotNull("restPose".takeIf { "rest_pose" in writes }, "hitArea".takeIf { "hit_areas" in writes })
 
     private val CAPABILITIES_JSON = JsonArray((ModifierPluginOutput.operations + setOf(
         "rig_objects", "author_context_v1", "author_context_v2", "input_reads_v1", "input_mesh_ids_v1",
