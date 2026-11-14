@@ -3,9 +3,24 @@ package io.github.psd2live.util
 import kotlin.test.*
 
 class FramePresentationTest {
+    @Test fun preservesOnlyMatchingPublishedObservationThroughEitherDeliveryOrder() {
+        val edit = WorkspaceEditCorrelation(80, null, "replace", "project", "load", "before", "old", 1)
+        val observation = WorkspacePublishedObservation(edit, WorkspaceBuildCorrelation(edit, 2, "candidate"), "state", "adopted", 5)
+        val receipts = ArrayList<PresentationReceipt>()
+        val token = PresentationToken("adopted", "state", 10, observation, receipts::add).apply { retain("a"); retain("b") }
+        assertNotNull(token.frame("a")).apply { publish(); gpuCompleted(20) }
+        assertNotNull(token.frame("b")).apply { gpuCompleted(21); publish() }
+        assertTrue(receipts.all { it.observation === observation && it.candidate == token.candidate })
+        assertEquals(2, receipts.size)
+        for (wrong in listOf(observation.copy(state = "other"), observation.copy(revision = "other"),
+            observation.copy(publishedAtNanos = 11), observation.copy(publishedAtNanos = 0))) {
+            assertNull(PresentationToken("adopted", "state", 10, wrong, completed = null).observation)
+        }
+    }
+
     @Test fun publicationAloneDoesNotCompleteAndGpuMayFinishBeforeDelivery() {
         val receipts = ArrayList<PresentationReceipt>()
-        val token = PresentationToken("revision", "state", 10, receipts::add)
+        val token = PresentationToken("revision", "state", 10, completed = receipts::add)
         token.retain("a")
         token.retain("b")
         val a = assertNotNull(token.frame("a"))
@@ -23,12 +38,12 @@ class FramePresentationTest {
 
     @Test fun oldCandidateAndRemovedMountCannotCompleteAfterNewActivation() {
         val receipts = ArrayList<PresentationReceipt>()
-        val old = PresentationToken("same-revision", "state", 10, receipts::add)
+        val old = PresentationToken("same-revision", "state", 10, completed = receipts::add)
         old.retain("view")
         val stale = assertNotNull(old.frame("view"))
         stale.publish()
         old.invalidate()
-        val next = PresentationToken("same-revision", "state", 10, receipts::add)
+        val next = PresentationToken("same-revision", "state", 10, completed = receipts::add)
         assertNotEquals(old.candidate, next.candidate)
         next.retain("view")
         val removed = assertNotNull(next.frame("view"))
@@ -46,7 +61,7 @@ class FramePresentationTest {
 
     @Test fun separateTextureDrawsCannotBorrowPublicationAndCompletionFromEachOther() {
         val receipts = ArrayList<PresentationReceipt>()
-        val token = PresentationToken("r", "s", 10, receipts::add)
+        val token = PresentationToken("r", "s", 10, completed = receipts::add)
         token.retain("view")
         val first = assertNotNull(token.frame("view"))
         val second = assertNotNull(token.frame("view"))

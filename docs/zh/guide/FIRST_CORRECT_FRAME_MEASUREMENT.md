@@ -64,7 +64,7 @@ PresentationMeasurements.onCompleted = null
 
 - 接线仅证明同一已提交模型候选的预览纹理经过窗口消费及 GPU 完成，不自动验证像素颜色、裁剪可见区域、遮挡或业务视觉正确性；`verifyWindowPixels` 另行使用可区分修订的已知图案，检查实际窗口 Surface 的像素。编辑画布的离屏工具不因此变成窗口测量工具。
 - 不覆盖窗口交换、系统桌面合成或显示器扫描，不能称为“已显示到屏幕”。同步 GPU 等待的开销包含在本指标中。
-- `candidate` 是本次模型激活身份，尚未与 `RigBuildProfile.Operation` 的候选身份建立映射；不能拼接两者得到完整编辑延迟。`revision/state` 可以用于诊断，但不能替代这种关联。
+- `candidate` 是本次模型激活身份，不能直接当作 `RigBuildProfile.Operation` 的候选身份。新增公开编辑场景通过 `WorkspacePublishedObservation` 明确关联 editId、构建 ordinal、候选 revision 和最终发布，再计算请求到窗口的区间；没有这份观察关联的 activation 样本仍不能冒充完整编辑延迟。
 - 钩子依赖仓库当前 Skiko 0.144.6 的 `drawContent/picture/pictureLock`。结构变化或上下文不可用会关闭回执并记录原因，不回退成录制时间。真实驱动、窗口回放和反射接线已有功能检查证据；正式性能验收仍须在最终整合基线和独占窗口中执行。
 - 无已提交捕获、预览未挂载、软件绘制、无匹配帧或被更新修订淘汰时不产生成功样本，验收工具应将其记为未完成，不能记作零延迟。
 
@@ -118,3 +118,37 @@ $env:PSD2LIVE_WINDOW_SAMPLES = '30'
 这些是静态四块已知图案的功能证据，不覆盖整个模型的遮罩、变形、物理、所有遮挡情形，也不证明窗口交换或显示器扫描完成。未执行至少 30 次的正式性能采样，不提供性能分位数；像素读回和 PNG 编码会扰动时间。
 
 公开编辑请求已有 `WorkspaceEditCorrelation`、`WorkspaceBuildCorrelation` 和发布观测身份，但本工具仍在模型构建完成后从激活捕获开始，报告为 `fullEditLatencyMeasured=false`、`editStartedAtNanos=null`。不能将编辑、构建或发布观测与本次 activation 样本直接拼接成完整 edit→window 延迟；真实编辑链路的性能结果须由独立验收提供。
+
+
+## 真实公开编辑请求到窗口正确帧
+
+新增 `WindowActivationTool.verifyDocumentEdits` 功能入口，与原 activation 场景分开报告。先安装并预热四块图案，再对同一已挂载预览，通过 `DesktopWorkspace.applyDocumentEdits` 提交四个 `layer_replace_image` 操作的原子批次。PNG 输入在请求前准备；进入公开命令后的解码、候选构建、提交、生产 renderer 激活及首个窗口 GPU 完成均在链路内。提交后工具不手动 refresh/load 模型，依靠真实 `WorkspaceHost.modelPublished` 路径。
+
+起点来自 A1 的 `WorkspaceEditObservation`：`WorkspaceHost.applyDocumentEdits` 进入 `editMutex` 之前记录的 `requestedAtNanos`。进程内 `WorkspaceCapture.observation` 持有成功 CAS 的票据、最终状态/修订和发布时间；构建阶段保留独立 ordinal、候选 revision 及计时。规范化可能改变最终采用的文档修订，因此构建候选 revision 与发布 revision 分别保留，不强行视为相等。窗口激活的 `candidate` 仍是另一个身份空间，不拿 editId 或构建序号代替。
+
+`WorkspaceTextureView.presentationOrigin` 只向同一个捕获模型对象复制观察数据，并核对项目、加载身份、状态和修订。VM 传给 token，原样随窗口 receipt 交付。`scheduleRuntimeBundleUpdate` 可能应用未提交设置、甚至重新构建纹理；得到的新模型副本不等于捕获模型时维持无关联，不能按 revision 猜测或继承旧票据。只有后续权威提交产生匹配捕获才可关联。
+
+工具分别核对 STARTED、每个 BUILT、成功 PUBLISHED、当前捕获、activation token、首个窗口 receipt 与同次像素读回，检查单调时间顺序和旧帧拒绝。每次编辑都改变四块图案的颜色，窗口像素必须拒绝上一修订。`verifyDocumentEdits` 的 1 次预热编辑及 2 次检查编辑均需通过；只保留功能证据，不输出性能分位数。正式 `measureDocumentEdits` 默认 5 次预热、30 次编辑，`PSD2LIVE_WINDOW_SAMPLES` 可增加到 1000、不得低于 30，每次含预热都需验证真实窗口像素。回调锁检查继续覆盖 coordinator 与 pictureLock。编辑观察回调只把不可变事件加入并发队列，报告在工具协程中生成。
+
+```powershell
+$env:PSD2LIVE_TOOLS = '1'
+$env:PSD2LIVE_RUNTIME = (Resolve-Path 'build/tools/window-activation/native/p2l_runtime.dll').Path
+$env:PSD2LIVE_COMPOSITOR = '1'
+.\gradlew.bat :test --tests '*WindowActivationTool.verifyDocumentEdits' --max-workers=2 '-Ppsd2live.testForks=1'
+# 保存报告和 PNG 后，设 PSD2LIVE_COMPOSITOR=0 单独验收。
+# 最终独占基线另行运行，当前功能验收不执行这一命令：
+$env:PSD2LIVE_WINDOW_SAMPLES = '30'
+.\gradlew.bat :test --tests '*WindowActivationTool.measureDocumentEdits' --max-workers=2 '-Ppsd2live.testForks=1'
+```
+
+输出目录为 `build/tools/window-document-edits/`。每条成功编辑证据包含真实请求时间、构建阶段、最终采用修订、激活候选、GPU 时间和像素证据。`fullEditLatencyMeasured` 只在整条真实编辑链路及全部像素检查成功后为 true；仍是小型静态图案的功能验收，不代表性能阈值达标。终点仍是实际窗口 GPU 完成，不包含 PNG 编码、窗口交换或显示器扫描。
+
+
+正式编辑采样写到 `build/tools/window-document-edits-measure/`。其 `summary` 的中位数、最近秩 P95、最大值只汇总成功检查样本的 `gpuCompletedAtNanos - edit.requestedAtNanos`，不含预热；`summaryMetric` 明确标记请求到正确窗口 GPU 帧。较晚的 activation 区间另外存入 `activationToGpuSummary`，不能用它冒充编辑区间。PNG 编码及像素读回虽在 GPU 端点之后，仍会干扰后续样本；报告保留该限制、所有原始区间和阶段，不据功能运行宣称性能通过。
+
+
+### 2026-11-14 真实编辑功能证据
+
+`verifyDocumentEdits` 在 compositor=1、0 两种模式均通过，各为 1 次预热编辑和 2 次检查编辑。每个真实批次包含四次 `layer_replace_image` 候选构建，合计 6 次编辑、24 次构建；每种模式始终使用同一挂载视口。成功 CAS 的观察、activation token、首个 GPU receipt 及窗口读回完全对应，6 张窗口图的 216 个像素检查通过，上一修订颜色被拒绝。14 次窗口观察者锁检查全部通过；32 项链路/来源/依赖定向测试及 2 项编辑计时指标测试通过。
+
+独立证据在 `build/architecture-acceptance/window-document-edits/compositor-1/`、`compositor-0/`，包含原始报告、PNG、日志及 JUnit XML；汇总为同级 `summary.json`。报告中每次编辑都有四个带 ordinal 的构建阶段，原始编辑事件及首帧回执完整保留。已核对编辑区间确实从请求时间开始，大于同一帧的 activation 区间。本轮 `benchmark=false`，没有生成性能分位数，也没有执行正式 5+30 次采样；正式入口交由最终无竞争基线另行运行。

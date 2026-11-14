@@ -3367,7 +3367,7 @@ class PSD2LiveViewModel : AutoCloseable {
 		val capturedAt = System.nanoTime()
 		val origin = runCatching { workspaceBackend?.captureTextures()?.presentationOrigin(preview) }.getOrNull()
 		// Drafts without a matching committed capture still reject stale frames, but cannot report revision latency.
-		val token = io.github.psd2live.util.PresentationToken(origin?.first, origin?.second, capturedAt)
+		val token = io.github.psd2live.util.PresentationToken(origin?.revision, origin?.state, capturedAt, observation = origin?.observation)
 		renderCoordinator.invalidateModel(token)
 		if (renderCoordinator.claimModelLoad(_state.value.previewLive)) sdkSession.load(preview, token)
 	}
@@ -7956,6 +7956,9 @@ class PSD2LiveViewModel : AutoCloseable {
 					if (it.previewModel !== previous || it.buildConfig() != config) it
 					else { accepted = true; it.copy(previewModel = updated) }
 				}
+				// This can reflect uncommitted editor settings, and updateRuntimeBundle may even rebuild textures.
+				// Never inherit the previous model's observation by revision: refreshSdkSession requires the exact
+				// currently captured model. A derived draft stays uncorrelated until an authoritative commit.
 				if (accepted) refreshSdkSession(updated) else scheduleRuntimeBundleUpdate()
 			} catch (failure: Throwable) {
                 if (failure is kotlinx.coroutines.CancellationException) throw failure

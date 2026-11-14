@@ -9,6 +9,9 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import io.github.psd2live.application.WorkspaceCloseReason
 import io.github.psd2live.application.WorkspaceRenderCoordinator
+import io.github.psd2live.application.WorkspaceEditObservation
+import io.github.psd2live.application.WorkspaceDocumentOperation
+import io.github.psd2live.project.MutationAuthor
 import io.github.psd2live.core.*
 import io.github.psd2live.document.WorkspaceSourceArt
 import io.github.psd2live.document.WorkspaceSourceLayer
@@ -40,6 +43,13 @@ import kotlin.test.Test
 class WindowActivationTool {
     @Test fun smoke() { requireTools(); run(2, benchmark = false) }
     @Test fun verifyWindowPixels() { requireTools(); run(2, benchmark = false, pixels = true) }
+    @Test fun verifyDocumentEdits() { requireTools(); run(2, benchmark = false, pixels = true, documentEdits = true) }
+    @Test fun measureDocumentEdits() {
+        requireTools()
+        val samples = setting("PSD2LIVE_WINDOW_SAMPLES", "30").toInt()
+        require(samples in 30..1000) { "Document edit measurement requires at least 30 edits" }
+        run(samples, benchmark = true, pixels = true, documentEdits = true)
+    }
     @Test fun measure() {
         requireTools()
         val samples = setting("PSD2LIVE_WINDOW_SAMPLES", "30").toInt()
@@ -47,9 +57,10 @@ class WindowActivationTool {
         run(samples, benchmark = true)
     }
 
-    private fun run(samples: Int, benchmark: Boolean, pixels: Boolean = false) = runBlocking {
+    private fun run(samples: Int, benchmark: Boolean, pixels: Boolean = false, documentEdits: Boolean = false) = runBlocking {
         val warmups = if (benchmark) 5 else 1
-        val out = output(if (pixels) "window-activation-pixels" else if (benchmark) "window-activation" else "window-activation-smoke")
+        val out = output(if (documentEdits) { if (benchmark) "window-document-edits-measure" else "window-document-edits" }
+            else if (pixels) "window-activation-pixels" else if (benchmark) "window-activation" else "window-activation-smoke")
         val rows = ArrayList<JsonObject>()
         val receipts = WindowReceiptInbox()
         val beforeActivation = ArrayList<JsonObject>()
@@ -68,6 +79,10 @@ class WindowActivationTool {
         check(previousObserver == null) { "Another presentation measurement is already active" }
         check(WindowPixelMeasurements.request == null && WindowPixelMeasurements.onReadback == null) { "Another window pixel measurement is active" }
         val pixelRequests = ConcurrentHashMap<Long, Int>()
+        val editPixelRequests = ConcurrentHashMap<String, Int>()
+        val editEvents = java.util.concurrent.ConcurrentLinkedQueue<WorkspaceEditObservation.Event>()
+        var editSubscription: AutoCloseable? = null
+        val editsEvidence = ArrayList<JsonObject>()
         val pixelResults = Channel<Result<JsonObject>>(Channel.UNLIMITED)
         val pixelEvidence = ArrayList<JsonObject>()
         val observerLocks = AtomicReference<List<Pair<String, Any>>>(emptyList())
@@ -81,9 +96,10 @@ class WindowActivationTool {
         }
         val audit = WindowActivationAudit()
         val durations = ArrayList<Long>()
+        val activationDurations = ArrayList<Long>()
         fun report() {
             out.resolve("report.json").writeText(buildJsonObject {
-                put("metric", "model_activation_capture_to_window_gpu_completion")
+                put("metric", if (documentEdits) "document_edit_request_to_correct_window_gpu_frame" else "model_activation_capture_to_window_gpu_completion")
                 put("benchmark", benchmark); put("requestedSamples", samples); put("successfulSamples", successful)
                 put("requestedWarmups", warmups); put("successfulWarmups", warmedUp)
                 put("complete", failure == null && warmedUp == warmups && successful == samples)
@@ -92,13 +108,23 @@ class WindowActivationTool {
                 put("pixelCorrectnessValidated", pixels && failure == null && pixelEvidence.size == warmups + samples)
                 put("pixelReadbackEnabled", pixels); put("screenPresentationMeasured", false)
                 put("windowPixelEvidence", JsonArray(pixelEvidence))
+                put("documentEditEvidence", JsonArray(editsEvidence))
+                putJsonArray("rawEditEvents") { editEvents.forEach { event -> add(buildJsonObject {
+                    put("editId", event.editId); put("phase", event.phase.name); put("atNanos", event.atNanos)
+                    put("failure", event.failure?.let(::JsonPrimitive) ?: JsonNull)
+                    event.publication?.let { put("publication", observationJson(it)) }
+                    event.build?.let { put("buildOrdinal", it.operation.correlation!!.ordinal); put("buildCandidateRevision", it.operation.correlation!!.candidateRevision) }
+                }) } }
                 put("observerLockChecks", observerLockChecks.get())
                 putJsonArray("observerLockFailures") { observerLockFailures.forEach { add(it) } }
                 if (pixels) put("pixelEndpoint", "actual Skiko window Surface after picture replay and GPU completion, before swap; four 3x3 patches inside the preview viewport")
                 put("workload", "four synthetic colored tiles; changing raster revision; no masks, physics or playback")
-                put("cacheMode", "warm JVM/window context; new model and remounted preview view per activation")
-                put("fullEditLatencyMeasured", false); put("editStartedAtNanos", JsonNull)
-                put("editStartUnavailableReason", "Synthetic prepared-model installation; no end-to-end edit command is measured")
+                put("cacheMode", if (documentEdits) "warm JVM/window; one mounted preview; real public layer_replace_image batches" else "warm JVM/window context; new model and remounted preview view per activation")
+                put("fullEditLatencyMeasured", documentEdits && failure == null && editsEvidence.size == warmups + samples)
+                put("editStartedAtNanos", JsonNull)
+                if (!documentEdits) put("editStartUnavailableReason", "Synthetic prepared-model installation; no end-to-end edit command is measured")
+                else put("editStartSource", "per edit: WorkspaceHost.applyDocumentEdits observation before editMutex")
+                if (documentEdits) put("measurementInterference", "GPU synchronization is included; pixel readback, validation and PNG encoding follow the GPU endpoint but may perturb subsequent samples")
                 put("timeoutMs", timeoutMs)
                 putJsonObject("environment") { environment.forEach { (key, value) -> put(key, value) } }
                 put("samples", JsonArray(rows))
@@ -109,6 +135,13 @@ class WindowActivationTool {
                 if (benchmark && failure == null && successful == samples) {
                     val stats = firstFrameDistribution(durations)
                     putJsonObject("summary") { put("medianMs", stats.medianMs); put("p95Ms", stats.p95Ms); put("maxMs", stats.maxMs) }
+                    if (documentEdits) {
+                        put("summaryMetric", "document_edit_request_to_correct_window_gpu_frame")
+                        val activation = firstFrameDistribution(activationDurations)
+                        putJsonObject("activationToGpuSummary") {
+                            put("medianMs", activation.medianMs); put("p95Ms", activation.p95Ms); put("maxMs", activation.maxMs)
+                        }
+                    }
                 }
             }.toString())
         }
@@ -133,12 +166,17 @@ class WindowActivationTool {
             val desktop = DesktopWorkspace(viewModel, out.resolve("workspace").toPath()).also { workspace = it }
             edt { viewModel.attachWorkspace(desktop); viewModel.selectPreviewBackend(PreviewBackend.P2LRT) }
             PresentationMeasurements.onCompleted = { observeLocks("receipt"); receipts.record(it) }
+            if (documentEdits) editSubscription = WorkspaceEditObservation.subscribe { editEvents.add(it) }
             if (pixels) {
-                WindowPixelMeasurements.request = { pixelRequests.containsKey(it.token.candidate) }
+                WindowPixelMeasurements.request = { if (documentEdits)
+                    it.token.observation?.edit?.startState?.let(editPixelRequests::containsKey) == true
+                    else pixelRequests.containsKey(it.token.candidate) }
                 WindowPixelMeasurements.onReadback = { readback ->
                     observeLocks("pixels")
                     val stamp = readback.frame
-                    pixelRequests.remove(stamp.token.candidate)?.let { ordinal ->
+                    val ordinal = if (documentEdits) stamp.token.observation?.edit?.startState?.let(editPixelRequests::remove)
+                        else pixelRequests.remove(stamp.token.candidate)
+                    ordinal?.let {
                         pixelResults.trySend(runCatching {
                             val imageFile = out.resolve("window-$ordinal.png")
                             org.jetbrains.skia.Image.makeFromBitmap(readback.bitmap).use { image ->
@@ -150,6 +188,7 @@ class WindowActivationTool {
                             buildJsonObject {
                                 put("ordinal", ordinal); put("revision", stamp.token.revision); put("state", stamp.token.state)
                                 put("candidate", stamp.token.candidate); put("viewId", stamp.viewId)
+                                stamp.token.observation?.let { put("editObservation", observationJson(it)) }
                                 put("gpuCompletedAtNanos", readback.gpuCompletedAtNanos); put("image", imageFile.canonicalPath)
                                 put("windowWidth", readback.bitmap.width); put("windowHeight", readback.bitmap.height)
                                 put("viewportLeft", readback.viewportLeft); put("viewportTop", readback.viewportTop)
@@ -193,54 +232,104 @@ class WindowActivationTool {
             val revisions = HashSet<String>()
             val states = HashSet<String>()
             var previousFrame: PreviewFrame? = null
-            for (ordinal in 1..warmups + samples) {
-                val index = ordinal - warmups
-                phase = if (index <= 0) "warmup_$ordinal" else "sample_$index"
-                val (document, model) = fixture(ordinal) // Preparation is outside activation timing.
-                val installStarted = System.nanoTime()
-                edt { viewModel.applySourceImport(viewModel.state.value, document, model, null, "window-activation-$ordinal") }
+            if (documentEdits) {
+                // Install/warm the fixture before the measured edit entry. Only this setup explicitly activates it.
+                val (document, model) = fixture(0)
+                val started = System.nanoTime()
+                edt { viewModel.applySourceImport(viewModel.state.value, document, model, null, "window-edit-baseline") }
                 withTimeout(60_000) { desktop.importedPsd(recoverLegacy = false) }
-                val activation = edt {
-                    viewModel.leaveStartPage()
-                    viewModel.dismissMeshSplitBatch()
+                val baseline = edt {
+                    viewModel.leaveStartPage(); viewModel.dismissMeshSplitBatch()
                     val canvasId = viewModel.state.value.activeCanvas.id
                     viewModel.state.value.activeWorkspace.canvases.filter { it.id != canvasId }
                         .forEach { viewModel.setCanvasMode(it.id, CanvasMode.EDIT) }
-                    viewModel.setCanvasMode(canvasId, CanvasMode.PREVIEW)
-                    viewModel.setAnimationEnabled(false)
+                    viewModel.setCanvasMode(canvasId, CanvasMode.PREVIEW); viewModel.setAnimationEnabled(false)
                     val captured = desktop.captureTextures()
-                    check(revisions.add(captured.revision) && states.add(captured.state)) { "Synthetic installation did not create a distinct revision/state" }
-                    val boundary = receipts.beforeActivation()
-                    boundary.received.forEach { received ->
-                        // Never archive a known superseded candidate, even if it arrived before this later cut.
-                        audit.archiveBeforeActivation(received, boundary.atNanos)
-                        beforeActivation += buildJsonObject {
-                            receiptJson(received.receipt).forEach { (key, value) -> put(key, value) }; put("sequence", received.sequence)
-                            put("receivedAtNanos", received.receivedAtNanos); put("boundaryAtNanos", boundary.atNanos)
-                            put("beforeOrdinal", ordinal)
-                        }
+                    viewModel.refreshWorkspaceRenderer(model)
+                    val token = checkNotNull(coordinator.presentation)
+                    check(token.observation == null)
+                    audit.expect(token, captured.revision, captured.state,
+                        viewModel.canvasRenderKey(canvasId, CanvasMode.PREVIEW), started)
+                }
+                audit.accept(baseline, withTimeout(timeoutMs) { receipts.receive().receipt })
+                previousFrame = withTimeout(timeoutMs) { viewModel.sdkFrameFor(baseline.viewId).first { it?.presentation?.token?.candidate == baseline.candidate } }
+            }
+            for (ordinal in 1..warmups + samples) {
+                val index = ordinal - warmups
+                phase = if (index <= 0) "warmup_$ordinal" else "sample_$index"
+                var publication: io.github.psd2live.util.WorkspacePublishedObservation? = null
+                val activation = if (documentEdits) {
+                    val operations = replacementOperations(ordinal) // Encode known inputs before the real request.
+                    val before = desktop.captureTextures()
+                    check(receipts.extra() == null) { "Unexpected receipt before public edit" }
+                    val retired = edt { checkNotNull(coordinator.presentation).also(audit::supersede) }
+                    editPixelRequests[before.state] = ordinal
+                    val requested = System.nanoTime()
+                    val result = withTimeout(60_000) { desktop.applyDocumentEdits(before.state, "window-pixels-$ordinal", operations, MutationAuthor.USER) }
+                    check(result.applied)
+                    // No tool refresh/load here: WorkspaceHost.modelPublished activates the committed model.
+                    edt {
+                        val captured = desktop.captureTextures()
+                        check(result.revisionId == captured.revision && result.state == captured.state)
+                        check(revisions.add(captured.revision) && states.add(captured.state))
+                        val wanted = checkNotNull(coordinator.presentation)
+                        publication = checkNotNull(wanted.observation) { "Published edit lost its renderer observation" }
+                        check(publication!!.edit.startState == before.state && publication!!.edit.startRevision == before.revision)
+                        check(publication!!.edit.requestedAtNanos >= requested)
+                        val key = viewModel.canvasRenderKey(viewModel.state.value.activeCanvas.id, CanvasMode.PREVIEW)
+                        val old = checkNotNull(previousFrame).copy(viewId = key)
+                        val streamBefore = coordinator.frameFor(key).value
+                        check(!coordinator.publish(old)); viewModel.acceptSdkFrame(old)
+                        check(coordinator.frameFor(key).value === streamBefore)
+                        Triple(audit.expect(wanted, captured.revision, captured.state, key, requested), retired.candidate, true)
                     }
-                    // Retire the previously active token too, not only the throwaway token below. Its later
-                    // deliveries must not be archived at a subsequent sample's boundary under another view ID.
-                    coordinator.presentation?.let(audit::supersede)
-                    viewModel.refreshWorkspaceRenderer(model)
-                    val superseded = checkNotNull(coordinator.presentation)
-                    audit.supersede(superseded)
-                    // Same EDT turn: queued native work may coalesce, but an obsolete activation must never complete.
-                    viewModel.refreshWorkspaceRenderer(model)
-                    val wanted = checkNotNull(coordinator.presentation)
-                    check(wanted !== superseded)
-                    if (pixels) pixelRequests[wanted.candidate] = ordinal
-                    val key = viewModel.canvasRenderKey(viewModel.state.value.activeCanvas.id, CanvasMode.PREVIEW)
-                    val rejected = previousFrame?.let { old ->
-                        val stale = old.copy(viewId = key)
-                        val before = coordinator.frameFor(key).value
-                        check(!coordinator.publish(stale)) { "Coordinator accepted an obsolete candidate" }
-                        viewModel.acceptSdkFrame(stale)
-                        check(coordinator.frameFor(key).value === before) { "VM accepted an obsolete frame" }
-                        true
-                    } ?: false
-                    Triple(audit.expect(wanted, captured.revision, captured.state, key, installStarted), superseded.candidate, rejected)
+                } else {
+                    val (document, model) = fixture(ordinal) // Preparation is outside activation timing.
+                    val installStarted = System.nanoTime()
+                    edt { viewModel.applySourceImport(viewModel.state.value, document, model, null, "window-activation-$ordinal") }
+                    withTimeout(60_000) { desktop.importedPsd(recoverLegacy = false) }
+                    edt {
+                        viewModel.leaveStartPage()
+                        viewModel.dismissMeshSplitBatch()
+                        val canvasId = viewModel.state.value.activeCanvas.id
+                        viewModel.state.value.activeWorkspace.canvases.filter { it.id != canvasId }
+                            .forEach { viewModel.setCanvasMode(it.id, CanvasMode.EDIT) }
+                        viewModel.setCanvasMode(canvasId, CanvasMode.PREVIEW)
+                        viewModel.setAnimationEnabled(false)
+                        val captured = desktop.captureTextures()
+                        check(revisions.add(captured.revision) && states.add(captured.state)) { "Synthetic installation did not create a distinct revision/state" }
+                        val boundary = receipts.beforeActivation()
+                        boundary.received.forEach { received ->
+                            // Never archive a known superseded candidate, even if it arrived before this later cut.
+                            audit.archiveBeforeActivation(received, boundary.atNanos)
+                            beforeActivation += buildJsonObject {
+                                receiptJson(received.receipt).forEach { (key, value) -> put(key, value) }; put("sequence", received.sequence)
+                                put("receivedAtNanos", received.receivedAtNanos); put("boundaryAtNanos", boundary.atNanos)
+                                put("beforeOrdinal", ordinal)
+                            }
+                        }
+                        // Retire the previously active token too, not only the throwaway token below. Its later
+                        // deliveries must not be archived at a subsequent sample's boundary under another view ID.
+                        coordinator.presentation?.let(audit::supersede)
+                        viewModel.refreshWorkspaceRenderer(model)
+                        val superseded = checkNotNull(coordinator.presentation)
+                        audit.supersede(superseded)
+                        // Same EDT turn: queued native work may coalesce, but an obsolete activation must never complete.
+                        viewModel.refreshWorkspaceRenderer(model)
+                        val wanted = checkNotNull(coordinator.presentation)
+                        check(wanted !== superseded)
+                        if (pixels) pixelRequests[wanted.candidate] = ordinal
+                        val key = viewModel.canvasRenderKey(viewModel.state.value.activeCanvas.id, CanvasMode.PREVIEW)
+                        val rejected = previousFrame?.let { old ->
+                            val stale = old.copy(viewId = key)
+                            val before = coordinator.frameFor(key).value
+                            check(!coordinator.publish(stale)) { "Coordinator accepted an obsolete candidate" }
+                            viewModel.acceptSdkFrame(stale)
+                            check(coordinator.frameFor(key).value === before) { "VM accepted an obsolete frame" }
+                            true
+                        } ?: false
+                        Triple(audit.expect(wanted, captured.revision, captured.state, key, installStarted), superseded.candidate, rejected)
+                    }
                 }
                 val expected = activation.first
                 val receipt = withTimeoutOrNull(timeoutMs) { receipts.receive().receipt }
@@ -262,6 +351,11 @@ class WindowActivationTool {
                     }
                     pixelEvidence += evidence
                 }
+                publication?.let { adopted ->
+                    check(receipt.observation == adopted) { "Receipt lost or replaced committed edit identity" }
+                    check(pixelEvidence.last().getValue("editObservation") == observationJson(adopted))
+                    editsEvidence += verifyEditEvents(adopted, receipt, editEvents.filter { it.editId == adopted.edit.editId })
+                }
                 previousFrame = withTimeout(timeoutMs) { viewModel.sdkFrameFor(expected.viewId).first { it?.presentation?.token?.candidate == expected.candidate } }
                 check(previousFrame?.backend == PreviewBackend.P2LRT) { "Requested P2LRT but another backend delivered the frame" }
                 environment["gpu"] = SkiaGpu.primary?.description ?: gpu.description
@@ -279,7 +373,9 @@ class WindowActivationTool {
                 if (index > 0) {
                     check(activation.third) { "Missing stale-frame rejection evidence" }
                     rows += row(index, expected, activation.second, activation.third, "accepted", receipt)
-                    durations += nanos; successful++
+                    activationDurations += nanos
+                    durations += if (documentEdits) windowDocumentEditDuration(receipt) else nanos
+                    successful++
                     report()
                 } else { warmedUp++; report() }
             }
@@ -294,6 +390,7 @@ class WindowActivationTool {
             throw error
         } finally {
             PresentationMeasurements.onCompleted = previousObserver
+            editSubscription?.close()
             if (pixels) { WindowPixelMeasurements.request = null; WindowPixelMeasurements.onReadback = null }
             // Coroutine timeouts and event delivery replace polling/sleeps. Closing still runs if the EDT is busy.
             SwingUtilities.invokeLater {
@@ -335,14 +432,59 @@ class WindowActivationTool {
                     status: String, receipt: PresentationReceipt?) = buildJsonObject {
         put("index", index); put("status", status); put("revision", expected.revision); put("state", expected.state)
         put("candidate", expected.candidate); put("viewId", expected.viewId); put("supersededCandidate", superseded)
-        put("staleFrameRejected", rejected); put("syntheticInstallStartedAtNanos", expected.installStartedAtNanos)
+        put("staleFrameRejected", rejected)
+        put(if (receipt?.observation == null) "syntheticInstallStartedAtNanos" else "toolInvokedAtNanos", expected.installStartedAtNanos)
         put("activationCapturedAtNanos", expected.capturedAtNanos); put("editStartedAtNanos", JsonNull)
         put("gpuCompletedAtNanos", receipt?.gpuCompletedAtNanos?.let(::JsonPrimitive) ?: JsonNull)
+        receipt?.observation?.let {
+            put("editObservation", observationJson(it)); put("editStartedAtNanos", it.edit.requestedAtNanos)
+            put("editToCorrectWindowGpuNs", windowDocumentEditDuration(receipt))
+        }
         put("activationToGpuNs", receipt?.let { JsonPrimitive(it.gpuCompletedAtNanos - expected.capturedAtNanos) } ?: JsonNull)
     }
 
     private fun receiptJson(receipt: PresentationReceipt) = buildJsonObject {
         put("revision", receipt.revision); put("state", receipt.state); put("candidate", receipt.candidate)
         put("viewId", receipt.viewId); put("capturedAtNanos", receipt.capturedAtNanos); put("gpuCompletedAtNanos", receipt.gpuCompletedAtNanos)
+        receipt.observation?.let { put("editObservation", observationJson(it)) }
+    }
+
+    private fun replacementOperations(ordinal: Int) = (0..3).map { tile ->
+        val image = java.awt.image.BufferedImage(24, 24, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+        for (y in 0 until 24) for (x in 0 until 24) image.setRGB(x, y, WindowPixelAudit.color(ordinal, tile))
+        val bytes = java.io.ByteArrayOutputStream().use { out -> check(javax.imageio.ImageIO.write(image, "png", out)); out.toByteArray() }
+        WorkspaceDocumentOperation("layer_replace_image", buildJsonObject {
+            put("layer_id", "tile-$tile"); put("png_base64", java.util.Base64.getEncoder().encodeToString(bytes)); put("rebuild_mesh", false)
+        })
+    }
+
+    private fun observationJson(stamp: io.github.psd2live.util.WorkspacePublishedObservation) = buildJsonObject {
+        put("editId", stamp.edit.editId); put("operation", stamp.edit.operation); put("projectId", stamp.edit.projectId)
+        put("loadingIdentity", stamp.edit.loadingIdentity); put("startState", stamp.edit.startState); put("startRevision", stamp.edit.startRevision)
+        put("requestedAtNanos", stamp.edit.requestedAtNanos); put("publishedAtNanos", stamp.publishedAtNanos)
+        put("publishedState", stamp.state); put("publishedRevision", stamp.revision)
+        put("buildOrdinal", stamp.build?.ordinal?.let(::JsonPrimitive) ?: JsonNull)
+        put("buildCandidateRevision", stamp.build?.candidateRevision?.let(::JsonPrimitive) ?: JsonNull)
+    }
+
+    private fun verifyEditEvents(stamp: io.github.psd2live.util.WorkspacePublishedObservation, receipt: PresentationReceipt,
+                                 events: List<WorkspaceEditObservation.Event>) = buildJsonObject {
+        val builds = events.mapNotNull { it.build }
+        check(events.first().phase == WorkspaceEditObservation.Phase.STARTED && events.last().phase == WorkspaceEditObservation.Phase.PUBLISHED)
+        check(events.last().publication == stamp && events.all { it.failure == null && it.edit == stamp.edit })
+        check(builds.isNotEmpty() && builds.last().operation.correlation == stamp.build)
+        // Candidate preparation may adopt a normalized document at CAS; keep both revisions, never equate them.
+        check(stamp.publishedAtNanos <= receipt.capturedAtNanos && receipt.capturedAtNanos <= receipt.gpuCompletedAtNanos)
+        put("observation", observationJson(stamp)); put("activationCandidate", receipt.candidate)
+        put("gpuCompletedAtNanos", receipt.gpuCompletedAtNanos); put("editToCorrectWindowGpuNs", windowDocumentEditDuration(receipt))
+        putJsonArray("builds") { builds.forEachIndexed { index, build ->
+            check(build.operation.correlation?.ordinal == index + 1)
+            check(stamp.edit.requestedAtNanos <= build.startedAtNanos && build.startedAtNanos <= build.finishedAtNanos && build.finishedAtNanos <= stamp.publishedAtNanos)
+            add(buildJsonObject {
+                put("ordinal", index + 1); put("candidateRevision", build.operation.correlation!!.candidateRevision)
+                put("startedAtNanos", build.startedAtNanos); put("finishedAtNanos", build.finishedAtNanos)
+                putJsonObject("stages") { build.stages.forEach { (name, stage) -> putJsonObject(name) { put("millis", stage.first); put("calls", stage.second) } } }
+            })
+        } }
     }
 }

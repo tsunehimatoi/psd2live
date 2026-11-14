@@ -21,7 +21,7 @@ class WindowFramePresentationTest {
 
     @Test fun invalidatedCandidateCannotCompleteWhileDeliveryIsDeferred() {
         val receipts = ArrayList<PresentationReceipt>()
-        val token = PresentationToken("r", "s", 10, receipts::add).apply { retain("view") }
+        val token = PresentationToken("r", "s", 10, completed = receipts::add).apply { retain("view") }
         val frame = assertNotNull(token.frame("view")).apply { publish() }
         val completion = assertNotNull(prepareWindowPresentation(listOf(frame), { true }, {}, { 30 }))
         token.invalidate()
@@ -31,7 +31,7 @@ class WindowFramePresentationTest {
 
     @Test fun overwrittenTextureCannotReceiveTheReplayReceipt() {
         val receipts = ArrayList<PresentationReceipt>()
-        val token = PresentationToken("r", "s", 10, receipts::add).apply { retain("view") }
+        val token = PresentationToken("r", "s", 10, completed = receipts::add).apply { retain("view") }
         val first = assertNotNull(token.frame("view")).apply { publish() }
         val second = assertNotNull(token.frame("view")).apply { publish() }
         var submitted = false
@@ -45,7 +45,7 @@ class WindowFramePresentationTest {
 
     @Test fun failureOrCandidateReplacementDuringGpuWaitCannotComplete() {
         val receipts = ArrayList<PresentationReceipt>()
-        val token = PresentationToken("r", "s", 10, receipts::add).apply { retain("view") }
+        val token = PresentationToken("r", "s", 10, completed = receipts::add).apply { retain("view") }
         val frame = assertNotNull(token.frame("view")).apply { publish() }
         assertFailsWith<IllegalStateException> {
             prepareWindowPresentation(listOf(frame), { true }, { error("GPU lost") }, { 20 })?.dispatch()
@@ -57,7 +57,7 @@ class WindowFramePresentationTest {
 
     @Test fun textureReplacedWhileWaitingCannotCompleteEvenIfCandidateIsUnchanged() {
         val receipts = ArrayList<PresentationReceipt>()
-        val token = PresentationToken("r", "s", 10, receipts::add).apply { retain("view") }
+        val token = PresentationToken("r", "s", 10, completed = receipts::add).apply { retain("view") }
         val frame = assertNotNull(token.frame("view")).apply { publish() }
         var current = frame
         prepareWindowPresentation(listOf(frame), { it === current }, { current = assertNotNull(token.frame("view")) }, { 20 })?.dispatch()

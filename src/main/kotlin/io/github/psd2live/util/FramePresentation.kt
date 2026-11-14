@@ -7,8 +7,11 @@ class PresentationToken(
     val revision: String?,
     val state: String?,
     val capturedAtNanos: Long = System.nanoTime(),
+    observation: WorkspacePublishedObservation? = null,
     private val completed: ((PresentationReceipt) -> Unit)? = PresentationMeasurements.onCompleted,
 ) {
+    val observation = observation?.takeIf { it.revision == revision && it.state == state &&
+        it.edit.requestedAtNanos <= it.publishedAtNanos && it.publishedAtNanos <= capturedAtNanos }
     val candidate: Long = candidates.incrementAndGet()
     private var active = true
     private val views = mutableMapOf<String, Any>()
@@ -24,7 +27,7 @@ class PresentationToken(
     internal fun report(frame: PresentationFrame, gpuCompletedAtNanos: Long) {
         val receipt = synchronized(this) {
             if (!current(frame) || revision == null || completed == null || !reported.add(frame.mount)) return
-            PresentationReceipt(revision, state, candidate, frame.viewId, capturedAtNanos, gpuCompletedAtNanos)
+            PresentationReceipt(revision, state, candidate, frame.viewId, capturedAtNanos, gpuCompletedAtNanos, observation)
         }
         // Diagnostics cannot break publication/rendering and run outside both token and frame locks.
         runCatching { completed?.invoke(receipt) }
@@ -65,7 +68,9 @@ class PresentationFrame internal constructor(val token: PresentationToken, val v
 data class PresentationCamera(val width: Int, val height: Int, val scale: Float, val offsetX: Float, val offsetY: Float)
 
 data class PresentationReceipt(val revision: String, val state: String?, val candidate: Long, val viewId: String,
-    val capturedAtNanos: Long, val gpuCompletedAtNanos: Long)
+    val capturedAtNanos: Long, val gpuCompletedAtNanos: Long, val observation: WorkspacePublishedObservation? = null)
+
+data class PresentationOrigin(val revision: String, val state: String, val observation: WorkspacePublishedObservation?)
 
 /** Development measurement opt-in. Install before model capture; normal rendering never waits for the GPU. */
 object PresentationMeasurements {
