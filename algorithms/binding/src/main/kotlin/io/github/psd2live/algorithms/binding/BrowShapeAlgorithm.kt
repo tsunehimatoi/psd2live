@@ -2,10 +2,12 @@ package io.github.psd2live.algorithms.binding
 
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.format.model.*
+import io.github.psd2live.targets.cubism.PuppetIr
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.float
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.umamo.edit.VertexSource
 import org.umamo.runtime.model.KeyformGrid
 import org.umamo.runtime.model.MeshDeltaForm
 import org.umamo.runtime.model.ParameterId
@@ -26,8 +28,7 @@ class BrowShapeAlgorithm : ReadingModifierAlgorithmPlugin {
         }) { "Brow shape v2 requires a compatible fitted brow provider" }
         require(source.targets.keys.all { ModifierTarget("mesh", it) in instance.targets })
         if (source.eyeProvider != null) require(input.providers("eye/fitted").any {
-            it.instanceId == source.eyeProvider && it.version == 2 && it.config["scaffold"] == instance.config["scaffold"] &&
-                it.targets.containsAll(source.targets.filterValues { target -> target.eye != null }.keys.map { id -> ModifierTarget("mesh", id) })
+            it.instanceId == source.eyeProvider && it.version >= 1 && it.config["scaffold"] == instance.config["scaffold"]
         }) { "Brow shape v2 requires its captured fitted eyes" }
         if (source.names.isEmpty()) return ModifierModelChanges()
 
@@ -74,23 +75,44 @@ class BrowShapeAlgorithm : ReadingModifierAlgorithmPlugin {
             else if (i % 2 == 0) (value - target.frame.left) / target.frame.width.coerceAtLeast(1e-4f)
             else (value - target.frame.top) / target.frame.height.coerceAtLeast(1e-4f)
         }
-        require(mesh.parent == target.parent && geometry == MeshGeometry(Floats.wrap(positions),
-            Floats.wrap(raw.atlasUvs), Ints.wrap(raw.triangles))) { "Brow shape v2 requires the fitted source mesh and parent frame" }
+        val parentOk = mesh.parent == target.parent
+        val sizeOk = geometry.positions.size == positions.size
+        val posOk = sizeOk && (0 until positions.size).all { kotlin.math.abs(geometry.positions[it] - positions[it]) <= 1e-4f }
+        val uvOk = geometry.uvs == Floats.wrap(raw.atlasUvs)
+        val idxOk = geometry.indices == Ints.wrap(raw.triangles)
+        require(parentOk && posOk && uvOk && idxOk) { "Brow shape v2 requires the fitted source mesh and parent frame" }
 
         val travel = target.eye?.let { it.opening * it.width * lift } ?: (target.fit.length * .25f * lift / .45f)
         val prior = BrowRig(target.fit, travel, BrowOptions(), checkpoint).grid(raw.rigPositions, target.frame, height, angle)
-        require(mesh.offsets == offsets(prior) && mesh.shapes.isEmpty() && mesh.channels.isEmpty()) {
+        val expectedOffsets = offsets(prior)
+        val extraAxes = mesh.offsets != expectedOffsets &&
+            expectedOffsets.axes.all { axis -> mesh.offsets?.axes?.any { it.parameter == axis.parameter } == true }
+        require((mesh.offsets == expectedOffsets || extraAxes) && mesh.shapes.isEmpty() && mesh.channels.isEmpty()) {
             "Brow shape v2 requires the unedited fitted height grid, without earlier mesh motion or drawing tracks"
         }
         val rig = BrowRig(target.fit, travel, BrowOptions(shape = true, shapeStrength = strength), checkpoint)
         val grid = rig.grid(raw.rigPositions, target.frame, height, angle)
+        val afterOffsets = offsets(grid)
+        val mergedOffsets = if (!extraAxes) afterOffsets else {
+            val parameters = (mesh.offsets?.axes.orEmpty() + afterOffsets.axes).map { it.parameter }.distinct().mapNotNull(input::parameter)
+            val branch = input.parentsOfMesh(mesh.id)
+            val current = PuppetIr.toPuppet(RigIR(input.canvas, parameters, deformers = branch, meshes = listOf(mesh)))
+            val canonical = mesh.copy(geometry = geometry.copy(positions = Floats.wrap(positions)), offsets = null, shapes = emptyList(), channels = emptyMap())
+            val stationary = BindingProjection.retain(PuppetIr.toPuppet(RigIR(input.canvas, input.parameters,
+                deformers = branch, meshes = listOf(canonical))), emptySet(), checkpoint = checkpoint)
+            fun projection(offsets: KeyGrid<MeshOffsets>) = stationary.copy(parameters = current.parameters, drawables =
+                PuppetIr.toPuppet(RigIR(input.canvas, parameters, meshes = listOf(canonical.copy(offsets = offsets)))).drawables)
+            val drawable = current.drawables.single()
+            val vertices = List(positions.size / 2) { VertexSource.FromOld(it) }
+            GeometryResidual.geometry(current, projection(expectedOffsets), projection(afterOffsets), drawable.id, vertices, vertices, checkpoint)?.let(::offsets)
+        }
         val shapes = rig.shapes(raw.rigPositions, target.frame, ParameterId("ParamBrow${side}X"),
             ParameterId("ParamBrow${side}Form"), EyeModules.open(target.fit.side), wide = false).map { shape ->
             BlendBinding(shape.parameterId.raw, Floats.wrap(shape.keys), shape.neutralIndex, shape.forms.map { form ->
                 form?.let { MeshShape(Floats.wrap(it.positionDeltas), mesh.drawOrder, mesh.opacity, mesh.multiply, mesh.screen) }
             })
         }
-        return mesh.copy(offsets = offsets(grid), shapes = shapes)
+        return mesh.copy(offsets = mergedOffsets, shapes = shapes)
     }
 
     private fun offsets(grid: KeyformGrid<MeshDeltaForm>) = KeyGrid(

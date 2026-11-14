@@ -177,7 +177,7 @@ class WorkspaceLegacyBindingTest {
         for (hasEye in listOf(false, true)) {
             val f = Fixture(document)
             f.install()
-            f.group(listOf("body/legacy", "face/legacy") + if (hasEye) listOf("eye/fitted") else emptyList())
+            f.group((if (hasEye) listOf("eye/fitted") else emptyList()) + listOf("body/legacy", "face/legacy"))
             val before = f.now.model.rig.puppet
             val brow = before.drawables.single { f.now.model.rig.layerIdByDrawableId[it.id.raw] == "brow" }
             f.edit("modifier_add", JsonObject(f.addition(algorithm.type, "brow") +
@@ -210,9 +210,9 @@ class WorkspaceLegacyBindingTest {
             put("group", "legacy")
             putJsonArray("entries") {
                 add(f.addition("rig.scaffold", "structure"))
+                add(f.addition("eye/fitted", "eye"))
                 add(f.addition("body/legacy", "body"))
                 add(f.addition("face/fitted", "face"))
-                add(f.addition("eye/fitted", "eye"))
             }
         })
         val before = f.now.model

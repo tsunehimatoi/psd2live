@@ -4,6 +4,7 @@ import io.github.psd2live.core.modifier.*
 import io.github.psd2live.format.model.*
 import io.github.psd2live.targets.cubism.PuppetIr
 import kotlinx.serialization.json.*
+import org.umamo.render.eval.drawableSpaceMapping
 import org.umamo.runtime.eval.colorAt
 import org.umamo.runtime.eval.scalarAt
 import org.umamo.runtime.model.FormChannel
@@ -25,7 +26,7 @@ class BrowLidAlgorithm : ReadingModifierAlgorithmPlugin {
         val brow = provider("brow/fitted", instance.config.getValue("base"))
         require(brow.version in 1..2) { "Brow and lid v2 requires fitted brows v1 or v2" }
         val eye = provider("eye/fitted", instance.config.getValue("dependencies").jsonObject.getValue("eye/fitted"))
-        require(eye.version == 2) { "Brow and lid v2 requires fitted eyes v2" }
+        require(eye.version in 1..4) { "Brow and lid v2 requires fitted eyes v1..v4" }
         val previous = input.upstream.filter { it.config["scaffold"] == scaffold && it.targets.any(targets::contains) }
         require(previous.none { it.capability in unsupported }) {
             "Brow and lid v2 requires eye meshes without previously lowered lid coupling or depth turn"
@@ -85,37 +86,75 @@ class BrowLidAlgorithm : ReadingModifierAlgorithmPlugin {
             }
             if (shapes.isEmpty()) return@mapNotNull null
             val mesh = requireNotNull(input.mesh(target.id))
-            val points = Floats.wrap(FloatArray(positions.size) { i ->
-                val point = positions[i]
-                if (material.parent == null) point
-                else if (i % 2 == 0) (point - frame.left) / frame.width.coerceAtLeast(1e-4f)
-                else (point - frame.top) / frame.height.coerceAtLeast(1e-4f)
-            })
-            require(mesh.parent == material.parent && mesh.geometry == MeshGeometry(points, Floats.wrap(raw.atlasUvs), Ints.wrap(raw.triangles)) &&
+            val geometry = requireNotNull(mesh.geometry)
+            val branch = input.parentsOfMesh(target.id)
+            val loweredCarrier = mesh.parent != material.parent
+            require((!loweredCarrier || (mesh.parent != null && (material.parent == null || branch.any { it.id == material.parent }))) &&
+                geometry.positions.size == positions.size &&
+                geometry.uvs == Floats.wrap(raw.atlasUvs) &&
+                geometry.indices == Ints.wrap(raw.triangles) &&
                 mesh.shapes.none { binding -> shapes.any { it.parameterId.raw == binding.parameter } }) {
-                "Brow and lid v2 requires the fitted eye source mesh and parent frame: ${target.id}"
+                "Brow and lid v2 requires the fitted eye source mesh and parent frame: ${target.id} " +
+                    "(pos=${geometry.positions.size}/${positions.size}, uvs=${geometry.uvs == Floats.wrap(raw.atlasUvs)}, " +
+                    "idx=${geometry.indices == Ints.wrap(raw.triangles)}, overlap=${mesh.shapes.map { it.parameter }.intersect(shapes.map { it.parameterId.raw }.toSet())})"
+            }
+            if (!loweredCarrier) {
+                val points = FloatArray(positions.size) { i ->
+                    val point = positions[i]
+                    if (material.parent == null) point
+                    else if (i % 2 == 0) (point - frame.left) / frame.width.coerceAtLeast(1e-4f)
+                    else (point - frame.top) / frame.height.coerceAtLeast(1e-4f)
+                }
+                require((0 until positions.size).all { kotlin.math.abs(geometry.positions[it] - points[it]) <= 1e-4f }) {
+                    "Brow and lid v2 requires the fitted eye source mesh and parent frame: ${target.id}"
+                }
             }
             val parameterIds = shapes.mapTo(hashSetOf()) { it.parameterId.raw }
 
             require(parameterIds.all { id ->
                 val parameter = input.parameter(id)
-                // Without brow.shape the legacy rig keeps its dormant angle shape, even without a live angle axis.
-                if (parameter == null) id.endsWith("Angle") && previous.none { it.capability == "eye.aftershock" }
+                // Without brow.shape (or when brow.shape runs on disjoint brow targets), angle may not be on browMeshes yet.
+                if (parameter == null) id.endsWith("Angle")
                 else !parameter.blend && parameter.default == 0f && parameter.min == -1f && parameter.max == 1f &&
-                    browMeshes.any { other -> other.offsets?.axes.orEmpty().any { it.parameter == id } }
+                    (id.endsWith("Angle") || browMeshes.any { other -> other.offsets?.axes.orEmpty().any { it.parameter == id } })
             }) { "Brow and lid v2 requires ordinary fitted brow axes" }
             val nativeId = nativeIds.getValue(target.id).jsonPrimitive.content
-            val parent = mesh.parent?.let(input::deformer)
             val model = PuppetIr.toPuppet(RigIR(input.canvas, parameters, meshes = listOf(mesh.copy(id = nativeId)) + browMeshes,
-                deformers = listOfNotNull(parent)))
+                deformers = branch))
             val drawable = model.drawables.first()
+            val scaledShapes = if (!loweredCarrier) shapes else {
+                val mapping = requireNotNull(drawableSpaceMapping(model, emptyMap(), drawable.id))
+                val world = mapping.localToWorld(geometry.positions.shared())
+                require((world.indices step 2).all { i ->
+                    val x = positions[i]
+                    val y = positions[i + 1]
+                    val canvas = measured.alignment?.canvas(x, y) ?: (x to y)
+                    kotlin.math.abs(world[i] - canvas.first) <= .5f && kotlin.math.abs(-world[i + 1] - canvas.second) <= .5f
+                }) { "Brow and lid v2 requires the fitted eye source mesh and parent frame: ${target.id}" }
+                val corners = mapping.localToWorld(floatArrayOf(0f, 0f, 1f, 1f))
+                val carrierW = kotlin.math.abs(corners[2] - corners[0]).coerceAtLeast(1e-4f)
+                val carrierH = kotlin.math.abs(corners[3] - corners[1]).coerceAtLeast(1e-4f)
+                val refW = if (material.parent == null) 1f else frame.width
+                val refH = if (material.parent == null) 1f else frame.height
+                val sx = refW / carrierW
+                val sy = refH / carrierH
+                shapes.map { binding ->
+                    binding.copy(forms = binding.forms.map { form ->
+                        form?.let {
+                            MeshForm(FloatArray(it.positionDeltas.size) { k ->
+                                it.positionDeltas[k] * (if (k % 2 == 0) sx else sy)
+                            }, it.drawOrder, it.opacity, it.multiplyColor, it.screenColor)
+                        }
+                    })
+                }
+            }
             val lowering = BlendShapeLowering({ _, _ -> names.getValue(target.id).jsonPrimitive.content }, checkpoint)
             val restOpacity = drawable.channelGrids.scalarAt(FormChannel.OPACITY, drawable.opacity, atDefault)
             val restOrder = drawable.channelGrids.scalarAt(FormChannel.DRAW_ORDER, drawable.drawOrder, atDefault)
             val restMultiply = drawable.channelGrids.colorAt(FormChannel.MULTIPLY_COLOR, drawable.multiplyColor, atDefault)
             val restScreen = drawable.channelGrids.colorAt(FormChannel.SCREEN_COLOR, drawable.screenColor, atDefault)
             val lowered = lowering.lawful(model.copy(drawables = listOf(drawable.copy(
-                blendShapes = drawable.blendShapes + shapes.map { shape -> shape.copy(forms = shape.forms.map { form ->
+                blendShapes = drawable.blendShapes + scaledShapes.map { shape -> shape.copy(forms = shape.forms.map { form ->
                     form?.let { MeshForm(it.positionDeltas, restOrder, restOpacity, restMultiply, restScreen) }
                 }) })) + model.drawables.drop(1)))
             val added = lowered.deformers.drop(model.deformers.size)

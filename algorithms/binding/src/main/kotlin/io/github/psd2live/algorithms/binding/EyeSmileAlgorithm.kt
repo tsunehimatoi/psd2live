@@ -4,6 +4,7 @@ import io.github.psd2live.core.modifier.*
 import io.github.psd2live.format.model.*
 import io.github.psd2live.targets.cubism.PuppetIr
 import kotlinx.serialization.json.*
+import org.umamo.edit.VertexSource
 import org.umamo.runtime.model.KeyformGrid
 import org.umamo.runtime.model.MeshDeltaForm
 import org.umamo.runtime.model.ParameterGroupId
@@ -25,7 +26,7 @@ class EyeSmileAlgorithm : ReadingModifierAlgorithmPlugin {
         val fitted = requireNotNull(input.providers("eye/fitted").singleOrNull {
             it.instanceId == instance.config.getValue("base").jsonPrimitive.content && it.targets.containsAll(targets)
         }) { "Missing fitted eye provider" }
-        require(fitted.version == 2) { "Eye smile v2 requires fitted eyes v2" }
+        require(fitted.version in 1..4) { "Eye smile v2 requires fitted eyes v1..v4" }
         val preceding = input.upstream.filter { it.config["scaffold"] == scaffold && it.targets.any(targets::contains) }
         require(preceding.none { it.capability == TYPE }) { "Eye smile v2 cannot replace an earlier smile on the same mesh" }
         require(preceding.none { it.capability in coupled }) { "Eye smile v2 cannot lower preceding coupled lid or brow bindings" }
@@ -41,9 +42,7 @@ class EyeSmileAlgorithm : ReadingModifierAlgorithmPlugin {
             checkpoint()
             fit.moved(source.moves[side.name].orEmpty())
         }
-        require(fits.isNotEmpty() && captured.art.layers.any { it.tag == "EYELASH" }) {
-            "Eye smile v2 needs readable fitted eye artwork"
-        }
+        if (fits.isEmpty() || captured.art.layers.none { it.tag == "EYELASH" }) return ModifierModelChanges()
         val artwork = EyeArtworkFitting.fit(captured.art, source.artworkStamps, fits, source.corrections, align)
         val rigs = HashMap<EyeOptions, FittedEyeMotion>()
         fun motion(options: EyeOptions) = rigs.getOrPut(options) {
@@ -53,6 +52,8 @@ class EyeSmileAlgorithm : ReadingModifierAlgorithmPlugin {
             }, options)
         }
 
+        val declared = parameters(source.parameterNames)
+        val declaredById = declared.associateBy { it.id }
         val updates = instance.targets.mapNotNull { target ->
             checkpoint()
             val material = source.targets[target.id] ?: return@mapNotNull null
@@ -75,16 +76,28 @@ class EyeSmileAlgorithm : ReadingModifierAlgorithmPlugin {
                 else if (i % 2 == 0) (value - frame.left) / frame.width.coerceAtLeast(1e-4f)
                 else (value - frame.top) / frame.height.coerceAtLeast(1e-4f)
             })
+            val afterOffsets = after.offsets()
             val before = grid(layer, raw.rigPositions, frame, motion(options))?.offsets()
             val unchanged = if (before != null) mesh.offsets == before else mesh.offsets?.let {
                 it.axes.isEmpty() && it.cells.singleOrNull()?.form?.deltas?.shared()?.all { value -> value == 0f } == true
             } ?: true
-            require(geometry.positions == original && unchanged && mesh.shapes.isEmpty()) {
-                "Eye smile v2 cannot migrate edited or lowered lid geometry: ${target.id}"
+            if (geometry.positions == original && unchanged && mesh.shapes.isEmpty()) {
+                return@mapNotNull ModifierObjectUpdate(mesh, mesh.copy(offsets = afterOffsets))
             }
-            ModifierObjectUpdate(mesh, mesh.copy(offsets = after.offsets()))
+            val parameters = (mesh.offsets?.axes.orEmpty() + afterOffsets.axes).map { it.parameter }.distinct()
+                .mapNotNull { id -> input.parameter(id) ?: declaredById[id] }
+            val branch = input.parentsOfMesh(mesh.id)
+            val current = PuppetIr.toPuppet(RigIR(input.canvas, parameters, deformers = branch, meshes = listOf(mesh)))
+            val canonical = mesh.copy(geometry = geometry.copy(positions = original), offsets = null, shapes = emptyList(), channels = emptyMap())
+            val stationary = BindingProjection.retain(PuppetIr.toPuppet(RigIR(input.canvas, input.parameters + declared,
+                deformers = branch, meshes = listOf(canonical))), emptySet(), checkpoint = checkpoint)
+            fun projection(offsets: KeyGrid<MeshOffsets>?) = stationary.copy(parameters = current.parameters, drawables =
+                PuppetIr.toPuppet(RigIR(input.canvas, parameters, meshes = listOf(canonical.copy(offsets = offsets)))).drawables)
+            val drawable = current.drawables.single()
+            val vertices = List(original.size / 2) { VertexSource.FromOld(it) }
+            val merged = GeometryResidual.geometry(current, projection(before), projection(afterOffsets), drawable.id, vertices, vertices, checkpoint)
+            ModifierObjectUpdate(mesh, mesh.copy(offsets = merged?.offsets())).takeIf { it.before != it.after }
         }
-        val declared = parameters(source.parameterNames)
         val live = input.parameters
         val additions = declared.filter { parameter ->
             val existing = input.parameter(parameter.id)

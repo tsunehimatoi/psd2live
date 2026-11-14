@@ -15,13 +15,15 @@ object LegacyFaceChanges {
         val after = result.withParametersSyncedFromTree()
         require(before.parts == after.parts && before.rootChildren == after.rootChildren && before.rootPartId == after.rootPartId)
         require(before.glues == after.glues && before.deformPaths == after.deformPaths && before.vertexGroups == after.vertexGroups)
-        require(before.parameters == after.parameters.take(before.parameters.size)) { "Face binding must preserve parameter order" }
+        val oldIds = before.parameters.mapTo(hashSetOf()) { it.id }
+        require(after.parameters.filter { it.id in oldIds } == before.parameters) { "Face binding must preserve parameter order" }
         val metadata = PuppetIr.toIr(after.copy(parts = emptyList(), deformers = emptyList(), drawables = emptyList(),
             atlas = before.atlas.copy(tiles = emptyList(), pages = emptyList()), sources = emptyList()))
         val deformers = updates(input.deformers, before.deformers, after.deformers, { it.id }, PuppetIr::deformerToIr)
         val meshes = updates(input.meshes, before.drawables, after.drawables, { it.id }, PuppetIr::meshToIr)
+        val oldRawIds = oldIds.mapTo(hashSetOf()) { it.raw }
         return ModifierModelChanges(
-            parameters = ModifierObjectChanges(added = metadata.parameters.drop(before.parameters.size)),
+            parameters = ModifierObjectChanges(added = metadata.parameters.filter { it.id !in oldRawIds }),
             deformers = ModifierObjectChanges(updated = deformers),
             meshes = ModifierObjectChanges(updated = meshes),
             parameterLinks = field(input.parameterLinks, metadata.parameterLinks),

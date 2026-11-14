@@ -28,6 +28,7 @@ object EyeScaffoldTransition {
     fun plan(
         input: RigIR, provider: RigModifierInstance, targets: Set<String>,
         ordinary: ModifierAlgorithmContext, fitted: ModifierAlgorithmContext, checkpoint: () -> Unit = {},
+        preserveMeshes: Set<String> = emptySet(),
     ): Result {
         require(provider.type == "rig.scaffold" && provider.version == 2)
         val provided = provider.targets.filter { it.kind == "mesh" }.mapTo(hashSetOf()) { it.id }
@@ -95,6 +96,7 @@ object EyeScaffoldTransition {
             }
             val geometryChanged = source.geometry != desired.geometry || source.offsets != desired.offsets
             if (!geometryChanged && aliasedChain.none { it in frameUpdates }) continue
+            if (id in preserveMeshes) continue
             if (actual.geometry != source.geometry || actual.offsets != source.offsets || actual.shapes.isNotEmpty())
                 return Result.Blocked(Reason.AUTHORED_MESH, setOf(id))
             if (id in indexedMeshes) return Result.Blocked(Reason.INDEXED_MESH, setOf(id))

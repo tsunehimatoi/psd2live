@@ -138,7 +138,17 @@ class WorkspacePresetInitializeTest {
         assertEquals(split.source, initialized.source)
         assertEquals(split.rigEdits.splitDrawableIds, initialized.rigEdits.splitDrawableIds)
         assertEquals(splitRecords, ArtPrimitiveJournal.commands(initialized.rigEdits))
-        val rebuilt = builder.build(initialized)
+        RigBuildProfile.reset()
+        RigBuildProfile.recording = true
+        val rebuilt = try {
+            builder.build(initialized)
+        } finally {
+            RigBuildProfile.recording = false
+        }
+        val nonMouthLegacyTemplates = RigBuildProfile.snapshot().keys.filter {
+            it.startsWith("modifier legacy template:") && !it.contains("mouth")
+        }
+        assertTrue(nonMouthLegacyTemplates.isEmpty(), "Non-mouth legacy templates: $nonMouthLegacyTemplates")
         for ((id, side) in ids.zip(sides)) {
             assertEquals(side, initialized.layerOverrides.getValue(id).side)
             assertEquals(side, rebuilt.analysis.layers.single { it.source.id.raw == id }.semantic.side)

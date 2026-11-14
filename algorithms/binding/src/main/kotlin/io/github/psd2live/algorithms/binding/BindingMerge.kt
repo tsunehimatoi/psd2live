@@ -85,6 +85,7 @@ object BindingMerge {
                 continue
             }
             val mapped = source.deformerIds(instance, target, checkpoint)
+            val currentDeformerIds = current.deformers.mapTo(HashSet()) { it.id }
             val nativeGeometry = sameMeshGeometry(sample, previous.drawables.single { it.id == id }) &&
                 sample.parentDeformerId == previous.drawables.single { it.id == id }.parentDeformerId?.let(mapped::getValue) &&
                 branch.all { canonical ->
@@ -97,10 +98,13 @@ object BindingMerge {
                         }
                     }
                 }
-            val common = branch.toList().asReversed().zip(desiredBranch.asReversed()).takeWhile { it.first == it.second }.map { it.first }.asReversed()
+            val common = branch.toList().asReversed().zip(desiredBranch.asReversed()).takeWhile { (prevId, nextId) ->
+                prevId == nextId && mapped[prevId] in currentDeformerIds
+            }.map { it.first }.asReversed()
+            val unmaterialized = branch.filterTo(HashSet()) { it in desiredBranch && mapped[it] !in currentDeformerIds }
             val added = desiredBranch.dropLast(common.size)
-            val removed = branch - common.toSet()
-            require(added.none { it in branch }) { "${instance.id}: incompatible binding branch order" }
+            val removed = branch - common.toSet() - unmaterialized
+            require(added.none { it in branch && it !in unmaterialized }) { "${instance.id}: incompatible binding branch order" }
             val anchor = common.firstOrNull()?.let(mapped::getValue)
             val partIds = if (removed.isNotEmpty() || added.isNotEmpty()) source.partIds(instance, target, checkpoint) else emptyMap()
             val remap = ModelIdRemap(deformers = mapped, parts = partIds)

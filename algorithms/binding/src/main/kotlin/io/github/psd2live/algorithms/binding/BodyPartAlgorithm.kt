@@ -73,7 +73,7 @@ class BodyPartAlgorithm : ChangingModifierAlgorithmPlugin {
             } ?: instance.targets
             val subConfig = buildJsonObject {
                 put("scaffold", scaffold)
-                subCfg["dependencies"]?.let { put("dependencies", it) }
+                (subCfg["dependencies"] ?: instance.config["dependencies"])?.let { put("dependencies", it) }
                 subCfg["values"]?.let { put("values", it) }
                 subCfg["physics"]?.let { put("physics", it) }
                 subCfg["physicsEnabled"]?.let { put("physicsEnabled", it) }
@@ -85,7 +85,11 @@ class BodyPartAlgorithm : ChangingModifierAlgorithmPlugin {
                 targets = subTargets,
                 config = subConfig,
             )
-            val evalInput = ModifierEvaluationInput(current, ModifierAlgorithmContext(subValues, context.resources, upstream))
+            val prefix = "sub:$subType:"
+            val subResources = context.resources.entries.associate { (k, v) ->
+                (if (k.startsWith(prefix)) k.removePrefix(prefix) else k) to v
+            }
+            val evalInput = ModifierEvaluationInput(current, ModifierAlgorithmContext(subValues, subResources, upstream))
             val subChanges = if (subType == BustBindingAlgorithm.TYPE) {
                 BustBindingAlgorithm().changes(evalInput, subInstance, checkpoint)
             } else {

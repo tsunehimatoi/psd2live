@@ -325,16 +325,16 @@ internal class RigModifierEvaluator(
                             val view = ModifierEvaluationInput(before, authorContext)
                             val changes = plugin.changes(view, instance, checkpoint)
                             changes.requireWrites(requireNotNull(definition.changeWrites) { "${instance.type}: missing change write contract" })
-                            changes.applyWithResources(before, checkpoint, resolveRasters).also {
+                            syncParametersFromTree(changes.applyWithResources(before, checkpoint, resolveRasters)).also {
                                 readCache[instance.id] = ModifierInputCache.ReadEntry(instance, plugin, authorContext, view.reads(), changes)
                             }
                         }
                     }
-                    is ChangingModifierAlgorithmPlugin -> plugin.changes(before, instance, authorContext, checkpoint).also {
+                    is ChangingModifierAlgorithmPlugin -> syncParametersFromTree(plugin.changes(before, instance, authorContext, checkpoint).also {
                         it.requireWrites(requireNotNull(definition.changeWrites) { "${instance.type}: missing change write contract" })
-                    }.applyWithResources(before, checkpoint, resolveRasters)
-                    is ContextualModifierAlgorithmPlugin -> plugin.evaluate(before, instance, authorContext, checkpoint)
-                    else -> plugin.evaluate(before, instance, checkpoint)
+                    }.applyWithResources(before, checkpoint, resolveRasters))
+                    is ContextualModifierAlgorithmPlugin -> syncParametersFromTree(plugin.evaluate(before, instance, authorContext, checkpoint))
+                    else -> syncParametersFromTree(plugin.evaluate(before, instance, checkpoint))
                 }
             }
             val generated = if (rawSourceRotations && cached == null)
@@ -471,6 +471,23 @@ internal class RigModifierEvaluator(
         after.parameters.forEach { parameter -> previous[parameter.id]?.let {
             require(compatible(it, parameter) || resolved[parameter.id]?.let { expected -> compatible(expected, parameter) } == true) { "${instance.id} changed shared parameter ${parameter.id}" }
         } }
+    }
+
+    private fun syncParametersFromTree(rig: RigIR): RigIR {
+        if (rig.parameterTree.isEmpty()) return rig
+        val order = ArrayList<String>(rig.parameters.size)
+        fun walk(nodes: List<io.github.psd2live.format.model.ParameterNode>) {
+            for (node in nodes) when (node) {
+                is io.github.psd2live.format.model.ParameterNode.Param -> order += node.id
+                is io.github.psd2live.format.model.ParameterNode.Group -> walk(node.children)
+            }
+        }
+        walk(rig.parameterTree)
+        if (order.isEmpty()) return rig
+        val byId = rig.parameters.associateBy { it.id }
+        val seen = order.toHashSet()
+        val next = order.mapNotNull(byId::get) + rig.parameters.filter { it.id !in seen }
+        return if (next.map { it.id } == rig.parameters.map { it.id }) rig else rig.copy(parameters = next)
     }
 
     private fun validateTargets(rig: RigIR, instance: RigModifierInstance) {

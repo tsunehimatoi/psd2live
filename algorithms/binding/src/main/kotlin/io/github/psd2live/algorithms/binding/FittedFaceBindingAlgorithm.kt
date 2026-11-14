@@ -8,7 +8,7 @@ import org.umamo.runtime.keyform.WarpLatticeInterpolator
 import org.umamo.runtime.model.*
 
 /** Composes the neutral scaffold, the base face axes and the measured depth turn in one worker. */
-internal object FittedFaceBindingAlgorithm : ChangingModifierAlgorithmPlugin {
+object FittedFaceBindingAlgorithm : ChangingModifierAlgorithmPlugin {
     override fun changes(input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext,
                          checkpoint: () -> Unit): ModifierModelChanges {
         val provider = requireNotNull(context.upstream.singleOrNull { it.capability == "rig.scaffold" && it.version >= 2 })
@@ -23,23 +23,31 @@ internal object FittedFaceBindingAlgorithm : ChangingModifierAlgorithmPlugin {
         require(head.headFrame == turn.head && head.faceFrame == turn.face &&
             head.alignedPivot.x == turn.container.pivotX && head.alignedPivot.y == turn.container.pivotY &&
             base.strength == turn.container.strength)
-        val names = ScaffoldHead.build(head, { it }, checkpoint).deformers.map { it.id } + ScaffoldHead.leanId
+        val names = (ScaffoldHead.build(head, { it }, checkpoint).deformers.map { it.id } +
+            ScaffoldHead.leanId + turn.frames.keys).distinct()
         val existing = input.deformers.mapTo(hashSetOf()) { it.id }
         val representative = instance.targets.first().id
         val live = names.mapNotNull { canonical ->
             val alias = ScaffoldBinding.deformerId(scaffold, representative, canonical.raw, shared = true)
             if (alias in existing) canonical to DeformerId(alias) else null
         }.toMap()
-        require(ScaffoldHead.faceId in live && live.values.toSet().size == live.size) { "Invalid scaffold head aliases" }
+        val angles = listOf(LegacyFaceBinding.angleX, LegacyFaceBinding.angleY, LegacyFaceBinding.angleZ).mapIndexed { i, id ->
+            val limit = if (i == 0) 45f else 30f
+            Parameter(id, base.parameterLabels[i], -limit, limit, 0f)
+        }
+        if (ScaffoldHead.faceId !in live) {
+            val oldParameters = input.parameters.mapTo(hashSetOf()) { it.id }
+            val added = angles.filter { it.id.raw !in oldParameters }.map {
+                io.github.psd2live.format.model.Parameter(it.id.raw, it.name, it.min, it.max, it.default)
+            }
+            return ModifierModelChanges(parameters = ModifierObjectChanges(added = added))
+        }
+        require(live.values.toSet().size == live.size) { "Invalid scaffold head aliases" }
         require(live.none { (canonical, actual) -> canonical != actual && canonical.raw in existing }) {
             "Scaffold head alias collides with a canonical deformer"
         }
         val before = ModelIdRemap(deformers = live.entries.associate { (canonical, actual) -> actual to canonical })
             .model(PuppetIr.toPuppet(input))
-        val angles = listOf(LegacyFaceBinding.angleX, LegacyFaceBinding.angleY, LegacyFaceBinding.angleZ).mapIndexed { i, id ->
-            val limit = if (i == 0) 45f else 30f
-            Parameter(id, base.parameterLabels[i], -limit, limit, 0f)
-        }
         require(before.parameters.none { p -> angles.any { it.id == p.id } })
         val bound = LegacyFaceBinding.bind(before, base.measurements, base.tuning, base.strength, angles,
             base.folderLabel, checkpoint)

@@ -16,8 +16,8 @@ internal object WorkspaceModifierPlan {
     data class Group(val id: String, val algorithm: String, val richness: String, val types: List<String>)
     val groupCatalog: List<Group> = listOf("legacy", "modern").flatMap { algorithm ->
         listOf("minimal", "standard", "full").map { richness ->
-            val bases = if (algorithm == "legacy") listOf("body/legacy", "face/legacy", "eye/legacy", "brow/legacy", "mouth/legacy", "hair/legacy")
-                else listOf("body/legacy", RigLegacyBindings.FITTED_FACE, "eye/fitted", "brow/fitted", "mouth/fitted", "hair/chains")
+            val bases = if (algorithm == "legacy") listOf("eye/legacy", "brow/legacy", "mouth/legacy", "body/legacy", "face/legacy", "hair/legacy")
+                else listOf("eye/fitted", "brow/fitted", "mouth/fitted", "body/legacy", RigLegacyBindings.FITTED_FACE, "hair/chains")
             val tiers = when (richness) {
                 "minimal" -> setOf(io.github.psd2live.core.recipe.ModuleTier.CORE)
                 "standard" -> setOf(io.github.psd2live.core.recipe.ModuleTier.CORE, io.github.psd2live.core.recipe.ModuleTier.MAJOR)

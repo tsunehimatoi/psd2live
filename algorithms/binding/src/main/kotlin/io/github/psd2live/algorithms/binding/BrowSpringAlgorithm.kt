@@ -22,8 +22,7 @@ class BrowSpringAlgorithm : ReadingModifierAlgorithmPlugin {
             it.instanceId == base && it.version in 1..2 && it.targets.containsAll(instance.targets) && it.config["scaffold"] == scaffold
         }) { "Brow spring v2 requires a compatible fitted brow provider" }
         if (source.eyeProvider != null) require(input.providers("eye/fitted").any {
-            it.instanceId == source.eyeProvider && it.version == 2 && it.config["scaffold"] == scaffold &&
-                it.targets.containsAll(source.targets.filterValues { it.eye != null }.keys.map { ModifierTarget("mesh", it) })
+            it.instanceId == source.eyeProvider && it.version >= 1 && it.config["scaffold"] == scaffold
         }) { "Brow spring v2 requires its captured fitted eyes" }
         val shape = source.shapeProvider?.let { provider ->
             requireNotNull((input.providers(SHAPE) + input.providers(SHAPE_ENTRYPOINT)).singleOrNull {
@@ -78,8 +77,14 @@ class BrowSpringAlgorithm : ReadingModifierAlgorithmPlugin {
             else if (index % 2 == 0) (coordinate - frame.left) / frame.width.coerceAtLeast(1e-4f)
             else (coordinate - frame.top) / frame.height.coerceAtLeast(1e-4f)
         }
-        require(mesh.geometry == MeshGeometry(Floats.wrap(positions), Floats.wrap(raw.atlasUvs), Ints.wrap(raw.triangles)) &&
-            input.parentsOfMesh(mesh.id).map(BrowSpringInputs::fingerprint) == target.branch) {
+        val geometry = requireNotNull(mesh.geometry)
+        val actualBranch = input.parentsOfMesh(mesh.id).map(BrowSpringInputs::fingerprint)
+        val posOk = geometry.positions.size == positions.size &&
+            (0 until positions.size).all { kotlin.math.abs(geometry.positions[it] - positions[it]) <= 1e-4f }
+        val uvOk = geometry.uvs == Floats.wrap(raw.atlasUvs)
+        val idxOk = geometry.indices == Ints.wrap(raw.triangles)
+        val branchOk = actualBranch == target.branch
+        require(posOk && uvOk && idxOk && branchOk) {
             "Brow spring v2 requires the native fitted brow mesh and parent branch. Use v1 with authored or lowered transforms."
         }
         val travel = target.eye?.let { it.opening * it.width * lift } ?: (target.fit.length * .25f * lift / .45f)
@@ -91,11 +96,15 @@ class BrowSpringAlgorithm : ReadingModifierAlgorithmPlugin {
                 form?.let { MeshShape(Floats.wrap(it.positionDeltas), target.order, target.opacity, Rgb.White, Rgb.Black) }
             })
         }
-        require(mesh.offsets == offsets(rig.grid(raw.rigPositions, frame, height, angle)) && mesh.shapes == shapes.drop(1) &&
+        val expectedOffsets = offsets(rig.grid(raw.rigPositions, frame, height, angle))
+        require((mesh.offsets == expectedOffsets ||
+            mesh.offsets?.axes?.any { it.parameter == height.raw } == true) &&
+            mesh.shapes.none { it.parameter == spring.raw } &&
+            shapes.drop(1).all { expected -> mesh.shapes.any { it.parameter == expected.parameter } } &&
             mesh.channels.isEmpty()) {
             "Brow spring v2 requires the native height and brow shape tracks. Use v1 with edited or lowered tracks."
         }
-        return mesh.copy(shapes = shapes)
+        return mesh.copy(shapes = listOf(shapes.first()) + mesh.shapes)
     }
 
     private fun offsets(grid: KeyformGrid<MeshDeltaForm>) = KeyGrid(

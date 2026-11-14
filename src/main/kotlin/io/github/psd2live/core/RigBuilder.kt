@@ -1489,16 +1489,19 @@ object RigBuilder {
     internal fun browShapeSourceInputs(
         analysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig, cache: PreviewMeshCache,
         targetLayers: Map<String, String>, eyeProvider: String?, parentId: (String, String) -> String,
+        frameConfig: PipelineConfig = config,
     ): BrowShapeInputs =
-        io.github.psd2live.core.modifier.source.RigStaticSourceCollector.browShapeSourceInputs(analysis, atlas, config, cache, targetLayers, eyeProvider, parentId)
+        io.github.psd2live.core.modifier.source.RigStaticSourceCollector.browShapeSourceInputs(analysis, atlas, config, cache, targetLayers, eyeProvider, parentId, frameConfig)
 
     /** Captures the fitted brow's artwork and fingerprints its expected native parent branch. */
     internal fun browSpringSourceInputs(
         analysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig, cache: PreviewMeshCache,
         targetLayers: Map<String, String>, kept: Set<ParameterId>, eyeProvider: String?, shapeProvider: String?,
         parentId: (String, String) -> String,
+        partId: (String) -> String = { it },
+        frameConfig: PipelineConfig = config,
     ): BrowSpringInputs =
-        io.github.psd2live.core.modifier.source.RigStaticSourceCollector.browSpringSourceInputs(analysis, atlas, config, cache, targetLayers, kept, eyeProvider, shapeProvider, parentId)
+        io.github.psd2live.core.modifier.source.RigStaticSourceCollector.browSpringSourceInputs(analysis, atlas, config, cache, targetLayers, kept, eyeProvider, shapeProvider, parentId, partId, frameConfig)
 
     /** Captures the neck's source topology and neutral frames without evaluating any binding stage. */
     internal fun neckSourceInputs(

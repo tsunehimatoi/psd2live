@@ -264,7 +264,7 @@ object RigModules {
 
 	val areas: List<RigArea> = listOf(
 		RigArea("face", listOf(legacy("face")), listOf(FACE_DEPTH_TURN, FACE_SKIN_CLIP, FACE_NECK)),
-		RigArea("eye", listOf(legacy("eye"), EYE_FITTED), listOf(EYE_SEE_THROUGH, EYE_SMILE, EYE_WIDE, EYE_GAZE_LID, EYE_EMOTION, EYE_LID_FADE,
+		RigArea("eye", listOf(legacy("eye"), EYE_FITTED), listOf(EYE_SEE_THROUGH, EYE_SMILE, EYE_WIDE, EYE_EMOTION, EYE_GAZE_LID, EYE_LID_FADE,
 			EYE_HIGHLIGHT, EYE_JELLY, EYE_AFTERSHOCK, EYE_SQUASH)),
 		RigArea("brow", listOf(legacy("brow"), BROW_FITTED), listOf(BROW_SEE_THROUGH, BROW_SHAPE, BROW_LID, BROW_BLINK, BROW_SPRING)),
 		RigArea("mouth", listOf(legacy("mouth"), MOUTH_FITTED), listOf(MOUTH_OUTLINE, MOUTH_VOWEL, MOUTH_CAPTURE, MOUTH_TONGUE, MOUTH_JAW, MOUTH_CHEEK_LID, MOUTH_DEPTH, MOUTH_SPRING)),

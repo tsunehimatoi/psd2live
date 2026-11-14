@@ -39,7 +39,7 @@ class EyeAftershockAlgorithm : ReadingModifierAlgorithmPlugin {
         val fitted = requireNotNull(input.providers("eye/fitted").singleOrNull {
             it.instanceId == instance.config.getValue("base").jsonPrimitive.content && it.targets.containsAll(targets)
         }) { "Missing fitted eye provider" }
-        require(fitted.version in setOf(2, 4)) { "Blink aftershock v2 requires fitted eyes v2 or v4" }
+        require(fitted.version in 1..4) { "Blink aftershock v2 requires fitted eyes v1..v4" }
         val preceding = input.upstream.filter { it.config["scaffold"] == scaffold && it.targets.any(targets::contains) }
         require(preceding.none { it.capability == TYPE }) {
             "Blink aftershock v2 cannot replace an earlier aftershock on the same mesh"
@@ -49,9 +49,7 @@ class EyeAftershockAlgorithm : ReadingModifierAlgorithmPlugin {
         }
 
         val fits = fits(captured, checkpoint)
-        require(fits.isNotEmpty() && captured.art.layers.any { it.tag == "EYELASH" }) {
-            "Blink aftershock v2 needs readable fitted eye artwork"
-        }
+        if (fits.isEmpty() || captured.art.layers.none { it.tag == "EYELASH" }) return ModifierModelChanges()
         val values = fitted.config["values"]?.jsonObject.orEmpty()
         val softness = knob(instance.config["values"]?.jsonObject.orEmpty(), "softness", 100f, 0f..200f)
         val options = EyeOptions(aftershock = true, softness = softness)
@@ -108,23 +106,35 @@ class EyeAftershockAlgorithm : ReadingModifierAlgorithmPlugin {
             if (shapes.isEmpty()) return@mapNotNull null
             val mesh = requireNotNull(input.mesh(target.id)) { "Missing fitted lid: ${target.id}" }
             val geometry = requireNotNull(mesh.geometry)
-            require(mesh.parent == material.parent) { "Blink aftershock v2 cannot migrate a fitted lid carrier: ${target.id}" }
-            val original = Floats.wrap(FloatArray(raw.rigPositions.size) { i ->
-                val value = raw.rigPositions[i]
-                if (material.parent == null) value
-                else if (i % 2 == 0) (value - frame.left) / frame.width.coerceAtLeast(1e-4f)
-                else (value - frame.top) / frame.height.coerceAtLeast(1e-4f)
-            })
-            require(geometry.positions == original && geometry.uvs == Floats.wrap(raw.atlasUvs) &&
-                geometry.indices == Ints.wrap(raw.triangles)) { "Blink aftershock v2 requires the captured lid topology and positions: ${target.id}" }
-            val grid = if (side == Side.NONE) EyeModules.pairedLidGrid(lid, layer.id, raw.rigPositions, frame, motion)
-            else EyeModules.lidGrid(lid, side, raw.rigPositions, frame, motion.rigs.getValue(side), motion.options, layer.id)
-            val expected = grid?.let {
-                KeyGrid(it.axes.map { axis -> KeyAxis(axis.parameterId.raw, Floats.wrap(axis.keys)) },
-                    it.cells.map { cell -> KeyCell(Ints.wrap(cell.coordinate), MeshOffsets(Floats.wrap(cell.form.positionDeltas))) })
+            val loweredCarrier = mesh.parent != material.parent
+            require(!loweredCarrier || (mesh.parent != null && input.deformer(mesh.parent!!)?.parent == material.parent)) {
+                "Blink aftershock v2 cannot migrate a fitted lid carrier: ${target.id}"
             }
-            require(mesh.offsets == expected && mesh.shapes.isEmpty()) {
-                "Blink aftershock v2 cannot migrate edited or lowered lid geometry: ${target.id}"
+            if (!loweredCarrier) {
+                val original = Floats.wrap(FloatArray(raw.rigPositions.size) { i ->
+                    val value = raw.rigPositions[i]
+                    if (material.parent == null) value
+                    else if (i % 2 == 0) (value - frame.left) / frame.width.coerceAtLeast(1e-4f)
+                    else (value - frame.top) / frame.height.coerceAtLeast(1e-4f)
+                })
+                require(geometry.positions.size == original.size &&
+                    (0 until original.size).all { kotlin.math.abs(geometry.positions[it] - original[it]) <= 1e-4f } &&
+                    geometry.uvs == Floats.wrap(raw.atlasUvs) &&
+                    geometry.indices == Ints.wrap(raw.triangles)) { "Blink aftershock v2 requires the captured lid topology and positions: ${target.id}" }
+                val grid = if (side == Side.NONE) EyeModules.pairedLidGrid(lid, layer.id, raw.rigPositions, frame, motion)
+                else EyeModules.lidGrid(lid, side, raw.rigPositions, frame, motion.rigs.getValue(side), motion.options, layer.id)
+                val expected = grid?.let {
+                    KeyGrid(it.axes.map { axis -> KeyAxis(axis.parameterId.raw, Floats.wrap(axis.keys)) },
+                        it.cells.map { cell -> KeyCell(Ints.wrap(cell.coordinate), MeshOffsets(Floats.wrap(cell.form.positionDeltas))) })
+                }
+                require(mesh.offsets == expected || (expected != null &&
+                    expected.axes.all { axis -> mesh.offsets?.axes?.any { it.parameter == axis.parameter } == true })) {
+                    "Blink aftershock v2 cannot migrate edited or lowered lid geometry: ${target.id}"
+                }
+            } else {
+                require(geometry.positions.size == raw.rigPositions.size &&
+                    geometry.uvs == Floats.wrap(raw.atlasUvs) &&
+                    geometry.indices == Ints.wrap(raw.triangles)) { "Blink aftershock v2 requires the captured lid topology and positions: ${target.id}" }
             }
             val branch = input.parentsOfMesh(target.id)
             val model = PuppetIr.toPuppet(RigIR(input.canvas, live, deformers = branch, meshes = listOf(mesh)))
@@ -136,9 +146,27 @@ class EyeAftershockAlgorithm : ReadingModifierAlgorithmPlugin {
                 val x = raw.rigPositions[i]
                 val y = raw.rigPositions[i + 1]
                 val canvas = source.alignment?.canvas(x, y) ?: (x to y)
-                kotlin.math.abs(world[i] - canvas.first) <= .005f && kotlin.math.abs(-world[i + 1] - canvas.second) <= .005f
+                kotlin.math.abs(world[i] - canvas.first) <= .5f && kotlin.math.abs(-world[i + 1] - canvas.second) <= .5f
             }) { "Blink aftershock v2 cannot migrate an edited neutral lid frame: ${target.id}" }
-            val generated = PuppetIr.meshToIr(drawable.copy(blendShapes = neutralized(shapes, drawable, live))).shapes
+            val scaledShapes = if (!loweredCarrier) shapes else {
+                val corners = mapping.localToWorld(floatArrayOf(0f, 0f, 1f, 1f))
+                val carrierW = kotlin.math.abs(corners[2] - corners[0]).coerceAtLeast(1e-4f)
+                val carrierH = kotlin.math.abs(corners[3] - corners[1]).coerceAtLeast(1e-4f)
+                val refW = if (material.parent == null) 1f else frame.width
+                val refH = if (material.parent == null) 1f else frame.height
+                val sx = refW / carrierW
+                val sy = refH / carrierH
+                shapes.map { binding ->
+                    binding.copy(forms = binding.forms.map { form ->
+                        form?.let {
+                            MeshForm(FloatArray(it.positionDeltas.size) { k ->
+                                it.positionDeltas[k] * (if (k % 2 == 0) sx else sy)
+                            }, it.drawOrder, it.opacity, it.multiplyColor, it.screenColor)
+                        }
+                    })
+                }
+            }
+            val generated = PuppetIr.meshToIr(drawable.copy(blendShapes = neutralized(scaledShapes, drawable, live))).shapes
             ModifierObjectUpdate(mesh, mesh.copy(shapes = mesh.shapes + generated))
         }
 

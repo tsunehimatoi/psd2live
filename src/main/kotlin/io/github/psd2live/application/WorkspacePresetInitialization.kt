@@ -30,7 +30,17 @@ internal object WorkspacePresetInitialization {
             deferRuntimeBundles = true
             rawSourceRotations = restoreSourceRotations && cliBindings != null && freshSource(config)
         }
-        fun current() = document.copy(rigEdits = document.rigEdits.copy(modifierStack = stack.toJson()))
+        val baseDocument = if (document.rigEdits.checkpointIndex < 0) document else {
+            val stripped = document.rigEdits.copy(authoringJournal = document.rigEdits.authoringJournal.filterNot {
+                RigCheckpoint.isRecord(it) || it["op"]?.jsonPrimitive?.contentOrNull == ArtPrimitiveJournal.OP
+            })
+            val ordinaryConfig = RigModifierPipeline.ordinaryConfig(configOf(document)).copy(meshOnly = true, rigEdits = stripped)
+            val ordinary = pipeline.buildOrdinaryPreview(document.source, ordinaryConfig, ProgressListener { _, _ -> work.checkpoint() }, previousAtlas = null)
+            val binding = ordinary.sources.bindingKey ?: pipeline.bindingKey(document.source, ordinaryConfig)
+            val checkpoint = RigCheckpoint.encode(ordinary.authored, binding)
+            document.copy(rigEdits = document.rigEdits.copy(authoringJournal = document.rigEdits.authoringJournal.filterNot(RigCheckpoint::isRecord) + checkpoint))
+        }
+        fun current() = baseDocument.copy(rigEdits = baseDocument.rigEdits.copy(modifierStack = stack.toJson()))
         fun build(stage: String): RigPreviewModel = RigBuildProfile.stage("source preset: $stage") {
             work.checkpoint()
             val candidate = current()
@@ -61,7 +71,7 @@ internal object WorkspacePresetInitialization {
         val subject = RecipeSubject.of(model.analysis)
         val fittedFace = RigModules.builds(RigModules.FACE_DEPTH_TURN, config, subject)
         val types = buildList {
-            for (area in listOf("body", "face", "eye", "brow", "mouth", "hair"))
+            for (area in listOf("eye", "brow", "mouth", "body", "face", "hair"))
                 add(if (area == "face" && fittedFace) RigLegacyBindings.FITTED_FACE else config.recipe.base(area).id)
             addAll(RigModules.modules.filter { RigModules.builds(it, config, subject) && it != RigModules.FACE_DEPTH_TURN }
                 .map { it.id }.filter { RigLegacyBindings.find(it) != null })

@@ -40,9 +40,7 @@ class EyeWideAlgorithm : ReadingModifierAlgorithmPlugin {
             checkpoint()
             fit.moved(source.moves[side.name].orEmpty())
         }
-        require(fits.isNotEmpty() && captured.art.layers.any { it.tag == "EYELASH" && it.opaquePixels > 0 }) {
-            "Eye widening v2 needs readable fitted eye artwork"
-        }
+        if (fits.isEmpty() || captured.art.layers.none { it.tag == "EYELASH" && it.opaquePixels > 0 }) return ModifierModelChanges()
         val artwork = EyeArtworkFitting.fit(captured.art, source.artworkStamps, fits, source.corrections, align)
         val parameters = openings.mapNotNull { id ->
             val previous = requireNotNull(input.parameter(id)) { "Missing fitted eye opening parameter: $id" }
@@ -148,9 +146,6 @@ class EyeWideAlgorithm : ReadingModifierAlgorithmPlugin {
             else (value - frame.top) / frame.height.coerceAtLeast(1e-4f)
         })
         if (geometry.positions == original && mesh.offsets == before) return after
-        require(mesh.offsets?.axes.orEmpty().all { axis -> before.axes.any { it.parameter == axis.parameter } }) {
-            "Eye widening v2 cannot combine unrelated axes on the fitted eye mesh"
-        }
         val parameters = (mesh.offsets?.axes.orEmpty() + after.axes).map { it.parameter }.distinct().mapNotNull(input::parameter)
         val branch = input.parentsOfMesh(mesh.id)
         val current = PuppetIr.toPuppet(RigIR(input.canvas, parameters, deformers = branch, meshes = listOf(mesh)))

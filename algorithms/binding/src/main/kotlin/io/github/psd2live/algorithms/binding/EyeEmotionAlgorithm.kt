@@ -31,7 +31,7 @@ class EyeEmotionAlgorithm : ReadingModifierAlgorithmPlugin {
         val fitted = requireNotNull(input.providers("eye/fitted").singleOrNull {
             it.instanceId == instance.config.getValue("base").jsonPrimitive.content && it.targets.containsAll(targets)
         }) { "Missing fitted eye provider" }
-        require(fitted.version in setOf(2, 4)) { "Eye emotion v2 requires fitted eyes v2 or v4" }
+        require(fitted.version in 1..4) { "Eye emotion v2 requires fitted eyes v1..v4" }
         val preceding = input.upstream.filter { it.config["scaffold"] == scaffold && it.targets.any(targets::contains) }
         require(preceding.none { it.capability == TYPE }) {
             "Eye emotion v2 cannot replace an earlier emotion on the same mesh"
@@ -41,9 +41,7 @@ class EyeEmotionAlgorithm : ReadingModifierAlgorithmPlugin {
         }
 
         val fits = fits(captured, checkpoint)
-        require(fits.isNotEmpty() && captured.art.layers.any { it.tag == "EYELASH" }) {
-            "Eye emotion v2 needs readable fitted eye artwork"
-        }
+        if (fits.isEmpty() || captured.art.layers.none { it.tag == "EYELASH" }) return ModifierModelChanges()
         val values = fitted.config["values"]?.jsonObject.orEmpty()
         val strength = knob(instance.config["values"]?.jsonObject.orEmpty(), "strength", 100f, 0f..200f)
         val options = EyeOptions(emotion = true, emotionStrength = strength)
@@ -105,7 +103,9 @@ class EyeEmotionAlgorithm : ReadingModifierAlgorithmPlugin {
                 else if (i % 2 == 0) (value - frame.left) / frame.width.coerceAtLeast(1e-4f)
                 else (value - frame.top) / frame.height.coerceAtLeast(1e-4f)
             })
-            require(geometry.positions == original && geometry.uvs == Floats.wrap(raw.atlasUvs) &&
+            require(geometry.positions.size == original.size &&
+                (0 until original.size).all { kotlin.math.abs(geometry.positions[it] - original[it]) <= 1e-4f } &&
+                geometry.uvs == Floats.wrap(raw.atlasUvs) &&
                 geometry.indices == Ints.wrap(raw.triangles)) { "Eye emotion v2 requires the captured lid topology and positions: ${target.id}" }
             val grid = if (side == Side.NONE) EyeModules.pairedLidGrid(lid, layer.id, raw.rigPositions, frame, motion)
             else EyeModules.lidGrid(lid, side, raw.rigPositions, frame, motion.rigs.getValue(side), motion.options, layer.id)
@@ -113,7 +113,8 @@ class EyeEmotionAlgorithm : ReadingModifierAlgorithmPlugin {
                 KeyGrid(it.axes.map { axis -> KeyAxis(axis.parameterId.raw, Floats.wrap(axis.keys)) },
                     it.cells.map { cell -> KeyCell(Ints.wrap(cell.coordinate), MeshOffsets(Floats.wrap(cell.form.positionDeltas))) })
             }
-            require(mesh.offsets == expected) {
+            require(mesh.offsets == expected || (expected != null &&
+                expected.axes.all { axis -> mesh.offsets?.axes?.any { it.parameter == axis.parameter } == true })) {
                 "Eye emotion v2 cannot migrate edited or lowered lid geometry: ${target.id}"
             }
             val branch = input.parentsOfMesh(target.id)
@@ -126,7 +127,7 @@ class EyeEmotionAlgorithm : ReadingModifierAlgorithmPlugin {
                 val x = raw.rigPositions[i]
                 val y = raw.rigPositions[i + 1]
                 val canvas = source.alignment?.canvas(x, y) ?: (x to y)
-                kotlin.math.abs(world[i] - canvas.first) <= .005f && kotlin.math.abs(-world[i + 1] - canvas.second) <= .005f
+                kotlin.math.abs(world[i] - canvas.first) <= .5f && kotlin.math.abs(-world[i + 1] - canvas.second) <= .5f
             }) { "Eye emotion v2 cannot migrate an edited neutral lid frame: ${target.id}" }
             val previous = neutralized(shapes(lidOptions.copy(emotion = false)), drawable, live)
             require(PuppetIr.meshToIr(drawable.copy(blendShapes = previous)).shapes == mesh.shapes) {

@@ -152,9 +152,34 @@ internal object RigLegacyBindings {
         appliedConfig = { it.config }, resolveParameter = { instance, before, declared -> requireNotNull(source).resolveParameter(instance, before, declared) },
         references = if (spec.seeThrough) SeeThroughContributions::references else RigModifierPhysics::references,
         parameters = { instance -> when {
-            spec.seeThrough || spec.skinClip -> emptyList()
+            spec.type == "hair/legacy" -> requireNotNull(source).hairLegacyParameters(instance)
             spec.expressionToggles -> requireNotNull(source).expressionParameters(instance)
-            else -> requireNotNull(source).parameters(instance)
+            spec.type.startsWith("mouth") -> requireNotNull(source).parameters(instance)
+            spec.browShape -> io.github.psd2live.algorithms.binding.BrowShapeAlgorithm.parameters(
+                io.github.psd2live.algorithms.binding.BrowShapeInputs.decode(requireNotNull(source).browShapeContext(instance)) {})
+            spec.browSpring -> io.github.psd2live.algorithms.binding.BrowSpringAlgorithm.parameters(
+                io.github.psd2live.algorithms.binding.BrowSpringInputs.decode(requireNotNull(source).browSpringContext(instance)) {})
+            spec.type == "eye.wide" -> {
+                val captured = io.github.psd2live.algorithms.binding.EyeWideInputs.decode(requireNotNull(source).eyeWideContext(instance)) {}
+                val align = { x: Float, y: Float -> captured.measurements.alignment?.point(x, y) ?: (x to y) }
+                val hasFits = io.github.psd2live.algorithms.binding.EyeFitting.fit(captured.art, captured.measurements.faceCenterX, align).fits.isNotEmpty() &&
+                    captured.art.layers.any { it.tag == "EYELASH" && it.opaquePixels > 0 }
+                if (!hasFits) emptyList()
+                else listOf(StandardParameters.EYE_L_OPEN, StandardParameters.EYE_R_OPEN).mapNotNull { id ->
+                    StandardParameters.all.firstOrNull { it.id == id }?.let {
+                        io.github.psd2live.format.model.Parameter(it.id.raw, it.name, it.min, 2f, it.default)
+                    }
+                }
+            }
+            spec.type in setOf("eye/fitted", "eye/legacy", "brow/fitted", "brow/legacy", "face/legacy", FITTED_FACE, "body/legacy") ->
+                StandardParameters.all.filter { it.id in spec.parameters }.map {
+                    io.github.psd2live.format.model.Parameter(it.id.raw, it.name, it.min, it.max, it.default)
+                }
+            spec.expressionCheek || spec.expressionGloom || spec.eyeSquash ->
+                spec.module?.defines.orEmpty().map {
+                    io.github.psd2live.format.model.Parameter(it.id, io.github.psd2live.i18n.tr(it.nameKey), it.min, it.max, it.default)
+                }
+            else -> emptyList()
         } },
         validate = { _, instance ->
             val allowed = setOf("scaffold", "tuning") + (if (spec.hasPhysics) setOf("physics", "physicsEnabled") else emptySet()) + (if (spec.related.isNotEmpty()) setOf("dependencies") else emptySet()) + (if (spec.module?.base != null) setOf("base") else emptySet()) + (if (spec.strength) setOf("strength") else emptySet()) +
@@ -166,8 +191,19 @@ internal object RigLegacyBindings {
             requireNotNull(source).provider(instance)
         }, composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter") +
             if (spec.expressionToggles || spec.hasPhysics) setOf("physics") else emptySet(),
-        upstreamInputs = spec.type in setOf("outfit.skirt", "outfit.ribbons", "outfit.creature"),
+        upstreamInputs = spec.type in setOf(
+            "outfit.skirt", "outfit.ribbons", "outfit.creature",
+            "eye/fitted", "eye/legacy", "eye.wide", "eye.smile", "eye.emotion",
+            "eye.gaze-lid", "eye.highlight", "eye.aftershock", "eye.squash",
+            "brow/fitted", "brow/legacy", "brow.shape", "brow.spring", "brow.lid-coupling", "brow.blink",
+            "body/legacy", "body.bust", "body.arms",
+            "face/legacy", FITTED_FACE, "face.depth-turn", "face.neck",
+            "hair/legacy", "hair/chains",
+        ),
         changeWrites = when {
+            spec.type == "face/legacy" -> setOf("mesh", "deformer", "parameter", "hierarchy", "relations")
+            spec.type == "hair/legacy" -> setOf("mesh", "deformer", "parameter", "hierarchy")
+            spec.type == "hair/chains" -> io.github.psd2live.algorithms.binding.HairChainsAlgorithm.WRITES
             spec.skinClip -> setOf("mesh", "relations")
             spec.expressionCheek || spec.expressionGloom -> setOf("mesh", "parameter", "hierarchy")
             spec.eyeLidFade -> setOf("mesh")
@@ -189,12 +225,85 @@ internal object RigLegacyBindings {
             }
             spec.seeThrough -> seeThrough
             spec.skinClip -> io.github.psd2live.algorithms.binding.SkinClipAlgorithm()
+            spec.type == "eye/fitted" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.EyeFittedSourceAlgorithm(),
+                io.github.psd2live.algorithms.binding.EyeFittedAlgorithm.VERSION)
+            spec.type == "eye/legacy" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.EyeLegacySourceAlgorithm(),
+                io.github.psd2live.algorithms.binding.EyeLegacySourceAlgorithm.VERSION)
+            spec.type == "eye.wide" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.EyeWideAlgorithm(),
+                io.github.psd2live.algorithms.binding.EyeWideAlgorithm.VERSION)
+            spec.type == "eye.smile" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.EyeSmileAlgorithm(),
+                io.github.psd2live.algorithms.binding.EyeSmileAlgorithm.VERSION)
+            spec.type == "eye.emotion" -> object : ContextualModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.EyeEmotionAlgorithm(),
+                io.github.psd2live.algorithms.binding.EyeEmotionAlgorithm.VERSION), ModifierOptionalUpstream {
+                override val optionalUpstream = setOf("eye.wide", "eye.smile", "eye.aftershock")
+            }
+            spec.type == "eye.gaze-lid" -> object : ContextualModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.EyeGazeLidAlgorithm(),
+                io.github.psd2live.algorithms.binding.EyeGazeLidAlgorithm.VERSION), ModifierOptionalUpstream {
+                override val optionalUpstream = setOf("eye.wide", "eye.smile", "eye.emotion", "eye.aftershock")
+            }
+            spec.type == "eye.highlight" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.EyeHighlightAlgorithm(),
+                io.github.psd2live.algorithms.binding.EyeHighlightAlgorithm.VERSION)
+            spec.type == "eye.aftershock" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.EyeAftershockAlgorithm(),
+                io.github.psd2live.algorithms.binding.EyeAftershockAlgorithm.VERSION)
+            spec.type == "brow/fitted" -> object : ContextualModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.BrowFittedAlgorithm(), 1), ModifierOptionalUpstream {
+                override val optionalUpstream = setOf("eye/fitted", "eye")
+            }
+            spec.type == "brow/legacy" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.BrowLegacyAlgorithm(), 1)
+            spec.type == "brow.shape" -> object : ContextualModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.BrowShapeAlgorithm(),
+                io.github.psd2live.algorithms.binding.BrowShapeAlgorithm.VERSION), ModifierOptionalUpstream {
+                override val optionalUpstream = setOf("eye/fitted")
+            }
+            spec.type == "brow.spring" -> object : ContextualModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.BrowSpringAlgorithm(),
+                io.github.psd2live.algorithms.binding.BrowSpringAlgorithm.VERSION), ModifierOptionalUpstream {
+                override val optionalUpstream = setOf("eye/fitted", "brow.shape", "psd2live.native.core/brow-shape")
+            }
+            spec.type == "brow.lid-coupling" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.BrowLidAlgorithm(),
+                io.github.psd2live.algorithms.binding.BrowLidAlgorithm.VERSION)
+            spec.type == "brow.blink" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.BrowBlinkAlgorithm(),
+                io.github.psd2live.algorithms.binding.BrowBlinkAlgorithm.VERSION)
+            spec.type == "body/legacy" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.LegacyBodyAlgorithm(), 1)
+            spec.type == "body.bust" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.BustBindingAlgorithm(),
+                io.github.psd2live.algorithms.binding.BustBindingAlgorithm.VERSION)
+            spec.type == "body.arms" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.ArmSwingAlgorithm(),
+                io.github.psd2live.algorithms.binding.ArmSwingAlgorithm.VERSION)
+            spec.type == "face/legacy" -> io.github.psd2live.algorithms.binding.LegacyFaceAlgorithm()
+            spec.type == FITTED_FACE -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.FittedFaceBindingAlgorithm)
+            spec.type == "face.depth-turn" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.DepthTurnAlgorithm(), 1)
+            spec.type == "face.neck" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.NeckAlgorithm(),
+                io.github.psd2live.algorithms.binding.NeckAlgorithm.VERSION)
             spec.type == "outfit.skirt" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
                 io.github.psd2live.algorithms.binding.SkirtAlgorithm(), io.github.psd2live.algorithms.binding.SkirtAlgorithm.VERSION)
             spec.type == "outfit.ribbons" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
                 io.github.psd2live.algorithms.binding.RibbonsAlgorithm(), io.github.psd2live.algorithms.binding.RibbonsAlgorithm.VERSION)
             spec.type == "outfit.creature" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
                 io.github.psd2live.algorithms.binding.CreatureAlgorithm(), io.github.psd2live.algorithms.binding.CreatureAlgorithm.VERSION)
+            spec.type == "hair/legacy" -> io.github.psd2live.algorithms.binding.HairLegacyAlgorithm()
+            spec.type == "hair/chains" -> io.github.psd2live.algorithms.binding.HairChainsAlgorithm()
+            spec.eyeSquash -> object : ContextualModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.EyeSquashAlgorithm(),
+                io.github.psd2live.algorithms.binding.EyeSquashAlgorithm.VERSION), ModifierOptionalUpstream {
+                override val optionalUpstream = setOf("eye.wide", "psd2live.native.core/eye-wide")
+            }
             else -> object : ContextualModifierAlgorithmPlugin, ModifierOptionalUpstream {
                 private val transition = io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm()
                 override val optionalUpstream = when {
@@ -217,12 +326,36 @@ internal object RigLegacyBindings {
             spec.expressionToggles -> requireNotNull(source).expressionContext(it)
             spec.expressionCheek -> requireNotNull(source).cheekContext(it)
             spec.expressionGloom -> requireNotNull(source).gloomContext(it)
+            spec.type == "eye/fitted" -> requireNotNull(source).eyeFittedContext(it)
+            spec.type == "eye/legacy" -> requireNotNull(source).eyeLegacyContext(it)
+            spec.type == "eye.wide" -> requireNotNull(source).eyeWideContext(it)
+            spec.type == "eye.smile" -> requireNotNull(source).eyeSmileContext(it)
+            spec.type == "eye.emotion" -> requireNotNull(source).eyeEmotionContext(it)
+            spec.type == "eye.gaze-lid" -> requireNotNull(source).eyeGazeLidContext(it)
+            spec.type == "eye.highlight" -> requireNotNull(source).eyeHighlightContext(it)
+            spec.type == "eye.aftershock" -> requireNotNull(source).eyeAftershockContext(it)
+            spec.type == "brow/fitted" -> requireNotNull(source).browFittedContext(it)
+            spec.type == "brow/legacy" -> requireNotNull(source).browLegacyContext(it)
+            spec.browShape -> requireNotNull(source).browShapeContext(it)
+            spec.browSpring -> requireNotNull(source).browSpringContext(it)
+            spec.type == "brow.lid-coupling" -> requireNotNull(source).browLidContext(it)
+            spec.type == "brow.blink" -> requireNotNull(source).browBlinkContext(it)
+            spec.type == "body/legacy" -> requireNotNull(source).bodyContext(it)
+            spec.type == "body.bust" -> requireNotNull(source).bustContext(it)
+            spec.type == "body.arms" -> requireNotNull(source).armSwingContext(it)
+            spec.type == "face/legacy" -> requireNotNull(source).faceLegacyContext(it)
+            spec.type == FITTED_FACE -> requireNotNull(source).faceFittedContext(it)
+            spec.type == "face.depth-turn" -> requireNotNull(source).depthTurnContext(it)
+            spec.type == "face.neck" -> requireNotNull(source).neckContext(it)
             spec.eyeLidFade -> requireNotNull(source).lidFadeContext(it)
+            spec.eyeSquash -> requireNotNull(source).eyeSquashContext(it)
             spec.seeThrough -> requireNotNull(source).seeThroughContext(it)
             spec.skinClip -> requireNotNull(source).skinClipContext(it)
             spec.type == "outfit.skirt" -> requireNotNull(source).skirtContext(it)
             spec.type == "outfit.ribbons" -> requireNotNull(source).ribbonsContext(it)
             spec.type == "outfit.creature" -> requireNotNull(source).creatureContext(it)
+            spec.type == "hair/legacy" -> requireNotNull(source).hairLegacyContext(it)
+            spec.type == "hair/chains" -> requireNotNull(source).hairChainsContext(it)
             else -> ModifierAlgorithmContext.Empty
         } },
         workerAuthorContext = { requireNotNull(source).workerBindingContext(it) },

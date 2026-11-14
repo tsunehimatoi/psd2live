@@ -95,10 +95,15 @@ object LegacyFaceBinding {
         }
         val folder = ParameterNode.Group(ParameterGroupId("ParamGroupFace"), folderName, true,
             angleParameters.map { ParameterNode.Param(it.id) })
+        val existingFolder = before.parameterTree.singleOrNull { it is ParameterNode.Group && it.id == folder.id } as? ParameterNode.Group
+        val nextTree = if (existingFolder == null) listOf(folder) + before.parameterTree
+            else before.parameterTree.map {
+                if (it === existingFolder) folder.copy(children = folder.children + existingFolder.children) else it
+            }
         return before.copy(
             parameters = angleParameters + before.parameters,
-            parameterTree = listOf(folder) + before.parameterTree.filterNot { it is ParameterNode.Group && it.id == folder.id },
-            parameterLinks = listOf(ParameterLink(angleX, angleY)) + before.parameterLinks,
+            parameterTree = nextTree,
+            parameterLinks = before.parameterLinks + listOf(ParameterLink(angleX, angleY)),
             deformers = deformers,
         )
     }

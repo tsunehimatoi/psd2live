@@ -92,7 +92,7 @@ class BrowPartAlgorithm : ChangingModifierAlgorithmPlugin {
                 subCfgJson["tuning"]?.let { put("tuning", it) }
                 subCfgJson["physics"]?.let { put("physics", it) }
                 subCfgJson["physicsEnabled"]?.let { put("physicsEnabled", it) }
-                subCfgJson["dependencies"]?.let { put("dependencies", it) }
+                (subCfgJson["dependencies"] ?: instance.config["dependencies"])?.let { put("dependencies", it) }
                 subCfgJson["dip"]?.let { put("dip", it) }
             }
             val subInstance = RigModifierInstance(
@@ -104,7 +104,11 @@ class BrowPartAlgorithm : ChangingModifierAlgorithmPlugin {
                 outputAliases = instance.outputAliases,
                 plugin = instance.plugin,
             )
-            val subContext = ModifierAlgorithmContext(subValues, context.resources, upstream)
+            val prefix = "sub:$subType:"
+            val subResources = context.resources.entries.associate { (k, v) ->
+                (if (k.startsWith(prefix)) k.removePrefix(prefix) else k) to v
+            }
+            val subContext = ModifierAlgorithmContext(subValues, subResources, upstream)
             val evalInput = ModifierEvaluationInput(current, subContext)
             current = subPlugin.changes(evalInput, subInstance, checkpoint).apply(current, checkpoint)
             upstream += ModifierUpstreamCapability(

@@ -31,10 +31,16 @@ object ScaffoldBinding {
         val mesh = actual.mesh ?: return false
         val base = original?.mesh ?: return false
         val native = desired.mesh ?: return false
-        return actual.parentDeformerId == null && actual.geometryGrid == null && actual.blendShapes.isEmpty() &&
+        return actual.parentDeformerId == null && isZeroGrid(actual.geometryGrid) && actual.blendShapes.isEmpty() &&
             mesh.positions.contentEquals(base.positions) && mesh.uvs.contentEquals(base.uvs) && mesh.indices.contentEquals(base.indices) &&
-            mesh.uvs.contentEquals(native.uvs) && mesh.indices.contentEquals(native.indices)
+            uvsMatch(mesh.uvs, native.uvs) && mesh.indices.contentEquals(native.indices)
     }
+
+    private fun isZeroGrid(grid: KeyformGrid<MeshDeltaForm>?): Boolean =
+        grid == null || (grid.axes.isEmpty() && grid.cells.singleOrNull()?.form?.positionDeltas?.all { it == 0f } == true)
+
+    private fun uvsMatch(a: FloatArray, b: FloatArray): Boolean =
+        a.size == b.size && a.indices.all { kotlin.math.abs(a[it] - b[it]) <= 1e-4f }
 
     fun deformerId(instance: RigModifierInstance, mesh: String, canonical: String, shared: Boolean = instance.type == "rig.scaffold" && instance.version >= 2) =
         instance.outputAliases["shared/deformer:$canonical"] ?: instance.outputId(if (shared) "shared/deformer:$canonical" else "$mesh/deformer:$canonical")

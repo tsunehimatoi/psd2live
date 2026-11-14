@@ -100,7 +100,11 @@ class FacePartAlgorithm : ChangingModifierAlgorithmPlugin {
                     targets = subTargets,
                     config = subConfig,
                 )
-                val subContext = ModifierAlgorithmContext(subValues, context.resources, upstream)
+                val prefix = "sub:face.depth-turn:"
+                val subResources = context.resources.entries.associate { (k, v) ->
+                    (if (k.startsWith(prefix)) k.removePrefix(prefix) else k) to v
+                }
+                val subContext = ModifierAlgorithmContext(subValues, subResources, upstream)
                 current = DepthTurnAlgorithm().changes(current, subInstance, subContext, checkpoint).apply(current, checkpoint)
             }
         }
@@ -123,7 +127,11 @@ class FacePartAlgorithm : ChangingModifierAlgorithmPlugin {
                     targets = subTargets,
                     config = subConfig,
                 )
-                val subContext = ModifierAlgorithmContext(subValues, context.resources, upstream)
+                val prefix = "sub:face.neck:"
+                val subResources = context.resources.entries.associate { (k, v) ->
+                    (if (k.startsWith(prefix)) k.removePrefix(prefix) else k) to v
+                }
+                val subContext = ModifierAlgorithmContext(subValues, subResources, upstream)
                 current = NeckAlgorithm().changes(ModifierEvaluationInput(current, subContext), subInstance, checkpoint).apply(current, checkpoint)
             }
         }

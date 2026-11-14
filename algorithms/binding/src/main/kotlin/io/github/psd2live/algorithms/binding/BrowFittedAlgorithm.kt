@@ -16,7 +16,9 @@ class BrowFittedAlgorithm : ChangingModifierAlgorithmPlugin {
         require(context.upstream.any { it.type == "rig.scaffold" && it.instanceId == inputs.scaffold && it.targets.containsAll(instance.targets) }) {
             "Fitted brow requires its captured scaffold provider"
         }
-        for (eye in inputs.eyes.values) require(context.upstream.any { it.type == "eye/fitted" && it.instanceId == eye.provider }) {
+        for (eye in inputs.eyes.values) require(context.upstream.any {
+            (it.capability == "eye/fitted" || it.type == "eye/fitted" || it.type == "eye") && it.instanceId == eye.provider
+        }) {
             "Fitted brow requires its captured eye measurements provider"
         }
         val targets = instance.targets.mapTo(hashSetOf()) { it.id }
@@ -36,7 +38,8 @@ class BrowFittedAlgorithm : ChangingModifierAlgorithmPlugin {
         val updated = desired.drawables.mapNotNull { mesh ->
             if (mesh === before[mesh.id]) null else {
                 val old = original.getValue(mesh.id.raw)
-                val next = old.copy(offsets = PuppetIr.meshToIr(mesh).offsets)
+                val irMesh = PuppetIr.meshToIr(mesh)
+                val next = old.copy(geometry = irMesh.geometry, offsets = irMesh.offsets)
                 ModifierObjectUpdate(old, next).takeIf { old != next }
             }
         }
@@ -82,14 +85,19 @@ class BrowFittedAlgorithm : ChangingModifierAlgorithmPlugin {
             val geometry = mesh.mesh ?: return@map mesh
             val captured = raw.getValue(layer.canonical)
             val positions = captured.rigPositions
-            require(geometry.indices.contentEquals(captured.triangles) && geometry.positions.size == positions.size) {
-                "Fitted brow requires canonical scaffold topology"
+            val frame = layer.frame
+            val normalized = FloatArray(positions.size) { index ->
+                val coordinate = positions[index]
+                if (mesh.parentDeformerId == null) coordinate
+                else if (index % 2 == 0) (coordinate - frame.left) / frame.width.coerceAtLeast(1e-4f)
+                else (coordinate - frame.top) / frame.height.coerceAtLeast(1e-4f)
             }
+            val nextMesh = DrawableMesh(normalized, captured.atlasUvs, captured.triangles)
             val y = if (layer.side == Side.LEFT) left else right
             val brow = rigs[layer.side]?.takeIf { layer.primary }
-            val grid = brow?.grid(positions, layer.frame, y, ParameterId(if (layer.side == Side.LEFT) "ParamBrowLAngle" else "ParamBrowRAngle"))
+            val grid = brow?.grid(positions, frame, y, ParameterId(if (layer.side == Side.LEFT) "ParamBrowLAngle" else "ParamBrowRAngle"))
                 ?: fallback(positions.size, layer, y, inputs.fallbackLift)
-            mesh.copy(geometryGrid = grid)
+            mesh.copy(mesh = nextMesh, geometryGrid = grid)
         }
         val group = ParameterNode.Group(ParameterGroupId("ParamGroupBrows"), inputs.groupName, true,
             parameters.map { ParameterNode.Param(it.id) })

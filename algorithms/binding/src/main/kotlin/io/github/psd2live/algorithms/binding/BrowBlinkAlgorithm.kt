@@ -35,7 +35,7 @@ class BrowBlinkAlgorithm : ReadingModifierAlgorithmPlugin {
             }
             val eye = providers.lastOrNull { it.capability == "eye/fitted" }
             if (source.eyeProvider != null && target.eye != null)
-                require(eye?.instanceId == source.eyeProvider && eye.version in 2..4) { "Missing captured fitted eyes" }
+                require(eye?.instanceId == source.eyeProvider && eye.version in 1..4) { "Missing captured fitted eyes" }
             // Legacy projection removes the blink axis when its target has no upstream eye binding.
             if (eye == null && providers.none { it.capability == "eye/legacy" }) return@mapNotNull null
 

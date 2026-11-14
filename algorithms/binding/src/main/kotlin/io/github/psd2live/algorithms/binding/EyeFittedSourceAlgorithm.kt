@@ -33,8 +33,15 @@ class EyeFittedSourceAlgorithm : ChangingModifierAlgorithmPlugin {
         val targets = eyeContext.values.getValue("eyes").jsonObject.getValue("materials").jsonObject.keys
         val selected = instance.targets.filter { it.kind == "mesh" }.mapTo(hashSetOf()) { it.id }
         require(targets.all { it in selected }) { "Fitted eye scaffold inputs exceed the selected targets" }
-        val planned = EyeScaffoldTransition.plan(input, provider, targets,
-            captured("ordinary", COARSE_MESHES), captured("fitted", FINE_MESHES), checkpoint)
+        val ordinary = captured("ordinary", COARSE_MESHES)
+        val fitted = captured("fitted", FINE_MESHES)
+        val preserved = linkedSetOf<String>()
+        var planned = EyeScaffoldTransition.plan(input, provider, targets, ordinary, fitted, checkpoint, preserved)
+        while (planned is EyeScaffoldTransition.Result.Blocked && planned.reason == EyeScaffoldTransition.Reason.AUTHORED_MESH) {
+            // Preserve user-authored or pre-split meshes (e.g. source_split_components) while migrating untouched peers.
+            preserved += planned.ids
+            planned = EyeScaffoldTransition.plan(input, provider, targets, ordinary, fitted, checkpoint, preserved)
+        }
         require(planned is EyeScaffoldTransition.Result.Ready) {
             val blocked = planned as EyeScaffoldTransition.Result.Blocked
             "Fitted eye v3 cannot migrate the source scaffold: ${blocked.reason} (${blocked.ids.sorted().joinToString()})"

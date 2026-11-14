@@ -108,31 +108,6 @@ internal object WorkspaceModifierSchemas {
             "tuning" to s.dictionary(s.number()),
             "values" to s.dictionary(s.number()),
         ), setOf("scaffold"))
-        "face" -> s.obj(mapOf(
-            "scaffold" to s.handle(),
-            "mode" to s.choices("fitted", "legacy"),
-            "depthTurn" to s.boolean(),
-            "neck" to s.boolean(),
-            "strength" to s.number(0, 4),
-            "tuning" to s.dictionary(s.number()),
-            "values" to s.dictionary(s.number()),
-        ), setOf("scaffold"))
-        "body" -> s.obj(mapOf(
-            "scaffold" to s.handle(),
-            "bust" to s.boolean(),
-            "arms" to s.boolean(),
-            "strength" to s.number(0, 4),
-            "tuning" to s.dictionary(s.number()),
-            "values" to s.dictionary(s.number()),
-        ), setOf("scaffold"))
-        "hair" -> s.obj(mapOf(
-            "scaffold" to s.handle(),
-            "mode" to s.choices("chains", "legacy"),
-            "tuning" to s.dictionary(s.number()),
-            "values" to s.dictionary(s.number()),
-            "physicsEnabled" to s.boolean(),
-            "physics" to s.dictionary(physics),
-        ), setOf("scaffold"))
         else -> RigLegacyBindings.find(type)?.let { spec -> s.obj(mapOf("scaffold" to s.handle(),
             "tuning" to s.obj(spec.fields.associate { it.id to s.number(it.range.start, it.range.endInclusive) }, emptySet())) +
             (if (spec.module?.base != null) mapOf("base" to s.handle()) else emptyMap()) +

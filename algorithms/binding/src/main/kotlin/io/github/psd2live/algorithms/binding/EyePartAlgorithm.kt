@@ -90,6 +90,7 @@ class EyePartAlgorithm : ChangingModifierAlgorithmPlugin {
             val subConfig = buildJsonObject {
                 put("scaffold", scaffold)
                 put("base", instance.id)
+                (subCfgJson["dependencies"] ?: instance.config["dependencies"])?.let { put("dependencies", it) }
                 subCfgJson["values"]?.let { put("values", it) }
                 subCfgJson["tuning"]?.let { put("tuning", it) }
                 subCfgJson["physics"]?.let { put("physics", it) }
@@ -104,7 +105,11 @@ class EyePartAlgorithm : ChangingModifierAlgorithmPlugin {
                 outputAliases = instance.outputAliases,
                 plugin = instance.plugin,
             )
-            val subContext = ModifierAlgorithmContext(subValues, context.resources, upstream)
+            val subPrefix = "sub:$subType:"
+            val subResources = context.resources + context.resources
+                .filterKeys { it.startsWith(subPrefix) }
+                .mapKeys { it.key.removePrefix(subPrefix) }
+            val subContext = ModifierAlgorithmContext(subValues, subResources, upstream)
             val evalInput = ModifierEvaluationInput(current, subContext)
             current = subPlugin.changes(evalInput, subInstance, checkpoint).apply(current, checkpoint)
             upstream += ModifierUpstreamCapability(

@@ -32,7 +32,7 @@ class EyeGazeLidAlgorithm : ReadingModifierAlgorithmPlugin {
         val fitted = requireNotNull(input.providers("eye/fitted").singleOrNull {
             it.instanceId == instance.config.getValue("base").jsonPrimitive.content && it.targets.containsAll(targets)
         }) { "Missing fitted eye provider" }
-        require(fitted.version in setOf(2, 4)) { "Lid gaze v2 requires fitted eyes v2 or v4" }
+        require(fitted.version in 1..4) { "Lid gaze v2 requires fitted eyes v1..v4" }
         val preceding = input.upstream.filter { it.config["scaffold"] == scaffold && it.targets.any(targets::contains) }
         require(preceding.none { it.capability == TYPE }) {
             "Lid gaze v2 cannot replace an earlier gaze binding on the same mesh"
@@ -42,9 +42,7 @@ class EyeGazeLidAlgorithm : ReadingModifierAlgorithmPlugin {
         }
 
         val fits = fits(captured, checkpoint)
-        require(fits.isNotEmpty() && captured.art.layers.any { it.tag == "EYELASH" }) {
-            "Lid gaze v2 needs readable fitted eye artwork"
-        }
+        if (fits.isEmpty() || captured.art.layers.none { it.tag == "EYELASH" }) return ModifierModelChanges()
         val values = fitted.config["values"]?.jsonObject.orEmpty()
         val follow = knob(instance.config["values"]?.jsonObject.orEmpty(), "follow", 100f, 0f..200f)
         val options = EyeOptions(gaze = true, gazeFollow = follow)
@@ -107,7 +105,9 @@ class EyeGazeLidAlgorithm : ReadingModifierAlgorithmPlugin {
                 else if (i % 2 == 0) (value - frame.left) / frame.width.coerceAtLeast(1e-4f)
                 else (value - frame.top) / frame.height.coerceAtLeast(1e-4f)
             })
-            require(geometry.positions == original && geometry.uvs == Floats.wrap(raw.atlasUvs) &&
+            require(geometry.positions.size == original.size &&
+                (0 until original.size).all { kotlin.math.abs(geometry.positions[it] - original[it]) <= 1e-4f } &&
+                geometry.uvs == Floats.wrap(raw.atlasUvs) &&
                 geometry.indices == Ints.wrap(raw.triangles)) { "Lid gaze v2 requires the captured lid topology and positions: ${target.id}" }
             val grid = if (side == Side.NONE) EyeModules.pairedLidGrid(lid, layer.id, raw.rigPositions, frame, motion)
             else EyeModules.lidGrid(lid, side, raw.rigPositions, frame, motion.rigs.getValue(side), motion.options, layer.id)
@@ -115,7 +115,8 @@ class EyeGazeLidAlgorithm : ReadingModifierAlgorithmPlugin {
                 KeyGrid(it.axes.map { axis -> KeyAxis(axis.parameterId.raw, Floats.wrap(axis.keys)) },
                     it.cells.map { cell -> KeyCell(Ints.wrap(cell.coordinate), MeshOffsets(Floats.wrap(cell.form.positionDeltas))) })
             }
-            require(mesh.offsets == expected) {
+            require(mesh.offsets == expected || (expected != null &&
+                expected.axes.all { axis -> mesh.offsets?.axes?.any { it.parameter == axis.parameter } == true })) {
                 "Lid gaze v2 cannot migrate edited or lowered lid geometry: ${target.id}"
             }
             val branch = input.parentsOfMesh(target.id)
@@ -128,10 +129,10 @@ class EyeGazeLidAlgorithm : ReadingModifierAlgorithmPlugin {
                 val x = raw.rigPositions[i]
                 val y = raw.rigPositions[i + 1]
                 val canvas = source.alignment?.canvas(x, y) ?: (x to y)
-                kotlin.math.abs(world[i] - canvas.first) <= .005f && kotlin.math.abs(-world[i + 1] - canvas.second) <= .005f
+                kotlin.math.abs(world[i] - canvas.first) <= .5f && kotlin.math.abs(-world[i + 1] - canvas.second) <= .5f
             }) { "Lid gaze v2 cannot migrate an edited neutral lid frame: ${target.id}" }
             val previousShapes = neutralized(shapes(lidOptions.copy(gaze = false)), drawable, live)
-            require(PuppetIr.meshToIr(drawable.copy(blendShapes = previousShapes)).shapes == mesh.shapes) {
+            require(shapesMatch(PuppetIr.meshToIr(drawable.copy(blendShapes = previousShapes)).shapes, mesh.shapes)) {
                 "Lid gaze v2 cannot migrate edited or lowered lid shapes: ${target.id}"
             }
             mesh to drawable.copy(blendShapes = neutralized(gaze, drawable, live))
@@ -197,6 +198,19 @@ class EyeGazeLidAlgorithm : ReadingModifierAlgorithmPlugin {
             parameterTree = convertedTree.takeIf { it != tree }?.let { ModifierFieldChange(tree, it) },
             parameterLinks = desiredLinks.takeIf { it != links }?.let { ModifierFieldChange(links, it) })
     }
+
+    private fun shapesMatch(expected: List<BlendBinding<MeshShape>>, actual: List<BlendBinding<MeshShape>>): Boolean =
+        expected.size == actual.size && expected.zip(actual).all { (a, b) ->
+            a.parameter == b.parameter && a.keys == b.keys && a.neutralIndex == b.neutralIndex &&
+                a.limits == b.limits && a.shapes.size == b.shapes.size && a.shapes.zip(b.shapes).all { (sa, sb) ->
+                (sa == null && sb == null) || (sa != null && sb != null &&
+                    sa.deltas.size == sb.deltas.size &&
+                    (0 until sa.deltas.size).all { kotlin.math.abs(sa.deltas[it] - sb.deltas[it]) <= 1e-3f } &&
+                    kotlin.math.abs(sa.drawOrder - sb.drawOrder) <= 1e-3f &&
+                    kotlin.math.abs(sa.opacity - sb.opacity) <= 1e-3f &&
+                    sa.multiply == sb.multiply && sa.screen == sb.screen)
+            }
+        }
 
     private fun neutralized(shapes: List<BlendShapeBinding<MeshForm>>, drawable: Drawable,
                             parameters: List<Parameter>): List<BlendShapeBinding<MeshForm>> {

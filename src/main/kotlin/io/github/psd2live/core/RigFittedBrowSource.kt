@@ -11,6 +11,8 @@ internal object RigFittedBrowSource {
         scaffold: String,
         targetLayers: Map<String, Pair<String, ClassifiedLayer>>,
         eyeProvider: String? = null,
+        frameContext: RigBuilder.RigContext = context,
+        frameConfig: PipelineConfig = config,
     ): BrowFittedInputs {
         val (fits, eyes) = context.fittedBrowMeasurements(config)
         val eyeMeasurements = if (eyes == null) emptyMap() else eyes.rigs.mapValues { (_, eye) ->
@@ -19,7 +21,7 @@ internal object RigFittedBrowSource {
         val layers = targetLayers.mapNotNull { (mesh, captured) ->
             val (canonical, layer) = captured
             if (layer.semantic.tag != SemanticTag.EYEBROW) return@mapNotNull null
-            val frame = context.parentAndFrame(layer, config).second
+            val frame = frameContext.parentAndFrame(layer, frameConfig).second
             val aligned = context.rigLayer(layer)
             mesh to BrowFittedInputs.Layer(canonical, layer.semantic.side, layer.semantic.role == null, frame, aligned.bounds.height)
         }.toMap()
