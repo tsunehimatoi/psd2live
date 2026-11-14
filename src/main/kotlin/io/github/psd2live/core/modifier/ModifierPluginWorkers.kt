@@ -211,7 +211,6 @@ internal object ModifierPluginWorkers {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Pair<ModifierPluginReference, String>, ReadResult>?): Boolean = size > 256
         }
         private val protocol = launchEntry.manifest.protocol
-        private val writtenHashes = HashSet<String>()
         private val sentObjectBlobs = HashMap<String, ByteArray>()
         private var nextBlobId = 0L
         private val geometryBudget = geometryBudgets[store] ?: ModifierGeometryCache.DEFAULT_BUDGET_BYTES
@@ -226,7 +225,8 @@ internal object ModifierPluginWorkers {
         @Volatile private var protocolBlobBytes = 0L
         @Volatile private var readEntryCount = 0
         private var resetInput = true
-        private val resources = Files.createTempDirectory("psd2live-plugin-")
+        private val resourceFiles = ModifierWorkerResourceFiles(Files.createTempDirectory("psd2live-plugin-"))
+        private val resources = resourceFiles.directory
         private val resolvedDeps = store.resolution(launchEntry.reference).dependencies
         private val runtimeDir = try {
             Files.createDirectories(resources.resolve(".runtime")).also { dir ->
@@ -260,7 +260,7 @@ internal object ModifierPluginWorkers {
                     }.toString())
                 }
             }
-        } catch (failure: Exception) { ModifierPluginStore.deleteTree(resources); throw failure }
+        } catch (failure: Exception) { resourceFiles.close(); throw failure }
         private val command = (launchEntry.manifest.commands[ModifierPluginStore.platform] ?: launchEntry.manifest.commands.getValue("jvm")).mapIndexed { index, value ->
             when {
                 value == "\$JAVA" -> Path.of(System.getProperty("java.home"), "bin", if (ModifierPluginStore.platform.startsWith("windows")) "java.exe" else "java").toString()
@@ -275,7 +275,7 @@ internal object ModifierPluginWorkers {
             if (resolvedDeps.isNotEmpty()) {
                 environment()["PSD2LIVE_PLUGIN_DEPS"] = runtimeDir.resolve("deps.json").toString()
             }
-        }.start() } catch (failure: Exception) { ModifierPluginStore.deleteTree(resources); throw failure }
+        }.start() } catch (failure: Exception) { resourceFiles.close(); throw failure }
         private val errors = StringBuilder()
         private val stderr = executor.submit {
             process.errorStream.bufferedReader().use { input ->
@@ -327,8 +327,7 @@ internal object ModifierPluginWorkers {
             sentObjectBlobs.clear()
             protocolBlobBytes = 0
             resetInput = true
-            writtenHashes.forEach { Files.deleteIfExists(resources.resolve(it)) }
-            writtenHashes.clear()
+            resourceFiles.clear()
             RigBuildProfile.count("plugin cache releases")
         }
 
@@ -599,7 +598,7 @@ internal object ModifierPluginWorkers {
             fun <T> changes(kind: String, values: List<T>, prior: Map<String, T>, id: (T) -> String) = values.filter { value ->
                 val key = "$kind:${id(value)}"
                 val reference = previous?.objects?.get(key)
-                val available = reference != null && (protocol == 2 || reference.jsonObject.getValue("sha256").jsonPrimitive.content in writtenHashes)
+                val available = reference != null && (protocol == 2 || resourceFiles.contains(reference.jsonObject.getValue("sha256").jsonPrimitive.content))
                 if (prior[id(value)] !== value || !available) true
                 else { retained[key] = reference!!; false }
             }
@@ -632,13 +631,7 @@ internal object ModifierPluginWorkers {
 
         private fun blob(bytes: ByteArray): JsonObject {
             val hash = ModifierPluginStore.hash(bytes)
-            if (writtenHashes.add(hash)) {
-                val path = resources.resolve(hash)
-                if (!Files.exists(path)) {
-                    Files.write(path, bytes)
-                    RigBuildProfile.count("plugin resource bytes", bytes.size.toLong())
-                }
-            }
+            if (resourceFiles.write(hash, bytes)) RigBuildProfile.count("plugin resource bytes", bytes.size.toLong())
             return buildJsonObject { put("sha256", hash); put("bytes", bytes.size) }
         }
         private fun floatBytes(values: FloatArray): ByteArray {
@@ -686,7 +679,9 @@ internal object ModifierPluginWorkers {
                 runCatching { process.inputStream.close() }
                 runCatching { process.outputStream.close() }
                 runCatching { process.errorStream.close() }
-                ModifierPluginStore.deleteTree(resources)
+                // Active request cleanup uses the same short filesystem lock. Waiting on the whole
+                // request here would invert the store lock held by synchronous uninstall/disable.
+                resourceFiles.close()
             } finally { if (interrupted) Thread.currentThread().interrupt() }
         }
     }

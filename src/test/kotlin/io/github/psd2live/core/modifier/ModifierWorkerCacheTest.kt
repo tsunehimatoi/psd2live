@@ -161,4 +161,43 @@ class ModifierWorkerCacheTest {
             } finally { resume.countDown(); owner.close() }
         }
     }
+
+    @Test fun uninstallDoesNotWaitForActiveRequestThatMayNeedTheStoreLock() = fixture(protocol = 1) { store, entry ->
+        val input = syntheticWorkerRig()
+        val algorithm = entry.manifest.algorithms.single()
+        ModifierPluginWorkers.evaluate(entry, algorithm, input, instance(entry), {}, store)
+        val pid = ModifierPluginWorkers.cacheSnapshots(store).single().pid
+        val process = ProcessHandle.of(pid).orElseThrow()
+        val active = CountDownLatch(1)
+        val resume = CountDownLatch(1)
+        Executors.newVirtualThreadPerTaskExecutor().use { executor ->
+            val request = executor.submit<RigIR> {
+                var checkpoints = 0
+                ModifierPluginWorkers.evaluate(entry, algorithm, input, instance(entry), {
+                    if (++checkpoints == 2) {
+                        active.countDown()
+                        check(resume.await(15, TimeUnit.SECONDS))
+                    }
+                }, store)
+            }
+            var uninstall: Future<*>? = null
+            try {
+                assertTrue(active.await(10, TimeUnit.SECONDS))
+                val stopping = executor.submit { store.uninstall(entry.reference) }
+                uninstall = stopping
+                // The request owns its lock and may need the store lock after this checkpoint.
+                process.onExit().get(10, TimeUnit.SECONDS)
+                stopping.get(3, TimeUnit.SECONDS)
+                resume.countDown()
+                assertFailsWith<ExecutionException> { request.get(10, TimeUnit.SECONDS) }
+                assertTrue(store.snapshot().isEmpty())
+                assertTrue(ModifierPluginWorkers.cacheSnapshots(store).isEmpty())
+                assertFalse(process.isAlive)
+            } finally {
+                resume.countDown()
+                uninstall?.get(10, TimeUnit.SECONDS)
+                request.cancel(true)
+            }
+        }
+    }
 }
