@@ -4,7 +4,7 @@
 #
 # Maintainers: protect the GitHub Environment "release-cubism" (required reviewers).
 # On a PUBLIC application repo, NEVER store the SDK zip as a Release asset here —
-# point CUBISM_SDK_SOURCE_REPO at a private sibling repo. See docs/*/guide/CUBISM_CI_RELEASE.md.
+# point CUBISM_SDK_SOURCE_REPO at a private sibling repo. See docs/zh/guide/CUBISM_CI_RELEASE.md.
 name: Release Cubism
 
 on:

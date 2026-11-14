@@ -620,14 +620,9 @@ private fun DccAboutContent() {
 	}
 }
 
-/** A page of the repository's documentation in the reader's language, Chinese where it has no translation. */
+/** A page of the repository's documentation. */
 private fun docsUrl(path: String): String {
-	val folder = when (io.github.psd2live.i18n.I18n.currentLanguage.tag) {
-		"en" -> "en"
-		"ja" -> "ja"
-		else -> "zh"
-	}
-	return "${DesktopUtils.GITHUB_REPO_URL}/blob/master/docs/$folder/$path"
+	return "${DesktopUtils.GITHUB_REPO_URL}/blob/master/docs/zh/$path"
 }
 
 // ---------------------------------------------------------------------------

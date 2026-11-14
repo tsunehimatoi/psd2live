@@ -60,4 +60,4 @@ The application draws Cubism on its window's own OpenGL context: `Live2D_Init` i
 
 Check application renderer status and logs. Without usable native resources, the app uses its software renderer; basic model export does not require this native library.
 
-[English setup](../../docs/en/guide/CUBISM_SDK_SETUP.md) · [中文](../../docs/zh/guide/CUBISM_SDK_SETUP.md) · [日本語](../../docs/ja/guide/CUBISM_SDK_SETUP.md) · [CMake configuration](CMakeLists.txt)
+[中文设置指南](../../docs/zh/guide/CUBISM_SDK_SETUP.md) · [CMake configuration](CMakeLists.txt)

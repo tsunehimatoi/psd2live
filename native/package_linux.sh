@@ -307,7 +307,7 @@ Optional Cubism SDK Preview:
 
   To enable native Cubism preview:
   1. Download Cubism SDK for Native (5-r.5) from Live2D
-  2. Build the native library following docs/en/guide/CUBISM_SDK_SETUP.md
+  2. Build the native library following docs/zh/guide/CUBISM_SDK_SETUP.md
   3. Set CUBISM_SDK_PATH environment variable to the deployed directory
   4. On headless hosts, run under Xvfb (e.g. xvfb-run ./psd2live.sh)
 

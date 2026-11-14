@@ -51,13 +51,10 @@ Default Gradle jars/distributions **exclude** `src/main/resources/cubism/**`. Op
 
 ## Documentation
 
-Detailed setup instructions in multiple languages:
-- [English](../docs/en/guide/CUBISM_SDK_SETUP.md)
+Detailed setup instructions:
 - [简体中文](../docs/zh/guide/CUBISM_SDK_SETUP.md)
-- [日本語](../docs/ja/guide/CUBISM_SDK_SETUP.md)
 
 CI and Cubism-inclusive release packaging (GitHub Actions):
-- [English](../docs/en/guide/CUBISM_CI_RELEASE.md)
 - [简体中文](../docs/zh/guide/CUBISM_CI_RELEASE.md)
 
 ## License Compliance

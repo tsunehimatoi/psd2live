@@ -85,7 +85,7 @@ internal class ProjectRepository(
                         ProjectHeadCache.write(root, head.snapshot, ProjectHeadCache.Key(head.node.revisionId))
                     }
                     capture.thumbnail?.let { Files.write(root.resolve(ProjectThumbnail.ENTRY), it) }
-                    Files.writeString(root.resolve("README.txt"), "PSD2Live project v2. Unencrypted ZIP. manifest.json inventories SHA-256 checksums. source/ holds the original source; history/ the history nodes and the document nodes each revision is made of; document/ the content-addressed document nodes, generator overrides and motion clips; assets/ the PNG rasters; rig/ each revision's authored rig as shared objects; auxiliary/ staged assets, views, workflow records and tasks; cache/ optional rebuild caches that may be deleted; thumbnail.png is an optional preview; workspace.json restores the UI. See docs/en/spec/PROJECT_FORMAT.md.\n")
+                    Files.writeString(root.resolve("README.txt"), "PSD2Live project v2. Unencrypted ZIP. manifest.json inventories SHA-256 checksums. source/ holds the original source; history/ the history nodes and the document nodes each revision is made of; document/ the content-addressed document nodes, generator overrides and motion clips; assets/ the PNG rasters; rig/ each revision's authored rig as shared objects; auxiliary/ staged assets, views, workflow records and tasks; cache/ optional rebuild caches that may be deleted; thumbnail.png is an optional preview; workspace.json restores the UI. See docs/zh/spec/PROJECT_FORMAT.md.\n")
                     staged(6)
                     caller.ensureActive()
                     if (writeArchive != null) writeArchive.invoke(root, path, capture.projectId)
