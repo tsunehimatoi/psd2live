@@ -1,7 +1,6 @@
 package io.github.psd2live.ui.state
 
 import io.github.psd2live.core.modifier.*
-import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.*
 
 /** UI adapters for one captured part; metadata and sibling feature configurations are never regenerated. */
@@ -17,23 +16,24 @@ internal object ModifierPartEditing {
         return "${part.type}/$mode"
     }
 
-    fun child(part: RigModifierInstance, type: String): RigModifierInstance {
-        val flag = ModifierPartConfig.features.getValue(part.type).entries.single { it.value == type }.key
-        val config = part.config["subConfigs"]?.jsonObject?.get(type)?.jsonObject ?: JsonObject(emptyMap())
-        return RigModifierInstance(
-            id = config["id"]?.jsonPrimitive?.content ?: "${part.id}:$flag",
-            type = type, version = config["version"]?.jsonPrimitive?.int ?: requireNotNull(RigLegacyBindings.find(type)).version,
-            targets = config["targets"]?.let { Json.decodeFromJsonElement(ListSerializer(ModifierTarget.serializer()), it) } ?: part.targets,
-            config = config, outputAliases = config["outputAliases"]?.jsonObject?.mapValues { it.value.jsonPrimitive.content } ?: part.outputAliases,
-        )
-    }
+    fun child(part: RigModifierInstance, type: String): RigModifierInstance = ModifierPartConfig.child(part, type)
+
+    fun hasOwnTargets(part: RigModifierInstance, type: String): Boolean =
+        part.config["subConfigs"]?.jsonObject?.get(type)?.jsonObject?.containsKey("targets") == true
 
     fun withChildConfig(part: RigModifierInstance, type: String, config: JsonObject): JsonObject {
         require(type in ModifierPartConfig.features.getValue(part.type).values)
         val children = part.config["subConfigs"]?.jsonObject.orEmpty()
         val original = children[type]?.jsonObject.orEmpty()
         val preserved = original.filterKeys { it in metadata }
-        val child = JsonObject(config + preserved)
+        val effective = child(part, type).config
+        // Unchanged inherited values stay inherited, including dependencies merged by the shared helper.
+        val authored = config.mapNotNull { (key, value) ->
+            val next = if (key in metadata || value != effective[key]) value else original[key]
+            next?.let { key to it }
+        }.toMap()
+        val child = JsonObject(authored + preserved)
+        if (child.isEmpty() && type !in children) return part.config
         return JsonObject(part.config + ("subConfigs" to JsonObject(children + (type to child))))
     }
 }
