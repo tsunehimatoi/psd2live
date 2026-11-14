@@ -1,6 +1,6 @@
 # 变形器与参数参考
 
-[文档目录](../../README.md) · [English](../../en/spec/DEFORMER_AND_PARAMETER_SPEC.md) · [日本語](../../ja/spec/DEFORMER_AND_PARAMETER_SPEC.md) · [PSD 素材与命名](PSD_LAYER_SPEC.md)
+[文档目录](../../README.md) · [PSD 素材与命名](PSD_LAYER_SPEC.md)
 
 本页描述自动生成的默认结构与编辑约定。实际对象取决于素材、模型预设和后续编辑，应以层级树、参数面板或 MCP `workspace_inspect` 返回值为准。
 
@@ -96,4 +96,4 @@
 
 检查中立姿态、端点、组合角和中间值；检查父级与局部形状是否重复施加运动。导出流水线包含几何诊断与读回检查，但警告不是“所有姿态已验证”的证明；运行时目标不支持的功能还可能被降级。
 
-[RigBuilder / StandardParameters](../../../src/main/kotlin/io/github/psd2live/core/RigBuilder.kt) · [Pipeline](../../../src/main/kotlin/io/github/psd2live/core/PSD2LivePipeline.kt) · [PuppetModel](../../../umamo/src/main/kotlin/org/umamo/runtime/model/PuppetModel.kt) · [Architecture (中文)](../../zh/spec/RUNTIME_EXPORT_ARCHITECTURE_AND_GAPS.md)
+[RigBuilder / StandardParameters](../../../src/main/kotlin/io/github/psd2live/core/RigBuilder.kt) · [Pipeline](../../../src/main/kotlin/io/github/psd2live/core/PSD2LivePipeline.kt) · [PuppetModel](../../../umamo/src/main/kotlin/org/umamo/runtime/model/PuppetModel.kt)

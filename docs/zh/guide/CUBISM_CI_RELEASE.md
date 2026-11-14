@@ -1,6 +1,6 @@
 # Cubism CI 与发行工作流
 
-[文档目录](../../README.md) · [English](../../en/guide/CUBISM_CI_RELEASE.md) · [Cubism Native 预览](CUBISM_SDK_SETUP.md)
+[文档目录](../../README.md) · [Cubism Native 预览](CUBISM_SDK_SETUP.md)
 
 本页说明仓库中两个 GitHub Actions 工作流：公开测试（不含 SDK）与可选的 Cubism 预览打包。不替代 Live2D 许可，也不授权再分发专有组件。
 

@@ -132,7 +132,7 @@
 
 网格重建使用 `layer_mesh_rebuild`（必需 `state/layer_id`）：按图层当前像素和网格设置重新生成它的网格，关键形、路径、权重与 Glue 迁移到新拓扑，整体移动过的图层保持位置。网格只在这些时候重新生成：导入、本命令、绘画与换图的 `rebuild_mesh` 选项、网格设置变更、再生成；没有网格的图层首次绘画出可见像素时为它建网格。绘画到网格外的像素不显示，界面的网格面板会给出比例并提供“按当前像素重建”。
 
-按纹理结构重布点使用 `layer_mesh_structure`（必需 `state/target`，target 为网格 ID 或 `mesh:<ID>`；可选 `settings`：`sensitivity` 0–1、`min_length` 源像素、`near_density` 为线上点距相对保留边缘行点距的倍数（默认 1）、`fill` 是否在线间加点（默认否：只有边缘行与线上有顶点）、`far_density` 为填充时相对原内侧边长的边长、`bands` 是否在画出的褶皱线两侧加行与横档（默认否）、`kinds` 为 `FOLD`/`SHADE`/`PATTERN` 子集、`max_lines` ≤64、`max_vertices` ≤16000）：外轮廓行与边缘带不动，内侧沿纹理中的褶皱、明暗分界与图案线条重建；关键形、路径、权重与 Glue 照常迁移，写一条 `canvas_mesh_rebuild`。目标有内部造型时替换其检测出的 TOPOLOGY 引导线（手绘及已标为 FOLD 的保留），并在同一历史节点中重新烘焙（`interior_rebaked`）。无法成网或超过 `max_vertices` 时报错且不做任何修改。`layer_mesh_structure_preview`（只读，参数同上，无 `state`）返回识别线（类型、是否被采用 `followed`、是否加带 `banded`，源像素与画布坐标）及新网格的画布点与三角形。细节见[按纹理结构重布点](../spec/TEXTURE_STRUCTURE_MESH.md)。
+按纹理结构重布点使用 `layer_mesh_structure`（必需 `state/target`，target 为网格 ID 或 `mesh:<ID>`；可选 `settings`：`sensitivity` 0–1、`min_length` 源像素、`near_density` 为线上点距相对保留边缘行点距的倍数（默认 1）、`fill` 是否在线间加点（默认否：只有边缘行与线上有顶点）、`far_density` 为填充时相对原内侧边长的边长、`bands` 是否在画出的褶皱线两侧加行与横档（默认否）、`kinds` 为 `FOLD`/`SHADE`/`PATTERN` 子集、`max_lines` ≤64、`max_vertices` ≤16000）：外轮廓行与边缘带不动，内侧沿纹理中的褶皱、明暗分界与图案线条重建；关键形、路径、权重与 Glue 照常迁移，写一条 `canvas_mesh_rebuild`。目标有内部造型时替换其检测出的 TOPOLOGY 引导线（手绘及已标为 FOLD 的保留），并在同一历史节点中重新烘焙（`interior_rebaked`）。无法成网或超过 `max_vertices` 时报错且不做任何修改。`layer_mesh_structure_preview`（只读，参数同上，无 `state`）返回识别线（类型、是否被采用 `followed`、是否加带 `banded`，源像素与画布坐标）及新网格的画布点与三角形。细节见按纹理结构重布点。
 
 模拟修改器的配置可省略 `bake`；候选准备会在后台对该实例之前的实际栈进行烘焙，并把结果与输入身份一起提交。`auto_bake: false` 时必须提供有效结果，过期输入拒绝整次修改。预览同样不发布烘焙；取消和 CAS 失败不保留候选前缀。
 
@@ -172,7 +172,7 @@
 | `delete_edges` | `edges`（`[[a, b], …]`，必须给出；`vertices` 不决定删哪些边） | 内部边在其四边形内换到另一条对角线（四边形在静止形、任一关键形或混合形中不凸则失败），轮廓边删掉所在三角形，不再使用的顶点一并删除；造成顶点点接或删光三角形时整批失败 |
 | `retriangulate` | `vertices`（空数组为全网格） | 在这些顶点周围向 Delaunay 翻边（在默认姿态的画布空间判定），只翻贴图映射不变、且在静止形与各关键形、混合形中都凸的四边形；顶点与关键形不变；已无可翻时为无变化（`applied:false`，不追加历史） |
 
-操作不适用时返回错误，不写入任何内容。关键形、混合形、顶点组与 Glue 随拓扑迁移（被删顶点的 Glue 对删除），路径重新绑定；目标网格有内部造型且改动前一致时，同一节点内按新网格重新烘焙（烘焙失败不拒绝编辑，造型报告网格已变化）。结果须通过[几何检查](#几何检查与试运行)。算法与 Cubism 网格编辑的对照见[网格拓扑](../spec/MESH_TOPOLOGY_AND_SPLIT.md#手工拓扑编辑)。
+操作不适用时返回错误，不写入任何内容。关键形、混合形、顶点组与 Glue 随拓扑迁移（被删顶点的 Glue 对删除），路径重新绑定；目标网格有内部造型且改动前一致时，同一节点内按新网格重新烘焙（烘焙失败不拒绝编辑，造型报告网格已变化）。结果须通过[几何检查](#几何检查与试运行)。算法与 Cubism 网格编辑的对照见网格拓扑。
 
 ### 物体复制、查找替换与 ID 转变
 
@@ -614,7 +614,7 @@ View 从模型数据渲染 PNG，不依赖桌面截图。`canvas_rect` 给出画
 
 ## 素材与 Layout
 
-工程内素材库与"先摆放、再生成"流程，设计与边界见 [MATERIAL_LAYOUT_WORKSPACE.md](../spec/MATERIAL_LAYOUT_WORKSPACE.md)。文档操作都可作为 `workspace_apply_edits` 成员；单独调用时返回进程任务句柄，`job_wait/job_get` 的 `data.result` 与批量结果相同（`state/history_node_id/edit_count/changed`），新素材以 `material:<id>`、新图层以 `layer:<id>` 出现在 `changed` 中。
+工程内素材库与"先摆放、再生成"流程，设计与边界见 MATERIAL_LAYOUT_WORKSPACE.md。文档操作都可作为 `workspace_apply_edits` 成员；单独调用时返回进程任务句柄，`job_wait/job_get` 的 `data.result` 与批量结果相同（`state/history_node_id/edit_count/changed`），新素材以 `material:<id>`、新图层以 `layer:<id>` 出现在 `changed` 中。
 
 | 工具 | 主要参数 | 说明 |
 | --- | --- | --- |
@@ -700,7 +700,7 @@ View 从模型数据渲染 PNG，不依赖桌面截图。`canvas_rect` 给出画
 
 `layer_delete` 与 `layer_restore` 都返回进程任务，支持原子批量；通过 `job_wait/job_get` 的 `result` 读取实际状态、历史节点和受影响图层。`layer_delete` 真正删除图层：像素离开工程，它的网格经日志记录 `layer_delete` 离开作者态 Rig，连同引用它们的遮罩、Glue、路径和权重；生成器读取的图层同时离开生成输入，随后的再生成不再为它生成网格，也不再影响任何框架。之前的历史节点保留它，`history_checkout` 即撤销。最后一个图层不能删除。嘴唇条带、旧版左右半边等不是独立源图层的行仍按旧方式隐藏。`layer_restore` 只恢复旧版本软删除的图层：可传 1–256 个唯一 `layer_ids`，省略时恢复全部（被拆分取代的原图层不在其中，指定它会报错并列出部件）；无删除内容时属于无变化，不追加历史。
 
-全局网格单位使用 `settings_update` 的 `meshUnits`：`DOCUMENT` 以文档长边 2048 像素为参照，同一图像放大后使用相同密度；`PIXELS` 使用源像素长度。两种模式的单层参数仍表示所选单位内的长度。旧 v1 设置存在 `meshSpacing` 而没有单位时沿用 `PIXELS`，避免重开改变旧网格；新设置、生成基线与导出保存实际单位。GUI 单位开关和公开修改使用同一候选重生与拓扑迁移。`meshTrace` 决定轮廓读什么：`TEXTURE`（新工程默认）读图层自身像素，按最大 alpha 缩减到至多网格单位 4 倍细的分辨率，细于画布像素的笔画也留在网格内，顶点间距不变；`CANVAS` 读缩放到画布分辨率的视图。没有该字段的已有设置按 `CANVAS` 读取，`CANVAS` 也不写出该字段，旧工程的设置文本与网格不变。`meshWrap`（0–64 网格单位，默认 0）为包裹拓扑：描轮廓前闭合窄于该值的缝隙与凹口，睫毛、发梢等细小凸起共用一个包络，所有绘制像素仍在网格内；`layer_mesh` 的 `changes.wrap` 按图层覆盖，`inspect` 的图层网格设置返回实际 `wrap`。值为 0 时不写出字段，没有字段的设置读作 0。详见[网格拓扑](../spec/MESH_TOPOLOGY_AND_SPLIT.md#包裹拓扑)。
+全局网格单位使用 `settings_update` 的 `meshUnits`：`DOCUMENT` 以文档长边 2048 像素为参照，同一图像放大后使用相同密度；`PIXELS` 使用源像素长度。两种模式的单层参数仍表示所选单位内的长度。旧 v1 设置存在 `meshSpacing` 而没有单位时沿用 `PIXELS`，避免重开改变旧网格；新设置、生成基线与导出保存实际单位。GUI 单位开关和公开修改使用同一候选重生与拓扑迁移。`meshTrace` 决定轮廓读什么：`TEXTURE`（新工程默认）读图层自身像素，按最大 alpha 缩减到至多网格单位 4 倍细的分辨率，细于画布像素的笔画也留在网格内，顶点间距不变；`CANVAS` 读缩放到画布分辨率的视图。没有该字段的已有设置按 `CANVAS` 读取，`CANVAS` 也不写出该字段，旧工程的设置文本与网格不变。`meshWrap`（0–64 网格单位，默认 0）为包裹拓扑：描轮廓前闭合窄于该值的缝隙与凹口，睫毛、发梢等细小凸起共用一个包络，所有绘制像素仍在网格内；`layer_mesh` 的 `changes.wrap` 按图层覆盖，`inspect` 的图层网格设置返回实际 `wrap`。值为 0 时不写出字段，没有字段的设置读作 0。详见网格拓扑。
 
 `import` 接受已有本地 PNG 绝对路径或图像字节；不要让模型逐字生成 Base64。省略 `solid_background` 保留原生 Alpha；需要去底时显式给出真实纯色。棋盘格截图不是透明素材。
 

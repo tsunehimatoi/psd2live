@@ -1,6 +1,6 @@
 # 素材与 Layout
 
-[文档目录](../../README.md) · [使用指南](USER_GUIDE.md) · [画布编辑](CANVAS_EDITOR.md) · [实现说明](../spec/MATERIAL_LAYOUT_WORKSPACE.md) · [Layout 清单](../spec/LAYOUT_MANIFEST.md)
+[文档目录](../../README.md) · [使用指南](USER_GUIDE.md) · [画布编辑](CANVAS_EDITOR.md) · [Layout 清单](../spec/LAYOUT_MANIFEST.md)
 
 Layout 让你先在工程里摆好部件，再生成 Rig；生成之后还可以继续加图、改标签，然后重新生成，已经做好的编辑会保留。
 

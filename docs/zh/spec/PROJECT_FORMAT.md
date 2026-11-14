@@ -1,6 +1,6 @@
 # 工程格式 v2
 
-[文档目录](../../README.md) · [English](../../en/spec/PROJECT_FORMAT.md) · [运行时与导出边界](RUNTIME_EXPORT_ARCHITECTURE_AND_GAPS.md)
+[文档目录](../../README.md)
 
 `.psd2live` 是未加密 ZIP，JSON 使用 UTF-8，栅格资源为 PNG。保存后的工程包含继续编辑所需的源素材与历史，不依赖原 PSD 路径。导出报告 `.psd2live.json` 不是此格式。
 
@@ -33,7 +33,7 @@ GUI 放弃并打开会先等待此前正在执行的编辑与字段提交完成�
 | `history/HEAD.json` | 当前节点与节点顺序 |
 | `history/nodes/` | 不可变父链节点和元数据（与 v1 相同） |
 | `history/revisions/<key>.json` | 每个修订的索引：`{schema, nodes:{类型:哈希}, overrides?, clips?, payloads?}` |
-| `document/nodes/<类型>/<sha256>.json` | 文档节点 `{schema, kind, value}`；类型为 `source`（源图层与组）、`generation-source` / `mesh-source`（旧版写入的 `placement-source` 读取时忽略）、`layers`（可见性、软删除、分类、父级、网格与纹理覆盖）、`settings`、`rig`（参数、骨架、摆动、模拟、物理、点击区域等 Rig 定义）、`journal`（作者编辑日志，不含覆盖）、`layout`（用户标签、素材关联、生成状态）、`materials`（素材库：文件夹与条目，像素引用 `assets/` 中的栅格，SVG 原文内嵌；读自 PSD / CMO3 的文件夹带 `origin` 文件名，其条目的 `placementCanvas` 为默认摆放所在的画布尺寸）、`document`（其余字段）。`layout` 与 `materials` 只在文档带有 [Layout 状态](MATERIAL_LAYOUT_WORKSPACE.md)时写入，不认识它们的旧版本拒绝打开 |
+| `document/nodes/<类型>/<sha256>.json` | 文档节点 `{schema, kind, value}`；类型为 `source`（源图层与组）、`generation-source` / `mesh-source`（旧版写入的 `placement-source` 读取时忽略）、`layers`（可见性、软删除、分类、父级、网格与纹理覆盖）、`settings`、`rig`（参数、骨架、摆动、模拟、物理、点击区域等 Rig 定义）、`journal`（作者编辑日志，不含覆盖）、`layout`（用户标签、素材关联、生成状态）、`materials`（素材库：文件夹与条目，像素引用 `assets/` 中的栅格，SVG 原文内嵌；读自 PSD / CMO3 的文件夹带 `origin` 文件名，其条目的 `placementCanvas` 为默认摆放所在的画布尺寸）、`document`（其余字段）。`layout` 与 `materials` 只在文档带有 Layout 状态时写入，不认识它们的旧版本拒绝打开 |
 | `document/nodes/payload/<sha256>.json` | 大型日志条目的内容寻址载荷节点，由 schema 2 修订在 `payloads` 中列出 |
 | `document/overrides/<sha256>.json` | 生成结果覆盖 `generated_override`，连同其在编辑日志中的位置 |
 | `document/clips/<sha256>.json` | 动作片段（`motions`，含各片段的 `events`）、生成动作设置（`motionPresets`）、表情（`expressions`）与姿势（`pose`）；后两者只在工程编辑过表情或设置了姿势组时写入 |
@@ -54,13 +54,13 @@ GUI 放弃并打开会先等待此前正在执行的编辑与字段提交完成�
 
 ### 固化点
 
-日志条目 `rig_checkpoint`（`{op, v:1, authored:{header, frame, deformers, meshes}, issues}`）把作者态 Rig 作为数据保存在它在日志中的位置：`authored` 是下文作者态 Rig 的索引（头部与对象哈希），`issues` 是写下它的再生成合并未能干净迁移的内容（`{kind, target, detail}`，见[固化 Rig](MATERIALIZED_RIG.md#5-再生成合并)）。重放从最后一个固化点开始：其作者态 Rig（纹理集变化时按画布纹理坐标重新绑定）加上之后的条目；之前的条目只作历史，不再重放。编辑使基础生成的结果发生变化时、生成的模型第一次编辑时、以及最后一个固化点之后满 32 条时由程序写出固化点（见[文档层](DOCUMENT_LAYER.md#固化点)），用户不直接编辑它；后两者保存编辑之前的作者态 Rig，生成快照 `generated` 沿用上一个固化点的。因此本版本编辑过的生成工程都是修订 3。
+日志条目 `rig_checkpoint`（`{op, v:1, authored:{header, frame, deformers, meshes}, issues}`）把作者态 Rig 作为数据保存在它在日志中的位置：`authored` 是下文作者态 Rig 的索引（头部与对象哈希），`issues` 是写下它的再生成合并未能干净迁移的内容（`{kind, target, detail}`，见固化 Rig）。重放从最后一个固化点开始：其作者态 Rig（纹理集变化时按画布纹理坐标重新绑定）加上之后的条目；之前的条目只作历史，不再重放。编辑使基础生成的结果发生变化时、生成的模型第一次编辑时、以及最后一个固化点之后满 32 条时由程序写出固化点（见[文档层](DOCUMENT_LAYER.md#固化点)），用户不直接编辑它；后两者保存编辑之前的作者态 Rig，生成快照 `generated` 沿用上一个固化点的。因此本版本编辑过的生成工程都是修订 3。
 
 固化点的对象属于文档：工作目录在写入引用它们的快照之前把对象写到 `<project>/rig-objects/`，保存时归档到 `rig/objects/`。
 
 ### 作者态 Rig
 
-`rig/revisions/` 保存各修订的作者态 Rig：基础生成（含骨架烘焙）加上旧格式静态编辑与整条日志之后、摆动、模拟写回与覆盖合并之前的 Rig（设计见[固化 Rig](MATERIALIZED_RIG.md)）。
+`rig/revisions/` 保存各修订的作者态 Rig：基础生成（含骨架烘焙）加上旧格式静态编辑与整条日志之后、摆动、模拟写回与覆盖合并之前的 Rig（设计见固化 Rig）。
 
 | 路径 | 内容 |
 | --- | --- |

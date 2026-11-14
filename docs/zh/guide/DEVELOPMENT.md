@@ -1,6 +1,6 @@
 # 开发与命令行
 
-[文档目录](../../README.md) · [English](../../en/guide/DEVELOPMENT.md) · [日本語](../../ja/guide/DEVELOPMENT.md)
+[文档目录](../../README.md)
 
 本页面向从源码运行、使用命令行或参与开发的用户。发布包自带运行时，普通使用不需要本页内容。
 
@@ -116,7 +116,7 @@ PSD2LIVE_TOOLS=1 PSD2LIVE_SAMPLE=ds ./gradlew test --tests "io.github.psd2live.t
 
 首帧工具的测量范围不同：离屏工具包含 GPU 同步和读回，不包含模型生成、GL context 创建、Compose 合成或窗口呈现；`renderer_cold` 仅指新建 renderer，不是进程冷启动。窗口工具经真实应用、视口和 Skiko 回放取得 GPU 完成回执，当前限定 P2LRT；模型生成已完成，JVM 与窗口已热，不覆盖窗口交换、系统桌面合成或显示器扫描。两项指标均不是完整编辑延迟，也不能直接与算法生成耗时拼接。
 
-`verifyReadback`、`smoke` 和 `verifyWindowPixels` 用于功能检查，不输出性能分位数；`measure` 每种场景／模式采集至少 30 个有效样本，预热样本不纳入统计。超时或校验失败不记作零延迟，不输出成功统计。窗口工具须在图形初始化前配置 `PSD2LIVE_COMPOSITOR=1` 或 `0`，分别运行并核对实际模式，切换前保存报告。窗口像素读回及 PNG 编码会扰动耗时，该入口不作为性能样本，也不测量窗口交换或显示器扫描。GPU／性能采样应独占运行，避免与构建或其他性能任务并行。入口参数与完整边界见[首个正确画面的测量边界](FIRST_CORRECT_FRAME_MEASUREMENT.md)。
+`verifyReadback`、`smoke` 和 `verifyWindowPixels` 用于功能检查，不输出性能分位数；`measure` 每种场景／模式采集至少 30 个有效样本，预热样本不纳入统计。超时或校验失败不记作零延迟，不输出成功统计。窗口工具须在图形初始化前配置 `PSD2LIVE_COMPOSITOR=1` 或 `0`，分别运行并核对实际模式，切换前保存报告。窗口像素读回及 PNG 编码会扰动耗时，该入口不作为性能样本，也不测量窗口交换或显示器扫描。GPU／性能采样应独占运行，避免与构建或其他性能任务并行。入口参数与完整边界见首个正确画面的测量边界。
 
 | 工具 | 内容 | 输出 |
 | --- | --- | --- |

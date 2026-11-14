@@ -53,7 +53,7 @@
 
 ### 2026-11-14 架构优化验收
 
-六个独立工作树的交付已在主分支整合。以下是开发回归、导出、性能和视觉证据，不替代上文的 Agent 建模人工评价。实现及正式测量基线为 `9bc79083ca58b2a1987bb8d95164c5c77b2641d2`；之后的文档提交不改变被测代码。长期契约见[工作区与界面会话](spec/RUNTIME_EXPORT_ARCHITECTURE_AND_GAPS.md)、[修改器栈](spec/RIG_MODIFIER_STACK.md)、[性能与缓存](spec/SYNTHETIC_PERFORMANCE_BASELINES.md)、[首次正确帧](guide/FIRST_CORRECT_FRAME_MEASUREMENT.md)。
+六个独立工作树的交付已在主分支整合。以下是开发回归、导出、性能和视觉证据，不替代上文的 Agent 建模人工评价。实现及正式测量基线为 `9bc79083ca58b2a1987bb8d95164c5c77b2641d2`；之后的文档提交不改变被测代码。长期契约见工作区与界面会话、修改器栈、性能与缓存、首次正确帧。
 
 | 交付 | 已实现与验收 |
 | --- | --- |

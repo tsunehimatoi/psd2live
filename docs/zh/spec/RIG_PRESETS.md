@@ -1,6 +1,6 @@
 # Rig 预设架构：部位、基础算法与模块
 
-[文档目录](../../README.md) · 模块与算法目录：[面部](RIG_TEMPLATES_FACE.md) · [头发与身体](RIG_TEMPLATES_HAIR_BODY.md) · [物理与动作](RIG_TEMPLATES_PHYSICS_MOTION.md) · [结构与表现](RIG_TEMPLATES_STRUCTURE.md) · [变形器与参数](DEFORMER_AND_PARAMETER_SPEC.md) · [文档层](DOCUMENT_LAYER.md)
+[文档目录](../../README.md) · 模块与算法目录：面部 · [变形器与参数](DEFORMER_AND_PARAMETER_SPEC.md) · [文档层](DOCUMENT_LAYER.md)
 
 本页描述自动生成怎样组织成可选择、可关闭、可调整的部分：
 

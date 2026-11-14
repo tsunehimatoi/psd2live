@@ -1,6 +1,6 @@
 # `.p2lrt` 2.0 格式
 
-[运行时](RUNTIME.md) · [工程、运行时与导出边界](RUNTIME_EXPORT_ARCHITECTURE_AND_GAPS.md)
+[运行时](RUNTIME.md)
 
 状态：容器、核心块、`PGUI`、`META`、扩展块 `BONE`、`SKIN`、`COLL`、`SIMS` 和附带块 `EXPR`、`HITA`、`UDAT`、`POSE` 已实现，导出默认写版本 2。读取器支持全部压缩方式、数组编码与贴图页类型；写出器可写 deflate 与 zstd 压缩，数组为 f32，贴图页为内嵌 PNG。
 

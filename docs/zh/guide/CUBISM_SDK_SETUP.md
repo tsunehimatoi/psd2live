@@ -1,6 +1,6 @@
 # 可选 Cubism Native 预览
 
-[文档目录](../../README.md) · [English](../../en/guide/CUBISM_SDK_SETUP.md) · [日本語](../../ja/guide/CUBISM_SDK_SETUP.md) · [CI 与发行](CUBISM_CI_RELEASE.md)
+[文档目录](../../README.md) · [CI 与发行](CUBISM_CI_RELEASE.md)
 
 内置渲染和基础导出无需官方 SDK。本页只配置本仓库的原生预览桥接，用于检查官方运行时的渲染与物理；不承诺与编辑器所有功能或所有像素一致。
 
