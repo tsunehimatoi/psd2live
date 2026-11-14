@@ -210,9 +210,10 @@ private val bindingManifestSpecs = listOf(
         writes = listOf("*"), creates = listOf("derivedMeshes"), modifies = listOf("mesh.opacity", "mesh.mask"),
         composableKinds = defaultComposable),
     BindingManifestSpec("mesh-split", "mesh.split", "split", "Mesh split", "mesh",
-        writes = listOf("mesh", "part", "hierarchy"), creates = listOf("derivedMeshes"),
-        modifies = listOf("mesh.visibility", "hierarchy"),
-        composableKinds = listOf("mesh", "part", "hierarchy")),
+        writes = listOf("mesh", "part", "hierarchy", "relations", "glue", "textures", "authoring", "hit_areas", "advanced"),
+        creates = listOf("derivedMeshes", "glues"),
+        modifies = listOf("mesh.mask", "mesh.textureSource", "hierarchy", "glue", "textures", "authoring", "hit_areas", "advanced"),
+        composableKinds = listOf("mesh", "part", "hierarchy", "relations", "glue")),
 )
 
 val pluginPackages by tasks.registering {

@@ -2,12 +2,8 @@ package io.github.psd2live.algorithms.binding
 
 import io.github.psd2live.core.modifier.ChangingModifierAlgorithmPlugin
 import io.github.psd2live.core.modifier.ModifierAlgorithmContext
-import io.github.psd2live.core.modifier.ModifierFieldChange
 import io.github.psd2live.core.modifier.ModifierModelChanges
-import io.github.psd2live.core.modifier.ModifierObjectChanges
-import io.github.psd2live.core.modifier.ModifierObjectUpdate
 import io.github.psd2live.core.modifier.RigModifierInstance
-import io.github.psd2live.format.model.ChildRef
 import io.github.psd2live.format.model.Floats
 import io.github.psd2live.format.model.Ints
 import io.github.psd2live.format.model.KeyCell
@@ -15,9 +11,6 @@ import io.github.psd2live.format.model.KeyGrid
 import io.github.psd2live.format.model.Mesh
 import io.github.psd2live.format.model.MeshGeometry
 import io.github.psd2live.format.model.MeshOffsets
-import io.github.psd2live.format.model.RenderGroup
-import io.github.psd2live.format.model.RenderMesh
-import io.github.psd2live.format.model.RenderNode
 import io.github.psd2live.format.model.RigIR
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
@@ -38,51 +31,20 @@ class MeshSplitAlgorithm : ChangingModifierAlgorithmPlugin {
         val customPieceIds = stringListConfig(instance, "pieceIds")
         val customNames = stringListConfig(instance, "names")
 
-        val added = mutableListOf<Mesh>()
-        val removed = mutableListOf<Mesh>()
-        val replacements = linkedMapOf<String, List<String>>()
-
+        val splits = linkedMapOf<String, MeshSplitResult>()
         for (mesh in input.meshes) {
             checkpoint()
             if (mesh.id !in targetSet) continue
-            val pieces = splitMesh(
-                mesh = mesh,
-                instance = instance,
-                customPieceIds = if (targetMeshIds.size == 1) customPieceIds else null,
-                customNames = if (targetMeshIds.size == 1) customNames else null,
-                checkpoint = checkpoint,
-            )
-            if (pieces.isEmpty()) continue
-            removed.add(mesh)
-            added.addAll(pieces)
-            replacements[mesh.id] = pieces.map { it.id }
+            val split = splitMesh(
+                mesh, instance,
+                if (targetMeshIds.size == 1) customPieceIds else null,
+                if (targetMeshIds.size == 1) customNames else null,
+                checkpoint,
+            ) ?: continue
+            splits[mesh.id] = split
         }
-
-        if (replacements.isEmpty()) return ModifierModelChanges()
-
-        val updatedParts = input.parts.mapNotNull { part ->
-            checkpoint()
-            if (part.children.none { it is ChildRef.MeshRef && it.id in replacements }) return@mapNotNull null
-            ModifierObjectUpdate(part, part.copy(children = replaceChildRefs(part.children, replacements)))
-        }
-        val rootChildrenChange = if (input.rootChildren.any { it is ChildRef.MeshRef && it.id in replacements }) {
-            ModifierFieldChange(input.rootChildren, replaceChildRefs(input.rootChildren, replacements))
-        } else {
-            null
-        }
-        val updatedRenderRoot = replaceRenderGroup(input.renderRoot, replacements, checkpoint)
-        val renderRootChange = if (updatedRenderRoot != input.renderRoot) {
-            ModifierFieldChange(input.renderRoot, updatedRenderRoot)
-        } else {
-            null
-        }
-
-        return ModifierModelChanges(
-            parts = ModifierObjectChanges(updated = updatedParts),
-            meshes = ModifierObjectChanges(added = added, removed = removed),
-            rootChildren = rootChildrenChange,
-            renderRoot = renderRootChange,
-        )
+        if (splits.isEmpty()) return ModifierModelChanges()
+        return MeshSplitReferences(input, splits, instance, checkpoint).changes()
     }
 
     private fun stringListConfig(instance: RigModifierInstance, key: String): List<String>? {
@@ -96,15 +58,19 @@ class MeshSplitAlgorithm : ChangingModifierAlgorithmPlugin {
         customPieceIds: List<String>?,
         customNames: List<String>?,
         checkpoint: () -> Unit,
-    ): List<Mesh> {
-        val geometry = mesh.geometry ?: return emptyList()
+    ): MeshSplitResult? {
+        val geometry = mesh.geometry ?: return null
         val positions = geometry.positions.shared()
         val uvs = geometry.uvs.shared()
         val indices = geometry.indices.shared()
         val vertexCount = positions.size / 2
         val triCount = indices.size / 3
-        if (vertexCount <= 0 || triCount <= 1 || uvs.size < vertexCount * 2) return emptyList()
+        if (vertexCount <= 0 || triCount <= 1) return null
 
+        if (positions.size % 2 != 0 || uvs.size != positions.size || indices.size % 3 != 0 ||
+            indices.any { it !in 0 until vertexCount }) {
+            throw MeshSplitRejected("mesh.split.invalid_geometry", "mesh:${mesh.id}")
+        }
         val parent = IntArray(vertexCount) { it }
         fun find(v: Int): Int {
             var x = v
@@ -137,7 +103,14 @@ class MeshSplitAlgorithm : ChangingModifierAlgorithmPlugin {
             if (a !in 0 until vertexCount) continue
             triByRoot.getOrPut(find(a)) { mutableListOf() }.add(t)
         }
-        if (triByRoot.size < 2) return emptyList()
+        if (triByRoot.size < 2) return null
+
+        fun checkDeltas(deltas: Floats) {
+            if (deltas.size != 0 && deltas.size != positions.size)
+                throw MeshSplitRejected("mesh.split.invalid_keyform", "mesh:${mesh.id}")
+        }
+        mesh.offsets?.cells?.forEach { checkDeltas(it.form.deltas) }
+        mesh.shapes.forEach { binding -> binding.shapes.forEach { it?.let { shape -> checkDeltas(shape.deltas) } } }
 
         data class Island(val triangles: List<Int>, val vertices: IntArray, val centerX: Float, val centerY: Float)
 
@@ -169,8 +142,8 @@ class MeshSplitAlgorithm : ChangingModifierAlgorithmPlugin {
         val validIds = customPieceIds?.takeIf { it.size == islands.size && it.distinct().size == it.size }
         val validNames = customNames?.takeIf { it.size == islands.size }
         val remap = IntArray(vertexCount)
-
-        return islands.mapIndexed { pieceIndex, island ->
+        val vertexMap = arrayOfNulls<MeshSplitVertex>(vertexCount)
+        val pieces = islands.mapIndexed { pieceIndex, island ->
             checkpoint()
             remap.fill(-1)
             val newPos = FloatArray(island.vertices.size * 2)
@@ -205,6 +178,9 @@ class MeshSplitAlgorithm : ChangingModifierAlgorithmPlugin {
             }
             val pieceId = validIds?.get(pieceIndex) ?: instance.outputId("split:${mesh.id}:$pieceIndex")
             val pieceName = validNames?.get(pieceIndex) ?: "${mesh.name} ${pieceIndex + 1}"
+            island.vertices.forEachIndexed { newIdx, oldIdx ->
+                vertexMap[oldIdx] = MeshSplitVertex(pieceId, newIdx)
+            }
             mesh.copy(
                 id = pieceId,
                 name = pieceName,
@@ -213,6 +189,7 @@ class MeshSplitAlgorithm : ChangingModifierAlgorithmPlugin {
                 shapes = slicedShapes,
             )
         }
+        return MeshSplitResult(mesh, pieces, vertexMap.toList(), islands.map { it.vertices })
     }
 
     private fun sliceDeltas(deltas: FloatArray, vertices: IntArray): Floats {
@@ -220,50 +197,10 @@ class MeshSplitAlgorithm : ChangingModifierAlgorithmPlugin {
         val out = FloatArray(vertices.size * 2)
         vertices.forEachIndexed { newIdx, oldIdx ->
             val src = oldIdx * 2
-            if (src + 1 < deltas.size) {
-                out[newIdx * 2] = deltas[src]
-                out[newIdx * 2 + 1] = deltas[src + 1]
-            }
+            out[newIdx * 2] = deltas[src]
+            out[newIdx * 2 + 1] = deltas[src + 1]
         }
         return Floats.wrap(out)
     }
 
-    private fun replaceChildRefs(children: List<ChildRef>, replacements: Map<String, List<String>>): List<ChildRef> =
-        children.flatMap { ref ->
-            if (ref is ChildRef.MeshRef && ref.id in replacements) {
-                replacements.getValue(ref.id).map { ChildRef.MeshRef(it) }
-            } else {
-                listOf(ref)
-            }
-        }
-
-    private fun replaceRenderGroup(
-        group: RenderGroup,
-        replacements: Map<String, List<String>>,
-        checkpoint: () -> Unit,
-    ): RenderGroup {
-        checkpoint()
-        var changed = false
-        val newChildren = buildList<RenderNode>(group.children.size) {
-            for (child in group.children) {
-                when (child) {
-                    is RenderMesh -> {
-                        val ids = replacements[child.id]
-                        if (ids != null) {
-                            changed = true
-                            ids.forEach { add(RenderMesh(it)) }
-                        } else {
-                            add(child)
-                        }
-                    }
-                    is RenderGroup -> {
-                        val updated = replaceRenderGroup(child, replacements, checkpoint)
-                        if (updated !== child) changed = true
-                        add(updated)
-                    }
-                }
-            }
-        }
-        return if (changed) group.copy(children = newChildren) else group
-    }
 }

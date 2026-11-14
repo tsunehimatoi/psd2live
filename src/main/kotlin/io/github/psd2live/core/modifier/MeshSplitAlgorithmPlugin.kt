@@ -13,8 +13,8 @@ internal object MeshSplitAlgorithmPlugin {
                 "A mesh split modifier targets one or more meshes"
             }
         },
-        composableKinds = setOf("mesh", "part", "hierarchy"),
-        changeWrites = setOf("mesh", "part", "hierarchy"),
+        composableKinds = setOf("mesh", "part", "hierarchy", "relations", "glue"),
+        changeWrites = setOf("mesh", "part", "hierarchy", "relations", "glue", "textures", "authoring", "hitArea", "advanced"),
         plugin = implementation,
     )
 }
