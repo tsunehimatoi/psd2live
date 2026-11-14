@@ -32,6 +32,9 @@ import io.github.psd2live.core.RigTuning
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.components.*
+import io.github.psd2live.ui.state.ModifierConflict
+import io.github.psd2live.ui.state.ModifierConflictAnalysis
+import io.github.psd2live.ui.state.ModifierConflictSeverity
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.state.availability
@@ -609,13 +612,14 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
         "plugins" -> tr("plugins.title")
         else -> tr("settings.rig.area.$id")
     }
-    data class AddRow(val type: String, val preset: String?, val label: String, val description: String?, val count: Int)
+    data class AddRow(val type: String, val preset: String?, val label: String, val description: String?, val count: Int, val conflict: ModifierConflict)
     fun rowsFor(cat: String): List<AddRow> {
         val rows = mutableListOf<AddRow>()
         fun add(type: String, preset: String?, label: String) {
             val availability = state.previewModel?.let { dialog.availability(it, type, preset) }
-            if (availability?.hidden != true) {
-                rows += AddRow(type, preset, label, modifierDescription(type, preset), availability?.existingCount ?: 0)
+            val conflict = state.previewModel?.let { ModifierConflictAnalysis.additionConflict(it, dialog.targets, type, preset) } ?: ModifierConflict.NONE
+            if (availability?.hidden != true || conflict.severity == ModifierConflictSeverity.HARD) {
+                rows += AddRow(type, preset, label, modifierDescription(type, preset), availability?.existingCount ?: 0, conflict)
             }
         }
         if (isMeshTarget && cat == "outfit") {
@@ -695,6 +699,8 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                             selected = isSelected,
                             bar = false,
                             enabled = !dialog.committing,
+                            danger = row.conflict.severity == ModifierConflictSeverity.HARD,
+                            warning = row.conflict.severity == ModifierConflictSeverity.SOFT,
                             trailing = if (row.count > 0) tr("modifier.add.existing", row.count) else null,
                         )
                     }
@@ -707,12 +713,19 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                     ?: modifierName(activeType)
                 val activeDesc = selectedRow?.takeIf { it.type == activeType && it.preset == activePreset }?.description
                     ?: modifierDescription(activeType, activePreset)
+                val activeConflict = selectedRow?.takeIf { it.type == activeType && it.preset == activePreset }?.conflict
+                    ?: state.previewModel?.let { ModifierConflictAnalysis.additionConflict(it, dialog.targets, activeType, activePreset) }
+                    ?: ModifierConflict.NONE
                 Column(Modifier.width(228.dp).height(paneHeight)) {
                     Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text(
                             text = activeTitle,
                             style = typography.body.copy(fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold),
-                            color = colors.textPrimary,
+                            color = when (activeConflict.severity) {
+                                ModifierConflictSeverity.HARD -> colors.error
+                                ModifierConflictSeverity.SOFT -> colors.warning
+                                ModifierConflictSeverity.NONE -> colors.textPrimary
+                            },
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -721,6 +734,13 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                                 text = activeDesc,
                                 style = typography.caption.copy(fontSize = 10.sp, lineHeight = 13.5.sp),
                                 color = colors.textMuted,
+                            )
+                        }
+                        if (activeConflict.severity != ModifierConflictSeverity.NONE && activeConflict.messageKey != null) {
+                            Text(
+                                text = tr(activeConflict.messageKey),
+                                style = typography.caption.copy(fontSize = 10.sp, lineHeight = 13.5.sp),
+                                color = if (activeConflict.severity == ModifierConflictSeverity.HARD) colors.error else colors.warning,
                             )
                         }
                     }

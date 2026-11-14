@@ -221,20 +221,20 @@ internal fun ModifierStatusBadge(
 ) {
     val colors = LocalToolColors.current
     val typography = LocalToolTypography.current
-    val isWarning = status == "missing_dependency" || status == "missing_plugin"
+    val isError = status == "missing_dependency" || status == "missing_plugin"
     val isActive = status == "active"
     val dotColor = when {
-        isWarning -> colors.warning
+        isError -> colors.error
         isActive -> colors.accent
         else -> colors.textMuted
     }
     val textColor = when {
-        isWarning -> colors.warning
+        isError -> colors.error
         isActive -> colors.textPrimary
         else -> colors.textMuted
     }
     val bgColor = when {
-        isWarning -> colors.warning.copy(alpha = 0.14f)
+        isError -> colors.error.copy(alpha = 0.14f)
         isActive -> colors.accent.copy(alpha = 0.14f)
         else -> colors.controlHover.copy(alpha = 0.45f)
     }

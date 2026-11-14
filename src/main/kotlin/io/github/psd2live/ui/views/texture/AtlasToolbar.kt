@@ -560,6 +560,7 @@ internal fun FloatingMenuRow(
 	trailing: String? = null,
 	bar: Boolean = true,
 	danger: Boolean = false,
+	warning: Boolean = false,
 	icon: (@Composable (Color) -> Unit)? = null,
 	control: (@Composable () -> Unit)? = null,
 ) {
@@ -569,6 +570,7 @@ internal fun FloatingMenuRow(
 	val tint = when {
 		!enabled -> colors.textDisabled
 		danger -> colors.error
+		warning -> colors.warning
 		else -> colors.textPrimary
 	}
 	val glide = LocalMenuGlide.current
@@ -600,8 +602,17 @@ internal fun FloatingMenuRow(
 				fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
 			if (hint != null) Text(hint, color = colors.textMuted.copy(alpha = 0.8f), fontSize = 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
 		}
-		if (trailing != null) Text(trailing, color = colors.textMuted.copy(alpha = 0.7f), fontSize = 9.5.sp, maxLines = 1,
-			modifier = Modifier.padding(start = 6.dp))
+		if (trailing != null) Text(
+			trailing,
+			color = when {
+				danger -> colors.error.copy(alpha = 0.85f)
+				warning -> colors.warning.copy(alpha = 0.85f)
+				else -> colors.textMuted.copy(alpha = 0.7f)
+			},
+			fontSize = 9.5.sp,
+			maxLines = 1,
+			modifier = Modifier.padding(start = 6.dp),
+		)
 		if (control != null) Box(Modifier.padding(start = 8.dp, end = 2.dp)) { control() }
 	}
 }

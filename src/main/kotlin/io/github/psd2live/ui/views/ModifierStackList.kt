@@ -27,6 +27,9 @@ import androidx.compose.ui.unit.sp
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.components.*
+import io.github.psd2live.ui.state.ModifierConflict
+import io.github.psd2live.ui.state.ModifierConflictAnalysis
+import io.github.psd2live.ui.state.ModifierConflictSeverity
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.theme.*
 import kotlinx.serialization.json.*
@@ -40,6 +43,7 @@ internal fun ModifierStackList(stack: RigModifierStack, reports: Map<String, Jso
     val colors = LocalToolColors.current
     val typography = LocalToolTypography.current
     val nodes = remember(stack) { RigModifierOrganization.nodes(stack) }
+    val conflicts = remember(stack, reports) { ModifierConflictAnalysis.stackConflicts(stack, reports) }
     val collapsed = remember { mutableStateMapOf<String, Boolean>() }
     var renaming by remember { mutableStateOf<String?>(null) }
     var renameDraft by remember { mutableStateOf("") }
@@ -188,6 +192,7 @@ internal fun ModifierStackList(stack: RigModifierStack, reports: Map<String, Jso
                             val hovered by interaction.collectIsHoveredAsState()
                             val isSelected = selectedId == instance.id
                             val status = reports[instance.id]?.get("status")?.jsonPrimitive?.content ?: "loading"
+                            val conflict = conflicts[instance.id] ?: ModifierConflict.NONE
                             val guideColor = colors.divider.copy(alpha = 0.45f)
                             val accentColor = colors.accent
                             Row(
@@ -228,17 +233,32 @@ internal fun ModifierStackList(stack: RigModifierStack, reports: Map<String, Jso
                                 CompactCheckbox(instance.enabled, { value -> vm.editModifier("modifier_enable", buildJsonObject {
                                     put("id", instance.id); put("enabled", value)
                                 }) }, enabled = enabled)
+                                val rowColor = when {
+                                    conflict.severity == ModifierConflictSeverity.HARD -> if (instance.enabled) colors.error else colors.error.copy(alpha = 0.7f)
+                                    conflict.severity == ModifierConflictSeverity.SOFT -> if (instance.enabled) colors.warning else colors.warning.copy(alpha = 0.7f)
+                                    instance.enabled -> colors.textPrimary
+                                    else -> colors.textMuted
+                                }
                                 Text(
                                     text = name,
                                     style = typography.body.copy(fontSize = 11.sp),
-                                    color = if (instance.enabled) colors.textPrimary else colors.textMuted,
+                                    color = rowColor,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f),
                                 )
-                                if (status != "active") {
-                                    val isWarning = status == "missing_dependency" || status == "missing_plugin"
-                                    val statusColor = if (isWarning) colors.warning else colors.textMuted
+                                val badgeColor = when {
+                                    conflict.severity == ModifierConflictSeverity.HARD -> colors.error
+                                    conflict.severity == ModifierConflictSeverity.SOFT -> colors.warning
+                                    status != "active" -> colors.textMuted
+                                    else -> null
+                                }
+                                val badgeText = when {
+                                    conflict.severity != ModifierConflictSeverity.NONE -> conflict.messageKey?.let { tr(it) } ?: tr("modifier.status.$status")
+                                    status != "active" -> tr("modifier.status.$status")
+                                    else -> null
+                                }
+                                if (badgeColor != null && badgeText != null) {
                                     TooltipArea(
                                         tooltip = {
                                             Surface(
@@ -248,9 +268,9 @@ internal fun ModifierStackList(stack: RigModifierStack, reports: Map<String, Jso
                                                 elevation = 4.dp,
                                             ) {
                                                 Text(
-                                                    text = tr("modifier.status.$status"),
+                                                    text = badgeText,
                                                     style = typography.caption.copy(fontSize = 10.sp),
-                                                    color = statusColor,
+                                                    color = badgeColor,
                                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
                                                 )
                                             }
@@ -261,7 +281,7 @@ internal fun ModifierStackList(stack: RigModifierStack, reports: Map<String, Jso
                                             modifier = Modifier
                                                 .size(6.dp)
                                                 .clip(CircleShape)
-                                                .background(statusColor),
+                                                .background(badgeColor),
                                         )
                                     }
                                 }
