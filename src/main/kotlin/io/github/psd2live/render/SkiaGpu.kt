@@ -177,7 +177,8 @@ class WindowGpu internal constructor(
 	internal val glContext: Long get() = binding.context
 
 	private val presentation = WindowFramePresentation(layer, handler, ::directContext,
-		{ valid() && isCurrentContext() }, { frame -> frame.presentation?.let { resources.frame(it.viewId) === frame } == true })
+		{ valid() && isCurrentContext() }, { frame -> frame.presentation?.let { resources.frame(it.viewId) === frame } == true },
+        { compositor?.presentationOffset() })
 	private val tasks = ConcurrentLinkedQueue<(GpuResources) -> Unit>()
 	private var installed: SkikoRenderDelegate? = null
 	private var compositor: WindowCompositor? = null

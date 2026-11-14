@@ -17,8 +17,8 @@ class PresentationToken(
     @Synchronized fun retain(viewId: String) { views.getOrPut(viewId) { Any() } }
     @Synchronized fun remove(viewId: String) { views.remove(viewId)?.let(reported::remove) }
     @Synchronized fun invalidate() { active = false; views.clear(); reported.clear() }
-    @Synchronized fun frame(viewId: String): PresentationFrame? =
-        views[viewId]?.takeIf { active }?.let { PresentationFrame(this, viewId, it) }
+    @Synchronized fun frame(viewId: String, camera: PresentationCamera? = null): PresentationFrame? =
+        views[viewId]?.takeIf { active }?.let { PresentationFrame(this, viewId, it, camera) }
     @Synchronized internal fun current(frame: PresentationFrame): Boolean =
         active && frame.token === this && views[frame.viewId] === frame.mount
     internal fun report(frame: PresentationFrame, gpuCompletedAtNanos: Long) {
@@ -35,7 +35,8 @@ class PresentationToken(
 }
 
 /** One draw into a reusable texture. A new instance is required even for the same model and texture. */
-class PresentationFrame internal constructor(val token: PresentationToken, val viewId: String, internal val mount: Any) {
+class PresentationFrame internal constructor(val token: PresentationToken, val viewId: String, internal val mount: Any,
+    val camera: PresentationCamera? = null) {
     private var published = false
     private var gpuCompletedAt: Long? = null
     val current: Boolean get() = token.current(this)
@@ -59,6 +60,9 @@ class PresentationFrame internal constructor(val token: PresentationToken, val v
         completedAt?.let { token.report(this, it) }
     }
 }
+
+/** Camera of this exact native draw, captured by the backend rather than reconstructed from current UI state. */
+data class PresentationCamera(val width: Int, val height: Int, val scale: Float, val offsetX: Float, val offsetY: Float)
 
 data class PresentationReceipt(val revision: String, val state: String?, val candidate: Long, val viewId: String,
     val capturedAtNanos: Long, val gpuCompletedAtNanos: Long)

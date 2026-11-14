@@ -255,7 +255,8 @@ class P2lrtPreviewSession(
 		val centerX = request.width * 0.5f * (1f + request.offsetX)
 		val centerY = request.height * 0.5f * (1f - request.offsetY)
 		val quality = io.github.psd2live.render.TargetQuality.of(io.github.psd2live.render.GraphicsSettings.current.canvasAntialiasing)
-		val presentation = current.presentation?.frame(request.viewId)
+		val presentation = current.presentation?.frame(request.viewId, if (io.github.psd2live.util.PresentationMeasurements.onCompleted != null)
+                io.github.psd2live.util.PresentationCamera(request.width, request.height, request.scale, request.offsetX, request.offsetY) else null)
 		resources.render(request.viewId, request.width, request.height, bottomUp = false, quality, presentation) { target ->
 			// Supersampled, the whole frame is in the larger target's pixels.
 			val s = target.scale

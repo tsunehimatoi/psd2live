@@ -563,7 +563,8 @@ class CubismSdkPreviewSession internal constructor(
             if (!reusePose) canvas.lastPoseRequest = request
 
 			val target = resources
-			val presentation = loadedPresentation?.frame(request.viewId)
+			val presentation = loadedPresentation?.frame(request.viewId, if (io.github.psd2live.util.PresentationMeasurements.onCompleted != null)
+                io.github.psd2live.util.PresentationCamera(request.width, request.height, request.scale, request.offsetX, request.offsetY) else null)
 			// Cubism's renderer feeds vertices from client memory, which a core profile does not have.
 			check(target?.coreProfile != true) { "Cubism needs a compatibility OpenGL context; the window's is a core profile" }
 			if (target != null) {

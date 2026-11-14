@@ -58,17 +58,17 @@ PresentationMeasurements.onCompleted = { receipts.add(it) }
 PresentationMeasurements.onCompleted = null
 ```
 
-默认关闭测量，不安装回放钩子、不等待 GPU。观察者在 token/frame 锁外运行，异常被隔离，不能使正常帧发布或窗口绘制失败。
+默认关闭测量，不安装回放钩子、不等待 GPU。窗口像素还有独立的 `WindowPixelMeasurements.request/onReadback` 开关，默认 null，不分配窗口位图、不读回像素；仅在诊断回调内借用位图，回调结束后立即释放。观察者在 token/frame 锁外运行，异常被隔离，不能使正常帧发布或窗口绘制失败。
 
 边界与验收限制：
 
-- 接线仅证明同一已提交模型候选的预览纹理经过窗口消费及 GPU 完成，不自动验证像素颜色、裁剪可见区域、遮挡或业务视觉正确性；正式首个正确画面验收仍应使用可区分修订的已知图案与像素检查。编辑画布的离屏工具不因此变成窗口测量工具。
+- 接线仅证明同一已提交模型候选的预览纹理经过窗口消费及 GPU 完成，不自动验证像素颜色、裁剪可见区域、遮挡或业务视觉正确性；`verifyWindowPixels` 另行使用可区分修订的已知图案，检查实际窗口 Surface 的像素。编辑画布的离屏工具不因此变成窗口测量工具。
 - 不覆盖窗口交换、系统桌面合成或显示器扫描，不能称为“已显示到屏幕”。同步 GPU 等待的开销包含在本指标中。
 - `candidate` 是本次模型激活身份，尚未与 `RigBuildProfile.Operation` 的候选身份建立映射；不能拼接两者得到完整编辑延迟。`revision/state` 可以用于诊断，但不能替代这种关联。
 - 钩子依赖仓库当前 Skiko 0.144.6 的 `drawContent/picture/pictureLock`。结构变化或上下文不可用会关闭回执并记录原因，不回退成录制时间。当前工作树已完成真实驱动、窗口回放和反射接线的功能 smoke；最终整合基线仍须在独占窗口中验收。
 - 无已提交捕获、预览未挂载、软件绘制、无匹配帧或被更新修订淘汰时不产生成功样本，验收工具应将其记为未完成，不能记作零延迟。
 
-无 GPU 回归覆盖令牌淘汰、视图关闭/重开、逐次纹理身份、发布与 GPU 完成乱序、重复完成、关闭测量、未知修订及观察者异常隔离，并以模拟 Cubism API 检查实际 session 的相同 bundle 重载、旧交付淘汰和加载失败。P2LRT 和真实窗口接线已另行完成下述功能 smoke；真实窗口像素正确性与正式性能验收仍待执行。
+无 GPU 回归覆盖令牌淘汰、视图关闭/重开、逐次纹理身份、发布与 GPU 完成乱序、重复完成、关闭测量、未知修订及观察者异常隔离，并以模拟 Cubism API 检查实际 session 的相同 bundle 重载、旧交付淘汰和加载失败。P2LRT 和真实窗口接线已另行完成下述功能 smoke；实际窗口像素通过下述独立 opt-in 入口验收，正式性能验收仍待执行。
 
 ## 独占窗口验收驱动
 
@@ -79,9 +79,10 @@ PresentationMeasurements.onCompleted = null
 导入本身在 `recoverLegacy=false` 时不直接发布 renderer 模型，但 UI 状态变化会重挂载视口、重启预览请求，静态检查不能保证显式激活前没有已到达回执；这尚未在真实窗口中复现。工具在两次显式 refresh 前建立原子队列边界，将此前已到达的回执单独列入 `preActivationReceipts`，所有回执仍完整保留在 `rawReceipts`，包含到达时间和序号。边界后到达的回执不按较早的 GPU 时间过滤，仍必须严格匹配当前候选；任何已标记 superseded 的回执及重复回执，即使在下一轮边界前到达，也会失败，不能通过归档掩盖。
 
 - `smoke`：1 次预热、2 次正式激活，仅作实际窗口、native 及反射接线的初验，无性能分位数。
+- `verifyWindowPixels`：1 次预热、2 次检查激活；回放及 GPU 完成后读取实际 Skiko 窗口 `ContextHandler.surface`，保留完整窗口 PNG。根据该次 native draw 固定的相机、Compose 视口原点和窗口 scene offset，定位四块图案，各检查 3×3 像素，RGBA 每通道容差 2；所有采样点必须在实际窗口及预览视口内。颜色随源图修订改变，每块还必须拒绝上一修订的颜色。读回与身份回执必须具有相同 `revision/state/candidate/viewId/gpuCompletedAtNanos`，不会用后续正确帧补替首帧。它不启动离屏渲染器，不输出性能分位数。
 - `measure`：5 次预热、至少 30 次正式激活；预热也必须通过身份与回执校验，预热耗时不纳入统计。报告记录要求和完成的预热次数；所有样本身份正确才输出中位数、最近秩 P95、最大值。
 - 使用 coroutine flow/channel 和有界超时等待事件，不使用 sleep 轮询。无窗口回执会记录 `timeout_no_window_receipt` 和空 GPU 结束时间，失败退出、保留已完成样本，不输出成功统计或用 CPU/离屏时间补齐。
-- 报告分别写到 `build/tools/window-activation-smoke/report.json`、`build/tools/window-activation/report.json`，保留所有原始回执、期望身份、被取代候选、旧帧拒绝结果、GPU/native 环境与 DLL SHA-256。实际驱动不证明像素颜色或屏幕扫描正确。
+- 报告分别写到 `build/tools/window-activation-smoke/report.json`、`build/tools/window-activation/report.json`，保留所有原始回执、期望身份、被取代候选、旧帧拒绝结果、GPU/native 环境与 DLL SHA-256。上述两个入口仍只验证身份和 GPU 完成。像素入口另写 `build/tools/window-activation-pixels/report.json`，包含每次激活（含预热）的窗口尺寸、视口、相机、采样位置和颜色。所有入口均不测量屏幕扫描。
 - 起点分别记录 `syntheticInstallStartedAtNanos`、`activationCapturedAtNanos`；`editStartedAtNanos=null`，因为这里没有测量真实编辑命令，不能把合成安装起点称为编辑起点。JVM/窗口 context 已热，每次安装会重新挂载预览视图，结果也不能冒充进程冷启动。
 - 当前窗口驱动限定 P2LRT。native 缺失、ABI 不兼容、OpenGL 不可用、后端回退都会失败，不会作为跳过的成功验收。Cubism 实际窗口还需另行覆盖。
 
@@ -93,6 +94,8 @@ $env:PSD2LIVE_TOOLS = '1'
 $env:PSD2LIVE_RUNTIME = (Resolve-Path 'build/tools/window-activation/native/p2l_runtime.dll').Path
 $env:PSD2LIVE_COMPOSITOR = '1'
 .\gradlew.bat :test --tests '*WindowActivationTool.smoke' --max-workers=2 '-Ppsd2live.testForks=1'
+# 独立的窗口像素功能验收；读回/PNG 编码会干扰耗时，不作为性能样本。
+.\gradlew.bat :test --tests '*WindowActivationTool.verifyWindowPixels' --max-workers=2 '-Ppsd2live.testForks=1'
 $env:PSD2LIVE_WINDOW_SAMPLES = '30'
 .\gradlew.bat :test --tests '*WindowActivationTool.measure' --max-workers=2 '-Ppsd2live.testForks=1'
 # 普通 Compose 回放路径另跑一轮，先保存前一轮报告，再设 PSD2LIVE_COMPOSITOR=0。
@@ -110,3 +113,14 @@ $env:PSD2LIVE_WINDOW_SAMPLES = '30'
 - 检查期间有并行 CPU 构建，所有时间均不作性能验收数据，不输出性能分位数。窗口 smoke 只证明 activation→window GPU 身份及完成回执；窗口像素仍未核验，不能与离屏像素检查合称完整 first correct frame 验收。
 
 独立报告、日志、JUnit 结果与失败留档位于当前工作树 `build/verification/window-functional-smoke/`。`PSD2LIVE_TOOLS=1` 已使 Gradle 测试任务禁用缓存和 up-to-date 替代，不需要用 `--rerun-tasks` 重编译全部依赖。正式 30 次采样仍等待最终整合基线及独占窗口。
+
+
+## 2026-11-14 实际窗口像素功能验收
+
+在上述 smoke 之后新增 `verifyWindowPixels` 并分别执行 compositor=1、0。两次均通过：各 1 次预热和 2 次检查激活，共 6 张实际窗口 Surface 读回图、24 个图案区域、216 个像素检查。每块中心颜色与预期完全相同，3×3 区域均通过每通道容差 2；上一修订颜色均被拒绝。每次像素证据均匹配原始首个 GPU 回执的修订、状态、候选、视图和 GPU 完成时间，没有用后续帧替代。
+
+窗口 Surface 为 1779×1144，预览视口为 `(308,78)` 起的 754×724 区域。完整 PNG 已查看，确认包含实际应用面板、视口及图案，而非离屏预览纹理。两种模式请求值与实际值一致；关闭模式的合成帧计数为零。两轮 `preActivationReceipts` 仍为空，窗口均自动关闭。无 GPU 的 17 项检查也通过，覆盖像素错误、旧修订、平移后的视口、裁剪拒绝、帧身份和依赖边界。
+
+证据分别保存在当前工作树 `build/verification/window-pixel-smoke/compositor-1/` 和 `compositor-0/`，每组含 `report.json`、三个窗口 PNG、日志和 JUnit XML；汇总为同级 `summary.json`。这些是功能证据，未执行 30 次性能采样，不输出性能分位数。读回和 PNG 编码会扰动运行时间。
+
+本验收只证明静态四块已知图案在实际窗口目标中的颜色及定位，不覆盖整个模型的遮罩、变形、物理、所有遮挡情形，也不证明窗口交换或显示器扫描完成。公开编辑请求到候选构建/提交的关联尚待独立接入；本工具仍以模型激活捕获为起点，`fullEditLatencyMeasured=false`。

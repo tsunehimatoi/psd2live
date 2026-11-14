@@ -15,6 +15,7 @@ import io.github.psd2live.document.WorkspaceSourceLayer
 import io.github.psd2live.format.eval.P2lRuntime
 import io.github.psd2live.project.WorkspaceDocument
 import io.github.psd2live.render.SkiaGpu
+import io.github.psd2live.render.WindowPixelMeasurements
 import io.github.psd2live.ui.state.CanvasMode
 import io.github.psd2live.ui.state.DesktopWorkspace
 import io.github.psd2live.ui.state.PSD2LiveViewModel
@@ -24,18 +25,21 @@ import io.github.psd2live.util.PresentationMeasurements
 import io.github.psd2live.util.PresentationReceipt
 import io.github.psd2live.util.PresentationToken
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.*
 import org.umamo.format.art.*
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.ConcurrentHashMap
 import javax.swing.SwingUtilities
 import kotlin.test.Test
 
 /** Real desktop/VM/viewport/Skiko acceptance, gated and never replaced by offscreen rendering. */
 class WindowActivationTool {
     @Test fun smoke() { requireTools(); run(2, benchmark = false) }
+    @Test fun verifyWindowPixels() { requireTools(); run(2, benchmark = false, pixels = true) }
     @Test fun measure() {
         requireTools()
         val samples = setting("PSD2LIVE_WINDOW_SAMPLES", "30").toInt()
@@ -43,9 +47,9 @@ class WindowActivationTool {
         run(samples, benchmark = true)
     }
 
-    private fun run(samples: Int, benchmark: Boolean) = runBlocking {
+    private fun run(samples: Int, benchmark: Boolean, pixels: Boolean = false) = runBlocking {
         val warmups = if (benchmark) 5 else 1
-        val out = output(if (benchmark) "window-activation" else "window-activation-smoke")
+        val out = output(if (pixels) "window-activation-pixels" else if (benchmark) "window-activation" else "window-activation-smoke")
         val rows = ArrayList<JsonObject>()
         val receipts = WindowReceiptInbox()
         val beforeActivation = ArrayList<JsonObject>()
@@ -62,6 +66,10 @@ class WindowActivationTool {
         val timeoutMs = setting("PSD2LIVE_WINDOW_TIMEOUT_SECONDS", "30").toLong().also { require(it in 5..120) } * 1000
         val previousObserver = PresentationMeasurements.onCompleted
         check(previousObserver == null) { "Another presentation measurement is already active" }
+        check(WindowPixelMeasurements.request == null && WindowPixelMeasurements.onReadback == null) { "Another window pixel measurement is active" }
+        val pixelRequests = ConcurrentHashMap<Long, Int>()
+        val pixelResults = Channel<Result<JsonObject>>(Channel.UNLIMITED)
+        val pixelEvidence = ArrayList<JsonObject>()
         val audit = WindowActivationAudit()
         val durations = ArrayList<Long>()
         fun report() {
@@ -71,7 +79,11 @@ class WindowActivationTool {
                 put("requestedWarmups", warmups); put("successfulWarmups", warmedUp)
                 put("complete", failure == null && warmedUp == warmups && successful == samples)
                 put("phase", phase); put("failure", failure?.let(::JsonPrimitive) ?: JsonNull)
-                put("backend", "P2LRT"); put("pixelCorrectnessValidated", false); put("screenPresentationMeasured", false)
+                put("backend", "P2LRT")
+                put("pixelCorrectnessValidated", pixels && failure == null && pixelEvidence.size == warmups + samples)
+                put("pixelReadbackEnabled", pixels); put("screenPresentationMeasured", false)
+                put("windowPixelEvidence", JsonArray(pixelEvidence))
+                if (pixels) put("pixelEndpoint", "actual Skiko window Surface after picture replay and GPU completion, before swap; four 3x3 patches inside the preview viewport")
                 put("workload", "four synthetic colored tiles; changing raster revision; no masks, physics or playback")
                 put("cacheMode", "warm JVM/window context; new model and remounted preview view per activation")
                 put("fullEditLatencyMeasured", false); put("editStartedAtNanos", JsonNull)
@@ -110,6 +122,33 @@ class WindowActivationTool {
             val desktop = DesktopWorkspace(viewModel, out.resolve("workspace").toPath()).also { workspace = it }
             edt { viewModel.attachWorkspace(desktop); viewModel.selectPreviewBackend(PreviewBackend.P2LRT) }
             PresentationMeasurements.onCompleted = receipts::record
+            if (pixels) {
+                WindowPixelMeasurements.request = { pixelRequests.containsKey(it.token.candidate) }
+                WindowPixelMeasurements.onReadback = { readback ->
+                    val stamp = readback.frame
+                    pixelRequests.remove(stamp.token.candidate)?.let { ordinal ->
+                        pixelResults.trySend(runCatching {
+                            val imageFile = out.resolve("window-$ordinal.png")
+                            org.jetbrains.skia.Image.makeFromBitmap(readback.bitmap).use { image ->
+                                checkNotNull(image.encodeToData(org.jetbrains.skia.EncodedImageFormat.PNG)).use { imageFile.writeBytes(it.bytes) }
+                            }
+                            val camera = checkNotNull(stamp.camera)
+                            val patches = WindowPixelAudit.verify(ordinal, camera, readback.viewportLeft, readback.viewportTop,
+                                readback.bitmap.width, readback.bitmap.height, readback.bitmap::getColor)
+                            buildJsonObject {
+                                put("ordinal", ordinal); put("revision", stamp.token.revision); put("state", stamp.token.state)
+                                put("candidate", stamp.token.candidate); put("viewId", stamp.viewId)
+                                put("gpuCompletedAtNanos", readback.gpuCompletedAtNanos); put("image", imageFile.canonicalPath)
+                                put("windowWidth", readback.bitmap.width); put("windowHeight", readback.bitmap.height)
+                                put("viewportLeft", readback.viewportLeft); put("viewportTop", readback.viewportTop)
+                                put("viewportWidth", camera.width); put("viewportHeight", camera.height)
+                                put("scale", camera.scale); put("offsetX", camera.offsetX); put("offsetY", camera.offsetY)
+                                put("patches", patches)
+                            }
+                        })
+                    }
+                }
+            }
             phase = "window_startup"
             Thread({
                 try {
@@ -174,6 +213,7 @@ class WindowActivationTool {
                     viewModel.refreshWorkspaceRenderer(model)
                     val wanted = checkNotNull(coordinator.presentation)
                     check(wanted !== superseded)
+                    if (pixels) pixelRequests[wanted.candidate] = ordinal
                     val key = viewModel.canvasRenderKey(viewModel.state.value.activeCanvas.id, CanvasMode.PREVIEW)
                     val rejected = previousFrame?.let { old ->
                         val stale = old.copy(viewId = key)
@@ -195,6 +235,15 @@ class WindowActivationTool {
                 val nanos = try { audit.accept(expected, receipt) } catch (error: Throwable) {
                     rows += row(index, expected, activation.second, activation.third, "identity_rejected", receipt)
                     throw error
+                }
+                if (pixels) {
+                    val evidence = withTimeout(timeoutMs) { pixelResults.receive() }.getOrThrow()
+                    for ((key, value) in mapOf("revision" to receipt.revision, "state" to receipt.state,
+                        "candidate" to receipt.candidate.toString(), "viewId" to receipt.viewId,
+                        "gpuCompletedAtNanos" to receipt.gpuCompletedAtNanos.toString())) {
+                        check(evidence.getValue(key).jsonPrimitive.content == value) { "Window pixels and receipt differ: $key" }
+                    }
+                    pixelEvidence += evidence
                 }
                 previousFrame = withTimeout(timeoutMs) { viewModel.sdkFrameFor(expected.viewId).first { it?.presentation?.token?.candidate == expected.candidate } }
                 check(previousFrame?.backend == PreviewBackend.P2LRT) { "Requested P2LRT but another backend delivered the frame" }
@@ -225,6 +274,7 @@ class WindowActivationTool {
             throw error
         } finally {
             PresentationMeasurements.onCompleted = previousObserver
+            if (pixels) { WindowPixelMeasurements.request = null; WindowPixelMeasurements.onReadback = null }
             // Coroutine timeouts and event delivery replace polling/sleeps. Closing still runs if the EDT is busy.
             SwingUtilities.invokeLater {
                 runCatching { vm?.close() }
@@ -248,12 +298,8 @@ class WindowActivationTool {
 
     private fun fixture(index: Int): Pair<WorkspaceDocument, RigPreviewModel> {
         val source = WorkspaceSourceArt(64, 64, List(4) { tile ->
-            val rgba = ByteArray(24 * 24 * 4) { offset -> when (offset % 4) {
-                0 -> (40 + (index * 29 + tile * 43) % 190).toByte()
-                1 -> (40 + (index * 47 + tile * 17) % 190).toByte()
-                2 -> (40 + (index * 13 + tile * 61) % 190).toByte()
-                else -> 255.toByte()
-            } }
+            val color = WindowPixelAudit.color(index, tile)
+            val rgba = ByteArray(24 * 24 * 4) { offset -> (color ushr when (offset % 4) { 0 -> 16; 1 -> 8; 2 -> 0; else -> 24 }).toByte() }
             WorkspaceSourceLayer(LayerId("tile-$tile"), "Tile $tile", "", SourceLayerKind.Raster, true, tile,
                 LayerBounds(tile % 2 * 32 + 4, tile / 2 * 32 + 4, 24, 24), 1f, false, LayerBlend.Normal,
                 ChannelMask.ALL, LayerRaster(24, 24, rgba), null, null, false)
