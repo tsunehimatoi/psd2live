@@ -39,6 +39,52 @@ class ModifierPartEditingTest {
         validateOperationSchema(config, WorkspaceModifierSchemas.configuration("mouth"))
     }
 
+    @Test fun sampleEdgeColorClearsParentFallbackAndLocalOverrideWithoutLosingSettings() {
+        for (localColor in listOf<Int?>(null, 0x112233)) {
+            val original = part()
+            val children = original.config.getValue("subConfigs").jsonObject
+            val outline = JsonObject(children.getValue("mouth.outline").jsonObject.let {
+                if (localColor == null) it - "color" else it + ("color" to JsonPrimitive(localColor))
+            })
+            val part = original.copy(config = JsonObject(original.config + ("color" to JsonPrimitive(0x778899)) +
+                ("subConfigs" to JsonObject(children + ("mouth.outline" to outline)))),
+                outputAliases = mapOf("mesh:face" to "retained.face"))
+            val child = ModifierPartEditing.child(part, "mouth.outline")
+            assertEquals(localColor ?: 0x778899, RigLegacyBindings.outlineColor(child))
+            val numericEdit = ModifierPartEditing.withChildConfig(part, child.type,
+                JsonObject(child.config + ("values" to buildJsonObject { put("thickness", 4f) })))
+            assertEquals(part.config["color"], numericEdit["color"], "Ordinary numeric edits retain the parent color")
+            assertEquals(localColor ?: 0x778899, RigLegacyBindings.outlineColor(ModifierPartEditing.child(part.copy(config = numericEdit), child.type)))
+
+            // The real Sample edge color button submits the effective child config with color removed.
+            val next = ModifierPartEditing.withChildConfig(part, child.type, JsonObject(child.config - "color"))
+            val restored = part.copy(config = next)
+            val sampled = ModifierPartEditing.child(restored, child.type)
+            assertNull(next["color"], "Automatic sampling must clear the legacy fallback as well")
+            assertNull(RigLegacyBindings.outlineColor(sampled), "The generator must receive automatic color, not inherited RGB")
+            assertEquals(JsonObject(outline - "color"), next.getValue("subConfigs").jsonObject[child.type])
+            assertEquals(children["mouth.vowel"], next.getValue("subConfigs").jsonObject["mouth.vowel"])
+            assertEquals(part.config - setOf("color", "subConfigs"), next - setOf("color", "subConfigs"))
+            assertEquals(child.id, sampled.id)
+            assertEquals(child.version, sampled.version)
+            assertEquals(child.targets, sampled.targets)
+            assertEquals(child.outputAliases, sampled.outputAliases)
+            assertEquals(part.outputAliases, restored.outputAliases)
+            validateOperationSchema(next, WorkspaceModifierSchemas.configuration("mouth"))
+        }
+    }
+
+    @Test fun sampleEdgeColorWithoutStoredChildRemovesOnlyTheLegacyParentColor() {
+        val part = part().copy(config = buildJsonObject {
+            put("scaffold", "structure"); put("outline", true); put("color", 0x778899)
+        })
+        val child = ModifierPartEditing.child(part, "mouth.outline")
+        val next = ModifierPartEditing.withChildConfig(part, child.type, JsonObject(child.config - "color"))
+        assertEquals(JsonObject(part.config - "color"), next)
+        assertNull(RigLegacyBindings.outlineColor(ModifierPartEditing.child(part.copy(config = next), child.type)))
+        validateOperationSchema(next, WorkspaceModifierSchemas.configuration("mouth"))
+    }
+
     @Test fun everySharedFeatureHasTheBindingDescriptorUsedByTheEditor() {
         for ((type, features) in ModifierPartConfig.features) {
             val part = RigModifierInstance("part", type, 1, listOf(ModifierTarget("mesh", "target")),

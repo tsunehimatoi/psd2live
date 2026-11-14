@@ -27,13 +27,16 @@ internal object ModifierPartEditing {
         val original = children[type]?.jsonObject.orEmpty()
         val preserved = original.filterKeys { it in metadata }
         val effective = child(part, type).config
+        // Removing the effective outline color means automatic sampling, not falling back to the legacy parent color.
+        val parentConfig = if (type == "mouth.outline" && "color" in effective && "color" !in config)
+            JsonObject(part.config - "color") else part.config
         // Unchanged inherited values stay inherited, including dependencies merged by the shared helper.
         val authored = config.mapNotNull { (key, value) ->
             val next = if (key in metadata || value != effective[key]) value else original[key]
             next?.let { key to it }
         }.toMap()
         val child = JsonObject(authored + preserved)
-        if (child.isEmpty() && type !in children) return part.config
-        return JsonObject(part.config + ("subConfigs" to JsonObject(children + (type to child))))
+        if (child.isEmpty() && type !in children) return parentConfig
+        return JsonObject(parentConfig + ("subConfigs" to JsonObject(children + (type to child))))
     }
 }
