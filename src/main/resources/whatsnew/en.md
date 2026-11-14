@@ -1,3 +1,16 @@
+## v3.8.0 · 2026-11-15
+
+### New
+
+- **Modifier menu & conflict indicators**: the preset add menu is reorganized into a progressive 3-column layout, marking hard and soft modifier conflicts in both the stack and add menu.
+- **Nested part settings & behavior preview**: collapsed part plugins expose nested sub-feature controls with live behavior preview in the inspector.
+
+### Improved
+
+- **Preset & terminology alignment**: unified "Stylized" algorithm terminology and preset names, with refined default preset options.
+- **Source PSD binding & export parity**: improved source-frame bindings for single eyes, layered mouths, and creature attachments, preserving split mesh references on `.cmo3` round-trip.
+- **Preview responsiveness & caching**: scoped build plans and bounded caches reduce redundant rebuilds and keep edited frames and save status synchronized.
+
 ## v3.7.1 · 2026-11-11
 
 ### New
