@@ -40,7 +40,7 @@ internal fun modifierName(type: String): String {
     val registry = RigModifierAlgorithms.registry
     val stored = registry.storedType(type)
     if (stored != type) return tr("modifier.algorithm.version", modifierName(stored), requireNotNull(registry.defaultDefinition(type)).version)
-    if (type in setOf(RigSourceModifiers.EYE, RigSourceModifiers.BROW, RigSourceModifiers.FACE, RigSourceModifiers.BODY, RigSourceModifiers.HAIR)) {
+    if (type in setOf(RigSourceModifiers.EYE, RigSourceModifiers.BROW, RigSourceModifiers.MOUTH, RigSourceModifiers.FACE, RigSourceModifiers.BODY, RigSourceModifiers.HAIR)) {
         return tr("settings.rig.area.$type")
     }
     ModifierPluginCatalog.algorithm(type)?.let { return it.second.name }
@@ -53,7 +53,7 @@ internal fun modifierName(type: String): String {
     }
 }
 
-private fun contentName(state: PSD2LiveState, kind: String, id: String): String {
+internal fun contentName(state: PSD2LiveState, kind: String, id: String): String {
     val puppet = state.previewModel?.rig?.puppet
     return when (kind) {
         "mesh" -> puppet?.drawables?.singleOrNull { it.id.raw == id }?.name
@@ -117,7 +117,7 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                             if (missing.isNotEmpty()) InspectorHint(tr("modifier.dependencies", missing.joinToString { it.jsonPrimitive.content }), warning = true)
                             when (page) {
                                 0 -> {
-                                    ModifierSourceValues(selected, enabled, vm)
+                                    ModifierSourceValues(selected, state, enabled, vm)
                                     ModifierModulePhysicsValues(selected, report, state, enabled, vm)
                                     ModifierNativeValues(selected.type, selected.config, state, enabled, vm, instanceId = selected.id) { config, captured, done ->
                                         vm.editModifier("modifier_update", buildJsonObject { put("id", selected.id); put("type", selected.type); put("config", config) }, captured, done)
@@ -194,7 +194,7 @@ private fun ModifierModulePhysicsValues(instance: RigModifierInstance, report: J
 }
 
 @Composable
-private fun ModifierSourceValues(instance: RigModifierInstance, enabled: Boolean, vm: PSD2LiveViewModel) {
+private fun ModifierSourceValues(instance: RigModifierInstance, state: PSD2LiveState, enabled: Boolean, vm: PSD2LiveViewModel) {
     if (instance.plugin?.let { !it.id.startsWith("builtin.") } == true) {
         ModifierPluginValues(instance, enabled, vm)
         return
@@ -222,177 +222,12 @@ private fun ModifierSourceValues(instance: RigModifierInstance, enabled: Boolean
         }
         return
     }
-    if (instance.type in setOf(RigSourceModifiers.EYE, RigSourceModifiers.BROW, RigSourceModifiers.FACE, RigSourceModifiers.BODY, RigSourceModifiers.HAIR)) {
-        ModifierPartValues(instance, enabled, vm)
+    if (instance.type in setOf(RigSourceModifiers.EYE, RigSourceModifiers.BROW, RigSourceModifiers.MOUTH, RigSourceModifiers.FACE, RigSourceModifiers.BODY, RigSourceModifiers.HAIR)) {
+        ModifierPartValues(instance, state, enabled, vm)
         return
     }
-    val spec = RigLegacyBindings.find(instance.type) ?: return
-    if (spec.hasPhysics) Row(verticalAlignment = Alignment.CenterVertically) {
-        CompactCheckbox(instance.config["physicsEnabled"]?.jsonPrimitive?.booleanOrNull != false, { value ->
-            vm.editModifier("modifier_update", buildJsonObject {
-                put("id", instance.id); put("type", instance.type)
-                put("config", JsonObject(instance.config + ("physicsEnabled" to JsonPrimitive(value))))
-            })
-        }, enabled = enabled)
-        Text(tr("swing.physics"), style = LocalToolTypography.current.caption)
-    }
-    if (spec.mouthOutline) {
-        val color = RigLegacyBindings.outlineColor(instance)
-        var hex by remember(instance.id, color) { mutableStateOf(color?.let { "%06X".format(it) }.orEmpty()) }
-        fun setColor(rgb: Int?) {
-            vm.editModifier("modifier_update", buildJsonObject {
-                put("id", instance.id); put("type", instance.type)
-                put("config", JsonObject(if (rgb == null) instance.config - "color" else instance.config + ("color" to JsonPrimitive(rgb))))
-            }) { failure -> if (failure != null) hex = color?.let { "%06X".format(it) }.orEmpty() }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            CompactTextField(hex, { value ->
-                hex = value
-                val digits = value.trim().removePrefix("#")
-                if (digits.length == 6) digits.toIntOrNull(16)?.takeIf { it >= 0 && it != color }?.let(::setColor)
-            }, enabled = enabled, placeholder = "#RRGGBB", isMono = true, modifier = Modifier.width(80.dp), height = 20.dp)
-            CompactButton(tr("mouth.autoColor"), { setColor(null) }, enabled = enabled && color != null, height = 20.dp)
-        }
-    }
-    fun config(field: String, key: String?, value: Float): JsonObject = if (key == null) JsonObject(instance.config + (field to JsonPrimitive(value)))
-        else JsonObject(instance.config + (field to JsonObject(instance.config[field]?.jsonObject.orEmpty() + (key to JsonPrimitive(value)))))
-    @Composable fun value(label: String, field: String, key: String?, default: Float, range: ClosedFloatingPointRange<Float>, unit: String) {
-        val current = if (key == null) instance.config[field]?.jsonPrimitive?.float else instance.config[field]?.jsonObject?.get(key)?.jsonPrimitive?.float
-        ModifierNumber(label, current ?: default, range, unit, enabled, vm) { number, expected, done ->
-            vm.editModifier("modifier_update", buildJsonObject { put("id", instance.id); put("type", instance.type); put("config", config(field, key, number)) }, expected, done)
-        }
-    }
-    if (spec.strength) value(tr("modifier.strength"), "strength", null, 1f, 0f..4f, "")
-    if (spec.knobs.isNotEmpty() || spec.fields.isNotEmpty()) {
-        run {
-            val hasTurnStyle = spec.type == "face.depth-turn" || spec.type == RigLegacyBindings.FITTED_FACE
-            if (hasTurnStyle) {
-                val style = instance.config["values"]?.jsonObject?.get("style")?.jsonPrimitive?.float ?: 0f
-                TurnStyleRow(style, enabled) { index ->
-                    val values = buildJsonObject {
-                        spec.knobs.forEach { knob -> put(knob.id, if (knob.id == "style") index.toFloat() else knob.default) }
-                    }
-                    vm.editModifier("modifier_update", buildJsonObject {
-                        put("id", instance.id)
-                        put("type", instance.type)
-                        put("config", JsonObject(instance.config + ("values" to values)))
-                    })
-                }
-            }
-            spec.knobs.filterNot { hasTurnStyle && it.id == "style" }.forEach { knob ->
-                val label = when {
-                    spec.seeThrough -> tr("seeThrough.opacity")
-                    spec.mouthOutline -> tr("mouth.thickness")
-                    else -> tr("settings.rig.knob.${if (instance.type == RigLegacyBindings.FITTED_FACE) "face.depth-turn" else instance.type.replace('/', '.')}.${knob.id}")
-                }
-                value(label, "values", knob.id, knob.default, knob.range, unit(knob.unit))
-            }
-            val groups = spec.fields.map { it.group }.distinct()
-            var selectedGroup by remember(instance.id) { mutableStateOf(groups.firstOrNull()) }
-            if (groups.size > 1) CompactDropdown(groups, selectedGroup ?: groups.first(), { selectedGroup = it },
-                itemLabel = { tr("settings.rigTuning.group." + it.name.lowercase()) }, modifier = Modifier.fillMaxWidth(), height = 22.dp)
-            spec.fields.filter { it.group == selectedGroup }.forEach { field ->
-                value(tr("settings.rigTuning.${field.id}"), "tuning", field.id, field.default, field.range, unit(field.unit))
-            }
-        }
-    }
-}
-
-@Composable
-private fun ModifierPartValues(instance: RigModifierInstance, enabled: Boolean, vm: PSD2LiveViewModel) {
-    fun updateConfig(next: JsonObject) {
-        vm.editModifier("modifier_update", buildJsonObject {
-            put("id", instance.id); put("type", instance.type); put("config", next)
-        })
-    }
-    val modes = when (instance.type) {
-        RigSourceModifiers.EYE, RigSourceModifiers.BROW, RigSourceModifiers.FACE -> listOf("fitted", "legacy")
-        RigSourceModifiers.HAIR -> listOf("chains", "legacy")
-        else -> emptyList()
-    }
-    if (modes.isNotEmpty()) {
-        val currentMode = instance.config["mode"]?.jsonPrimitive?.contentOrNull ?: modes.first()
-        InspectorFormRow(tr("modifier.part.mode")) {
-            CompactDropdown(modes, currentMode, { next ->
-                if (next != currentMode) updateConfig(JsonObject(instance.config + ("mode" to JsonPrimitive(next))))
-            }, itemLabel = { tr("modifier.part.mode.$it") }, enabled = enabled, height = 20.dp, modifier = Modifier.fillMaxWidth())
-        }
-    }
-    if (instance.type in setOf(RigSourceModifiers.BROW, RigSourceModifiers.HAIR)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            CompactCheckbox(instance.config["physicsEnabled"]?.jsonPrimitive?.booleanOrNull != false, { value ->
-                updateConfig(JsonObject(instance.config + ("physicsEnabled" to JsonPrimitive(value))))
-            }, enabled = enabled)
-            Text(tr("swing.physics"), style = LocalToolTypography.current.caption)
-        }
-    }
-    if (instance.type in setOf(RigSourceModifiers.FACE, RigSourceModifiers.BODY)) {
-        val strength = instance.config["strength"]?.jsonPrimitive?.floatOrNull ?: 1f
-        ModifierNumber(tr("modifier.strength"), strength, 0f..4f, "", enabled, vm) { number, expected, done ->
-            vm.editModifier("modifier_update", buildJsonObject {
-                put("id", instance.id); put("type", instance.type)
-                put("config", JsonObject(instance.config + ("strength" to JsonPrimitive(number))))
-            }, expected, done)
-        }
-    }
-    val features = when (instance.type) {
-        RigSourceModifiers.EYE -> listOf(
-            "wide" to "settings.rig.module.eye.wide",
-            "smile" to "settings.rig.module.eye.smile",
-            "emotion" to "settings.rig.module.eye.emotion",
-            "gazeLid" to "settings.rig.module.eye.gaze-lid",
-            "highlight" to "settings.rig.module.eye.highlight",
-            "lidFade" to "settings.rig.module.eye.lid-fade",
-            "squash" to "settings.rig.module.eye.squash",
-            "aftershock" to "settings.rig.module.eye.aftershock",
-        )
-        RigSourceModifiers.BROW -> listOf(
-            "shape" to "settings.rig.module.brow.shape",
-            "spring" to "settings.rig.module.brow.spring",
-            "blink" to "settings.rig.module.brow.blink",
-            ModifierPartConfig.LID_COUPLING to "settings.rig.module.brow.lid-coupling",
-        )
-        RigSourceModifiers.FACE -> listOf(
-            "depthTurn" to "settings.rig.module.face.depth-turn",
-            "neck" to "settings.rig.module.face.neck",
-        )
-        RigSourceModifiers.BODY -> listOf(
-            "bust" to "settings.rig.module.body.bust",
-            "arms" to "settings.rig.module.body.arms",
-        )
-        else -> emptyList()
-    }
-    for ((key, labelKey) in features) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            CompactCheckbox(ModifierPartConfig.enabled(instance.config, key), { value ->
-                updateConfig(ModifierPartConfig.withFlag(instance.config, key, value))
-            }, enabled = enabled)
-            Text(tr(labelKey), style = LocalToolTypography.current.caption)
-        }
-    }
-    val fields = RigLegacyBindings.find(when (instance.type) {
-        RigSourceModifiers.EYE -> "eye/fitted"
-        RigSourceModifiers.BROW -> "brow/fitted"
-        RigSourceModifiers.FACE -> RigLegacyBindings.FITTED_FACE
-        RigSourceModifiers.BODY -> "body/legacy"
-        RigSourceModifiers.HAIR -> "hair/chains"
-        else -> ""
-    })?.fields.orEmpty()
-    if (fields.isNotEmpty()) {
-        val groups = fields.map { it.group }.distinct()
-        var selectedGroup by remember(instance.id) { mutableStateOf(groups.firstOrNull()) }
-        if (groups.size > 1) CompactDropdown(groups, selectedGroup ?: groups.first(), { selectedGroup = it },
-            itemLabel = { tr("settings.rigTuning.group." + it.name.lowercase()) }, modifier = Modifier.fillMaxWidth(), height = 22.dp)
-        fields.filter { it.group == selectedGroup }.forEach { field ->
-            val current = instance.config["tuning"]?.jsonObject?.get(field.id)?.jsonPrimitive?.floatOrNull ?: field.default
-            ModifierNumber(tr("settings.rigTuning.${field.id}"), current, field.range, unit(field.unit), enabled, vm) { number, expected, done ->
-                val tuning = JsonObject(instance.config["tuning"]?.jsonObject.orEmpty() + (field.id to JsonPrimitive(number)))
-                vm.editModifier("modifier_update", buildJsonObject {
-                    put("id", instance.id); put("type", instance.type)
-                    put("config", JsonObject(instance.config + ("tuning" to tuning)))
-                }, expected, done)
-            }
-        }
+    ModifierBindingValues(instance, enabled, vm) { config, expected, done ->
+        vm.editModifier("modifier_update", buildJsonObject { put("id", instance.id); put("type", instance.type); put("config", config) }, expected, done)
     }
 }
 
@@ -415,7 +250,7 @@ private fun ModifierBehaviorPreview(type: String, version: Int? = null) {
     }
 }
 
-private fun unit(unit: RigTuning.Unit): String = when (unit) {
+internal fun unit(unit: RigTuning.Unit): String = when (unit) {
     RigTuning.Unit.DEGREES -> "°"
     RigTuning.Unit.PERCENT -> "%"
     RigTuning.Unit.TORSO_LENGTHS -> tr("settings.unit.x")
@@ -432,7 +267,7 @@ internal fun ModifierNumber(label: String, value: Float, range: ClosedFloatingPo
     var expected by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(value) { if (!editing) draft = value }
     val start = { if (!editing) { editing = true; expected = vm.modifierEditState() } }
-    val finish = { if (editing) { editing = false; if (draft != value) commit(draft, expected) { failure -> if (failure != null) draft = actualValue } } }
+    val finish = { if (editing) { editing = false; if (draft != value) commit(draft, expected) { if (!editing) draft = actualValue } } }
     InspectorFormRow(label) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
         CompactSlider(draft, { draft = if (integer) kotlin.math.round(it) else it }, start, finish, valueRange = range, enabled = enabled, modifier = Modifier.weight(1f))
@@ -542,7 +377,7 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
         type == RigSourceModifiers.SCAFFOLD -> "structure"
         type == "physics" || type == "simulation" || type == "swing" -> "advanced"
         type == "motion" -> "expression"
-        type in setOf(RigSourceModifiers.EYE, RigSourceModifiers.BROW, RigSourceModifiers.FACE, RigSourceModifiers.BODY, RigSourceModifiers.HAIR) -> type
+        type in setOf(RigSourceModifiers.EYE, RigSourceModifiers.BROW, RigSourceModifiers.MOUTH, RigSourceModifiers.FACE, RigSourceModifiers.BODY, RigSourceModifiers.HAIR) -> type
         else -> RigLegacyBindings.find(RigModifierAlgorithms.registry.storedType(type))?.area ?: "plugins"
     }
     fun categoryName(id: String): String = when {
