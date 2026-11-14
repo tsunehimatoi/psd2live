@@ -645,7 +645,8 @@ object Cmo3Import {
 			buildGrid(glue.keyformGridSource, glue.keyforms, paramIdByUuid, ::glueForm)
 				?.asChannelTrack { form -> ChannelValue.Scalar(form.intensity) }
 		// A glue with no keyed intensity welds fully, which is the runtime's long-standing fallback.
-		return Glue(meshA, meshB, pairs, channelGridsOf(FormChannel.GLUE_INTENSITY to intensityTrack), intensity = 1f)
+		return Glue(meshA, meshB, pairs, channelGridsOf(FormChannel.GLUE_INTENSITY to intensityTrack), intensity = 1f,
+			id = idStrOf(glue.id))
 	}
 
 	/**
