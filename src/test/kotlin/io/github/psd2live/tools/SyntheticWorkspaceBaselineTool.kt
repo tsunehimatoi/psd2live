@@ -40,6 +40,7 @@ class SyntheticWorkspaceBaselineTool {
                 val builder = WorkspacePreviewBuilder()
                 val runtime = WorkspaceRuntime<RigPreviewModel>({ builder.build(it) }, rebuildFrom = { doc, previous -> builder.build(doc, previous) })
                 val commands = WorkspaceDocumentCommands(runtime)
+                var activeArchive: OpenedProject? = null
                 var ordinal = 0
                 suspend fun measured(scenario: String, action: suspend () -> Unit) {
                     val before = runtime.state.value.capture
@@ -93,13 +94,19 @@ class SyntheticWorkspaceBaselineTool {
                         command("rig_edit_structure", rename(target, "Stress $index"))
                     } }
                     val expected = ContentHash.of(PuppetIr.toIr(runtime.capture().model.rig.puppet))
+                    // Keep metadata, not the old selections/snapshots: close must be allowed to release their objects.
+                    val expectedHead = runtime.history().headNodeId
+                    val expectedNodes = runtime.history().selections.associate { it.node.id to it.node }
+                    val expectedLeaves = expectedNodes.keys - expectedNodes.values.mapNotNull { it.parentId }.toSet()
+                    val expectedAuxiliary = runtime.capture().auxiliary
+                    assertTrue(expectedNodes.size >= edits + samples * 2 + 6)
                     val archive = directory.resolve("$size.psd2live")
                     val storage = WorkspaceStore(Files.createTempDirectory("synthetic-baseline-store-"))
                     try {
                         measured("save") {
                             val capture = runtime.capture()
                             ProjectRepository().save(ProjectSaveCapture(capture.projectId, runtime.history(),
-                                JsonObject(emptyMap()), psd, storage), archive)
+                                capture.auxiliary, psd, storage, auxiliary = capture.auxiliary), archive)
                         }
                         repeat(5) {
                             measured("close-reopen") {
@@ -110,11 +117,28 @@ class SyntheticWorkspaceBaselineTool {
                                 captured.model.modifierBuildOwner?.let { owner ->
                                     assertTrue(owner.isClosed && !owner.retainsMeshCache)
                                 }
-                                ProjectRepository().open(archive).use { opened ->
+                                activeArchive?.close()
+                                activeArchive = null
+                                val opened = ProjectRepository().open(archive)
+                                try {
                                     val document = opened.history.head().snapshot
                                     val model = builder.build(document)
                                     assertEquals(expected, ContentHash.of(PuppetIr.toIr(model.rig.puppet)))
-                                    runtime.install(runtime.state.value.state, captured.projectId, document, model)
+                                    assertEquals(captured.projectId, opened.projectId)
+                                    runtime.install(runtime.state.value.state, opened.projectId, document, model,
+                                        history = opened.history.state(), auxiliary = opened.presentation)
+                                    val restored = runtime.history()
+                                    assertEquals(expectedNodes.size, restored.selections.size)
+                                    assertEquals(expectedHead, restored.headNodeId)
+                                    val restoredNodes = restored.selections.associate { it.node.id to it.node }
+                                    assertEquals(expectedNodes, restoredNodes, "History metadata and branch identities must survive reopen")
+                                    assertEquals(expectedLeaves, restoredNodes.keys - restoredNodes.values.mapNotNull { it.parentId }.toSet())
+                                    expectedAuxiliary.forEach { (key, value) -> assertEquals(value, runtime.capture().auxiliary[key]) }
+                                    // Keep the extraction alive while its lazy historical selections are installed.
+                                    activeArchive = opened
+                                } catch (failure: Throwable) {
+                                    opened.close()
+                                    throw failure
                                 }
                             }
                         }
@@ -122,7 +146,10 @@ class SyntheticWorkspaceBaselineTool {
                             PSD2LivePipeline().export(runtime.capture().model, size, directory.resolve("$size-export"))
                         }
                     } finally { io.github.psd2live.core.modifier.ModifierPluginStore.deleteTree(storage.root) }
-                } finally { runtime.state.value.capture?.let { runtime.close(it.state, discardUnsaved = true) } }
+                } finally {
+                    runtime.state.value.capture?.let { runtime.close(it.state, discardUnsaved = true) }
+                    activeArchive?.close()
+                }
             }
         } finally { RigBuildProfile.recording = wasRecording; report.close() }
     }

@@ -110,4 +110,3 @@ internal fun syntheticWorkerRig(): RigIR {
     )
     return RigIR(Canvas(100f, 100f), emptyList(), meshes = listOf(mesh))
 }
-
