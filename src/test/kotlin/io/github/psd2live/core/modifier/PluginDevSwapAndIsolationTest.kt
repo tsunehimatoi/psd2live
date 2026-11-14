@@ -346,4 +346,33 @@ class PluginDevSwapAndIsolationTest {
         assertEquals(ref2, reloaded.resolve(ref2)?.reference)
         assertEquals(art2.artifactId, reloaded.adoptByReference(ref2, "proj-2")?.artifactId)
     }
+
+    @Test
+    fun `reloads legacy dependency-locked artifact whose buildDigest equals payload digest`(@TempDir tempDir: Path) {
+        val storeRoot = tempDir.resolve("dev-artifacts-legacy")
+        val legacyDir = storeRoot.resolve("art_legacy_dep")
+        val payloadDir = legacyDir.resolve("payload")
+        writeStagedPlugin(payloadDir, "custom.legacy", "1.0.0+dev.1", "custom.legacy/op")
+        val payloadDigest = ModifierPluginStore.inspectPackageDirectory(payloadDir).reference.digest
+        val legacyRef = ModifierPluginReference(
+            id = "custom.legacy",
+            version = "1.0.0+dev.1",
+            digest = payloadDigest,
+            dependencyDigests = mapOf("builtin.base@1.0.0" to "1".repeat(64)),
+        )
+        val legacyMeta = buildJsonObject {
+            put("artifactId", "art_legacy_dep")
+            put("sourceId", "src-legacy")
+            put("buildDigest", payloadDigest)
+            put("packages", JsonArray(listOf(Json.encodeToJsonElement(ModifierPluginReference.serializer(), legacyRef))))
+            put("retention", "ADOPTED")
+            put("expiresAt", JsonNull)
+            put("adoptedProjects", JsonArray(listOf(JsonPrimitive("proj-legacy"))))
+        }
+        Files.writeString(legacyDir.resolve("artifact.json"), legacyMeta.toString())
+
+        val reloaded = PluginDevArtifactStore.Store(storeRoot)
+        assertEquals(1, reloaded.list().size)
+        assertEquals(legacyRef, reloaded.resolve(legacyRef)?.reference)
+    }
 }

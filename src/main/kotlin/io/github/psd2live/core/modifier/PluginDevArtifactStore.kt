@@ -227,7 +227,7 @@ internal object PluginDevArtifactStore {
                         val expectedBuildDigest = computeBuildDigest(checked.reference.digest, depDigests)
                         require(
                             meta.buildDigest == expectedBuildDigest ||
-                                (depDigests.isEmpty() && meta.buildDigest == checked.reference.digest),
+                                meta.buildDigest == checked.reference.digest,
                         ) { "Dev artifact digest mismatch: ${meta.artifactId}" }
                         val artifact = PluginDevArtifact(
                             artifactId = meta.artifactId,
