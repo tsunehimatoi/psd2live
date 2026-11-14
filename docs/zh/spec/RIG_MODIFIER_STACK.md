@@ -10,7 +10,9 @@
 - `RigModifierRegistry`：按类型与算法版本查找定义，检查未知依赖、重复版本和依赖环。
 - `RigModifierEvaluator`：在中立 `RigIR` 上依次求值，检查目标、顺序、互斥算法、共享参数定义和写入冲突；输出实际贡献。
 - `RigModifierAlgorithms`：适配现有摆动、已烘焙模拟、物理组与动作片段，不改动这些算法的运动设计。
-- `RigSourceModifiers` / `RigLegacyBindings` / `RigSourceBinding`：`rig.scaffold` 从捕获的源图生成静止绑定结构；`body/legacy`、`face/legacy`、`eye/legacy`、`brow/legacy`、`mouth/legacy`、`hair/legacy` 追加各自的原算法；`eye/fitted`（版本 2）、`brow/fitted`、`mouth/fitted` 使用原拟合算法，`hair/chains` 使用原分段链，眼部的 `eye.smile`、`eye.squash`、`eye.wide`、`eye.lid-fade`、`eye.highlight`、`eye.aftershock`、`eye.gaze-lid`、`eye.emotion`，眉部的 `brow.shape`、`brow.spring`、`brow.blink`、`brow.lid-coupling`，以及嘴部的 `mouth.vowel`、`mouth.cheek-lid`、`mouth.capture`、`mouth.tongue`、`mouth.jaw`、`mouth.interior-depth`、`mouth.spring` 及 `expression.cheek`／`expression.gloom`、`face.skin-clip`／`face.neck`／`face.depth-turn`、`body.bust`／`body.arms`、`outfit.skirt`／`outfit.ribbons`／`outfit.creature` 追加各自的原模块绑定。拟合与模块的可调值存在实例的 `values`，范围来自原目录。身体和头脸的强度、各部位高级数值（`tuning`）存于实例，不读取旧全局绑定强度或数值。目标网格保留原拓扑和作者编辑，上游作者变形器继续生效。结构分支 ID 由结构实例与固定目标确定，不按当前父级重新分组；新增参数文件夹也按实例分配 ID，兼容标准参数和参数配对可复用。共用同一源图的作者副本仍可分别接受不同实例。
+- `RigSourceModifiers` / `RigLegacyBindings`：`rig.scaffold` 从捕获的源图生成静止绑定结构；`body/legacy`、`face/legacy`、`eye/legacy`、`brow/legacy`、`mouth/legacy`、`hair/legacy` 追加各自的原算法；`eye/fitted`（规范 facade v1）、`brow/fitted`、`mouth/fitted` 使用原拟合算法，`hair/chains` 使用原分段链，眼部的 `eye.smile`、`eye.squash`、`eye.wide`、`eye.lid-fade`、`eye.highlight`、`eye.aftershock`、`eye.gaze-lid`、`eye.emotion`，眉部的 `brow.shape`、`brow.spring`、`brow.blink`、`brow.lid-coupling`，以及嘴部的 `mouth.vowel`、`mouth.cheek-lid`、`mouth.capture`、`mouth.tongue`、`mouth.jaw`、`mouth.interior-depth`、`mouth.spring` 及 `expression.cheek`／`expression.gloom`、`face.skin-clip`／`face.neck`／`face.depth-turn`、`body.bust`／`body.arms`、`outfit.skirt`／`outfit.ribbons`／`outfit.creature` 追加各自的原模块绑定。拟合与模块的可调值存在实例的 `values`，范围来自原目录。身体和头脸的强度、各部位高级数值（`tuning`）存于实例，不读取旧全局绑定强度或数值。目标网格保留原拓扑和作者编辑，上游作者变形器继续生效。结构分支 ID 由结构实例与固定目标确定，不按当前父级重新分组；新增参数文件夹也按实例分配 ID，兼容标准参数和参数配对可复用。共用同一源图的作者副本仍可分别接受不同实例。
+- 独立绑定实现位于 `:algorithms:binding`，当前对外使用规范 facade v1；`rig.scaffold` 仍保留 v1/v2。宿主捕获实例配置、源素材资源及显式上游能力，通过 `ModifierAlgorithmContext` / `ModifierEvaluationInput` 提供给算法；算法在实际上游 IR 上求值并返回变更。`body`、`face`、`eye`、`brow`、`mouth`、`hair` 部件入口组合基础算法和各自启用的子算法，子项使用对应上下文。独立接口与打包不代表全部兼容模板路径已经消除；保存实例的版本、包摘要及输出身份仍按历史锁定读取。
+- `ModifierPartConfig` 位于 `:algorithm-api`，供宿主、部件算法与界面共用子功能顺序、配置读取和 child 重建规则。规范键 `lidCoupling` 优先于旧键 `lid`，显式 `false` 同样优先；读取不重写历史，显式写入才规范化。`subConfigs` 保留 child 的 `id`、`version`、`targets`、`outputAliases`、依赖及独立数值；child 不借用父项的输出别名或可编辑数值，只有规定的公共字段按规则传入。
 - `RigModifierPipeline`：从普通素材网格与作者日志构建输入，按实例顺序运行生成器；预览模型与导出 IR 共用求值结果，并附带每项实际贡献报告。空栈不隐式生成绑定、物理或动作；已有普通参数的名字也不会重新触发预设物理。
 - `WorkspaceModifierEdits`：添加单项／组、更新、启停、移除、移动和应用前缀共用纯候选；通过 `WorkspaceDocumentCommands` 进入隔离重建、CAS 和单历史节点提交。显式实例 ID 可供同一批量的后续成员引用。添加可指定从 0 开始的 `index`；省略时追加，用于在缺失依赖的消费者之前显式插入提供者，既有项不自动重排。
 - 添加预览复用 `workspace_preview_regeneration` 的只读后台候选：`modifiers` 返回候选栈的实际贡献、依赖状态与覆盖冲突，不发布文档、历史或模型；使用同一输入状态和请求提交时，实例分配及候选修订保持一致。
@@ -20,11 +22,13 @@
 
 添加源图绑定使用 `modifier_plan`：固定目标、递归列出所需提供者、复用当前有效或已固化的提供者，并为新增项预分配稳定身份。组目录提供旧／新算法 × 精简／标准／丰富六种组合，按素材适用性筛选附加项。`fitted` 保留为 `modern-standard` 别名。`face/fitted` 与 `face/legacy` 共享互斥族，前者提供兼容的头脸依赖能力；新入口不再组合旧脸部与独立 `face.depth-turn`。计划本身不提交文档，确认前用现有只读候选求值展示实际贡献，确认后只提交一个组操作。对话框的选择变化不改变已捕获目标，提交仍受同一状态 CAS 约束。该添加入口支持已注册源图绑定及原生摆动、物理、模拟和动作的创建与数值编辑；模拟已接入具名权重组、碰撞体、混合形输出模式和静态输入轴配置；训练片段引用上游动作，缺失时暂停求值，非法排序会被拒绝。
 
+新预设初始化中的 `RigPartFolding` 可将连续的基础绑定与子模块折叠为部件实例，只处理未锁定项或调用方明确标记为本次新建且匹配当前内置包的实例，不在读取已有工程时重写历史锁定。参与项须启用、使用规范 v1、属于同一预设组和 scaffold，子目标包含于基础目标，顺序符合部件执行顺序，且依赖均可解析。存在重复身份／重复子类型、不连续或乱序、跨组引用 child 或下游仍需要其独立能力、显式插件／版本覆盖、输入指纹或固定参数提供者时保持展开；不跨过禁用项和其他写入者。CLI 绑定适配路径不执行此折叠。折叠保留基础实例身份，并将 child 原身份、目标、配置及输出别名写入 `subConfigs`；不会以父身份替换 child 的持久输出归属。这里记录实现规则，不表示本轮完整预设初始化或导出已通过验收。
+
 实例状态存于 `RigEditOverlay.modifierStack`，缺省为 `null`，与显式空栈有别。该字段参与工作区修订身份；缺省值从旧文档的修订文本中省略，保持既有修订 ID。工作存储与归档保存完整实例、顺序、版本、配置、休眠覆盖和退休身份。转换捕获的层级、参数文件夹、物理组与动作在实例的 outputAliases 中保存原输出 ID，后续更新不可改写；新实例使用自己的身份，不继承已移除项的别名。空别名字段不参与旧实例的序列化。包含它的 v2 rig 节点使用 schema 6；旧字段继续使用原 schema。
 
 目前栈工程不走旧的生成输入合并与作者态缓存捷径，而由权威源图、作者日志和完整栈重建，避免排序被错误固化或缓存掉。后续性能优化必须保持同一求值结果。旧工程尚未转换时继续保留原生成流程；栈工程的旧预设设置写入会被拒绝并指向修改器操作。
 
-源图适配器按固定目标收集该项之前的有效基础算法及已应用能力，计算加入前后的原算法差异，然后合并到实际上游几何、通道和关系。局部网格修正使用各自的静止祖先投影，避免重复计算祖先运动；拟合改变中性父坐标时，先使用普通 DCC 重绑定原语迁移作者几何，保持画布位置。源图模板只纳入依赖已满足的前驱，暂停的模块不会被下游另一部位重新启用；启用模块也不触发任何未添加的相邻模块。只在同一隔离候选内缓存纯源图模板和参数定义，不缓存最终栈结果；作者编辑、摆动等非模板内容仍来自实际输入。已应用能力保存后续绑定求值所需的源图算法版本、身份、输出别名和配置；不复制模拟烘焙等无此依赖需求的大数据。
+兼容模板路径的源图适配器按固定目标收集该项之前的有效基础算法及已应用能力，计算加入前后的原算法差异，然后合并到实际上游几何、通道和关系。局部网格修正使用各自的静止祖先投影，避免重复计算祖先运动；拟合改变中性父坐标时，先使用普通 DCC 重绑定原语迁移作者几何，保持画布位置。源图模板只纳入依赖已满足的前驱，暂停的模块不会被下游另一部位重新启用；启用模块也不触发任何未添加的相邻模块。只在同一隔离候选内缓存纯源图模板和参数定义，不缓存最终栈结果；作者编辑、摆动等非模板内容仍来自实际输入。已应用能力保存后续绑定求值所需的源图算法版本、身份、输出别名和配置；不复制模拟烘焙等无此依赖需求的大数据。
 
 网格和 Warp 的独立混合形以实际默认关键形为参考，合并作者贡献与加入该模块前后的原生贡献差异；保留参数、键、零贡献位置与权重限制曲线，不把它们铺成所有参数组合的关键形。网格拓扑通过原素材映射迁移；默认几何与通道变化后重新表达混合形参考值。源图求值出现新增承载 Warp 时，由首次创建它的持久实例分配输出 ID，后续更新及前置项固化不重新命名。作者在网格与原父级之间添加的 Warp 继续保留；坐标转换仅逆求共同锚点之下的作者路径，避免域外拟合祖先造成多解。当前适配范围是原算法在原路径之下追加的承载结构；替换或改排原路径的基础算法仍需独立适配。
 
