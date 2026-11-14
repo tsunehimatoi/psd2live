@@ -6,7 +6,7 @@ import io.github.psd2live.core.modifier.*
 import io.github.psd2live.format.compile.RigIrBinary
 import io.github.psd2live.project.rawConfig
 import io.github.psd2live.scenario.Characters
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.*
 import org.umamo.runtime.model.Drawable
 import org.umamo.runtime.model.DrawableMesh

@@ -5,7 +5,7 @@ import io.github.psd2live.algorithms.binding.ScaffoldAlgorithm
 import io.github.psd2live.core.modifier.ModifierAlgorithmContext
 import io.github.psd2live.core.modifier.ModifierAlgorithmResource
 import io.github.psd2live.format.compile.RigIrBinary
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.*
 import io.github.psd2live.core.modifier.ModifierTarget
 import io.github.psd2live.core.modifier.RigModifierInstance

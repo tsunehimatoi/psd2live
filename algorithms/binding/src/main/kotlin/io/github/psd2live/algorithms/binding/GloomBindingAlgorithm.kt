@@ -11,7 +11,7 @@ import io.github.psd2live.format.model.ChannelValue
 import io.github.psd2live.format.model.KeyGrid
 import io.github.psd2live.format.model.Mesh
 import io.github.psd2live.format.model.RigIR
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 

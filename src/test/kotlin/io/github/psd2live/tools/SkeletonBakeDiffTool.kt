@@ -3,7 +3,7 @@ package io.github.psd2live.tools
 import io.github.psd2live.core.Bounds
 import io.github.psd2live.core.SkeletonRig
 import io.github.psd2live.format.compile.document.ContentHash
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import org.umamo.render.eval.CpuDeformationEvaluator
 import org.umamo.runtime.model.ParameterId
 import java.awt.image.BufferedImage

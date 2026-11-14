@@ -5,7 +5,7 @@ import io.github.psd2live.core.modifier.*
 import io.github.psd2live.format.model.Floats
 import io.github.psd2live.project.rawConfig
 import io.github.psd2live.scenario.Characters
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.*
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files

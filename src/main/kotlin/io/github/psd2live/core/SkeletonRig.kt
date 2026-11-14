@@ -310,7 +310,7 @@ internal object SkeletonRig {
 			atlas = org.umamo.runtime.model.PuppetAtlas.Empty, sources = emptyList(), deformPaths = emptyList(),
 			renderRoot = org.umamo.runtime.model.RenderGroup(null, org.umamo.runtime.model.DEFAULT_DRAW_ORDER, emptyList()),
 		)
-		return io.github.psd2live.format.compile.document.ContentHash.of(BAKE_VERSION, io.github.psd2live.targets.cubism.PuppetIr.toIr(read),
+		return io.github.psd2live.format.compile.document.ContentHash.of(BAKE_VERSION, io.github.psd2live.bridge.PuppetIr.toIr(read),
 			base.deformers.map { Triple(it.id.raw, it.parent?.raw, it.javaClass.simpleName) },
 			base.drawables.map { it.id.raw to it.parentDeformerId?.raw }, spec.toJson(), frame,
 			lockedTopology.filter { DrawableId(it) in inputs.drawables }.sorted(), stance?.contentKey, io.github.psd2live.i18n.I18n.currentLanguage.tag,
@@ -319,7 +319,7 @@ internal object SkeletonRig {
 	}
 
 	private fun fullHash(model: PuppetModel) =
-		io.github.psd2live.format.compile.document.ContentHash.of(io.github.psd2live.targets.cubism.PuppetIr.toIr(model))
+		io.github.psd2live.format.compile.document.ContentHash.of(io.github.psd2live.bridge.PuppetIr.toIr(model))
 
 	/** [deformer] hung from [parent]; null for a kind that has no parent to change. */
 	private fun withParent(deformer: Deformer, parent: DeformerId?): Deformer? = when (deformer) {
@@ -402,7 +402,7 @@ internal object SkeletonRig {
 		val (key, bake) = synchronized(bakes) { bakes.entries.lastOrNull { it.value.spec == text }?.toPair() } ?: return null
 		val output = bake.output.copy(atlas = org.umamo.runtime.model.PuppetAtlas.Empty, sources = emptyList(), deformPaths = emptyList())
 		// A hit takes every unread drawable and deformer from its new base ([rebased]): only their ids and order matter.
-		val ir = io.github.psd2live.targets.cubism.PuppetIr.toIr(output).let { ir ->
+		val ir = io.github.psd2live.bridge.PuppetIr.toIr(output).let { ir ->
 			val drawables = bake.inputs.drawables.mapTo(HashSet()) { it.raw }
 			val unread = bake.unread.mapTo(HashSet()) { it.raw }
 			ir.copy(
@@ -418,7 +418,7 @@ internal object SkeletonRig {
 
 	/** Adds [stored] to the bake cache under its key; a bake this process already holds for that key is kept. */
 	fun seed(stored: StoredBake) {
-		val bake = Bake(null, io.github.psd2live.targets.cubism.PuppetIr.toPuppet(stored.output),
+		val bake = Bake(null, io.github.psd2live.bridge.PuppetIr.toPuppet(stored.output),
 			BakeInputs(stored.drawables.mapTo(HashSet(), ::DrawableId), stored.deformers.mapTo(HashSet(), ::DeformerId)),
 			stored.unread.mapTo(HashSet(), ::DeformerId),
 			stored.reparentedDrawables.entries.associate { DrawableId(it.key) to it.value?.let(::DeformerId) },
@@ -1802,7 +1802,7 @@ internal object SkeletonRig {
 			atlas = org.umamo.runtime.model.PuppetAtlas.Empty, sources = emptyList(), deformPaths = emptyList(), vertexGroups = emptyList(),
 			renderRoot = org.umamo.runtime.model.RenderGroup(null, org.umamo.runtime.model.DEFAULT_DRAW_ORDER, emptyList()),
 		)
-		val ir = io.github.psd2live.targets.cubism.PuppetIr.toIr(read).toString()
+		val ir = io.github.psd2live.bridge.PuppetIr.toIr(read).toString()
 		val treeParameters = tree.mapTo(HashSet()) { ParameterId(it.parameterId) }
 		val poseIds = poses.mapTo(HashSet()) { it.id }
 		// A parameter the IR names anywhere, or one the skin turns: a name that merely contains another's only adds to the key.

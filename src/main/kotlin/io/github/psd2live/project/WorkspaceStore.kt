@@ -1,5 +1,6 @@
 package io.github.psd2live.project
 
+import io.github.psd2live.util.IdentityWeakCache
 import io.github.psd2live.core.LayerClassificationOverride
 import io.github.psd2live.core.LayerType
 import io.github.psd2live.core.PartRole

@@ -5,7 +5,7 @@ import io.github.psd2live.core.modifier.*
 import io.github.psd2live.format.model.Floats
 import io.github.psd2live.format.model.Ints
 import io.github.psd2live.project.*
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.putJsonArray

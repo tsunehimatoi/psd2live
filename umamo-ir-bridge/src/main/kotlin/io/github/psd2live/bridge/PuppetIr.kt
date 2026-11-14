@@ -1,4 +1,4 @@
-package io.github.psd2live.targets.cubism
+package io.github.psd2live.bridge
 
 import io.github.psd2live.format.model.*
 import io.github.psd2live.format.model.Canvas

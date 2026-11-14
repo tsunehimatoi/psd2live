@@ -1,7 +1,7 @@
 package io.github.psd2live.core
 
-import io.github.psd2live.project.LayerCanvasRect
-import io.github.psd2live.project.WorkspaceSourceLayer
+import io.github.psd2live.document.LayerCanvasRect
+import io.github.psd2live.document.WorkspaceSourceLayer
 import org.umamo.format.FileKind
 import org.umamo.format.FormatRegistry
 import org.umamo.format.art.ChannelMask

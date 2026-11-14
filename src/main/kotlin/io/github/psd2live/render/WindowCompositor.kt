@@ -90,6 +90,9 @@ internal class WindowCompositor(private val gpu: WindowGpu, private val inner: S
 
 	fun hide(viewId: String) { if (views.remove(viewId) != null) sortViews() }
 
+	/** Root coordinates to the window surface; only queried by opt-in pixel diagnostics when not compositing. */
+	internal fun presentationOffset(): Pair<Float, Float>? = if (hook()) sceneOffset() else null
+
 	private fun sortViews() = synchronized(views) {
 		// Views of different places do not overlap: only a layer's members need an order, and they stay together.
 		painted = views.entries.map { java.util.AbstractMap.SimpleImmutableEntry(it) }

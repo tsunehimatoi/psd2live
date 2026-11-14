@@ -3,7 +3,7 @@ package io.github.psd2live.scenario
 import io.github.psd2live.application.WorkspaceReadSession
 import io.github.psd2live.core.*
 import io.github.psd2live.core.quality.SkeletonBindingQuality
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.*
 import org.junit.jupiter.api.io.TempDir
 import org.umamo.runtime.model.DeformerId

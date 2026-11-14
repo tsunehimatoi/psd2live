@@ -5,7 +5,7 @@ import io.github.psd2live.algorithms.binding.LegacyBodyMotion
 import io.github.psd2live.algorithms.binding.BindingProjection
 import io.github.psd2live.algorithms.binding.ScaffoldBody
 import io.github.psd2live.i18n.tr
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import org.umamo.runtime.model.PartId
 import org.umamo.runtime.model.PuppetModel
 import kotlin.test.*

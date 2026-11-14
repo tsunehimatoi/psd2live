@@ -1,6 +1,6 @@
 package io.github.psd2live.core
 
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import org.umamo.runtime.model.ArtSource

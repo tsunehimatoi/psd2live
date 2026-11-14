@@ -178,7 +178,7 @@ internal class LegacySplitReferences(config: PipelineConfig) {
 	}
 
 	private companion object {
-		private val cache = io.github.psd2live.project.IdentityWeakCache<kotlinx.serialization.json.JsonObject, Set<String>>()
+		private val cache = io.github.psd2live.util.IdentityWeakCache<kotlinx.serialization.json.JsonObject, Set<String>>()
 
 		fun quotedComponents(command: kotlinx.serialization.json.JsonObject): Set<String> = cache.getOrPut(command) {
 			val text = command.toString()

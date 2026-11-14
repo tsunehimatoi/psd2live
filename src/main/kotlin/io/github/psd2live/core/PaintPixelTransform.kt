@@ -13,7 +13,7 @@ import kotlin.math.roundToInt
  * selection when there is one - are lifted off, put through an affine map and laid back over what is left.
  *
  * A map is six numbers `a b c d e f` taking a raster point (x, y) to (a x + c y + e, b x + d y + f), the layout of
- * [io.github.psd2live.project.LayerTransform].
+ * [io.github.psd2live.document.LayerTransform].
  */
 internal object PaintPixelTransform {
     /** [m] taking [x], [y] to raster x. */

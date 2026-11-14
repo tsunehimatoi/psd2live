@@ -22,7 +22,7 @@ class PreviewSessions(
 	/** The p2lrt session, loaded with the current model the first time anything draws with it. */
 	private val p2lrt: P2lrtPreviewSession
 		get() = p2lrtSession ?: P2lrtPreviewSession({ if (active == PreviewBackend.P2LRT || it.viewId in p2lrtViews) onFrame(it) }, ::p2lrtStatus)
-			.also { session -> p2lrtSession = session; model?.let(session::load) }
+			.also { session -> p2lrtSession = session; model?.let { session.load(it, presentation) } }
 	/** Views Cubism cannot draw (another window's context) that p2lrt draws instead. */
 	private val p2lrtViews = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
 
@@ -37,6 +37,7 @@ class PreviewSessions(
 		private set
 
 	private var model: RigPreviewModel? = null
+	private var presentation: io.github.psd2live.util.PresentationToken? = null
 
 	/** How the active runtime's frames reach the window, for the log. */
 	val renderPath: String? get() = if (active == PreviewBackend.CUBISM) cubism.renderPath else p2lrtSession?.renderPath
@@ -57,7 +58,8 @@ class PreviewSessions(
 		model?.let(::loadActive)
 	}
 
-	fun load(model: RigPreviewModel) {
+	fun load(model: RigPreviewModel, presentation: io.github.psd2live.util.PresentationToken? = null) {
+		this.presentation = presentation
 		this.model = model
 		// Both runtimes draw in the window's Skia OpenGL context; without one the canvas paints in software.
 		(io.github.psd2live.render.SkiaGpu.status.value as? io.github.psd2live.render.SkiaGpu.Status.Unavailable)?.let {
@@ -70,10 +72,10 @@ class PreviewSessions(
 	private fun loadActive(model: RigPreviewModel) {
 		when (active) {
 			PreviewBackend.CUBISM -> {
-				cubism.load(model.runtimeBundle, model.rig.puppet.parameters.map { it.id })
-				if (p2lrtViews.isNotEmpty()) p2lrt.load(model)
+				cubism.load(model.runtimeBundle, model.rig.puppet.parameters.map { it.id }, presentation)
+				if (p2lrtViews.isNotEmpty()) p2lrt.load(model, presentation)
 			}
-			PreviewBackend.P2LRT -> p2lrt.load(model)
+			PreviewBackend.P2LRT -> p2lrt.load(model, presentation)
 		}
 	}
 

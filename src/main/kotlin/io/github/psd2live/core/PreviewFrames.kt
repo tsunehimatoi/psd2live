@@ -24,6 +24,8 @@ data class PreviewFrame(
 	val advanced: Boolean = false,
 	/** Features carried by the compiled model (skin 1, exact links 2, simulation 4, collision 8). */
 	val advancedAvailable: Int = 0,
+	/** The exact loaded candidate and texture draw, shared with GpuFrame. */
+	val presentation: io.github.psd2live.util.PresentationFrame? = null,
 )
 
 /** One frame a preview canvas asks for. Camera values are Cubism's: [scale] fits the canvas height, offsets in clip units. */

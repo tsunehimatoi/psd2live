@@ -11,7 +11,7 @@ import io.github.psd2live.core.recipe.RecipeSubject
 import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.core.sim.*
 import io.github.psd2live.format.model.*
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import io.github.psd2live.project.WorkspaceDocument
 import io.github.psd2live.project.WorkspaceSettingsCodec
 import io.github.psd2live.project.rawConfig

@@ -9,7 +9,7 @@ import io.github.psd2live.format.compile.render.SoftwareRasterizer
 import io.github.psd2live.format.model.Bytes
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.format.model.TexturePage
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement

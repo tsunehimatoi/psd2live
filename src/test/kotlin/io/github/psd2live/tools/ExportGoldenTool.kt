@@ -1,5 +1,7 @@
 package io.github.psd2live.tools
 
+import io.github.psd2live.application.run
+
 import io.github.psd2live.core.MotionClip
 import io.github.psd2live.core.MotionCurve
 import io.github.psd2live.core.MotionInterpolation

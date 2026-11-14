@@ -9,7 +9,7 @@ import io.github.psd2live.format.model.Physics
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.format.model.TexturePage
 import io.github.psd2live.format.model.TileArt
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import io.github.psd2live.core.modifier.RigModifierAlgorithms
 import io.github.psd2live.core.modifier.ModifierPluginCatalog
 import io.github.psd2live.core.modifier.RigModifierStack

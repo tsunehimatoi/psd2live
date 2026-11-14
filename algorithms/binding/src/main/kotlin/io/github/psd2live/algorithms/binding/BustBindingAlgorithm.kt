@@ -9,7 +9,7 @@ import io.github.psd2live.format.model.ParameterNode
 import io.github.psd2live.format.model.PhysicsGroup
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.format.model.Textures
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.*
 import org.umamo.edit.VertexSource
 import org.umamo.runtime.model.*

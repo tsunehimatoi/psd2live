@@ -2,7 +2,7 @@ package io.github.psd2live.core
 
 import io.github.psd2live.format.compile.Compiler
 import io.github.psd2live.format.compile.RigIrObjects
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.*
 import io.github.psd2live.core.legacy.SupersededEntryNote
 

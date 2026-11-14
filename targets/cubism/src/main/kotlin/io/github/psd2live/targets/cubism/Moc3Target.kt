@@ -1,5 +1,7 @@
 package io.github.psd2live.targets.cubism
 
+import io.github.psd2live.bridge.PuppetIr
+
 import io.github.psd2live.format.compile.*
 import io.github.psd2live.format.model.AlphaBlend
 import io.github.psd2live.format.model.Clip

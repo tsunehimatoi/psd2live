@@ -1,6 +1,6 @@
 package io.github.psd2live.core
 
-import io.github.psd2live.project.WorkspaceSourceLayer
+import io.github.psd2live.document.WorkspaceSourceLayer
 import kotlinx.serialization.json.*
 import org.umamo.format.art.*
 import org.umamo.edit.VertexSource

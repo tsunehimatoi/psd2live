@@ -4811,7 +4811,7 @@ object RigBuilder {
 		if (context.faceTurn(config) == null) return deformers
 		val marks = context.faceLandmarks(config)
 		// Content keys: unrelated recipe modules must not solve the same facial lattices again.
-		val key = listOf(deformers.map(io.github.psd2live.targets.cubism.PuppetIr::deformerToIr),
+		val key = listOf(deformers.map(io.github.psd2live.bridge.PuppetIr::deformerToIr),
 			context.head, context.face, faceSignature(context.faceRig), config.rigTuning, config.headTurnStrength,
 			io.github.psd2live.core.recipe.RigModules.turnStyle(config), marks.points, marks.contour, marks.measures,
 			context.fittedEyes(config)?.fitting?.fits.orEmpty().keys, context.fittedBrows(config).keys,

@@ -1,7 +1,6 @@
 package io.github.psd2live.core
 
 import io.github.psd2live.AppVersion
-import io.github.psd2live.application.CliPresetBindings
 import io.github.psd2live.i18n.tr
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
@@ -680,7 +679,7 @@ class PSD2LivePipeline {
 
 	/**
 	 * Whether [a] and [b] are the same art for generation and texturing: equal, or different only in where layers were
-	 * moved as a whole ([io.github.psd2live.project.LayerTransform]), which neither generation nor the atlas reads.
+	 * moved as a whole ([io.github.psd2live.document.LayerTransform]), which neither generation nor the atlas reads.
 	 * Layers in [ignoredOpacity] - reference layers, which generators leave out - may also differ in opacity alone.
 	 */
 	fun sameArt(a: SourceArt, b: SourceArt, ignoredOpacity: Set<String> = emptySet()): Boolean {
@@ -688,7 +687,7 @@ class PSD2LivePipeline {
 		if (a.widthPx != b.widthPx || a.heightPx != b.heightPx || a.groups != b.groups || a.layers.size != b.layers.size) return false
 		return a.layers.indices.all { i ->
 			val x = a.layers[i]; val y = b.layers[i]
-			x === y || x == y || (x is io.github.psd2live.project.WorkspaceSourceLayer && y is io.github.psd2live.project.WorkspaceSourceLayer &&
+			x === y || x == y || (x is io.github.psd2live.document.WorkspaceSourceLayer && y is io.github.psd2live.document.WorkspaceSourceLayer &&
 				(x.copy(layerTransform = null) == y.copy(layerTransform = null) ||
 					(x.id.raw in ignoredOpacity && x.copy(layerTransform = null, opacity = y.opacity) == y.copy(layerTransform = null))))
 		}
@@ -709,43 +708,6 @@ class PSD2LivePipeline {
 		return current.config.copy(rigEdits = config.rigEdits) == config
 	}
 
-	fun run(
-		psd: Path,
-		outputDirectory: Path,
-		config: PipelineConfig = PipelineConfig(),
-		progress: ProgressListener = ProgressListener { _, _ -> },
-	): PipelineResult {
-		progress.update(tr("progress.readPsd"), 0.04)
-		return exportSource(readPsd(psd), psd.fileName.toString(), outputDirectory, config, progress)
-	}
-
-	/** Export the current authoritative source, including Agent-created layers, without rereading the PSD. */
-	fun run(
-		source: SourceArt,
-		sourceName: String,
-		outputDirectory: Path,
-		config: PipelineConfig = PipelineConfig(),
-		progress: ProgressListener = ProgressListener { _, _ -> },
-	): PipelineResult {
-		progress.update(tr("progress.readPsd"), 0.04)
-		return exportSource(source, sourceName, outputDirectory, config, progress)
-	}
-
-	private fun exportSource(source: SourceArt, name: String, directory: Path, config: PipelineConfig,
-	                         progress: ProgressListener): PipelineResult {
-		return export(buildSourceExport(source, config, building(progress)), name, directory, progress)
-	}
-
-	internal fun buildSourceExport(source: SourceArt, config: PipelineConfig = PipelineConfig(),
-	                               progress: ProgressListener = ProgressListener { _, _ -> }): RigPreviewModel = when {
-		!standaloneSource(config) -> buildPreview(source, config, progress)
-		config.meshOnly -> buildRawMeshExport(source, config, progress)
-		!config.generateDeformers -> buildRawWithoutDeformers(source, config, progress)
-		else -> CliPresetBindings.build(this, source, config, progress)
-	}
-
-	/** The build's own progress, in the part of an export before the model is written. */
-	private fun building(progress: ProgressListener) = ProgressListener { stage, fraction -> progress.update(stage, 0.04 + fraction * 0.54) }
 
 	/**
 	 * Writes [model] - the rig the editor shows, as built - as the formats its config enables, each read back and

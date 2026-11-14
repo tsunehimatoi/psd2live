@@ -3,7 +3,7 @@ package io.github.psd2live.tools
 import io.github.psd2live.core.*
 import io.github.psd2live.targets.cubism.Cubism3Json
 import io.github.psd2live.targets.cubism.Moc3Target
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import org.umamo.format.moc3.Moc3
 import org.umamo.interop.moc3.Moc3Sidecars
 import org.umamo.interop.moc3.export.Moc3Export

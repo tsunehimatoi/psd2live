@@ -1,7 +1,7 @@
 package io.github.psd2live.algorithms.binding
 
 import io.github.psd2live.core.modifier.*
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import io.github.psd2live.algorithms.binding.BindingFrames.reparent
 import org.umamo.runtime.eval.rotationFormAt
 import org.umamo.runtime.eval.warpControlPointsAt

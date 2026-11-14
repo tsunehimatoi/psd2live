@@ -4,7 +4,7 @@ import io.github.psd2live.core.modifier.RigModifierInstance
 import io.github.psd2live.core.modifier.RigModifierStack
 import io.github.psd2live.core.modifier.ModifierTarget
 import io.github.psd2live.format.model.*
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlin.test.*
 
 class CliPresetPresentationTest {

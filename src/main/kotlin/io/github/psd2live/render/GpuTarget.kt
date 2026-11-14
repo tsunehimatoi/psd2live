@@ -17,7 +17,8 @@ import org.lwjgl.opengl.GL31
 import org.lwjgl.opengl.GL33
 
 /** What a view drew last: [image] holds it in its top-left [width] × [height] texels. */
-class GpuFrame internal constructor(val image: Image, val width: Int, val height: Int)
+class GpuFrame internal constructor(val image: Image, val width: Int, val height: Int,
+	val presentation: io.github.psd2live.util.PresentationFrame? = null)
 
 /**
  * How a view's frame is antialiased ([CanvasAntialiasing]): drawn into a target of [samples] per pixel and resolved,
@@ -69,9 +70,10 @@ internal class GpuTarget(private val coreProfile: Boolean) {
 	 * frame's top (the drawer maps the top to clip y = -1), or with [bottomUp] the scene buffer, copied in flipped.
 	 * [draw] learns the framebuffer it draws into and how it is antialiased; [wanted] does not apply with [bottomUp].
 	 */
-	fun render(skia: DirectContext, width: Int, height: Int, bottomUp: Boolean, wanted: TargetQuality = TargetQuality.NONE, draw: (DrawTarget) -> Unit): GpuFrame? {
+	fun render(skia: DirectContext, width: Int, height: Int, bottomUp: Boolean, wanted: TargetQuality = TargetQuality.NONE, presentation: io.github.psd2live.util.PresentationFrame? = null, draw: (DrawTarget) -> Unit): GpuFrame? {
 		val w = width.coerceAtLeast(1)
 		val h = height.coerceAtLeast(1)
+		drawn = null
 		ensure(w, h)
 		if (bottomUp && sceneFramebuffer == 0) createScene()
 		val buffer = if (bottomUp) null else qualityBuffer(wanted, w, h)
@@ -105,7 +107,7 @@ internal class GpuTarget(private val coreProfile: Boolean) {
 		val adopted = image ?: Image.adoptTextureFrom(skia,
 			BackendTexture.makeGL(capacityWidth, capacityHeight, false, texture, GL11.GL_TEXTURE_2D, GL11.GL_RGBA8),
 			SurfaceOrigin.TOP_LEFT, ColorType.RGBA_8888).also { image = it }
-		return GpuFrame(adopted, w, h).also { drawn = it }
+		return GpuFrame(adopted, w, h, presentation).also { drawn = it }
 	}
 
 	/** The last frame drawn, while its texture stands. */
@@ -317,8 +319,8 @@ class GpuResources internal constructor(private val gpu: WindowGpu) {
 	val coreProfile: Boolean get() = gpu.coreProfile
 
 	/** Draws [viewId]'s frame with [draw] (see [GpuTarget.render]). */
-	fun render(viewId: String, width: Int, height: Int, bottomUp: Boolean, quality: TargetQuality = TargetQuality.NONE, draw: (DrawTarget) -> Unit): GpuFrame? =
-		targets.getOrPut(viewId) { GpuTarget(coreProfile) }.render(skia, width, height, bottomUp, quality, draw)
+	fun render(viewId: String, width: Int, height: Int, bottomUp: Boolean, quality: TargetQuality = TargetQuality.NONE, presentation: io.github.psd2live.util.PresentationFrame? = null, draw: (DrawTarget) -> Unit): GpuFrame? =
+		targets.getOrPut(viewId) { GpuTarget(coreProfile) }.render(skia, width, height, bottomUp, quality, presentation, draw)
 
 	/** What [viewId] drew last. */
 	fun frame(viewId: String): GpuFrame? = targets[viewId]?.last

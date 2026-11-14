@@ -125,6 +125,7 @@ class CubismSdkPreviewSession internal constructor(
 		val generation: Long,
 		val bundle: CubismRuntimeBundle,
 		val parameters: List<ParameterId>,
+		val presentation: io.github.psd2live.util.PresentationToken?,
 	)
 
 	/** Where live models come from: the encoded bundle in memory, or a materialized manifest on old libraries. */
@@ -142,6 +143,7 @@ class CubismSdkPreviewSession internal constructor(
 	private val loadScheduled = AtomicBoolean(false)
 	@Volatile private var generation = 0L
 	@Volatile private var loadedGeneration = -1L
+	private var loadedPresentation: io.github.psd2live.util.PresentationToken? = null
 	@Volatile private var closed = false
 	private var binding: CubismNativeBinding? = null
 	/** The context's resources while a task runs; null in tests. */
@@ -197,11 +199,11 @@ class CubismSdkPreviewSession internal constructor(
 	 * points the live models stay: texture-only changes upload just the changed pages, other changes rebuild
 	 * each model from memory and restore its pose. Older libraries reload through a materialized directory.
 	 */
-	fun load(bundle: CubismRuntimeBundle, parameters: List<ParameterId>) {
+	fun load(bundle: CubismRuntimeBundle, parameters: List<ParameterId>, presentation: io.github.psd2live.util.PresentationToken? = null) {
 		if (closed) return
 		val targetGeneration = ++generation
 		loadedGeneration = -1L
-		pendingLoad.set(PendingLoad(targetGeneration, bundle, parameters))
+		pendingLoad.set(PendingLoad(targetGeneration, bundle, parameters, presentation))
 		scheduleLoad()
 	}
 
@@ -273,6 +275,7 @@ class CubismSdkPreviewSession internal constructor(
 			lastAppliedReload = applied
 			parameterIds = next.parameters
 			writtenParameterIds = nextParameterIds
+			loadedPresentation = next.presentation
 			loadedGeneration = next.generation
 			if (plan != CubismPreviewReload.Full) requeueLastRequests()
 			postStatus(if (next.generation == generation) "ready" else null)
@@ -560,11 +563,13 @@ class CubismSdkPreviewSession internal constructor(
             if (!reusePose) canvas.lastPoseRequest = request
 
 			val target = resources
+			val presentation = loadedPresentation?.frame(request.viewId, if (io.github.psd2live.util.PresentationMeasurements.onCompleted != null)
+                io.github.psd2live.util.PresentationCamera(request.width, request.height, request.scale, request.offsetX, request.offsetY) else null)
 			// Cubism's renderer feeds vertices from client memory, which a core profile does not have.
 			check(target?.coreProfile != true) { "Cubism needs a compatibility OpenGL context; the window's is a core profile" }
 			if (target != null) {
 				// Cubism draws GL's way up; the target turns it upright into the texture the canvas draws.
-				target.render(request.viewId, request.width, request.height, bottomUp = true) {
+				target.render(request.viewId, request.width, request.height, bottomUp = true, presentation = presentation) {
 					native.Live2D_Draw(handle, request.width, request.height, request.scale, request.offsetX, request.offsetY)
 				} ?: error("Cubism frame rendering failed")
 			} else {
@@ -579,6 +584,7 @@ class CubismSdkPreviewSession internal constructor(
                 cameraScale = request.scale,
                 cameraOffsetX = request.offsetX,
                 cameraOffsetY = request.offsetY,
+                presentation = presentation,
 			)
 			if (!closed && frameGeneration == generation) postFrame(frameGeneration, frame)
 		} catch (failure: Throwable) {

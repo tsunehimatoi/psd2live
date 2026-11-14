@@ -11,7 +11,7 @@ import io.github.psd2live.format.model.Canvas
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.project.rawConfig
 import io.github.psd2live.scenario.Characters
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.*
 import org.umamo.format.art.SourceArt
 import kotlin.test.*

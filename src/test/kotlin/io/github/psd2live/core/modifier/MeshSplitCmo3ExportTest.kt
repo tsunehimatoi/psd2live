@@ -10,7 +10,7 @@ import io.github.psd2live.format.compile.Handling
 import io.github.psd2live.format.model.Bytes
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.targets.cubism.Cmo3Target
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import org.junit.jupiter.api.io.TempDir
 import org.umamo.format.cmo3.Cmo3
 import org.umamo.format.cmo3.model.custom.CModelSource

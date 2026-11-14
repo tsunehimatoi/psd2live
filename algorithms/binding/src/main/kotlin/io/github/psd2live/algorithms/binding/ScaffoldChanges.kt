@@ -7,7 +7,7 @@ import io.github.psd2live.core.modifier.ModifierObjectUpdate
 import io.github.psd2live.core.modifier.RigModifierInstance
 import io.github.psd2live.format.model.ChildRef
 import io.github.psd2live.format.model.RigIR
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import org.umamo.runtime.model.*
 
 internal object ScaffoldChanges {

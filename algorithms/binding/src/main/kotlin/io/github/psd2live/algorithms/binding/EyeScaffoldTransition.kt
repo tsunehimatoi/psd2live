@@ -8,7 +8,7 @@ import io.github.psd2live.core.modifier.RigModifierInstance
 import io.github.psd2live.format.model.Deformer
 import io.github.psd2live.format.model.Mesh
 import io.github.psd2live.format.model.RigIR
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 

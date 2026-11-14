@@ -4,7 +4,7 @@ import io.github.psd2live.algorithms.physics.PhysicsGroups
 import io.github.psd2live.core.RigPhysicsEdit
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.format.model.*
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.*
 
 /** Adds arm swing to the existing hanging-arm lattices. Body pose grids remain upstream. */

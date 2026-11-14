@@ -1,12 +1,14 @@
 package io.github.psd2live.tools
 
+import io.github.psd2live.application.run
+
 import io.github.psd2live.core.Cmo3ModelImport
 import io.github.psd2live.core.PSD2LivePipeline
 import io.github.psd2live.core.PipelineConfig
 import io.github.psd2live.core.PipelineResult
 import io.github.psd2live.core.RigBuildProfile
 import io.github.psd2live.core.RigIrCompiler
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals

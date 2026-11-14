@@ -13,7 +13,7 @@ import io.github.psd2live.project.MaterializedRigStore
 import io.github.psd2live.project.ProjectRepository
 import io.github.psd2live.project.ProjectSaveCapture
 import io.github.psd2live.project.WorkspaceStore
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
 import org.umamo.render.eval.CpuDeformationEvaluator

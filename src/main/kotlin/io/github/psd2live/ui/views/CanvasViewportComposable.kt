@@ -1679,7 +1679,8 @@ fun CanvasViewportComposable(
 				val holeSize = size
 				val boundaryOffset = Offset(viewport.offsetX.toFloat(), viewport.offsetY.toFloat())
 				val boundarySize = Size((viewport.canvasWidth * viewport.scale).toFloat(), (viewport.canvasHeight * viewport.scale).toFloat())
-				composited.showView(renderKey, io.github.psd2live.render.CompositedView(canvasOrigin.x, canvasOrigin.y, holeSize.width, holeSize.height) { target, frame ->
+				val presentationOrigin = canvasOrigin
+				composited.showView(renderKey, io.github.psd2live.render.CompositedView(presentationOrigin.x, presentationOrigin.y, holeSize.width, holeSize.height) { target, frame ->
 					androidx.compose.ui.graphics.drawscope.CanvasDrawScope().draw(drawDensity, drawDirection, target.asComposeCanvas(), holeSize) {
 						when (background.kind) {
 							CanvasBackgroundKind.CHECKER -> drawRect(brush = checkerboardBrush)
@@ -1687,7 +1688,7 @@ fun CanvasViewportComposable(
 							CanvasBackgroundKind.TRANSPARENT -> drawRect(color = TransparentCanvasFill, blendMode = BlendMode.Src)
 						}
 						drawRect(color = Color(198, 205, 216, 105), topLeft = boundaryOffset, size = boundarySize, style = Stroke(width = 1f))
-						frame?.let { drawGpuFrame(it) }
+						frame?.let { drawGpuFrame(it, presentationOrigin = presentationOrigin) }
 					}
 				})
 				drawRect(Color.Transparent, blendMode = BlendMode.Clear)
@@ -1695,7 +1696,7 @@ fun CanvasViewportComposable(
 				previewHole.set(false)
 				previewGpu?.hideView(renderKey)
 				// Drawn in this draw, for this frame's request: the texture already matches the camera.
-				drawGpuFrame(previewDrawn)
+				drawGpuFrame(previewDrawn, presentationOrigin = canvasOrigin)
 			} else if (snapshotGeometry == null) {
 				if (previewHole.getAndSet(false)) previewGpu?.hideView(renderKey)
 				// Paint is an isolated document-canvas session: its live tiles belong only on the Edit
@@ -2734,7 +2735,7 @@ private const val ONION_TINT = 0.6f
  * Draws a GPU frame at the origin: the top-left [GpuFrame.width] × [GpuFrame.height] texels of its texture, faded
  * to [alpha] and, for an onion-skin ghost, washed with [tint].
  */
-internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGpuFrame(frame: GpuFrame, alpha: Float = 1f, tint: Color? = null) {
+internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGpuFrame(frame: GpuFrame, alpha: Float = 1f, tint: Color? = null, presentationOrigin: Offset? = null) {
 	drawIntoCanvas { canvas ->
 		val rect = org.jetbrains.skia.Rect.makeWH(frame.width.toFloat(), frame.height.toFloat())
 		val paint = if (alpha < 1f || tint != null) org.jetbrains.skia.Paint().apply {
@@ -2743,6 +2744,7 @@ internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGpuFrame(frame
 		} else null
 		try {
 			canvas.nativeCanvas.drawImageRect(frame.image, rect, rect, org.jetbrains.skia.SamplingMode.DEFAULT, paint, true)
+            io.github.psd2live.render.WindowFramePresentation.consume(frame, presentationOrigin?.x, presentationOrigin?.y)
 		} finally {
 			paint?.close()
 		}

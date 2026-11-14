@@ -4,7 +4,7 @@ import io.github.psd2live.core.*
 import io.github.psd2live.core.recipe.RigRecipe
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.format.model.TileArt
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import java.util.concurrent.CancellationException
 import org.umamo.format.art.SourceArt
 import org.umamo.runtime.model.PuppetModel

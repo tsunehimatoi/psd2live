@@ -3,7 +3,7 @@ package io.github.psd2live.core
 import io.github.psd2live.algorithms.binding.BindingFrames
 import io.github.psd2live.algorithms.binding.GeometryResidual
 import io.github.psd2live.format.model.*
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import org.umamo.edit.VertexSource
 import org.umamo.runtime.model.DrawableId
 import kotlin.test.*

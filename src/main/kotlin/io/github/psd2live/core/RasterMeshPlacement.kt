@@ -1,6 +1,6 @@
 package io.github.psd2live.core
 
-import io.github.psd2live.project.LayerTransform
+import io.github.psd2live.document.LayerTransform
 import org.umamo.render.eval.drawableSpaceMapping
 import org.umamo.runtime.model.*
 

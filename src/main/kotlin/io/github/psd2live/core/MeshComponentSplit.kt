@@ -1,6 +1,6 @@
 package io.github.psd2live.core
 
-import io.github.psd2live.project.WorkspaceSourceLayer
+import io.github.psd2live.document.WorkspaceSourceLayer
 import org.umamo.format.art.LayerBounds
 import org.umamo.format.art.LayerId
 import org.umamo.format.art.LayerRaster

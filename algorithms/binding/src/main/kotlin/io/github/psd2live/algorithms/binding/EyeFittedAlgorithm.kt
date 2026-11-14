@@ -5,7 +5,7 @@ import io.github.psd2live.format.model.Parameter
 import io.github.psd2live.format.model.ParameterLink
 import io.github.psd2live.format.model.ParameterNode
 import io.github.psd2live.format.model.RigIR
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.*
 import org.umamo.runtime.eval.meshGridDefaultDeltas
 import org.umamo.runtime.eval.scalarAt

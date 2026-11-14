@@ -3,7 +3,7 @@ package io.github.psd2live.algorithms.simulation
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.sim.*
 import io.github.psd2live.format.model.RigIR
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import io.github.psd2live.algorithms.physics.PhysicsGroups
 import org.umamo.edit.withParametersSyncedFromTree
 

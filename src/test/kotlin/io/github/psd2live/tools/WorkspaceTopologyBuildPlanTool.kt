@@ -5,7 +5,7 @@ import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.format.compile.RigIrBinary
 import io.github.psd2live.format.model.*
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import io.github.psd2live.project.*

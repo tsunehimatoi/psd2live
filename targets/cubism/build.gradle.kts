@@ -1,5 +1,4 @@
-// Cubism export target (GPL-3, uses the Umamo engine): PuppetModel <-> RigIR conversion and the
-// moc3/cmo3 writers behind the neutral export interface.
+// Cubism export target (GPL-3): target lowering and moc3/cmo3 writers behind the neutral export interface.
 plugins {
 	kotlin("jvm")
 }
@@ -14,7 +13,7 @@ kotlin {
 dependencies {
 	api(project(":format-model"))
 	api(project(":format-compile"))
-	api(project(":umamo"))
+	api(project(":umamo-ir-bridge"))
 	testImplementation(kotlin("test"))
 }
 

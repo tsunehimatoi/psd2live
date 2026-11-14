@@ -28,8 +28,8 @@ class P2lrtPreviewSession(
 	private val onFrame: (PreviewFrame) -> Unit,
 	private val onStatus: (String?) -> Unit,
 ) : AutoCloseable {
-	private class Loaded(val generation: Long, val model: P2lRuntime.Model, val pages: List<java.awt.image.BufferedImage>)
-	private class PendingModel(val generation: Long, val model: RigPreviewModel)
+	private class Loaded(val generation: Long, val model: P2lRuntime.Model, val pages: List<java.awt.image.BufferedImage>, val presentation: io.github.psd2live.util.PresentationToken?)
+	private class PendingModel(val generation: Long, val model: RigPreviewModel, val presentation: io.github.psd2live.util.PresentationToken?)
 	private class Delivery(val generation: Long, val frame: PreviewFrame)
 
 	private class View(val rig: P2lRuntime.Rig, val gpu: WindowGpu, val generation: Long) {
@@ -72,11 +72,11 @@ class P2lrtPreviewSession(
 	val renderPath: String get() = "texture"
 
 	/** Compiles [model] to `.p2lrt` in the background and plays it; requests coalesce to the newest model. */
-	fun load(model: RigPreviewModel) {
+	fun load(model: RigPreviewModel, presentation: io.github.psd2live.util.PresentationToken? = null) {
 		if (closed) return
 		synchronized(lock) {
 			if (closed) return
-			pendingModel.set(PendingModel(generation.incrementAndGet(), model))
+			pendingModel.set(PendingModel(generation.incrementAndGet(), model, presentation))
 		}
 		scheduleCompile()
 	}
@@ -101,10 +101,10 @@ class P2lrtPreviewSession(
 						runtime ?: (P2lRuntime.load() ?: error("The PSD2Live runtime library is not available")).also { runtime = it }
 					}
 					try {
-						compile(rt, model, target, simulations = true)
+						compile(rt, model, target, pending.presentation, simulations = true)
 					} catch (failure: Throwable) {
 						// A simulation that cannot be prepared must not take the whole preview down: play the rig without it.
-						try { compile(rt, model, target, simulations = false) }
+						try { compile(rt, model, target, pending.presentation, simulations = false) }
 						catch (fallback: Throwable) { fallback.addSuppressed(failure); throw fallback }
 					}
 				}
@@ -129,7 +129,7 @@ class P2lrtPreviewSession(
 		}
 	}
 
-	private fun compile(runtime: P2lRuntime, model: RigPreviewModel, target: Long, simulations: Boolean): Loaded {
+	private fun compile(runtime: P2lRuntime, model: RigPreviewModel, target: Long, presentation: io.github.psd2live.util.PresentationToken?, simulations: Boolean): Loaded {
 		val bytes = P2lrt.write(RigIrCompiler.compile(model, simulations = simulations))
 		val shared = runtime.loadModel(bytes)
 		try {
@@ -137,7 +137,7 @@ class P2lrtPreviewSession(
 				// Fitting is cached on the shared native model, including for future views and mode switches.
 				rig.setAdvanced(rig.advancedAvailable)
 			}
-			return Loaded(target, shared, model.atlas.pages.map { it.image })
+			return Loaded(target, shared, model.atlas.pages.map { it.image }, presentation)
 		} catch (failure: Throwable) {
 			shared.close()
 			throw failure
@@ -255,7 +255,9 @@ class P2lrtPreviewSession(
 		val centerX = request.width * 0.5f * (1f + request.offsetX)
 		val centerY = request.height * 0.5f * (1f - request.offsetY)
 		val quality = io.github.psd2live.render.TargetQuality.of(io.github.psd2live.render.GraphicsSettings.current.canvasAntialiasing)
-		resources.render(request.viewId, request.width, request.height, bottomUp = false, quality) { target ->
+		val presentation = current.presentation?.frame(request.viewId, if (io.github.psd2live.util.PresentationMeasurements.onCompleted != null)
+                io.github.psd2live.util.PresentationCamera(request.width, request.height, request.scale, request.offsetX, request.offsetY) else null)
+		resources.render(request.viewId, request.width, request.height, bottomUp = false, quality, presentation) { target ->
 			// Supersampled, the whole frame is in the larger target's pixels.
 			val s = target.scale
 			context.renderer.draw(rig, target.framebuffer, request.width * s, request.height * s, pixelsPerCanvas * s,
@@ -268,6 +270,7 @@ class P2lrtPreviewSession(
 			width = request.width, height = request.height, parameters = parameters, animationEnabled = request.animationEnabled,
 			viewId = request.viewId, cameraScale = request.scale, cameraOffsetX = request.offsetX, cameraOffsetY = request.offsetY,
 			backend = PreviewBackend.P2LRT, advanced = features != 0, advancedAvailable = rig.advancedAvailable,
+			presentation = presentation,
 		), current.generation)
 	}
 

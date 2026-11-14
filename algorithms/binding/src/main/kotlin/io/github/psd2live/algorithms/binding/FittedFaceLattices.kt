@@ -5,7 +5,7 @@ import io.github.psd2live.core.modifier.ModifierModelChanges
 import io.github.psd2live.core.modifier.ModifierObjectChanges
 import io.github.psd2live.core.modifier.ModifierObjectUpdate
 import io.github.psd2live.format.model.RigIR
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.*
 import org.umamo.runtime.model.DeformerId
 

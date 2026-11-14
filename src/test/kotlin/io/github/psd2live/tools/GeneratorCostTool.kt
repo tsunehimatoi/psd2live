@@ -7,7 +7,7 @@ import io.github.psd2live.core.sim.SimBaker
 import io.github.psd2live.core.sim.SimGenerator
 import io.github.psd2live.core.sim.SimKind
 import io.github.psd2live.format.compile.document.ContentHash
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import kotlin.test.Test
 
 /**

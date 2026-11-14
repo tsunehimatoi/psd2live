@@ -1,7 +1,7 @@
 package io.github.psd2live.core
 
-import io.github.psd2live.project.WorkspaceSourceArt
-import io.github.psd2live.project.WorkspaceSourceLayer
+import io.github.psd2live.document.WorkspaceSourceArt
+import io.github.psd2live.document.WorkspaceSourceLayer
 import io.github.psd2live.i18n.tr
 import kotlinx.serialization.json.*
 import org.umamo.edit.withDrawablesDeleted

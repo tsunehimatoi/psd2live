@@ -4,7 +4,7 @@ import io.github.psd2live.algorithms.binding.ScaffoldBinding
 import io.github.psd2live.core.modifier.ModifierTarget
 import io.github.psd2live.core.modifier.RigModifierInstance
 import io.github.psd2live.format.model.ParameterNode as IrParameterNode
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import org.umamo.runtime.model.*
 import kotlin.test.*
 

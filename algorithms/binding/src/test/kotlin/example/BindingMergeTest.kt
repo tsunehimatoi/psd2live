@@ -2,7 +2,7 @@ package example
 
 import io.github.psd2live.algorithms.binding.*
 import io.github.psd2live.core.modifier.*
-import io.github.psd2live.targets.cubism.PuppetIr
+import io.github.psd2live.bridge.PuppetIr
 import org.umamo.runtime.model.*
 import java.util.concurrent.CancellationException
 import kotlin.test.*
