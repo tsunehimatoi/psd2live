@@ -60,6 +60,7 @@ docs/
 | [`.p2lrt` 2.0 格式](zh/spec/P2LRT_V2.md) | 分块容器、核心层与扩展层、演进规则 |
 | [文档层](zh/spec/DOCUMENT_LAYER.md) | 生成器依赖图、生成结果覆盖、缓存 |
 | [Rig 预设架构](zh/spec/RIG_PRESETS.md) | 部位、基础算法、模块与配方 |
+| [极简工作区与移动端（设计中）](zh/spec/LITE_WORKSPACE.md) | 零门槛精简界面、前后分层触控向导、MCP 接入与移动端分期方案 |
 
 ## Agent（MCP）
 
