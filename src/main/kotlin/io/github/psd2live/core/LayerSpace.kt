@@ -3,7 +3,7 @@ package io.github.psd2live.core
 import org.umamo.format.art.LayerBounds
 import org.umamo.format.art.LayerRaster
 import org.umamo.format.art.SourceLayer
-import io.github.psd2live.project.storedCanvasRect
+import io.github.psd2live.document.storedCanvasRect
 
 /**
  * One layer's space: where the layer sits on the canvas and how many raster pixels cover it.

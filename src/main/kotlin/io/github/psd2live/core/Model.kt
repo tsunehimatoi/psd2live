@@ -289,9 +289,9 @@ data class PipelineConfig(
 	/** The stored atlas budget (`atlas` setting); null keeps [atlasSize] and [texturePadding] with the default page count. */
 	val atlasBudget: AtlasBudget? = null,
 	/** Per-layer texture density, lock and pin by source layer ID ([AtlasLayout]). */
-	val textureOverrides: Map<String, io.github.psd2live.project.TextureOverride> = emptyMap(),
+	val textureOverrides: Map<String, io.github.psd2live.document.TextureOverride> = emptyMap(),
 	/** The stored atlas layout (`atlasArrangement` setting); null arranges the atlas automatically on every build. */
-	val atlasArrangement: io.github.psd2live.project.AtlasArrangement? = null,
+	val atlasArrangement: io.github.psd2live.document.AtlasArrangement? = null,
 ) {
 	/** The budget the atlas is packed within: [atlasBudget], else the legacy page size and padding with the default page count. */
 	fun effectiveAtlasBudget(): AtlasBudget = atlasBudget ?: AtlasBudget(atlasSize.coerceAtLeast(1), AtlasBudget.DEFAULT_MAX_PAGES, texturePadding.coerceAtLeast(0))
@@ -501,7 +501,7 @@ data class PackedAtlas(
 	/** Why the layout departs from the request: a fit below 1, locks or pins that did not fit, pages beyond the budget. Logged only. */
 	val notices: List<String> = emptyList(),
 	/** The mesh footprints the stored arrangement gave tiles; a tile without one owns its whole rectangle. */
-	val footprints: Map<String, io.github.psd2live.project.TextureFootprint> = emptyMap(),
+	val footprints: Map<String, io.github.psd2live.document.TextureFootprint> = emptyMap(),
 	/** Whether the layout is a stored arrangement rather than the automatic one. */
 	val arranged: Boolean = false,
 ) {

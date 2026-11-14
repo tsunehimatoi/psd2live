@@ -1,7 +1,10 @@
 package io.github.psd2live.project
 
 import io.github.psd2live.core.Side
-import io.github.psd2live.core.fit.*
+import io.github.psd2live.core.fit.EyePoint
+import io.github.psd2live.core.fit.EyeRegion
+import io.github.psd2live.core.fit.EyePrimitive
+import io.github.psd2live.core.fit.EyeContact
 import io.github.psd2live.core.recipe.EyePartOverride
 import kotlinx.serialization.json.*
 

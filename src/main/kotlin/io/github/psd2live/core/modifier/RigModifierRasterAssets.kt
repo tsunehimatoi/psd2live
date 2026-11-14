@@ -1,7 +1,7 @@
 package io.github.psd2live.core.modifier
 
 import io.github.psd2live.core.*
-import io.github.psd2live.project.WorkspaceSourceLayer
+import io.github.psd2live.document.WorkspaceSourceLayer
 import io.github.psd2live.format.model.Bytes
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.format.model.TexturePage

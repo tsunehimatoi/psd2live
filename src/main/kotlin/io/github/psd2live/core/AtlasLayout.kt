@@ -2,11 +2,11 @@ package io.github.psd2live.core
 
 import io.github.psd2live.format.compile.RasterResample
 import io.github.psd2live.i18n.tr
-import io.github.psd2live.project.ArrangedTile
-import io.github.psd2live.project.AtlasArrangement
-import io.github.psd2live.project.TextureFootprint
-import io.github.psd2live.project.TextureOverride
-import io.github.psd2live.project.TexturePin
+import io.github.psd2live.document.ArrangedTile
+import io.github.psd2live.document.AtlasArrangement
+import io.github.psd2live.document.TextureFootprint
+import io.github.psd2live.document.TextureOverride
+import io.github.psd2live.document.TexturePin
 import org.umamo.format.art.SourceLayer
 import java.awt.image.BufferedImage
 import java.lang.ref.SoftReference

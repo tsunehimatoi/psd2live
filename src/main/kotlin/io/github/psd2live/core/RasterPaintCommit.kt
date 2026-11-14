@@ -1,10 +1,10 @@
 package io.github.psd2live.core
 
-import io.github.psd2live.project.LayerCanvasRect
-import io.github.psd2live.project.WorkspaceSourceArt
-import io.github.psd2live.project.WorkspaceSourceLayer
-import io.github.psd2live.project.storedCanvasRect
-import io.github.psd2live.project.transform
+import io.github.psd2live.document.LayerCanvasRect
+import io.github.psd2live.document.WorkspaceSourceArt
+import io.github.psd2live.document.WorkspaceSourceLayer
+import io.github.psd2live.document.storedCanvasRect
+import io.github.psd2live.document.transform
 import kotlinx.serialization.json.*
 import org.umamo.edit.withDrawablesDeleted
 import org.umamo.format.art.LayerBounds
@@ -128,7 +128,7 @@ internal object RasterPaintCommit {
         // A layer moved as a whole shows its frame elsewhere on the canvas: the rebuilt mesh goes where it shows.
         // The document's layer, not the classified one: a model reused across a move carries the new layer only in its source.
         val shownAs = sourceLayerFor(currentPreview, currentPreview.analysis, layerId)?.id?.raw
-            ?.let { id -> currentPreview.analysis.source.layers.firstOrNull { it.id.raw == id } }?.transform ?: io.github.psd2live.project.LayerTransform.IDENTITY
+            ?.let { id -> currentPreview.analysis.source.layers.firstOrNull { it.id.raw == id } }?.transform ?: io.github.psd2live.document.LayerTransform.IDENTITY
         val currentAnalysis = currentPreview.analysis
         // The frames the live rig was built on. Rebuilt from the previous analysis on purpose: the
         // commit preserves every deformer, so a mesh rebuilt against frames moved by the new paint

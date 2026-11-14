@@ -1,5 +1,7 @@
 package io.github.psd2live.tools
 
+import io.github.psd2live.application.run
+
 import io.github.psd2live.core.Cmo3ModelImport
 import io.github.psd2live.core.PSD2LivePipeline
 import io.github.psd2live.core.PipelineConfig

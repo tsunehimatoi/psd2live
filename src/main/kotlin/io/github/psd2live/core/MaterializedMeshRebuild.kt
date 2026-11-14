@@ -1,6 +1,6 @@
 package io.github.psd2live.core
 
-import io.github.psd2live.project.transform
+import io.github.psd2live.document.transform
 import io.github.psd2live.core.sim.*
 import org.umamo.edit.VertexSource
 import org.umamo.format.art.SourceArt
@@ -63,7 +63,7 @@ internal object MaterializedMeshRebuild {
             val canvasGenerated = if (layer is MouthLipLayer) generated.copy(puppet = org.umamo.render.restMeshesToCanvasSpace(generated.puppet)) else generated
             val shownAs = (current.analysis.source.layers.firstOrNull { it.id.raw == layerId }
                 ?: (layer as? MouthLipLayer)?.let { lip -> current.analysis.source.layers.firstOrNull { it.id.raw == lip.ownerId } })?.transform
-                ?: io.github.psd2live.project.LayerTransform.IDENTITY
+                ?: io.github.psd2live.document.LayerTransform.IDENTITY
             val converted = RasterMeshPlacement.underParents(canvasGenerated, model, { previous.parentDeformerId }, { shownAs }) {
                 progress.update("Preparing parent-space mesh", (index + 0.5) / changed.size)
             }

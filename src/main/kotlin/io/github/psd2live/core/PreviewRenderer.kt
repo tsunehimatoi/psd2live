@@ -1,6 +1,6 @@
 ﻿package io.github.psd2live.core
 
-import io.github.psd2live.project.storedCanvasRect
+import io.github.psd2live.document.storedCanvasRect
 import org.umamo.format.art.SourceArt
 import org.umamo.format.art.isEffectivelyVisible
 import java.awt.AlphaComposite
@@ -14,7 +14,7 @@ object PreviewRenderer {
 	 * would hash every array's contents on each lookup, megabytes per rebuild.
 	 */
 	private data class LayerKey(val rgba: ByteArray, val width: Int, val left: Int, val top: Int, val opacity: Float,
-	                            val rect: io.github.psd2live.project.LayerCanvasRect? = null, val height: Int = 0) {
+	                            val rect: io.github.psd2live.document.LayerCanvasRect? = null, val height: Int = 0) {
 		override fun equals(other: Any?) = other is LayerKey && rgba === other.rgba && width == other.width && left == other.left &&
 			top == other.top && opacity == other.opacity && rect == other.rect && height == other.height
 		override fun hashCode() = java.util.Objects.hash(System.identityHashCode(rgba), width, left, top, opacity, rect, height)

@@ -1,6 +1,6 @@
 package io.github.psd2live.core
 
-import io.github.psd2live.project.LayerCanvasRect
+import io.github.psd2live.document.LayerCanvasRect
 import org.umamo.format.art.LayerBounds
 import org.umamo.format.art.LayerRaster
 import org.umamo.format.art.SourceLayer

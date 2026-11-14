@@ -5,9 +5,8 @@ import io.github.psd2live.core.MotionClip
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import org.umamo.format.art.SourceArt
-import java.lang.ref.ReferenceQueue
+import io.github.psd2live.util.IdentityWeakCache
 import java.lang.ref.SoftReference
-import java.lang.ref.WeakReference
 import java.lang.reflect.Field
 import java.lang.reflect.Modifier
 import java.security.MessageDigest
@@ -254,37 +253,5 @@ internal object JournalEntryText {
 	fun bytes(entry: JsonObject): ByteArray {
 		cache.getOrPut(entry) { SoftReference(entry.toString().encodeToByteArray()) }.get()?.let { return it }
 		return entry.toString().encodeToByteArray().also { cache.put(entry, SoftReference(it)) }
-	}
-}
-
-/** A thread-safe map from object identity to a value that does not keep its keys alive. */
-internal class IdentityWeakCache<K : Any, V : Any> {
-	private class Key(referent: Any, queue: ReferenceQueue<Any>?) : WeakReference<Any>(referent, queue) {
-		private val hash = System.identityHashCode(referent)
-		override fun hashCode(): Int = hash
-		override fun equals(other: Any?): Boolean {
-			if (other === this) return true
-			if (other !is Key || other.hash != hash) return false
-			val referent = get()
-			return referent != null && referent === other.get()
-		}
-	}
-
-	private val queue = ReferenceQueue<Any>()
-	private val map = HashMap<Key, V>()
-
-	fun put(key: K, value: V) {
-		synchronized(this) { purge(); map[Key(key, queue)] = value }
-	}
-
-	fun getOrPut(key: K, compute: () -> V): V {
-		synchronized(this) { purge(); map[Key(key, null)]?.let { return it } }
-		val value = compute()
-		synchronized(this) { map.putIfAbsent(Key(key, queue), value)?.let { return it } }
-		return value
-	}
-
-	private fun purge() {
-		while (true) map.remove(queue.poll() as? Key ?: return)
 	}
 }

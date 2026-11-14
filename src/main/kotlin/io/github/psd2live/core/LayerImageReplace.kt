@@ -1,9 +1,9 @@
 package io.github.psd2live.core
 
 import io.github.psd2live.project.WorkspaceDocument
-import io.github.psd2live.project.WorkspaceSourceArt
-import io.github.psd2live.project.WorkspaceSourceLayer
-import io.github.psd2live.project.canvasRect
+import io.github.psd2live.document.WorkspaceSourceArt
+import io.github.psd2live.document.WorkspaceSourceLayer
+import io.github.psd2live.document.canvasRect
 import org.umamo.format.art.LayerRaster
 import kotlin.math.roundToInt
 

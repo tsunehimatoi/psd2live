@@ -1,9 +1,9 @@
 package io.github.psd2live.core
 
 import io.github.psd2live.format.compile.RasterResample
-import io.github.psd2live.project.LayerCanvasRect
-import io.github.psd2live.project.WorkspaceSourceMetadata
-import io.github.psd2live.project.storedCanvasRect
+import io.github.psd2live.document.LayerCanvasRect
+import io.github.psd2live.document.WorkspaceSourceMetadata
+import io.github.psd2live.document.storedCanvasRect
 import org.umamo.format.art.LayerBounds
 import org.umamo.format.art.LayerRaster
 import org.umamo.format.art.SourceLayer

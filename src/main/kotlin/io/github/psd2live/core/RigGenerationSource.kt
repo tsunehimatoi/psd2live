@@ -185,11 +185,11 @@ internal object RigGenerationSource {
         if (reference.layers.any { it.id.raw == id } || id in DepthSplit.frontLayerIds(overlay) ||
             id in ArtPrimitiveJournal.ownedLayers(overlay) || id in ArtPrimitiveJournal.supersededLayers(overlay) ||
             PrimitiveResolution.of(overlay).isPartLayer(id) || id in partitionCoverage(overlay)) return reference
-        return io.github.psd2live.project.WorkspaceSourceArt(reference.widthPx, reference.heightPx,
+        return io.github.psd2live.document.WorkspaceSourceArt(reference.widthPx, reference.heightPx,
             reference.layers + if (trace == MeshTrace.TEXTURE && CanvasDensity.dense(layer))
-                (io.github.psd2live.project.WorkspaceSourceLayer.copyOf(layer, layer.order) as io.github.psd2live.project.WorkspaceSourceLayer)
+                (io.github.psd2live.document.WorkspaceSourceLayer.copyOf(layer, layer.order) as io.github.psd2live.document.WorkspaceSourceLayer)
                     .copy(raster = CanvasDensity.alignedRaster(layer), rect = null)
-            else io.github.psd2live.project.WorkspaceSourceLayer.copyOf(CanvasDensity.canvasLayer(layer), layer.order),
+            else io.github.psd2live.document.WorkspaceSourceLayer.copyOf(CanvasDensity.canvasLayer(layer), layer.order),
             reference.groups)
     }
 

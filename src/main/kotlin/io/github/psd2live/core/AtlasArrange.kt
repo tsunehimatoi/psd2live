@@ -1,13 +1,13 @@
 package io.github.psd2live.core
 
-import io.github.psd2live.project.ArrangedTile
-import io.github.psd2live.project.TextureFootprint
+import io.github.psd2live.document.ArrangedTile
+import io.github.psd2live.document.TextureFootprint
 import org.umamo.format.art.LayerRaster
 import kotlin.math.ceil
 import kotlin.math.floor
 
 /**
- * The geometry of a stored atlas arrangement ([io.github.psd2live.project.AtlasArrangement]).
+ * The geometry of a stored atlas arrangement ([io.github.psd2live.document.AtlasArrangement]).
  *
  * A page is a grid of [CELL] x [CELL] texture pixel cells. A tile occupies the cells its rectangle touches, or,
  * with a mesh footprint, only the cells its meshes touch - so two tiles whose rectangles overlap fit side by
