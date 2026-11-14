@@ -69,3 +69,31 @@ PresentationMeasurements.onCompleted = null
 - 无已提交捕获、预览未挂载、软件绘制、无匹配帧或被更新修订淘汰时不产生成功样本，验收工具应将其记为未完成，不能记作零延迟。
 
 无 GPU 回归覆盖令牌淘汰、视图关闭/重开、逐次纹理身份、发布与 GPU 完成乱序、重复完成、关闭测量、未知修订及观察者异常隔离，并以模拟 Cubism API 检查实际 session 的相同 bundle 重载、旧交付淘汰和加载失败。P2LRT 原生编译、真实窗口与像素正确性留待独占验收。
+
+## 独占窗口验收驱动
+
+`WindowActivationTool` 已准备并通过编译，真实窗口执行仍需单独安排。它启动完整的 `PSD2LiveApp`，使用合成的四块彩色图案，经 `DesktopWorkspace` 安装原子工作区快照，再通过实际 VM、`WorkspaceRenderCoordinator`、P2LRT、`CanvasViewportComposable` 和 Skiko 的 `drawContent` 回放回执验收。它不调用离屏探针、不直接制造 GPU 完成回执。
+
+每个样本先生成模型，再安装不同颜色的源图；模型生成不计入 activation 指标。激活在同一 EDT turn 内连续执行两次，前一候选被取代；验收要求后一候选的 `revision/state/candidate/viewId/capturedAt` 完全匹配。上一轮真实帧还会重新送给 production coordinator 和 VM，确认不能覆盖新帧流。普通测试中的假回执只用于 `WindowActivationAuditTest`，不进入窗口采样。
+
+- `smoke`：1 次预热、2 次正式激活，仅作实际窗口、native 及反射接线的初验，无性能分位数。
+- `measure`：1 次预热、至少 30 次正式激活；所有样本身份正确才输出中位数、最近秩 P95、最大值。
+- 使用 coroutine flow/channel 和有界超时等待事件，不使用 sleep 轮询。无窗口回执会记录 `timeout_no_window_receipt` 和空 GPU 结束时间，失败退出、保留已完成样本，不输出成功统计或用 CPU/离屏时间补齐。
+- 报告分别写到 `build/tools/window-activation-smoke/report.json`、`build/tools/window-activation/report.json`，保留所有原始回执、期望身份、被取代候选、旧帧拒绝结果、GPU/native 环境与 DLL SHA-256。实际驱动不证明像素颜色或屏幕扫描正确。
+- 起点分别记录 `syntheticInstallStartedAtNanos`、`activationCapturedAtNanos`；`editStartedAtNanos=null`，因为这里没有测量真实编辑命令，不能把合成安装起点称为编辑起点。JVM/窗口 context 已热，每次安装会重新挂载预览视图，结果也不能冒充进程冷启动。
+- 当前窗口驱动限定 P2LRT。native 缺失、ABI 不兼容、OpenGL 不可用、后端回退都会失败，不会作为跳过的成功验收。Cubism 实际窗口还需另行覆盖。
+
+在独占窗口获准后，先 smoke，再运行 30 次采样；两种 compositor 模式应分开执行：
+
+```powershell
+$env:PSD2LIVE_TOOLS = '1'
+# 可明确指定已验证的 native DLL；未指定时会查找工具目录内准备好的本地副本。
+$env:PSD2LIVE_RUNTIME = (Resolve-Path 'build/tools/window-activation/native/p2l_runtime.dll').Path
+$env:PSD2LIVE_COMPOSITOR = '1'
+.\gradlew.bat :test --tests '*WindowActivationTool.smoke' --max-workers=2 '-Ppsd2live.testForks=1' --rerun-tasks
+$env:PSD2LIVE_WINDOW_SAMPLES = '30'
+.\gradlew.bat :test --tests '*WindowActivationTool.measure' --max-workers=2 '-Ppsd2live.testForks=1' --rerun-tasks
+# 普通 Compose 回放路径另跑一轮，先保存前一轮报告，再设 PSD2LIVE_COMPOSITOR=0。
+```
+
+`PSD2LIVE_WINDOW_TIMEOUT_SECONDS` 默认 30，允许 5–120 秒。准备的 DLL 来自主检出已有产物，仅作只读复制，ABI 已检查为 1.4（当前绑定最低 1.1），SHA-256 为 `09c517548a6daae7ac2f900f387ca89011a3d1bc1e432592de32402cbf1eab15`；该二进制的精确源码版本尚未证明，来源记录在同目录 `provenance.json`。需要严格绑定当前源码时，应在当前工作树执行 `:buildRuntime` 后显式设置 `PSD2LIVE_RUNTIME`，不能把 ABI 兼容等同于源码一致。
