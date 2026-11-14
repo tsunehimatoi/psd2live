@@ -128,9 +128,9 @@ class FacePartAlgorithm : ChangingModifierAlgorithmPlugin {
                     config = subConfig,
                 )
                 val prefix = "sub:face.neck:"
-                val subResources = context.resources.entries.associate { (k, v) ->
-                    (if (k.startsWith(prefix)) k.removePrefix(prefix) else k) to v
-                }
+                val subResources = context.resources
+                    .filterKeys { it.startsWith(prefix) }
+                    .mapKeys { (k, _) -> k.removePrefix(prefix) }
                 val subContext = ModifierAlgorithmContext(subValues, subResources, upstream)
                 current = NeckAlgorithm().changes(ModifierEvaluationInput(current, subContext), subInstance, checkpoint).apply(current, checkpoint)
             }

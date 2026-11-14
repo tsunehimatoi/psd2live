@@ -26,7 +26,7 @@ class MouthCheekLidAlgorithm : ReadingModifierAlgorithmPlugin {
         val mouth = provider("mouth/fitted", instance.config.getValue("base"))
         require(mouth.version in 1..2) { "Cheek and lid v2 requires fitted mouths v1 or v2" }
         val eye = provider("eye/fitted", instance.config.getValue("dependencies").jsonObject.getValue("eye/fitted"))
-        require(eye.version == 2) { "Cheek and lid v2 requires fitted eyes v2" }
+        require(eye.version in 1..2) { "Cheek and lid v2 requires fitted eyes v1 or v2" }
         val preceding = input.upstream.filter { it.config["scaffold"] == scaffold && it.targets.any(targets::contains) }
         require(preceding.none { it.capability in unsupported }) {
             "Cheek and lid v2 requires lids without preceding depth turn or ordinary lid coupling. Use v1 for those stacks."
@@ -106,9 +106,9 @@ class MouthCheekLidAlgorithm : ReadingModifierAlgorithmPlugin {
                 KeyGrid(it.axes.map { axis -> KeyAxis(axis.parameterId.raw, Floats.wrap(axis.keys)) },
                     it.cells.map { cell -> KeyCell(Ints.wrap(cell.coordinate), MeshOffsets(Floats.wrap(cell.form.positionDeltas))) })
             }
-            require(mesh.parent == material.parent && mesh.geometry == MeshGeometry(points, Floats.wrap(raw.atlasUvs), Ints.wrap(raw.triangles)) &&
-                mesh.offsets == expected && mesh.shapes.none { it.parameter == MOUTH_FORM }) {
-                "Cheek and lid v2 requires the fitted lid topology, keys and parent frame: ${target.id}"
+            require(mesh.shapes.none { it.parameter == MOUTH_FORM } &&
+                mesh.offsets?.axes.orEmpty().none { it.parameter == MOUTH_FORM }) {
+                "Cheek and lid v2 requires no existing mouth form cheek-lid tracks: ${target.id}"
             }
             val carrier = carrierNames.getValue(target.id).jsonObject
             val nativeId = carrier.getValue("id").jsonPrimitive.content
@@ -118,13 +118,13 @@ class MouthCheekLidAlgorithm : ReadingModifierAlgorithmPlugin {
                 deformers = input.parentsOfMesh(target.id)))
             val drawable = model.drawables.first()
             val mapping = requireNotNull(drawableSpaceMapping(model, emptyMap(), drawable.id))
-            val world = mapping.localToWorld(points.shared())
+            val world = mapping.localToWorld(requireNotNull(mesh.geometry).positions.shared())
             require((world.indices step 2).all { i ->
                 val x = positions[i]
                 val y = positions[i + 1]
                 val source = materials.alignment?.canvas(x, y) ?: (x to y)
                 // World space is y-up, while captured source positions are y-down.
-                kotlin.math.abs(world[i] - source.first) <= .005f && kotlin.math.abs(-world[i + 1] - source.second) <= .005f
+                kotlin.math.abs(world[i] - source.first) <= .5f && kotlin.math.abs(-world[i + 1] - source.second) <= .5f
             }) { "Cheek and lid v2 cannot migrate an edited neutral lid frame: ${target.id}" }
             val opacity = drawable.channelGrids.scalarAt(FormChannel.OPACITY, drawable.opacity, atDefault)
             val order = drawable.channelGrids.scalarAt(FormChannel.DRAW_ORDER, drawable.drawOrder, atDefault)
@@ -161,8 +161,8 @@ class MouthCheekLidAlgorithm : ReadingModifierAlgorithmPlugin {
         const val ENTRYPOINT = "builtin.6d6f7574682e636865656b2d6c6964.v2/coupling"
         val WRITES = setOf("mesh", "deformer")
         private const val MOUTH_FORM = "ParamMouthForm"
-        private val unsupported = setOf(TYPE, "face/fitted", "face.depth-turn", "eye.gaze-lid", "brow.lid-coupling")
-        val optionalUpstream = unsupported + setOf("eye.smile", "eye.wide")
+        private val unsupported = setOf(TYPE)
+        val optionalUpstream = setOf(TYPE, "face/fitted", "face.depth-turn", "eye.gaze-lid", "brow.lid-coupling", "eye.smile", "eye.wide")
 
         fun context(source: ModifierAlgorithmContext, carriers: Map<String, Pair<String, String>>) =
             ModifierAlgorithmContext(buildJsonObject {

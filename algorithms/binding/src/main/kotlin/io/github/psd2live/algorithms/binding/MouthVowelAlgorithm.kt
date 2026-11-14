@@ -67,7 +67,9 @@ class MouthVowelAlgorithm : ReadingModifierAlgorithmPlugin {
             }
             val parent = target.parent?.let { ScaffoldBinding.deformerId(structure, id, it) }
             require(mesh.parent == parent && geometry == MeshGeometry(Floats.wrap(positions), Floats.wrap(material.atlasUvs), Ints.wrap(material.triangles)) &&
-                mesh.shapes.isEmpty()) { "Mouth vowel v2 requires the fitted source mesh without other additive tracks: $id" }
+                mesh.shapes.none { it.parameter in vowelIds.mapTo(hashSetOf()) { id -> id.raw } }) {
+                "Mouth vowel v2 requires the fitted source mesh without existing vowel tracks: $id"
+            }
             val model = PuppetIr.toPuppet(RigIR(input.canvas, live, meshes = listOf(mesh)))
             val drawable = model.drawables.single()
             val follow = follows.getValue(id).jsonPrimitive.contentOrNull
@@ -88,7 +90,7 @@ class MouthVowelAlgorithm : ReadingModifierAlgorithmPlugin {
                         multiply, screen) }
                 })
             }
-            val next = PuppetIr.meshToIr(drawable.copy(blendShapes = neutralized))
+            val next = PuppetIr.meshToIr(drawable.copy(blendShapes = drawable.blendShapes + neutralized))
             ModifierObjectUpdate(mesh, mesh.copy(shapes = next.shapes))
         }
         val tree = input.parameterTree

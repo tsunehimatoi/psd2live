@@ -155,9 +155,9 @@ class WorkspaceLegacyBindingTest {
         val source = unsided.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
         val (initialized, preview) = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
         val stack = RigModifierStack.fromJson(assertNotNull(initialized.rigEdits.modifierStack))
-        assertEquals(1, stack.instances.single { it.type == "face/fitted" }.version)
-        assertEquals(1, stack.instances.single { it.type == "eye/fitted" }.version)
-        assertTrue(stack.instances.any { it.type == "brow/fitted" })
+        assertEquals(1, stack.instances.single { it.type == "face" }.version)
+        assertEquals(1, stack.instances.single { it.type == "eye" }.version)
+        assertTrue(stack.instances.any { it.type == "brow" })
         assertEquals(setOf("iris", "iris-right"), preview.rig.layerIdByDrawableId.values.filter { it.startsWith("iris") }.toSet())
         assertTrue(preview.rig.puppet.drawables.isNotEmpty())
         for (model in listOf(preview, native(source, source.config().recipe))) {

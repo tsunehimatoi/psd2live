@@ -44,7 +44,7 @@ class MouthOutlineAlgorithm : ReadingModifierAlgorithmPlugin {
                 }
                 val turn = if (target.headOnMesh) {
                     val provider = requireNotNull(captured.head).provider
-                    require(context.upstream.any { it.instanceId == provider && it.type in setOf("face/fitted", "face.depth-turn") &&
+                    require(context.upstream.any { it.instanceId == provider && it.type in setOf("face/fitted", "face.depth-turn", "face") &&
                         ModifierTarget("mesh", id) in it.targets }) { "Missing outline head provider for $id" }
                     requireNotNull(head)
                 } else null

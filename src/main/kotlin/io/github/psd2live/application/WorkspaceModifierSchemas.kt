@@ -108,6 +108,20 @@ internal object WorkspaceModifierSchemas {
             "tuning" to s.dictionary(s.number()),
             "values" to s.dictionary(s.number()),
         ), setOf("scaffold"))
+        "mouth" -> s.obj(mapOf(
+            "scaffold" to s.handle(),
+            "mode" to s.choices("fitted", "legacy"),
+            "tongue" to s.boolean(),
+            "vowel" to s.boolean(),
+            "capture" to s.boolean(),
+            "spring" to s.boolean(),
+            "depth" to s.boolean(),
+            "jaw" to s.boolean(),
+            "cheekLid" to s.boolean(),
+            "color" to s.integer(0, 0xffffff),
+            "tuning" to s.dictionary(s.number()),
+            "values" to s.dictionary(s.number()),
+        ), setOf("scaffold"))
         else -> RigLegacyBindings.find(type)?.let { spec -> s.obj(mapOf("scaffold" to s.handle(),
             "tuning" to s.obj(spec.fields.associate { it.id to s.number(it.range.start, it.range.endInclusive) }, emptySet())) +
             (if (spec.module?.base != null) mapOf("base" to s.handle()) else emptyMap()) +

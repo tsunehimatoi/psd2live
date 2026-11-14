@@ -45,7 +45,11 @@ class BodyPartAlgorithm : ChangingModifierAlgorithmPlugin {
         )
         val baseValues = context.values["base_context"]?.jsonObject ?: context.values
         val upstream = context.upstream.toMutableList()
-        val baseContext = ModifierAlgorithmContext(baseValues, context.resources, upstream)
+        val baseContext = ModifierAlgorithmContext(
+            baseValues,
+            context.resources.filterKeys { !it.startsWith("sub:") },
+            upstream,
+        )
 
         var current = LegacyBodyAlgorithm().changes(input, baseInstance, baseContext, checkpoint).apply(input, checkpoint)
         upstream += ModifierUpstreamCapability(
@@ -73,7 +77,16 @@ class BodyPartAlgorithm : ChangingModifierAlgorithmPlugin {
             } ?: instance.targets
             val subConfig = buildJsonObject {
                 put("scaffold", scaffold)
-                (subCfg["dependencies"] ?: instance.config["dependencies"])?.let { put("dependencies", it) }
+                val deps = buildJsonObject {
+                    (subCfg["dependencies"] ?: instance.config["dependencies"])?.jsonObject?.forEach { (k, v) -> put(k, v) }
+                    if ("body/legacy" !in (subCfg["dependencies"]?.jsonObject ?: instance.config["dependencies"]?.jsonObject.orEmpty())) {
+                        put("body/legacy", instance.id)
+                    }
+                    if ("face/legacy" !in (subCfg["dependencies"]?.jsonObject ?: instance.config["dependencies"]?.jsonObject.orEmpty())) {
+                        upstream.lastOrNull { it.capability == "face/legacy" }?.let { put("face/legacy", it.instanceId) }
+                    }
+                }
+                put("dependencies", deps)
                 subCfg["values"]?.let { put("values", it) }
                 subCfg["physics"]?.let { put("physics", it) }
                 subCfg["physicsEnabled"]?.let { put("physicsEnabled", it) }
@@ -86,9 +99,9 @@ class BodyPartAlgorithm : ChangingModifierAlgorithmPlugin {
                 config = subConfig,
             )
             val prefix = "sub:$subType:"
-            val subResources = context.resources.entries.associate { (k, v) ->
-                (if (k.startsWith(prefix)) k.removePrefix(prefix) else k) to v
-            }
+            val subResources = context.resources.entries
+                .filter { (k, _) -> k.startsWith(prefix) }
+                .associate { (k, v) -> k.removePrefix(prefix) to v }
             val evalInput = ModifierEvaluationInput(current, ModifierAlgorithmContext(subValues, subResources, upstream))
             val subChanges = if (subType == BustBindingAlgorithm.TYPE) {
                 BustBindingAlgorithm().changes(evalInput, subInstance, checkpoint)

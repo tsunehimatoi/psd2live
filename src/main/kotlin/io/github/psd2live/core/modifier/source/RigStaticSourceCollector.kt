@@ -990,8 +990,9 @@ internal object RigStaticSourceCollector {
         targetLayers: Map<String, String>,
         eyeProvider: String?,
         parentId: (String, String) -> String,
+        frameConfig: PipelineConfig = config,
     ): ModifierAlgorithmContext {
-        val shape = browShapeSourceInputs(analysis, atlas, config, cache, targetLayers, eyeProvider, parentId).encode()
+        val shape = browShapeSourceInputs(analysis, atlas, config, cache, targetLayers, eyeProvider, parentId, frameConfig).encode()
         val shapeTargets = shape.values.getValue("targets").jsonObject.keys
         val byLayer = analysis.layers.associateBy { it.source.id.raw }
         val carrierNames = kotlinx.serialization.json.buildJsonObject {
@@ -1195,7 +1196,7 @@ internal object RigStaticSourceCollector {
         frontHairSway: Boolean,
         backHairSway: Boolean,
     ): ModifierAlgorithmContext {
-        val context = RigBuilder.rigContext(analysis, config.copy(generateDeformers = false), cache, neutralScaffold = true)
+        val context = RigBuilder.rigContext(analysis, config, cache, neutralScaffold = true)
         val pivotCanvas = context.faceRig.coordinateSpace.toCanvas(context.faceRig.centerX, context.faceRig.mouthLineY)
         val pivot = ScaffoldHead.Point(pivotCanvas.first, pivotCanvas.second)
         val headBounds = toModelBounds(context.head)
@@ -1269,7 +1270,7 @@ internal object RigStaticSourceCollector {
         backHairSway: Boolean,
         expressionInputs: List<String>,
     ): ModifierAlgorithmContext {
-        val context = RigBuilder.rigContext(analysis, config.copy(generateDeformers = false), cache, neutralScaffold = true)
+        val context = RigBuilder.rigContext(analysis, config, cache, neutralScaffold = true)
         val pivotCanvas = context.faceRig.coordinateSpace.toCanvas(context.faceRig.centerX, context.faceRig.mouthLineY)
         val head = HairFollowMotion.Head(toModelBounds(context.head), pivotCanvas.first, pivotCanvas.second, context.face.bottom)
         val planes = linkedMapOf<String, HairChainsInputs.Plane>()
@@ -1342,5 +1343,151 @@ internal object RigStaticSourceCollector {
             physicsLabels = physicsLabels,
             expressionInputs = expressionInputs,
         ).context()
+    }
+
+    fun mouthLegacySourceInputs(
+        analysis: PipelineAnalysis,
+        config: PipelineConfig,
+        cache: PreviewMeshCache,
+        targetLayers: Map<String, ClassifiedLayer>,
+        primaryByLayer: Map<String, String>,
+        scaffoldContext: ModifierAlgorithmContext,
+    ): ModifierAlgorithmContext {
+        val context = RigBuilder.rigContext(analysis, config, cache, neutralScaffold = true)
+        val tuning = config.rigTuning
+        val mouthTags = setOf(
+            SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN, SemanticTag.MOUTH_CLOSE,
+            SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE,
+        )
+        val layers = targetLayers.entries.mapNotNull { (id, original) ->
+            val layer = context.rigLayer(original)
+            if (layer.semantic.tag !in mouthTags) return@mapNotNull null
+            val tag = layer.semantic.tag.name
+            val aperture = RigBuilder.mouthApertureFor(layer) ?: layer.bounds
+            val frame = context.parentAndFrame(original, config).second
+            val maskSource = layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) &&
+                !layer.source.clipped && layer.semantic.role == null
+            id to io.github.psd2live.algorithms.binding.MouthLegacyInputs.Layer(
+                canonical = primaryByLayer[original.source.id.raw] ?: id,
+                tag = tag,
+                side = io.github.psd2live.algorithms.binding.Side.valueOf(layer.semantic.side.name),
+                variant = layer.semantic.variant,
+                frame = toModelBounds(frame),
+                aperture = toModelBounds(aperture),
+                bounds = toModelBounds(layer.bounds),
+                preset = (config.layerOverrides[original.source.id.raw]?.type ?: original.semantic.type) == LayerType.PRESET,
+                opacity = layer.source.opacity,
+                originalMask = null,
+                maskSource = maskSource,
+            )
+        }.toMap()
+        val motion = io.github.psd2live.algorithms.binding.MouthFittedInputs.Fallback(
+            curve = if (config.mouthShape == "custom") config.mouthCurve else io.github.psd2live.algorithms.binding.MouthCurve.preset(config.mouthShape),
+            exactClose = false,
+            closedNarrow = tuning.mouthClosedNarrow,
+            formWiden = tuning.mouthFormWiden,
+            seam = tuning.mouthSeam,
+            smileBase = tuning.mouthSmileBase,
+            smile = tuning.mouthSmile,
+        )
+        return io.github.psd2live.algorithms.binding.MouthLegacyInputs(
+            layers = layers,
+            motion = motion,
+            teethFade = tuning.teethFade,
+            closedMouth = context.hasClosedMouth,
+            formName = tr("model.parameter.mouthForm"),
+            openName = tr("model.parameter.mouthOpenY"),
+            groupName = tr("model.group.mouth"),
+            scaffold = scaffoldContext,
+        ).encode()
+    }
+
+    fun mouthCheekLidSourceInputs(
+        analysis: PipelineAnalysis,
+        atlas: PackedAtlas,
+        config: PipelineConfig,
+        cache: PreviewMeshCache,
+        targetLayers: Map<String, String>,
+        parameterNames: Map<String, String>,
+        parentId: (String, String) -> String,
+    ): ModifierAlgorithmContext {
+        val smile = eyeSmileSourceInputs(analysis, atlas, config, cache, targetLayers, parameterNames, parentId)
+        val byLayerId = analysis.layers.associateBy { it.source.id.raw }
+        val carriers = buildJsonObject {
+            for ((id, layerId) in targetLayers) {
+                val layer = byLayerId[layerId] ?: continue
+                putJsonObject(id) {
+                    put("id", id)
+                    put("name", tr("model.deformer.meshShape", layer.source.name))
+                }
+            }
+        }
+        return ModifierAlgorithmContext(
+            values = buildJsonObject {
+                put("schema", "mouth-cheek-lid/1")
+                put("source", smile.values)
+                put("carriers", carriers)
+            },
+            resources = smile.resources,
+        )
+    }
+
+    fun mouthJawSourceInputs(
+        analysis: PipelineAnalysis,
+        atlas: PackedAtlas,
+        config: PipelineConfig,
+        cache: PreviewMeshCache,
+        targetLayers: Map<String, ClassifiedLayer>,
+        primaryByLayer: Map<String, String>,
+        providers: Map<String, String>,
+    ): ModifierAlgorithmContext {
+        val context = RigBuilder.rigContext(analysis, config, cache, neutralScaffold = true)
+        val fitted = context.fittedMouth(config)
+        val fit = fitted?.source?.fit
+        val mouthBox = analysis.layers.firstOrNull {
+            it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && it.semantic.role == null
+        }?.bounds ?: analysis.anchors.face
+        val originX = fit?.originX ?: mouthBox.centerX
+        val originY = fit?.originY ?: mouthBox.centerY
+        val axisX = fit?.axisX ?: 1f
+        val axisY = fit?.axisY ?: 0f
+        val width = fit?.width ?: mouthBox.width.coerceAtLeast(1f)
+        val opening = fit?.opening ?: mouthBox.height.coerceAtLeast(1f)
+        val chin = fitted?.chin ?: 0.6f
+        val reach = if (config.recipe.base("mouth") === io.github.psd2live.core.recipe.RigModules.MOUTH_FITTED) {
+            config.recipe.baseValue("mouth", "reach") / 100f
+        } else 1f
+        val targetsJson = buildJsonObject {
+            for ((id, layer) in targetLayers) {
+                val (parent, frame) = context.parentAndFrame(layer, config)
+                putJsonObject(id) {
+                    put("frame", JsonArray(listOf(frame.left, frame.top, frame.right, frame.bottom).map(::JsonPrimitive)))
+                    put("nose", layer.semantic.tag == SemanticTag.NOSE)
+                    put("parent", parent?.raw?.let(::JsonPrimitive) ?: JsonNull)
+                }
+            }
+        }
+        val raw = ScaffoldMeshContext.capture(targetLayers.values.distinctBy { it.source.id }.map { layer ->
+            val data = RigBuilder.fittedMouthSourceMesh(layer, context, config, atlas, cache)
+            ScaffoldMeshContext.Material(
+                primaryByLayer.getValue(layer.source.id.raw),
+                layer.source.id.raw,
+                io.github.psd2live.algorithms.binding.ScaffoldMesh.RawMesh(data.rigPositions, data.mesh.uvs, data.mesh.indices),
+                io.github.psd2live.algorithms.binding.ScaffoldMesh.Geometry.Zero,
+            )
+        })
+        return ModifierAlgorithmContext(
+            values = buildJsonObject {
+                put("schema", "mouth-jaw/1")
+                putJsonObject("providers") {
+                    for ((k, v) in providers) put(k, v)
+                }
+                put("targets", targetsJson)
+                put("fit", JsonArray(listOf(originX, originY, axisX, axisY, width, opening).map(::JsonPrimitive)))
+                put("chin", chin)
+                put("reach", reach)
+            },
+            resources = raw.resources,
+        )
     }
 }

@@ -9,7 +9,7 @@ import org.umamo.runtime.eval.scalarAt
 import org.umamo.runtime.model.*
 
 /** Builds the fitted mouth transition from neutral upstream geometry and source measurements. */
-class MouthFittedAlgorithm : ChangingModifierAlgorithmPlugin {
+class MouthFittedAlgorithm(private val upgradeToSource: Boolean = false) : ChangingModifierAlgorithmPlugin {
     override fun changes(input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext, checkpoint: () -> Unit) =
         candidateChanges(input, instance, context, checkpoint, lowerShapes = true)
 
@@ -17,12 +17,15 @@ class MouthFittedAlgorithm : ChangingModifierAlgorithmPlugin {
                                   checkpoint: () -> Unit, lowerShapes: Boolean): ModifierModelChanges {
         require(instance.targets.all { it.kind == "mesh" }) { "Fitted mouth requires mesh targets" }
         val inputs = MouthFittedInputs.decode(context)
+        val scaffoldProvider = context.upstream.singleOrNull { it.type == "rig.scaffold" && it.instanceId != null }?.let {
+            RigModifierInstance(requireNotNull(it.instanceId), it.type, it.version, it.targets, config = it.config, outputAliases = it.outputAliases, plugin = it.plugin)
+        }
         val source = PuppetIr.toPuppet(input)
         val targets = instance.targets.mapTo(linkedSetOf()) { it.id }
         val tongues = linkedMapOf<String, String>()
-        val posed = sourceCandidate(source, targets, inputs, checkpoint) { id ->
+        val posed = sourceCandidate(source, targets, inputs, checkpoint, scaffold = scaffoldProvider, tongueId = { id ->
             instance.outputId("tongue-out:${id.raw}").also { tongues[it] = id.raw }
-        }
+        })
         val model = if (lowerShapes) lower(posed, inputs, checkpoint) else posed
         val parameters = objectChanges(source.parameters, model.parameters, input.parameters.associateBy { it.id }, { it.id.raw }) {
             PuppetIr.parametersToIr(model.copy(parameters = listOf(it))).single()
@@ -88,6 +91,7 @@ class MouthFittedAlgorithm : ChangingModifierAlgorithmPlugin {
         checkpoint: () -> Unit,
         sourcePositions: Map<String, FloatArray> = emptyMap(),
         tongueId: (DrawableId) -> String,
+        scaffold: RigModifierInstance? = null,
     ): PuppetModel {
         val mouth = inputs.source?.rig()
         val own = inputs.layers.values.filter { covers(it, inputs, mouth) && it.opaque }
@@ -114,12 +118,25 @@ class MouthFittedAlgorithm : ChangingModifierAlgorithmPlugin {
             val faceSkin = mouth != null && lipped && !mouth.fit.hasLines && layer.tag == "FACE" && layer.role == null
             val mouthFace = mouth != null && (layer.role == null || layer.role == "SHADOW") &&
                 (layer.tag in setOf("FACE", "NOSE") || layer.tag == "FACE_DETAIL" && mouth.fit.toMouth(layer.centroidX, layer.centroidY).second > 0f)
-            val raw = vertexInputs?.targets?.get(original.id.raw)?.takeIf { it.parent == original.parentDeformerId?.raw }
-                ?.let { rawMeshes.getValue(it.canonical) }
+            val raw = vertexInputs?.targets?.get(original.id.raw)?.takeIf { target ->
+                val expectedParent = target.parent?.let { p -> scaffold?.let { ScaffoldBinding.deformerId(it, original.id.raw, p) } ?: p }
+                expectedParent == original.parentDeformerId?.raw
+            }?.let { rawMeshes.getValue(it.canonical) }
             val suppliedPositions = sourcePositions[original.id.raw]
+            val matches = raw != null && matchesSource(raw, geometry, layer.frame, checkpoint)
+            val upgradeMesh = upgradeToSource && (covered || faceSkin || mouthFace) && raw != null && suppliedPositions == null && !matches
+            val nextMesh = if (!upgradeMesh) geometry else {
+                val frame = layer.frame
+                val normalized = FloatArray(raw!!.rigPositions.size) { index ->
+                    val coordinate = raw.rigPositions[index]
+                    if (original.parentDeformerId == null) coordinate
+                    else if (index % 2 == 0) (coordinate - frame.left) / frame.width.coerceAtLeast(1e-4f)
+                    else (coordinate - frame.top) / frame.height.coerceAtLeast(1e-4f)
+                }
+                DrawableMesh(normalized, raw.atlasUvs, raw.triangles)
+            }
             val positions by lazy {
-                suppliedPositions ?: if (raw != null && matchesSource(raw, geometry, layer.frame, checkpoint))
-                    raw.rigPositions else positions(geometry.positions, layer.frame)
+                suppliedPositions ?: if (matches || upgradeMesh) raw!!.rigPositions else positions(geometry.positions, layer.frame)
             }
             val grid = when {
                 mouth != null && follow != null -> if (layer.tag == "MOUTH_CLOSE") mouth.closedGrid(positions, layer.frame, mouthForm)
@@ -150,8 +167,8 @@ class MouthFittedAlgorithm : ChangingModifierAlgorithmPlugin {
                     ChannelValue.Color(ColorRgb(light, light * 0.97f, light * 0.97f))
                 }
             }
-            val updated = if (grid === original.geometryGrid && channels == original.channelGrids.gridsByChannel && masks == original.maskedBy)
-                original else original.copy(geometryGrid = grid, channelGrids = ChannelGrids(channels), maskedBy = masks)
+            val updated = if (nextMesh === geometry && grid === original.geometryGrid && channels == original.channelGrids.gridsByChannel && masks == original.maskedBy)
+                original else original.copy(mesh = nextMesh, geometryGrid = grid, channelGrids = ChannelGrids(channels), maskedBy = masks)
             val rebuiltMouthMesh = suppliedPositions != null && layer.tag in tags
             if (!rebuiltMouthMesh && (mouth == null || follow == null && !mouthFace)) return@map updated
             val mouthShapes = if (mouth != null && follow != null) {

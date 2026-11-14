@@ -243,7 +243,7 @@ data class MouthFittedInputs(
                 if (head != null && context.upstream.isNotEmpty()) require(context.upstream.any { capability ->
                     capability.instanceId == head.provider &&
                         (capability.capability in setOf("face/fitted", "face.depth-turn") ||
-                            capability.type in setOf("face/fitted", "face.depth-turn"))
+                            capability.type in setOf("face/fitted", "face.depth-turn", "face"))
                 }) { "Missing fitted mouth head-turn provider" }
             }
         }

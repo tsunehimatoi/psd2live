@@ -43,8 +43,10 @@ class BrowBlinkAlgorithm : ReadingModifierAlgorithmPlugin {
             val suffix = if (side == Side.LEFT) "L" else "R"
             val open = EyeModules.open(side)
             val smileProvider = providers.lastOrNull { it.capability == "eye.smile" }
+                ?: eye?.takeIf { it.type == "eye" && it.config["smile"]?.jsonPrimitive?.booleanOrNull == true }
             val smile = EyeModules.smile(side).takeIf { target.eye != null && smileProvider != null }
-            val wide = eye != null && providers.any { it.capability == "eye.wide" }
+            val wide = eye != null && (providers.any { it.capability == "eye.wide" } ||
+                (eye.type == "eye" && eye.config["wide"]?.jsonPrimitive?.booleanOrNull == true))
             val openParam = requireNotNull(input.parameter(open.raw))
             require(!openParam.blend && openParam.min == 0f && openParam.default == 1f && openParam.max == (if (wide) 2f else 1f))
             val smileParam = smile?.let { requireNotNull(input.parameter(it.raw)) }

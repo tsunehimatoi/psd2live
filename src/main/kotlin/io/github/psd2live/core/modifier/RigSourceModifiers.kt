@@ -332,10 +332,18 @@ internal class RigModifierSource(
     }
 
     private fun eyeConfig(instance: RigModifierInstance): PipelineConfig {
+        if (instance.type == RigSourceModifiers.EYE) {
+            return if ((instance.config["mode"]?.jsonPrimitive?.content ?: "fitted") == "fitted") fittedEyeConfig(instance) else sourceConfig()
+        }
         val baseId = instance.config["dependencies"]?.jsonObject?.get("eye/fitted")?.jsonPrimitive?.content
             ?: instance.config["base"]?.jsonPrimitive?.content
-            ?: return sourceConfig()
-        val base = stack.instances.firstOrNull { it.id == baseId } ?: return sourceConfig()
+        val base = if (baseId != null) {
+            stack.instances.firstOrNull { it.id == baseId }
+        } else {
+            activeBefore(instance).lastOrNull {
+                isFittedEyeInstance(it) && it.config["scaffold"] == instance.config["scaffold"]
+            }
+        } ?: return sourceConfig()
         val fitted = base.type == "eye/fitted" || (base.type == "eye" && (base.config["mode"]?.jsonPrimitive?.content ?: "fitted") == "fitted")
         if (!fitted) return sourceConfig()
         return fittedEyeConfig(base)
@@ -460,20 +468,26 @@ internal class RigModifierSource(
         val base = instance.config["base"]?.jsonPrimitive?.content
         val brow = activeBefore(instance).singleOrNull { it.id == base }
             ?: activeBefore(instance).lastOrNull { it.type == "brow/fitted" && it.config["scaffold"] == scaffold }
+            ?: instance.takeIf { it.type == RigSourceModifiers.BROW }
         val browMeshes = brow?.targets?.filter { it.kind == "mesh" }?.map { it.id }.orEmpty()
         return io.github.psd2live.core.modifier.source.RigStaticSourceCollector.browLidSourceInputs(
             analysis, atlas, eyeConfig(instance), meshCache, targetLayers, primaryByLayer, browMeshes, eyeSubParentId(instance),
         )
     }
 
+    private fun isFittedEyeInstance(instance: RigModifierInstance): Boolean =
+        instance.type == "eye/fitted" ||
+            (instance.type == RigSourceModifiers.EYE && (instance.config["mode"]?.jsonPrimitive?.content ?: "fitted") == "fitted")
+
     fun browBlinkContext(instance: RigModifierInstance): ModifierAlgorithmContext {
         val targetLayers = instance.targets.mapNotNull { t -> layersByMesh[t.id]?.let { t.id to it } }.toMap()
         val scaffold = instance.config["scaffold"]
         val eyeProvider = activeBefore(instance).lastOrNull {
-            it.type == "eye/fitted" && it.config["scaffold"] == scaffold
+            isFittedEyeInstance(it) && it.config["scaffold"] == scaffold
         }?.id
         return io.github.psd2live.core.modifier.source.RigStaticSourceCollector.browBlinkSourceInputs(
-            analysis, atlas, sourceConfig(), meshCache, targetLayers, eyeProvider, eyeSubParentId(instance),
+            analysis, atlas, activeRecipeConfig(instance), meshCache, targetLayers, eyeProvider, eyeSubParentId(instance),
+            browFrameConfig(instance),
         )
     }
 
@@ -481,7 +495,7 @@ internal class RigModifierSource(
         val targetLayers = instance.targets.mapNotNull { t -> layersByMesh[t.id]?.let { t.id to it } }.toMap()
         val scaffold = instance.config["scaffold"]
         val eyeProvider = activeBefore(instance).lastOrNull {
-            it.type == "eye/fitted" && it.config["scaffold"] == scaffold
+            isFittedEyeInstance(it) && it.config["scaffold"] == scaffold
         }?.id
         return RigBuilder.browShapeSourceInputs(
             analysis, atlas, activeRecipeConfig(instance), meshCache, targetLayers, eyeProvider, eyeSubParentId(instance),
@@ -493,7 +507,7 @@ internal class RigModifierSource(
         val targetLayers = instance.targets.mapNotNull { t -> layersByMesh[t.id]?.let { t.id to it } }.toMap()
         val scaffold = instance.config["scaffold"]
         val eyeProvider = activeBefore(instance).lastOrNull {
-            it.type == "eye/fitted" && it.config["scaffold"] == scaffold
+            isFittedEyeInstance(it) && it.config["scaffold"] == scaffold
         }?.id
         val shapeProvider = activeBefore(instance).lastOrNull {
             (it.type == "brow.shape" || isPackagedAuthorContext(it, setOf("brow.shape"))) &&
@@ -570,45 +584,6 @@ internal class RigModifierSource(
             layers = layers,
             neutral = neutral,
         ).context()
-    }
-
-    fun outline(rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit): RigIR {
-        val thickness = RigLegacyBindings.values(instance)["thickness"] ?: 1.5f
-        val outlineConfig = RigModifierPipeline.ordinaryConfig(config).copy(
-            meshOnly = false, deferRig = false, mouthOutlineEnabled = true, mouthThickness = thickness,
-            mouthColor = RigLegacyBindings.outlineColor(instance))
-        val lipLayers = MouthLipLayers.prepare(analysis, outlineConfig, meshCache).layers.mapNotNull {
-            (it.source as? MouthLipLayer)?.let { lip -> (lip.ownerId to lip.side) to it }
-        }.toMap()
-        val owners = rig.meshes.associateBy { it.id }
-        val ribbons = instance.targets.flatMap { target ->
-            checkpoint()
-            val layer = layersByMesh.getValue(target.id)
-            if (lipLayers.keys.none { it.first == layer }) return@flatMap emptyList()
-            val native = template(relevantBefore(instance, target) + instance, provider(instance).config).model
-            val canonical = primaryByLayer.getValue(layer)
-            val owner = owners.getValue(target.id)
-            (0..1).mapNotNull { side ->
-                val lip = native.drawables.singleOrNull { it.id.raw == "${canonical}_lip_$side" } ?: return@mapNotNull null
-                val source = lipLayers.getValue(layer to side)
-                val id = DrawableId(instance.outputId("mouth-lip:${target.id}:$side"))
-                val assetId = instance.outputId("mouth-art:${target.id}:$side")
-                val asset = source.copy(source = object : org.umamo.format.art.SourceLayer by source.source {
-                    override val id = org.umamo.format.art.LayerId(assetId)
-                })
-                val arranged = id == lip.id && assetId == source.source.id.raw && config.atlasArrangement?.tiles?.containsKey(assetId) == true
-                val drawable = lip.copy(id = id, parentDeformerId = owner.parent?.let(::DeformerId), maskedBy = owner.maskedBy.map(::DrawableId),
-                    invertMask = owner.invertMask, isVisible = owner.visible, textureSourceId = null,
-                    drawOrder = if (arranged) lip.drawOrder
-                        else (owner.drawOrder + 1f).coerceAtMost(1000f),
-                    atlasTileId = PuppetSourceAtlas.tileIdFor(assetId))
-                val paths = native.deformPaths.filter { it.drawableId == lip.id }.map { path ->
-                    path.copy(id = instance.outputId("mouth-path:${target.id}:$side:${path.id}"), drawableId = id)
-                }
-                RigModifierRasterAssets.Ribbon(DrawableId(owner.id), drawable, asset, paths)
-            }
-        }
-        return RigModifierRasterAssets.attachRibbons(rig, ribbons, config)
     }
 
     fun bodyContext(instance: RigModifierInstance): ModifierAlgorithmContext {
@@ -706,12 +681,15 @@ internal class RigModifierSource(
         val bases = areas.associate { area ->
             val candidateChosen = preceding.lastOrNull { prev ->
                 RigLegacyBindings.find(prev.type)?.let { it.isBase && it.area == area.id } == true || prev.type == area.id
+            } ?: instance.takeIf {
+                (it.type == area.id || it.type.startsWith("${area.id}.")) &&
+                    it.config["scaffold"]?.jsonPrimitive?.content == scaffold.id
             }
             val chosen = if (browBeforeFaceOnly && area.id == "brow" && candidateChosen != null && faceChoice != null &&
                 preceding.indexOf(candidateChosen) > preceding.indexOf(faceChoice)) null else candidateChosen
             val base = when {
                 chosen == null -> area.legacy.id
-                chosen.type == area.id -> {
+                chosen.type == area.id || chosen.type.startsWith("${area.id}.") -> {
                     val mode = chosen.config["mode"]?.jsonPrimitive?.content ?: "fitted"
                     val candidate = "${area.id}/$mode"
                     if (candidate == RigLegacyBindings.FITTED_FACE) area.legacy.id
@@ -720,8 +698,15 @@ internal class RigModifierSource(
                 chosen.type == RigLegacyBindings.FITTED_FACE -> area.legacy.id
                 else -> chosen.type
             }
+            val specType = when {
+                chosen == null -> base
+                chosen.type == "face" && base == area.legacy.id &&
+                    (chosen.config["mode"]?.jsonPrimitive?.content ?: "fitted") == "fitted" -> RigLegacyBindings.FITTED_FACE
+                chosen.type == area.id -> base
+                else -> chosen.type
+            }
             area.id to io.github.psd2live.core.recipe.BaseChoice(base, chosen?.version ?: area.legacy.version,
-                chosen?.let(RigLegacyBindings::values).orEmpty())
+                chosen?.let { RigLegacyBindings.values(it.copy(type = specType)) }.orEmpty())
         }
         val modules = io.github.psd2live.core.recipe.RigModules.modules.associate { module ->
             val chosen = when {
@@ -730,13 +715,23 @@ internal class RigModifierSource(
                     ?: faceChoice?.takeIf { it.type == RigLegacyBindings.FITTED_FACE || (it.config["mode"]?.jsonPrimitive?.content ?: "fitted") == "fitted" }
                 else -> preceding.lastOrNull { it.type == module.id }
             }
+            val moduleSpecType = if (chosen?.type == "face") depthId else chosen?.type
             module.id to io.github.psd2live.core.recipe.ModuleChoice(chosen != null,
-                chosen?.version ?: module.version, chosen?.let(RigLegacyBindings::values).orEmpty())
+                chosen?.version ?: module.version,
+                chosen?.let { RigLegacyBindings.values(it.copy(type = requireNotNull(moduleSpecType))) }.orEmpty())
         }
+        val partTypes = setOf("eye", "brow", "mouth", "face", "body", "hair")
         val tuning = tuningOverride ?: preceding.fold(RigTuning()) { acc, prev ->
-            if (RigLegacyBindings.find(prev.type) != null || prev.type in setOf("eye", "brow", "face", "body", "hair"))
-                RigLegacyBindings.tuning(prev, acc)
-            else acc
+            val tuningType = when {
+                RigLegacyBindings.find(prev.type) != null -> prev.type
+                prev.type in partTypes -> {
+                    val mode = prev.config["mode"]?.jsonPrimitive?.content ?: "fitted"
+                    val candidate = "${prev.type}/$mode"
+                    if (RigLegacyBindings.find(candidate) != null) candidate else "${prev.type}/legacy"
+                }
+                else -> null
+            }
+            if (tuningType != null) RigLegacyBindings.tuning(prev.copy(type = tuningType), acc) else acc
         }
         val headStrength = strengthOverride ?: faceChoice?.let(RigLegacyBindings::strength) ?: 1f
         return sourceConfig().copy(
@@ -860,57 +855,18 @@ internal class RigModifierSource(
             spec.type == "outfit.creature" -> return creatureContext(instance)
             spec.type == "hair/legacy" -> return hairLegacyContext(instance)
             spec.type == "hair/chains" -> return hairChainsContext(instance)
+            spec.type == "mouth/fitted" -> return mouthFittedContext(instance)
+            spec.type == "mouth/legacy" -> return mouthLegacyContext(instance)
+            spec.type == "mouth.outline" -> return mouthOutlineContext(instance)
+            spec.type == "mouth.vowel" -> return mouthModuleContext(instance, RigModules.MOUTH_VOWEL)
+            spec.type == "mouth.capture" -> return mouthModuleContext(instance, RigModules.MOUTH_CAPTURE)
+            spec.type == "mouth.tongue" -> return mouthModuleContext(instance, RigModules.MOUTH_TONGUE)
+            spec.type == "mouth.jaw" -> return mouthJawContext(instance)
+            spec.type == "mouth.cheek-lid" -> return mouthCheekLidContext(instance)
+            spec.type == "mouth.interior-depth" -> return mouthModuleContext(instance, RigModules.MOUTH_DEPTH)
+            spec.type == "mouth.spring" -> return mouthModuleContext(instance, RigModules.MOUTH_SPRING)
         }
-        val source = legacyBindingSource(instance)
-        val pairs = instance.targets.map { source.transition(instance, it) {} }
-        if (pairs.isEmpty()) return ModifierAlgorithmContext.Empty
-        fun combine(models: List<PuppetModel>): PuppetModel {
-            val first = models.first()
-            val parameters = linkedMapOf<ParameterId, org.umamo.runtime.model.Parameter>()
-            val deformers = linkedMapOf<DeformerId, Deformer>()
-            val parts = linkedMapOf<PartId, Part>()
-            val drawables = linkedMapOf<DrawableId, Drawable>()
-            val roots = linkedSetOf<OrgChild>()
-            val groups = linkedMapOf<ParameterGroupId, ParameterNode.Group>()
-            val ungrouped = linkedSetOf<ParameterId>()
-            for (model in models) {
-                model.parameters.forEach { parameters.putIfAbsent(it.id, it) }
-                model.deformers.forEach { deformers.putIfAbsent(it.id, it) }
-                model.parts.forEach { parts.putIfAbsent(it.id, it) }
-                model.drawables.forEach { drawables.putIfAbsent(it.id, it) }
-                roots += model.rootChildren
-                for (node in model.parameterTree) when (node) {
-                    is ParameterNode.Group -> groups.merge(node.id, node) { a, b ->
-                        a.copy(children = (a.children + b.children).distinct())
-                    }
-                    is ParameterNode.Param -> ungrouped += node.id
-                }
-            }
-            val groupedIds = groups.values.flatMapTo(HashSet()) { g -> g.children.filterIsInstance<ParameterNode.Param>().map { it.id } }
-            val tree = groups.values.toList() + ungrouped.filter { it !in groupedIds }.map { ParameterNode.Param(it) }
-            return first.copy(
-                parameters = parameters.values.toList(),
-                parameterTree = tree,
-                parts = parts.values.toList(),
-                deformers = deformers.values.toList(),
-                drawables = drawables.values.toList(),
-                rootChildren = roots.toList(),
-            ).withDerivedRenderRoot()
-        }
-        val beforeModel = combine(pairs.map { it.first })
-        val afterModel = combine(pairs.map { it.second })
-        val available = afterModel.parameters.mapTo(HashSet()) { it.id.raw }
-        val fixedPhysics = spec.module?.physicsGroups.orEmpty().toSet()
-        val physicsRules = if (fixedPhysics.isEmpty()) emptyList()
-            else PhysicsGenerator.moduleRules(available).filter { it.id in fixedPhysics }
-        val values = buildJsonObject {
-            if (spec.isBase && spec.area == "mouth") put("rest_pose_open", true)
-            if (physicsRules.isNotEmpty()) putJsonArray("physics") { physicsRules.forEach { add(it.toJson()) } }
-        }
-        return ModifierAlgorithmContext(values, mapOf(
-            "before" to ModifierAlgorithmResource(RigIrBinary.encode(PuppetIr.toIr(beforeModel))),
-            "after" to ModifierAlgorithmResource(RigIrBinary.encode(PuppetIr.toIr(afterModel))),
-        ))
+        error("Unmigrated binding type without worker context: ${instance.type}")
     }
 
     fun outlineShellSource(context: RigBuilder.RigContext, config: PipelineConfig, layers: Map<String, ClassifiedLayer>,
@@ -991,7 +947,12 @@ internal class RigModifierSource(
             put("mode", mode)
             put("base_context", baseContext.values)
             if (subContexts.isNotEmpty()) put("sub_contexts", subContexts)
-            put(ModifierParameterI18n.CONTEXT_KEY, io.github.psd2live.core.modifier.source.ModifierParameterContext.i18n().toJsonElement())
+            put(ModifierParameterI18n.CONTEXT_KEY, io.github.psd2live.core.modifier.source.ModifierParameterContext.i18n(
+                mapOf(
+                    "ParamMouthForm" to io.github.psd2live.i18n.tr("model.parameter.mouthForm"),
+                    "ParamMouthOpenY" to io.github.psd2live.i18n.tr("model.parameter.mouthOpenY"),
+                )
+            ).toJsonElement())
         }
         return ModifierAlgorithmContext(values, extraResources, baseContext.upstream)
     }
@@ -1024,7 +985,12 @@ internal class RigModifierSource(
             put("mode", mode)
             put("base_context", baseContext.values)
             if (subContexts.isNotEmpty()) put("sub_contexts", subContexts)
-            put(ModifierParameterI18n.CONTEXT_KEY, io.github.psd2live.core.modifier.source.ModifierParameterContext.i18n().toJsonElement())
+            put(ModifierParameterI18n.CONTEXT_KEY, io.github.psd2live.core.modifier.source.ModifierParameterContext.i18n(
+                mapOf(
+                    "ParamMouthForm" to io.github.psd2live.i18n.tr("model.parameter.mouthForm"),
+                    "ParamMouthOpenY" to io.github.psd2live.i18n.tr("model.parameter.mouthOpenY"),
+                )
+            ).toJsonElement())
         }
         return ModifierAlgorithmContext(values, extraResources, baseContext.upstream)
     }
@@ -1053,7 +1019,12 @@ internal class RigModifierSource(
             put("mode", mode)
             put("base_context", baseContext.values)
             if (subContexts.isNotEmpty()) put("sub_contexts", subContexts)
-            put(ModifierParameterI18n.CONTEXT_KEY, io.github.psd2live.core.modifier.source.ModifierParameterContext.i18n().toJsonElement())
+            put(ModifierParameterI18n.CONTEXT_KEY, io.github.psd2live.core.modifier.source.ModifierParameterContext.i18n(
+                mapOf(
+                    "ParamMouthForm" to io.github.psd2live.i18n.tr("model.parameter.mouthForm"),
+                    "ParamMouthOpenY" to io.github.psd2live.i18n.tr("model.parameter.mouthOpenY"),
+                )
+            ).toJsonElement())
         }
         return ModifierAlgorithmContext(values, extraResources, baseContext.upstream)
     }
@@ -1081,7 +1052,12 @@ internal class RigModifierSource(
             put("mode", "legacy")
             put("base_context", baseContext.values)
             if (subContexts.isNotEmpty()) put("sub_contexts", subContexts)
-            put(ModifierParameterI18n.CONTEXT_KEY, io.github.psd2live.core.modifier.source.ModifierParameterContext.i18n().toJsonElement())
+            put(ModifierParameterI18n.CONTEXT_KEY, io.github.psd2live.core.modifier.source.ModifierParameterContext.i18n(
+                mapOf(
+                    "ParamMouthForm" to io.github.psd2live.i18n.tr("model.parameter.mouthForm"),
+                    "ParamMouthOpenY" to io.github.psd2live.i18n.tr("model.parameter.mouthOpenY"),
+                )
+            ).toJsonElement())
         }
         return ModifierAlgorithmContext(values, extraResources, baseContext.upstream)
     }
@@ -1100,7 +1076,7 @@ internal class RigModifierSource(
 
     fun hairLegacyContext(instance: RigModifierInstance): ModifierAlgorithmContext {
         val scaffold = provider(instance)
-        val tuning = RigLegacyBindings.tuning(instance, RigTuning())
+        val tuning = RigLegacyBindings.tuning(instance.copy(type = "hair/legacy"), RigTuning())
         val frontHairSway = scaffold.config["frontHairSway"]?.jsonPrimitive?.boolean ?: true
         val backHairSway = scaffold.config["backHairSway"]?.jsonPrimitive?.boolean ?: true
         val earlierBinding = activeBefore(instance).any { it.type == "hair/legacy" || it.type == "hair" }
@@ -1128,15 +1104,237 @@ internal class RigModifierSource(
         val values = buildJsonObject {
             put("mode", mode)
             put("base_context", baseContext.values)
-            put(ModifierParameterI18n.CONTEXT_KEY, io.github.psd2live.core.modifier.source.ModifierParameterContext.i18n().toJsonElement())
+            put(ModifierParameterI18n.CONTEXT_KEY, io.github.psd2live.core.modifier.source.ModifierParameterContext.i18n(
+                mapOf(
+                    "ParamMouthForm" to io.github.psd2live.i18n.tr("model.parameter.mouthForm"),
+                    "ParamMouthOpenY" to io.github.psd2live.i18n.tr("model.parameter.mouthOpenY"),
+                )
+            ).toJsonElement())
         }
         return ModifierAlgorithmContext(values, baseContext.resources, baseContext.upstream)
+    }
+
+    fun mouthFittedContext(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val scaffold = provider(instance)
+        val preceding = activeBefore(instance)
+        val precedingWithFitted = if (preceding.any { it.type == "mouth/fitted" || it.type == "mouth" }) preceding
+            else preceding + instance.copy(type = "mouth/fitted")
+        val (native, context) = RigFittedMouthModuleSource.context(this, scaffold, precedingWithFitted, activeModule = null, neutralScaffold = true)
+        val targetLayers = instance.targets.mapNotNull { t -> layersByMesh[t.id]?.let { layersById[it] }?.let { t.id to it } }.toMap()
+        return RigFittedMouthModuleSource.measure(this, native, context, precedingWithFitted, targetLayers)
+    }
+
+    fun mouthLegacyContext(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val scaffold = provider(instance)
+        val targetLayers = instance.targets.mapNotNull { t -> layersByMesh[t.id]?.let { layersById[it] }?.let { t.id to it } }.toMap()
+        return io.github.psd2live.core.modifier.source.RigStaticSourceCollector.mouthLegacySourceInputs(
+            analysis, sourceConfig(), meshCache, targetLayers, primaryByLayer, sourceScaffoldContext(scaffold),
+        )
+    }
+
+    fun mouthOutlineContext(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val scaffold = provider(instance)
+        val preceding = activeBefore(instance)
+        val fittedProvider = preceding.lastOrNull {
+            (it.type == "mouth/fitted" || it.type == "mouth") && it.config["scaffold"] == instance.config["scaffold"]
+        }?.id
+        val headProvider = preceding.lastOrNull {
+            (it.type in setOf("face/fitted", "face.depth-turn") ||
+                (it.type == "face" && ((it.config["mode"]?.jsonPrimitive?.content ?: "fitted") == "fitted" ||
+                    it.config["depthTurn"]?.jsonPrimitive?.booleanOrNull == true))) &&
+                it.config["scaffold"] == instance.config["scaffold"]
+        }?.id
+        val targetLayers = instance.targets.mapNotNull { t -> layersByMesh[t.id]?.let { layersById[it] }?.let { t.id to it } }.toMap()
+        val owners = targetLayers.mapNotNull { (id, layer) ->
+            if (layer.semantic.tag !in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) || layer.semantic.role != null) null
+            else id to RigMouthOutlineSource.Owner(layer.source.id.raw, id, fittedProvider = fittedProvider, headOnMesh = headProvider != null)
+        }.toMap()
+        val thickness = instance.config["values"]?.jsonObject?.get("thickness")?.jsonPrimitive?.floatOrNull ?: 1.5f
+        val color = instance.config["color"]?.jsonPrimitive?.intOrNull
+        val outlineConfig = activeRecipeConfig(instance).copy(mouthOutlineEnabled = true, mouthThickness = thickness, mouthColor = color)
+        val head = headProvider?.let { providerId ->
+            val outlineRigContext = RigBuilder.rigContext(analysis, outlineConfig, meshCache)
+            io.github.psd2live.core.RigFittedFaceSource.headTurn(outlineRigContext, outlineConfig)?.let { turn ->
+                io.github.psd2live.algorithms.binding.MouthFittedInputs.Head(
+                    providerId, turn.centerX, turn.centerY, turn.radiusX, turn.radiusY, turn.turn, turn.depth, turn.chinY,
+                )
+            }
+        }
+        return RigMouthOutlineSource.capture(analysis, outlineConfig, owners, head = head, cache = meshCache).encode()
+    }
+
+    fun mouthModuleContext(instance: RigModifierInstance, module: RigModule): ModifierAlgorithmContext {
+        val scaffold = provider(instance)
+        val preceding = activeBefore(instance)
+        val extraModules = buildList {
+            if (preceding.none { it.type == "mouth/fitted" || it.type == "mouth" }) {
+                add(instance.copy(type = "mouth/fitted", config = JsonObject(instance.config - "values" - "tuning")))
+            }
+            if (module == RigModules.MOUTH_TONGUE &&
+                instance.config["capture"]?.jsonPrimitive?.booleanOrNull == true &&
+                preceding.none { it.type == RigModules.MOUTH_CAPTURE.id }) {
+                add(instance.copy(type = RigModules.MOUTH_CAPTURE.id, config = JsonObject(instance.config - "values" - "tuning")))
+            }
+            if (module == RigModules.MOUTH_SPRING &&
+                instance.config["jaw"]?.jsonPrimitive?.booleanOrNull == true &&
+                preceding.none { it.type == RigModules.MOUTH_JAW.id }) {
+                add(instance.copy(type = RigModules.MOUTH_JAW.id, config = JsonObject(instance.config - "values" - "tuning")))
+            }
+        }
+        val precedingWithFitted = preceding + extraModules
+        val (native, context) = RigFittedMouthModuleSource.context(this, scaffold, precedingWithFitted, activeModule = module, neutralScaffold = true)
+        val allTargetLayers = instance.targets.mapNotNull { t -> layersByMesh[t.id]?.let { layersById[it] }?.let { t.id to it } }.toMap()
+        val fitted = context.fittedMouth(native)
+        val rig = fitted?.rig
+        val hasSeparateMouth = fitted?.result?.layers?.any { it.semantic.tag == SemanticTag.MOUTH } == true
+        val lippedSkin = allTargetLayers.entries.mapNotNullTo(linkedSetOf()) { (id, layer) ->
+            if (fitted != null && rig != null && layer.semantic.tag == SemanticTag.FACE &&
+                layer.semantic.role == null && fitted.lipped && !rig.fit.hasLines) id else null
+        }
+        val targetLayers = when (module) {
+            RigModules.MOUTH_TONGUE -> allTargetLayers.filter { (_, layer) -> fitted != null && fitted.covers(layer) }
+            RigModules.MOUTH_VOWEL, RigModules.MOUTH_CAPTURE -> allTargetLayers.filter { (id, layer) ->
+                (fitted != null && fitted.covers(layer)) || id in lippedSkin
+            }
+            RigModules.MOUTH_SPRING -> allTargetLayers.filter { (id, _) -> id in lippedSkin }
+            RigModules.MOUTH_DEPTH -> allTargetLayers.filter { (_, layer) ->
+                (fitted != null && fitted.covers(layer)) ||
+                    (layer.semantic.tag == SemanticTag.MOUTH_OPEN && layer.semantic.role == null && hasSeparateMouth)
+            }
+            else -> allTargetLayers
+        }
+        val inner = RigFittedMouthModuleSource.measure(this, native, context, precedingWithFitted, targetLayers)
+        val folder = io.github.psd2live.i18n.tr("model.group.mouth")
+        val followsOrNull = targetLayers.mapValues { (_, layer) ->
+            if (fitted != null && fitted.covers(layer)) fitted.follow(layer) else null
+        }
+        return when (module) {
+            RigModules.MOUTH_VOWEL -> io.github.psd2live.algorithms.binding.MouthVowelAlgorithm.context(
+                inner, followsOrNull, module.defines.associate { it.id to io.github.psd2live.i18n.tr(it.nameKey) }, folder)
+            RigModules.MOUTH_CAPTURE -> io.github.psd2live.algorithms.binding.MouthCaptureAlgorithm.context(
+                inner, followsOrNull, lippedSkin, module.defines.associate { it.id to io.github.psd2live.i18n.tr(it.nameKey) }, folder)
+            RigModules.MOUTH_TONGUE -> io.github.psd2live.algorithms.binding.MouthTongueAlgorithm.context(
+                inner, targetLayers.mapValues { (_, layer) -> requireNotNull(fitted).follow(layer) },
+                io.github.psd2live.i18n.tr(module.defines.single().nameKey), folder)
+            RigModules.MOUTH_SPRING -> io.github.psd2live.algorithms.binding.MouthSpringAlgorithm.context(
+                inner, lippedSkin, io.github.psd2live.i18n.tr(module.defines.single().nameKey), folder, io.github.psd2live.i18n.tr("model.physics.mouthSpring"))
+            RigModules.MOUTH_DEPTH -> ModifierAlgorithmContext(buildJsonObject {
+                put("schema", "mouth-depth/1")
+                put("source", inner.values)
+                put("interior", JsonObject(targetLayers.mapValues { (_, layer) ->
+                    val follow = fitted?.follow(layer)
+                    val depth = when (follow) {
+                        io.github.psd2live.algorithms.binding.MouthRig.Follow.UPPER_TEETH -> 0.06f
+                        io.github.psd2live.algorithms.binding.MouthRig.Follow.LOWER_TEETH -> 0.1f
+                        io.github.psd2live.algorithms.binding.MouthRig.Follow.TONGUE -> 0.16f
+                        io.github.psd2live.algorithms.binding.MouthRig.Follow.DEEP -> 0.2f
+                        io.github.psd2live.algorithms.binding.MouthRig.Follow.INSIDE,
+                        io.github.psd2live.algorithms.binding.MouthRig.Follow.OPENING -> 0f
+                        else -> if (layer.semantic.tag == SemanticTag.MOUTH_OPEN && hasSeparateMouth) 0.12f else 0f
+                    }
+                    val shade = follow == io.github.psd2live.algorithms.binding.MouthRig.Follow.TONGUE ||
+                        follow == io.github.psd2live.algorithms.binding.MouthRig.Follow.DEEP ||
+                        follow == io.github.psd2live.algorithms.binding.MouthRig.Follow.INSIDE ||
+                        follow == io.github.psd2live.algorithms.binding.MouthRig.Follow.OPENING ||
+                        (layer.semantic.tag == SemanticTag.MOUTH_OPEN && layer.semantic.role == null && hasSeparateMouth)
+                    buildJsonObject { put("depth", depth); put("shade", shade) }
+                }))
+            }, inner.resources)
+            else -> ModifierAlgorithmContext(buildJsonObject { put("source", inner.values) }, inner.resources)
+        }
+    }
+
+    fun mouthCheekLidContext(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val targetLayers = instance.targets.mapNotNull { t -> layersByMesh[t.id]?.let { t.id to it } }.toMap()
+        val names = eyeModuleParameterNames(io.github.psd2live.core.recipe.RigModules.MOUTH_CHEEK_LID)
+        return io.github.psd2live.core.modifier.source.RigStaticSourceCollector.mouthCheekLidSourceInputs(
+            analysis, atlas, eyeConfig(instance), meshCache, targetLayers, names, eyeSubParentId(instance),
+        )
+    }
+
+    fun mouthJawContext(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val cfg = activeRecipeConfig(instance)
+        val rig = RigBuilder.rigContext(analysis, cfg, meshCache, neutralScaffold = true).fittedMouth(cfg)?.rig
+        val targetLayers = instance.targets.mapNotNull { t -> layersByMesh[t.id]?.let { layersById[it] }?.let { t.id to it } }
+            .filter { (_, layer) ->
+                val tag = layer.semantic.tag
+                tag == SemanticTag.FACE || tag == SemanticTag.NOSE ||
+                    (tag == SemanticTag.FACE_DETAIL && rig != null && rig.fit.toMouth(layer.centroidX, layer.centroidY).second > 0f)
+            }.toMap()
+        val scaffold = instance.config["scaffold"]
+        val preceding = activeBefore(instance).filter { it.config["scaffold"] == scaffold }
+        val providers = linkedMapOf<String, String>()
+        for (p in preceding) {
+            if (p.type in io.github.psd2live.algorithms.binding.MouthJawAlgorithm.optionalUpstream) {
+                providers[p.type] = p.id
+            }
+        }
+        return io.github.psd2live.core.modifier.source.RigStaticSourceCollector.mouthJawSourceInputs(
+            analysis, atlas, cfg, meshCache, targetLayers, primaryByLayer, providers,
+        )
+    }
+
+    fun mouthPartContext(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val mode = instance.config["mode"]?.jsonPrimitive?.content ?: "fitted"
+        val baseContext = if (mode == "fitted") mouthFittedContext(instance) else mouthLegacyContext(instance)
+        val subFlagToModule = listOf(
+            "outline" to (RigModules.MOUTH_OUTLINE.id to ::mouthOutlineContext),
+            "vowel" to (RigModules.MOUTH_VOWEL.id to { i: RigModifierInstance -> mouthModuleContext(i, RigModules.MOUTH_VOWEL) }),
+            "capture" to (RigModules.MOUTH_CAPTURE.id to { i: RigModifierInstance -> mouthModuleContext(i, RigModules.MOUTH_CAPTURE) }),
+            "tongue" to (RigModules.MOUTH_TONGUE.id to { i: RigModifierInstance -> mouthModuleContext(i, RigModules.MOUTH_TONGUE) }),
+            "jaw" to (RigModules.MOUTH_JAW.id to ::mouthJawContext),
+            "cheekLid" to (RigModules.MOUTH_CHEEK_LID.id to ::mouthCheekLidContext),
+            "depth" to (RigModules.MOUTH_DEPTH.id to { i: RigModifierInstance -> mouthModuleContext(i, RigModules.MOUTH_DEPTH) }),
+            "spring" to (RigModules.MOUTH_SPRING.id to { i: RigModifierInstance -> mouthModuleContext(i, RigModules.MOUTH_SPRING) }),
+        )
+        val subConfigs = instance.config["subConfigs"]?.jsonObject.orEmpty()
+        val resources = LinkedHashMap<String, ModifierAlgorithmResource>(baseContext.resources)
+        val subContexts = buildJsonObject {
+            for ((flag, entry) in subFlagToModule) {
+                if (instance.config[flag]?.jsonPrimitive?.booleanOrNull == true) {
+                    val (subType, builder) = entry
+                    val subCfgObj = subConfigs[subType]?.jsonObject
+                    val subTargets = subCfgObj?.get("targets")?.jsonArray?.map {
+                        kotlinx.serialization.json.Json.decodeFromJsonElement(ModifierTarget.serializer(), it)
+                    } ?: instance.targets
+                    val subInstanceConfig = buildJsonObject {
+                        instance.config.forEach { (k, v) -> if (k != "values" && k != "tuning") put(k, v) }
+                        subCfgObj?.get("values")?.let { put("values", it) }
+                        subCfgObj?.get("tuning")?.let { put("tuning", it) }
+                        subCfgObj?.get("color")?.let { put("color", it) }
+                    }
+                    val subCtx = builder(instance.copy(type = subType, targets = subTargets, config = subInstanceConfig))
+                    put(subType, subCtx.values)
+                    for ((resKey, resVal) in subCtx.resources) {
+                        resources["sub:$subType:$resKey"] = resVal
+                    }
+                }
+            }
+        }
+        val values = buildJsonObject {
+            put("mode", mode)
+            put("base_context", baseContext.values)
+            if (subContexts.isNotEmpty()) put("sub_contexts", subContexts)
+            if (subConfigs.isNotEmpty()) put("sub_configs", JsonObject(subConfigs))
+            put(ModifierParameterI18n.CONTEXT_KEY, io.github.psd2live.core.modifier.source.ModifierParameterContext.i18n(
+                mapOf(
+                    "ParamMouthForm" to io.github.psd2live.i18n.tr("model.parameter.mouthForm"),
+                    "ParamMouthOpenY" to io.github.psd2live.i18n.tr("model.parameter.mouthOpenY"),
+                )
+            ).toJsonElement())
+        }
+        return ModifierAlgorithmContext(values, resources, baseContext.upstream)
     }
 
     fun partParameterContext(instance: RigModifierInstance, defaultMode: String): ModifierAlgorithmContext =
         ModifierAlgorithmContext(buildJsonObject {
             put("mode", instance.config["mode"]?.jsonPrimitive?.content ?: defaultMode)
-            put(ModifierParameterI18n.CONTEXT_KEY, io.github.psd2live.core.modifier.source.ModifierParameterContext.i18n().toJsonElement())
+            put(ModifierParameterI18n.CONTEXT_KEY, io.github.psd2live.core.modifier.source.ModifierParameterContext.i18n(
+                mapOf(
+                    "ParamMouthForm" to io.github.psd2live.i18n.tr("model.parameter.mouthForm"),
+                    "ParamMouthOpenY" to io.github.psd2live.i18n.tr("model.parameter.mouthOpenY"),
+                )
+            ).toJsonElement())
         })
 
     fun scaffoldContext(instance: RigModifierInstance): ModifierAlgorithmContext = scaffoldContexts.getOrPut(instance) {
@@ -1475,30 +1673,15 @@ internal class RigModifierSource(
         if (before.id !in setOf(StandardParameters.EYE_L_OPEN.raw, StandardParameters.EYE_R_OPEN.raw) ||
             before.min != declared.min || before.default != declared.default || before.blend != declared.blend ||
             before.repeat != declared.repeat || before.keys != declared.keys) return null
-        val widening = instance.type == "eye.wide" || instance.type == "psd2live.native.core/eye-wide"
-        val inherited = activeBefore(instance).any { it.type == "eye.wide" || it.type == "psd2live.native.core/eye-wide" }
+        val widening = instance.type == "eye.wide" || instance.type == "psd2live.native.core/eye-wide" ||
+            (instance.type == RigSourceModifiers.EYE && instance.config["wide"]?.jsonPrimitive?.booleanOrNull == true)
+        val inherited = activeBefore(instance).any {
+            it.type == "eye.wide" || it.type == "psd2live.native.core/eye-wide" ||
+                (it.type == RigSourceModifiers.EYE && it.config["wide"]?.jsonPrimitive?.booleanOrNull == true)
+        }
         if (!widening && (!inherited || before.max < declared.max)) return null
         if (before.max < 1f || declared.max < 1f) return null
         return before.copy(max = maxOf(before.max, declared.max))
-    }
-
-    fun parameters(instance: RigModifierInstance): List<io.github.psd2live.format.model.Parameter> {
-        val source = legacyBindingSource(instance)
-        if (source !== this) return source.parameters(instance)
-        val found = LinkedHashMap<String, io.github.psd2live.format.model.Parameter>()
-        val definitions = instance.targets.flatMap { target ->
-            val desired = transition(instance, target) {}.second
-            parameterDefinitions.getOrPut(desired) { PuppetIr.parametersToIr(desired) }
-        }
-        for (parameter in definitions) {
-            val previous = found[parameter.id]
-            require(previous == null || previous.min == parameter.min && previous.max == parameter.max && previous.default == parameter.default &&
-                previous.blend == parameter.blend && previous.repeat == parameter.repeat && previous.keys == parameter.keys) {
-                "${instance.id}: incompatible shared parameter ${parameter.id} across targets"
-            }
-            found.putIfAbsent(parameter.id, parameter)
-        }
-        return found.values.toList()
     }
 
     private fun restricted(input: PuppetModel, kept: Set<ParameterId>): PuppetModel =
@@ -1560,6 +1743,7 @@ internal object RigSourceModifiers {
     const val FACE = "face"
     const val BODY = "body"
     const val HAIR = "hair"
+    const val MOUTH = "mouth"
 
     private fun partDefinitions(source: RigModifierSource?): List<RigModifierDefinition> = listOf(
         RigModifierDefinition(
@@ -1568,6 +1752,8 @@ internal object RigSourceModifiers {
             requires = setOf(SCAFFOLD),
             provides = setOf("eye/fitted", "eye/legacy"),
             exclusiveFamily = "base:eye",
+            providers = { mapOf(SCAFFOLD to it.config.getValue("scaffold").jsonPrimitive.content) },
+            upstreamInputs = true,
             appliedConfig = { it.config },
             validate = { _, instance ->
                 require("scaffold" in instance.config) { "Specify eye's scaffold" }
@@ -1589,6 +1775,8 @@ internal object RigSourceModifiers {
             requires = setOf(SCAFFOLD),
             provides = setOf("brow/fitted", "brow/legacy"),
             exclusiveFamily = "base:brow",
+            providers = { mapOf(SCAFFOLD to it.config.getValue("scaffold").jsonPrimitive.content) },
+            upstreamInputs = true,
             appliedConfig = { it.config },
             validate = { _, instance ->
                 require("scaffold" in instance.config) { "Specify brow's scaffold" }
@@ -1600,7 +1788,9 @@ internal object RigSourceModifiers {
                 requireNotNull(source).provider(instance)
             },
             composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter", "physics"),
-            plugin = io.github.psd2live.algorithms.binding.BrowPartAlgorithm(),
+            plugin = object : ChangingModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.BrowPartAlgorithm(), ModifierOptionalUpstream {
+                override val optionalUpstream = setOf("eye/fitted")
+            },
             changeWrites = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter", "physics", "restPose"),
             authorContext = { requireNotNull(source).browPartContext(it) },
         ),
@@ -1610,6 +1800,8 @@ internal object RigSourceModifiers {
             requires = setOf(SCAFFOLD),
             provides = setOf("face/fitted", "face/legacy"),
             exclusiveFamily = "base:face",
+            providers = { mapOf(SCAFFOLD to it.config.getValue("scaffold").jsonPrimitive.content) },
+            upstreamInputs = true,
             appliedConfig = { it.config },
             validate = { _, instance ->
                 require("scaffold" in instance.config) { "Specify face's scaffold" }
@@ -1631,6 +1823,8 @@ internal object RigSourceModifiers {
             requires = setOf(SCAFFOLD),
             provides = setOf("body/legacy"),
             exclusiveFamily = "base:body",
+            providers = { mapOf(SCAFFOLD to it.config.getValue("scaffold").jsonPrimitive.content) },
+            upstreamInputs = true,
             appliedConfig = { it.config },
             validate = { _, instance ->
                 require("scaffold" in instance.config) { "Specify body's scaffold" }
@@ -1640,7 +1834,9 @@ internal object RigSourceModifiers {
                 requireNotNull(source).provider(instance)
             },
             composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter", "physics"),
-            plugin = io.github.psd2live.algorithms.binding.BodyPartAlgorithm(),
+            plugin = object : ChangingModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.BodyPartAlgorithm(), ModifierOptionalUpstream {
+                override val optionalUpstream = setOf("face/legacy", "face/fitted")
+            },
             changeWrites = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter", "physics"),
             authorContext = { requireNotNull(source).bodyPartContext(it) },
         ),
@@ -1650,6 +1846,8 @@ internal object RigSourceModifiers {
             requires = setOf(SCAFFOLD, "body/legacy", "face/legacy"),
             provides = setOf("hair/chains", "hair/legacy"),
             exclusiveFamily = "base:hair",
+            providers = { mapOf(SCAFFOLD to it.config.getValue("scaffold").jsonPrimitive.content) },
+            upstreamInputs = true,
             appliedConfig = { it.config },
             validate = { _, instance ->
                 require("scaffold" in instance.config) { "Specify hair's scaffold" }
@@ -1664,6 +1862,32 @@ internal object RigSourceModifiers {
             plugin = io.github.psd2live.algorithms.binding.HairPartAlgorithm(),
             changeWrites = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter", "physics"),
             authorContext = { requireNotNull(source).hairPartContext(it) },
+        ),
+        RigModifierDefinition(
+            type = MOUTH,
+            version = 1,
+            requires = setOf(SCAFFOLD),
+            provides = setOf("mouth/fitted", "mouth/legacy"),
+            exclusiveFamily = "base:mouth",
+            providers = { mapOf(SCAFFOLD to it.config.getValue("scaffold").jsonPrimitive.content) },
+            upstreamInputs = true,
+            appliedConfig = { it.config },
+            validate = { _, instance ->
+                require("scaffold" in instance.config) { "Specify mouth's scaffold" }
+                val mode = instance.config["mode"]?.jsonPrimitive?.content ?: "fitted"
+                require(mode == "fitted" || mode == "legacy") { "Invalid mouth mode: $mode" }
+                require(instance.targets.all { it.kind == "mesh" && source?.hasMesh(it.id) == true }) {
+                    "Mouth targets must have captured source layers"
+                }
+                requireNotNull(source).provider(instance)
+            },
+            composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter", "physics", "restPose", "textures", "authoring"),
+            plugin = object : ChangingModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.MouthPartAlgorithm(), ModifierOptionalUpstream {
+                override val optionalUpstream = setOf("face/fitted", "face.depth-turn", "body/legacy", "face/legacy",
+                    "eye/fitted", "eye.smile", "eye.wide")
+            },
+            changeWrites = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter", "physics", "restPose", "textures", "authoring"),
+            authorContext = { requireNotNull(source).mouthPartContext(it) },
         ),
     )
 

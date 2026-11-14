@@ -54,7 +54,7 @@ class EyePartAlgorithm : ChangingModifierAlgorithmPlugin {
         )
         val baseValues = context.values["base_context"]?.jsonObject ?: context.values
         val upstream = context.upstream.toMutableList()
-        val baseContext = ModifierAlgorithmContext(baseValues, context.resources, upstream)
+        val baseContext = ModifierAlgorithmContext(baseValues, context.resources.filterKeys { !it.startsWith("sub:") }, upstream)
 
         var current = if (mode == "fitted") {
             EyeFittedSourceAlgorithm().changes(input, baseInstance, baseContext, checkpoint).apply(input, checkpoint)
@@ -106,10 +106,13 @@ class EyePartAlgorithm : ChangingModifierAlgorithmPlugin {
                 plugin = instance.plugin,
             )
             val subPrefix = "sub:$subType:"
-            val subResources = context.resources + context.resources
+            val subResources = context.resources
                 .filterKeys { it.startsWith(subPrefix) }
                 .mapKeys { it.key.removePrefix(subPrefix) }
-            val subContext = ModifierAlgorithmContext(subValues, subResources, upstream)
+            val filteredUpstream = if (subType == EyeAftershockAlgorithm.TYPE) {
+                upstream.filter { it.capability !in setOf(EyeGazeLidAlgorithm.TYPE, EyeEmotionAlgorithm.TYPE) }
+            } else upstream
+            val subContext = ModifierAlgorithmContext(subValues, subResources, filteredUpstream)
             val evalInput = ModifierEvaluationInput(current, subContext)
             current = subPlugin.changes(evalInput, subInstance, checkpoint).apply(current, checkpoint)
             upstream += ModifierUpstreamCapability(

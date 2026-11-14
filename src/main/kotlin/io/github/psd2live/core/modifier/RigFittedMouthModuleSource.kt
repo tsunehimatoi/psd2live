@@ -50,7 +50,11 @@ internal object RigFittedMouthModuleSource {
         }
         val frames = layers.mapValues { (_, layer) -> context.parentAndFrame(layer, native) }
         val parents = frames.mapValues { it.value.first?.raw }
-        val headProvider = preceding.lastOrNull { it.type in setOf("face.depth-turn", RigLegacyBindings.FITTED_FACE) }
+        val headProvider = preceding.lastOrNull {
+            it.type in setOf("face.depth-turn", RigLegacyBindings.FITTED_FACE) ||
+                (it.type == "face" && ((it.config["mode"]?.jsonPrimitive?.content ?: "fitted") == "fitted" ||
+                    it.config["depthTurn"]?.jsonPrimitive?.booleanOrNull == true))
+        }
         val inputs = RigFittedMouthSource.capture(context, native, parents, layers,
             frames.mapValues { it.value.second }, emptyList(), headProvider?.id)
         val vertices = ScaffoldMeshContext.capture(layers.values.distinctBy { it.source.id }.map { layer ->

@@ -51,23 +51,18 @@ class WorkspaceSourceImporterTest {
                 assertEquals(previous.seeThrough, model.baseRig.seeThrough)
             } else {
                 assertTrue(stack.instances.all { it.presetGroup == "modern" })
-                assertTrue(stack.instances.any { it.type == "face/fitted" })
+                assertTrue(stack.instances.any { it.type == "face" && it.config["mode"]?.jsonPrimitive?.content == "fitted" })
                 assertTrue(stack.instances.none { it.type == "face/legacy" || it.type == "face.depth-turn" })
                 assertTrue(installed.model.rig.puppet.deformers.isNotEmpty())
-                val lids = mapOf("eye.smile" to 1, "eye.wide" to 1, "eye.gaze-lid" to 1, "eye.emotion" to 1,
-                    "eye.highlight" to 1, "eye.aftershock" to 1, "eye.squash" to 1)
-                val activeLids = lids.filterKeys { type -> stack.instances.any { it.type == type } }
-                val independent = mapOf("body/legacy" to 1, "face/fitted" to 1, "eye/fitted" to 1) + activeLids
-                for ((type, version) in independent) {
+                val parts = listOf("body", "face", "eye", "brow", "mouth").filter { type -> stack.instances.any { it.type == type } }
+                for (type in parts) {
                     val instance = stack.instances.single { it.type == type }
-                    assertEquals(version, instance.version, type)
-                    assertEquals(assertNotNull(BuiltinModifierPlugins.reference(type, version)), instance.plugin)
+                    assertEquals(1, instance.version, type)
+                    assertEquals(assertNotNull(BuiltinModifierPlugins.reference(type, 1)), instance.plugin)
                 }
-                val previous = mapOf("body/legacy" to 1, "face/fitted" to 1, "eye/fitted" to 2) +
-                    activeLids.mapValues { 1 }
                 val locked = stack.copy(instances = stack.instances.map { instance ->
-                    val version = previous[instance.type] ?: return@map instance
-                    instance.copy(version = version, plugin = assertNotNull(BuiltinModifierPlugins.reference(instance.type, version)))
+                    if (instance.type !in parts) return@map instance
+                    instance.copy(version = 1, plugin = assertNotNull(BuiltinModifierPlugins.reference(instance.type, 1)))
                 })
                 val reference = installed.document.copy(rigEdits = installed.document.rigEdits.copy(modifierStack = locked.toJson()))
                 assertEquals(RigIrCompiler.compile(builder.build(reference)), RigIrCompiler.compile(installed.model))
@@ -89,9 +84,10 @@ class WorkspaceSourceImporterTest {
             modifiers = WorkspaceInitialModifiers.CUSTOM,
             preset = WorkspaceInitialPreset(headStrength = .7f, bodyStrength = 1.3f, clothing = false)).capture
         val stack = RigModifierStack.fromJson(assertNotNull(installed.document.rigEdits.modifierStack))
-        val replaced = setOf("face/legacy", "eye/legacy", "brow/legacy")
+        val replaced = setOf("face", "eye", "brow")
         assertEquals(replaced, stack.instances.filter { it.type in replaced }.mapTo(HashSet()) { entry ->
             assertEquals(1, entry.version, entry.type)
+            assertEquals("legacy", entry.config["mode"]?.jsonPrimitive?.content, entry.type)
             assertEquals(assertNotNull(BuiltinModifierPlugins.reference(entry.type, 1)), entry.plugin)
             entry.type
         })

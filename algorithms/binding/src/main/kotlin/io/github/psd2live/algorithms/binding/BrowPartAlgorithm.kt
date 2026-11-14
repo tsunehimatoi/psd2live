@@ -52,7 +52,7 @@ class BrowPartAlgorithm : ChangingModifierAlgorithmPlugin {
         )
         val baseValues = context.values["base_context"]?.jsonObject ?: context.values
         val upstream = context.upstream.toMutableList()
-        val baseContext = ModifierAlgorithmContext(baseValues, context.resources, upstream)
+        val baseContext = ModifierAlgorithmContext(baseValues, context.resources.filterKeys { !it.startsWith("sub:") }, upstream)
 
         var current = if (mode == "fitted") {
             BrowFittedAlgorithm().changes(input, baseInstance, baseContext, checkpoint).apply(input, checkpoint)
@@ -92,7 +92,14 @@ class BrowPartAlgorithm : ChangingModifierAlgorithmPlugin {
                 subCfgJson["tuning"]?.let { put("tuning", it) }
                 subCfgJson["physics"]?.let { put("physics", it) }
                 subCfgJson["physicsEnabled"]?.let { put("physicsEnabled", it) }
-                (subCfgJson["dependencies"] ?: instance.config["dependencies"])?.let { put("dependencies", it) }
+                val deps = subCfgJson["dependencies"]?.jsonObject ?: instance.config["dependencies"]?.jsonObject ?: JsonObject(emptyMap())
+                val mergedDeps = buildJsonObject {
+                    deps.forEach { (k, v) -> put(k, v) }
+                    if (subType == BrowLidAlgorithm.TYPE && "eye/fitted" !in deps) {
+                        upstream.lastOrNull { it.capability == "eye/fitted" }?.instanceId?.let { put("eye/fitted", it) }
+                    }
+                }
+                if (mergedDeps.isNotEmpty()) put("dependencies", mergedDeps)
                 subCfgJson["dip"]?.let { put("dip", it) }
             }
             val subInstance = RigModifierInstance(
@@ -105,9 +112,9 @@ class BrowPartAlgorithm : ChangingModifierAlgorithmPlugin {
                 plugin = instance.plugin,
             )
             val prefix = "sub:$subType:"
-            val subResources = context.resources.entries.associate { (k, v) ->
-                (if (k.startsWith(prefix)) k.removePrefix(prefix) else k) to v
-            }
+            val subResources = context.resources
+                .filterKeys { it.startsWith(prefix) }
+                .mapKeys { it.key.removePrefix(prefix) }
             val subContext = ModifierAlgorithmContext(subValues, subResources, upstream)
             val evalInput = ModifierEvaluationInput(current, subContext)
             current = subPlugin.changes(evalInput, subInstance, checkpoint).apply(current, checkpoint)

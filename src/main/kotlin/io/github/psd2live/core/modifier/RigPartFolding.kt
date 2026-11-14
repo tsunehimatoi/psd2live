@@ -48,6 +48,17 @@ internal object RigPartFolding {
         "body.arms" to "arms",
     )
 
+    private val mouthFlags = mapOf(
+        "mouth.outline" to "outline",
+        "mouth.vowel" to "vowel",
+        "mouth.capture" to "capture",
+        "mouth.tongue" to "tongue",
+        "mouth.jaw" to "jaw",
+        "mouth.cheek-lid" to "cheekLid",
+        "mouth.interior-depth" to "depth",
+        "mouth.spring" to "spring",
+    )
+
     fun foldEye(instances: List<RigModifierInstance>): List<FoldedPart> =
         foldArea(instances, fittedType = "eye/fitted", legacyType = "eye/legacy", partType = "eye", flagByType = eyeFlags)
 
@@ -66,15 +77,23 @@ internal object RigPartFolding {
         foldArea(instances, fittedType = "hair/chains", legacyType = "hair/legacy", partType = "hair", flagByType = emptyMap(),
             fittedMode = "chains")
 
+    fun foldMouth(instances: List<RigModifierInstance>): List<FoldedPart> =
+        foldArea(instances, fittedType = "mouth/fitted", legacyType = "mouth/legacy", partType = "mouth", flagByType = mouthFlags,
+            matchByScaffoldWithoutBase = true)
+
     /**
      * Folds all eligible legacy part+submodule groups into unified part plugin instances while
-     * preserving stack order and leaving groups with external plugin overrides untouched.
+     * preserving stack order and leaving groups with external plugin overrides or excluded types untouched.
      */
-    fun foldAll(instances: List<RigModifierInstance>): List<RigModifierInstance> {
-        val parts = (foldEye(instances) + foldBrow(instances) + foldFace(instances) +
+    fun foldAll(instances: List<RigModifierInstance>, excludedTypes: Set<String> = emptySet()): List<RigModifierInstance> {
+        val byId = instances.associateBy { it.id }
+        val parts = (foldEye(instances) + foldBrow(instances) + foldMouth(instances) + foldFace(instances) +
             foldBody(instances) + foldHair(instances)).filter { part ->
-            val byId = instances.associateBy { it.id }
-            part.sourceIds.none { id -> byId[id]?.plugin != null }
+            part.sourceIds.none { id ->
+                val inst = byId[id] ?: return@none false
+                val plugin = inst.plugin
+                inst.type in excludedTypes || (plugin != null && BuiltinModifierPlugins.entry(plugin.id) == null)
+            }
         }
         if (parts.isEmpty()) return instances
         val foldedByBase = parts.associateBy { it.folded.id }
@@ -97,6 +116,7 @@ internal object RigPartFolding {
         fittedMode: String = "fitted",
         defaultMode: String? = null,
         matchByDependencies: Boolean = false,
+        matchByScaffoldWithoutBase: Boolean = false,
     ): List<FoldedPart> {
         val enabled = instances.filter { it.enabled }
         val bases = enabled.filter { it.type == fittedType || it.type == legacyType }.distinctBy { it.id }
@@ -109,7 +129,8 @@ internal object RigPartFolding {
                     (child.config["base"]?.jsonPrimitive?.content == base.id ||
                         (matchByDependencies && child.config["dependencies"]?.let { deps ->
                             deps.toString().contains("\"${base.id}\"")
-                        } == true))
+                        } == true) ||
+                        (matchByScaffoldWithoutBase && child.config["base"] == null && child.config["dependencies"] == null))
             }
             val subConfigs = buildJsonObject {
                 for (child in children) {
@@ -121,17 +142,23 @@ internal object RigPartFolding {
                         child.config["physicsEnabled"]?.let { put("physicsEnabled", it) }
                         child.config["dependencies"]?.let { put("dependencies", it) }
                         child.config["dip"]?.let { put("dip", it) }
+                        child.config["color"]?.let { put("color", it) }
                     }
                 }
             }
             val foldedConfig = buildJsonObject {
                 scaffold?.let { put("scaffold", it) }
                 put("mode", mode)
+                base.config["dependencies"]?.let { put("dependencies", it) }
                 base.config["tuning"]?.let { put("tuning", it) }
                 base.config["values"]?.let { put("values", it) }
+                base.config["physics"]?.let { put("physics", it) }
+                base.config["physicsEnabled"]?.let { put("physicsEnabled", it) }
+                base.config["color"]?.let { put("color", it) }
                 for (child in children) {
                     put(flagByType.getValue(child.type), true)
                 }
+                if (subConfigs.isNotEmpty()) put("subConfigs", subConfigs)
             }
             val folded = RigModifierInstance(
                 id = base.id,
@@ -140,6 +167,7 @@ internal object RigPartFolding {
                 targets = base.targets,
                 config = foldedConfig,
                 outputAliases = base.outputAliases,
+                plugin = base.plugin?.let { BuiltinModifierPlugins.reference(partType, 1) ?: it },
             )
             FoldedPart(
                 folded = folded,

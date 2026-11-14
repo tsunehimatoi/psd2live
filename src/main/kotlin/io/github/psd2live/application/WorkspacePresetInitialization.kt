@@ -71,7 +71,7 @@ internal object WorkspacePresetInitialization {
         val subject = RecipeSubject.of(model.analysis)
         val fittedFace = RigModules.builds(RigModules.FACE_DEPTH_TURN, config, subject)
         val types = buildList {
-            for (area in listOf("eye", "brow", "mouth", "body", "face", "hair"))
+            for (area in listOf("eye", "brow", "face", "mouth", "body", "hair"))
                 add(if (area == "face" && fittedFace) RigLegacyBindings.FITTED_FACE else config.recipe.base(area).id)
             addAll(RigModules.modules.filter { RigModules.builds(it, config, subject) && it != RigModules.FACE_DEPTH_TURN }
                 .map { it.id }.filter { RigLegacyBindings.find(it) != null })
@@ -119,6 +119,9 @@ internal object WorkspacePresetInitialization {
             stack = stack.copy(instances = stack.instances.map { entry ->
                 lockedVersions[entry.type]?.let { (version, plugin) -> entry.copy(version = version, plugin = plugin) } ?: entry
             })
+        }
+        if (cliBindings == null) {
+            stack = stack.copy(instances = RigPartFolding.foldAll(stack.instances, pluginOverrides.keys))
         }
         if (cliBindings != null) stack = cliBindings.bindings(model, stack)
         model = build("binding preview")

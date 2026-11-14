@@ -51,6 +51,7 @@ object ExpressionWorker {
         register("brow.spring", "spring", BindingTransitionAlgorithm(BrowSpringAlgorithm(), BrowSpringAlgorithm.VERSION))
         register("brow.see-through", "visibility", SeeThroughAlgorithm())
 
+        register("mouth", "part", MouthPartAlgorithm())
         register("mouth/legacy", "binding", BindingTransitionAlgorithm(MouthLegacyAlgorithm(), MouthLegacyAlgorithm.VERSION))
         val mouthFitted = BindingTransitionAlgorithm(MouthFittedSourceAlgorithm(), 1)
         register("mouth/fitted", "binding", mouthFitted)

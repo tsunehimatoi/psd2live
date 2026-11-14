@@ -154,7 +154,6 @@ internal object RigLegacyBindings {
         parameters = { instance -> when {
             spec.type == "hair/legacy" -> requireNotNull(source).hairLegacyParameters(instance)
             spec.expressionToggles -> requireNotNull(source).expressionParameters(instance)
-            spec.type.startsWith("mouth") -> requireNotNull(source).parameters(instance)
             spec.browShape -> io.github.psd2live.algorithms.binding.BrowShapeAlgorithm.parameters(
                 io.github.psd2live.algorithms.binding.BrowShapeInputs.decode(requireNotNull(source).browShapeContext(instance)) {})
             spec.browSpring -> io.github.psd2live.algorithms.binding.BrowSpringAlgorithm.parameters(
@@ -171,11 +170,11 @@ internal object RigLegacyBindings {
                     }
                 }
             }
-            spec.type in setOf("eye/fitted", "eye/legacy", "brow/fitted", "brow/legacy", "face/legacy", FITTED_FACE, "body/legacy") ->
+            spec.type in setOf("eye/fitted", "eye/legacy", "brow/fitted", "brow/legacy", "face/legacy", FITTED_FACE, "body/legacy", "mouth/fitted", "mouth/legacy") ->
                 StandardParameters.all.filter { it.id in spec.parameters }.map {
                     io.github.psd2live.format.model.Parameter(it.id.raw, it.name, it.min, it.max, it.default)
                 }
-            spec.expressionCheek || spec.expressionGloom || spec.eyeSquash ->
+            spec.expressionCheek || spec.expressionGloom || spec.eyeSquash || spec.type.startsWith("mouth.") ->
                 spec.module?.defines.orEmpty().map {
                     io.github.psd2live.format.model.Parameter(it.id, io.github.psd2live.i18n.tr(it.nameKey), it.min, it.max, it.default)
                 }
@@ -309,29 +308,54 @@ internal object RigLegacyBindings {
                 io.github.psd2live.algorithms.binding.CreatureAlgorithm(), io.github.psd2live.algorithms.binding.CreatureAlgorithm.VERSION)
             spec.type == "hair/legacy" -> io.github.psd2live.algorithms.binding.HairLegacyAlgorithm()
             spec.type == "hair/chains" -> io.github.psd2live.algorithms.binding.HairChainsAlgorithm()
+            spec.type == "mouth/fitted" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.MouthFittedAlgorithm(), 1)
+            spec.type == "mouth/legacy" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm(),
+                io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm.VERSION)
+            spec.type == "mouth.outline" -> io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.MouthOutlineAlgorithm(), 1)
+            spec.type == "mouth.vowel" -> object : ContextualModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.MouthVowelAlgorithm(),
+                io.github.psd2live.algorithms.binding.MouthVowelAlgorithm.VERSION), ModifierOptionalUpstream {
+                override val optionalUpstream = io.github.psd2live.algorithms.binding.MouthVowelAlgorithm.optionalUpstream
+            }
+            spec.type == "mouth.capture" -> object : ContextualModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.MouthCaptureAlgorithm(),
+                io.github.psd2live.algorithms.binding.MouthCaptureAlgorithm.VERSION), ModifierOptionalUpstream {
+                override val optionalUpstream = io.github.psd2live.algorithms.binding.MouthCaptureAlgorithm.optionalUpstream
+            }
+            spec.type == "mouth.tongue" -> object : ContextualModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.MouthTongueAlgorithm(),
+                io.github.psd2live.algorithms.binding.MouthTongueAlgorithm.VERSION), ModifierOptionalUpstream {
+                override val optionalUpstream = io.github.psd2live.algorithms.binding.MouthTongueAlgorithm.optionalUpstream
+            }
+            spec.type == "mouth.jaw" -> object : ContextualModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.MouthJawAlgorithm(),
+                io.github.psd2live.algorithms.binding.MouthJawAlgorithm.VERSION), ModifierOptionalUpstream {
+                override val optionalUpstream = io.github.psd2live.algorithms.binding.MouthJawAlgorithm.optionalUpstream
+            }
+            spec.type == "mouth.cheek-lid" -> object : ContextualModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.MouthCheekLidAlgorithm(),
+                io.github.psd2live.algorithms.binding.MouthCheekLidAlgorithm.VERSION), ModifierOptionalUpstream {
+                override val optionalUpstream = io.github.psd2live.algorithms.binding.MouthCheekLidAlgorithm.optionalUpstream
+            }
+            spec.type == "mouth.interior-depth" -> object : ContextualModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.MouthDepthAlgorithm(),
+                io.github.psd2live.algorithms.binding.MouthDepthAlgorithm.VERSION), ModifierOptionalUpstream {
+                override val optionalUpstream = io.github.psd2live.algorithms.binding.MouthDepthAlgorithm.optionalUpstream
+            }
+            spec.type == "mouth.spring" -> object : ContextualModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
+                io.github.psd2live.algorithms.binding.MouthSpringAlgorithm(),
+                io.github.psd2live.algorithms.binding.MouthSpringAlgorithm.VERSION), ModifierOptionalUpstream {
+                override val optionalUpstream = io.github.psd2live.algorithms.binding.MouthSpringAlgorithm.optionalUpstream
+            }
             spec.eyeSquash -> object : ContextualModifierAlgorithmPlugin by io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm(
                 io.github.psd2live.algorithms.binding.EyeSquashAlgorithm(),
                 io.github.psd2live.algorithms.binding.EyeSquashAlgorithm.VERSION), ModifierOptionalUpstream {
                 override val optionalUpstream = setOf("eye.wide", "psd2live.native.core/eye-wide")
             }
-            // All non-mouth bindings are handled by dedicated workers above; this fallback only serves mouth/* (#72).
-            else -> object : ContextualModifierAlgorithmPlugin, ModifierOptionalUpstream {
-                private val transition = io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm()
-                override val optionalUpstream = when {
-                    spec.browShape -> setOf("eye/fitted")
-                    spec.browSpring -> setOf("eye/fitted", "brow.shape", "psd2live.native.core/brow-shape")
-                    else -> emptySet()
-                }
-
-                override fun evaluate(input: RigIR, instance: RigModifierInstance, context: ModifierAlgorithmContext,
-                                      checkpoint: () -> Unit): RigIR {
-                    if (context != ModifierAlgorithmContext.Empty) {
-                        return transition.evaluate(input, instance, context, checkpoint)
-                    }
-                    val bindings = RigSourceBinding.apply(input, instance, requireNotNull(source), checkpoint)
-                    return if (spec.mouthOutline) source.outline(bindings, instance, checkpoint) else bindings
-                }
-            }
+            else -> error("Unmigrated binding type without worker plugin: ${spec.type}")
         },
         authorContext = { when {
             spec.expressionToggles -> requireNotNull(source).expressionContext(it)
@@ -367,6 +391,16 @@ internal object RigLegacyBindings {
             spec.type == "outfit.creature" -> requireNotNull(source).creatureContext(it)
             spec.type == "hair/legacy" -> requireNotNull(source).hairLegacyContext(it)
             spec.type == "hair/chains" -> requireNotNull(source).hairChainsContext(it)
+            spec.type == "mouth/fitted" -> requireNotNull(source).mouthFittedContext(it)
+            spec.type == "mouth/legacy" -> requireNotNull(source).mouthLegacyContext(it)
+            spec.type == "mouth.outline" -> requireNotNull(source).mouthOutlineContext(it)
+            spec.type == "mouth.vowel" -> requireNotNull(source).mouthModuleContext(it, RigModules.MOUTH_VOWEL)
+            spec.type == "mouth.capture" -> requireNotNull(source).mouthModuleContext(it, RigModules.MOUTH_CAPTURE)
+            spec.type == "mouth.tongue" -> requireNotNull(source).mouthModuleContext(it, RigModules.MOUTH_TONGUE)
+            spec.type == "mouth.jaw" -> requireNotNull(source).mouthJawContext(it)
+            spec.type == "mouth.cheek-lid" -> requireNotNull(source).mouthCheekLidContext(it)
+            spec.type == "mouth.interior-depth" -> requireNotNull(source).mouthModuleContext(it, RigModules.MOUTH_DEPTH)
+            spec.type == "mouth.spring" -> requireNotNull(source).mouthModuleContext(it, RigModules.MOUTH_SPRING)
             else -> ModifierAlgorithmContext.Empty
         } },
         workerAuthorContext = { requireNotNull(source).workerBindingContext(it) },

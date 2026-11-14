@@ -28,7 +28,7 @@ class ArmSwingAlgorithm : ReadingModifierAlgorithmPlugin {
         val body = upstream("body/legacy", dependencies.getValue("body/legacy").jsonPrimitive.content)
         val face = upstream("face/legacy", dependencies.getValue("face/legacy").jsonPrimitive.content)
         require(body.type == "body/legacy" && body.version in 1..2 && body.config["scaffold"] == JsonPrimitive(scaffoldId) &&
-            face.type in setOf("face/legacy", "face/fitted") && face.config["scaffold"] == JsonPrimitive(scaffoldId)) {
+            face.type in setOf("face/legacy", "face/fitted", "face") && face.config["scaffold"] == JsonPrimitive(scaffoldId)) {
             "Arm swing requires body and face binding on the same scaffold"
         }
         val source = source(context, checkpoint)
