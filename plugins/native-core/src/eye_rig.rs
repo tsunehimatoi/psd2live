@@ -1,3 +1,5 @@
+#![allow(dead_code, non_camel_case_types)]
+
 use crate::rig_ir::{
     decode_rig_binary, BlendBinding, BlendLimit, BlendLimitPoint, ChannelValue, KeyAxis, KeyCell,
     KeyGrid, MeshGeometry, MeshShape, Rgb,

@@ -335,7 +335,7 @@ class NativeCoreBatchAndPresetE2ETest {
             // Bare legacy alias must remain owned by builtin/in-process, never hijacked by standalone package.
             val legacyClipDef = RigModifierAlgorithms.registry
                 .definition(RigModifierInstance("probe", "face.skin-clip", 1, listOf(ModifierTarget("mesh", "probe"))))
-            assertTrue(legacyClipDef.pluginReference == null || legacyClipDef.pluginReference!!.id.startsWith("builtin."))
+            assertTrue(legacyClipDef.pluginReference.let { it == null || it.id.startsWith("builtin.") })
 
             val artwork = Characters.head(physics = true)
             val baseDoc = WorkspaceDocument(

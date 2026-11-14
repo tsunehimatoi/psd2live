@@ -314,6 +314,7 @@ internal object RigLegacyBindings {
                 io.github.psd2live.algorithms.binding.EyeSquashAlgorithm.VERSION), ModifierOptionalUpstream {
                 override val optionalUpstream = setOf("eye.wide", "psd2live.native.core/eye-wide")
             }
+            // All non-mouth bindings are handled by dedicated workers above; this fallback only serves mouth/* (#72).
             else -> object : ContextualModifierAlgorithmPlugin, ModifierOptionalUpstream {
                 private val transition = io.github.psd2live.algorithms.binding.BindingTransitionAlgorithm()
                 override val optionalUpstream = when {

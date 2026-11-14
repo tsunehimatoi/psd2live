@@ -66,6 +66,28 @@ internal object RigPartFolding {
         foldArea(instances, fittedType = "hair/chains", legacyType = "hair/legacy", partType = "hair", flagByType = emptyMap(),
             fittedMode = "chains")
 
+    /**
+     * Folds all eligible legacy part+submodule groups into unified part plugin instances while
+     * preserving stack order and leaving groups with external plugin overrides untouched.
+     */
+    fun foldAll(instances: List<RigModifierInstance>): List<RigModifierInstance> {
+        val parts = (foldEye(instances) + foldBrow(instances) + foldFace(instances) +
+            foldBody(instances) + foldHair(instances)).filter { part ->
+            val byId = instances.associateBy { it.id }
+            part.sourceIds.none { id -> byId[id]?.plugin != null }
+        }
+        if (parts.isEmpty()) return instances
+        val foldedByBase = parts.associateBy { it.folded.id }
+        val dropped = parts.flatMapTo(HashSet()) { it.sourceIds - it.folded.id }
+        return instances.mapNotNull { instance ->
+            when {
+                instance.id in dropped -> null
+                instance.id in foldedByBase -> foldedByBase.getValue(instance.id).folded
+                else -> instance
+            }
+        }
+    }
+
     private fun foldArea(
         instances: List<RigModifierInstance>,
         fittedType: String,

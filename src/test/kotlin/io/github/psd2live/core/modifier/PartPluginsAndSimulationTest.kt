@@ -124,5 +124,8 @@ class PartPluginsAndSimulationTest {
         assertEquals("hair", hair.folded.type)
         assertEquals("chains", hair.folded.config.getValue("mode").jsonPrimitive.content)
         assertEquals(setOf("hair-1"), hair.sourceIds)
+
+        val foldedAll = RigPartFolding.foldAll(instances)
+        assertEquals(listOf("rig.scaffold", "face", "body", "hair"), foldedAll.map { it.type })
     }
 }

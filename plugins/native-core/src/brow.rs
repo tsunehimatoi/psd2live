@@ -85,6 +85,7 @@ impl BrowFit {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy)]
 struct BrowOptions {
     shape: bool,
