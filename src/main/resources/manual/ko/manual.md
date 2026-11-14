@@ -2006,7 +2006,7 @@ PSD2Live에는 로컬 MCP 서비스가 내장되어 있습니다. 켜면 Claude 
 두 도구 세트 모두 모든 작업을 호출할 수 있으며, 실행과 검증은 완전히 같습니다.
 ## 주의사항
 - 서비스는 이 컴퓨터에서만 실행되며, Streamable HTTP와 Bearer 토큰 인증을 사용합니다. 토큰으로 작업 공간을 편집할 수 있으므로 이 컴퓨터의 호스트 설정에만 보관하세요. 포트나 토큰을 바꾸면 연결된 호스트의 설정도 함께 갱신해야 합니다.
-- Stdio만 지원하는 호스트는 Python 3으로 저장소 루트의 `mcp_proxy.py`를 실행해 연결합니다.
+- Stdio만 지원하는 호스트는 Python 3으로 `tools/mcp_proxy.py`를 실행해 연결합니다.
 - 창을 열지 않을 때는 명령줄의 `mcp` 하위 명령으로 MCP 엔드포인트만 따로 시작할 수 있습니다.
 @@ external-application-integration-api | Live2D Cubism Editor 외부 연동 API
 스크립트를 작성하거나 호스트 호출 문제를 조사할 때는 MCP 작업의 호출 규약을 알아야 합니다. 모든 작업에는 엄격한 요청 및 결과 스키마가 있으며, `workspace_list_operations`로 나열하고 `workspace_get_operation`으로 필드를 확인할 수 있습니다.

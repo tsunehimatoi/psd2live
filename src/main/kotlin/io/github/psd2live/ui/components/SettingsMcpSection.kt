@@ -67,9 +67,9 @@ internal fun SettingsMcpSection() {
 	val problem = draft.problem()
 	val dirty = draft != saved
 	val proxyPath = remember {
-		// Packages ship it among the app's resources; a source checkout runs from the repository root.
+		// Packages ship it among the app's resources; a source checkout runs from tools/.
 		val packaged = System.getProperty("compose.application.resources.dir")?.let { File(it, "mcp_proxy.py") }?.takeIf(File::isFile)
-		runCatching { (packaged ?: File("mcp_proxy.py")).canonicalPath }.getOrDefault("mcp_proxy.py").replace('\\', '/')
+		runCatching { (packaged ?: File("tools/mcp_proxy.py")).canonicalPath }.getOrDefault("tools/mcp_proxy.py").replace('\\', '/')
 	}
 
 	fun copy(text: String, label: String) {

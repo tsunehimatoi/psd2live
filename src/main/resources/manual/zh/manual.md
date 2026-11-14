@@ -2004,7 +2004,7 @@ PSD2Live 内置本地 MCP 服务。打开后，Claude Code、Codex 等 AI 宿主
 两种工具集下所有操作都能调用，执行与校验完全相同。
 ## 注意事项
 - 服务只在本机运行，使用 Streamable HTTP 与 Bearer 令牌认证。令牌能编辑你的工作区，只保存在本机宿主的配置中；改了端口或令牌后，同步更新已连接宿主的配置。
-- 只支持 Stdio 的宿主，用 Python 3 运行仓库根目录的 `mcp_proxy.py` 转接。
+- 只支持 Stdio 的宿主，用 Python 3 运行 `tools/mcp_proxy.py` 转接。
 - 不打开窗口时，可用命令行 `mcp` 子命令单独启动 MCP 端点。
 @@ external-application-integration-api | Live2D Cubism Editor 外部集成 API
 写脚本或排查宿主调用时，需要了解 MCP 操作的调用约定。每个操作都有严格的请求与结果 schema，可以用 `workspace_list_operations` 列出、用 `workspace_get_operation` 查看字段。

@@ -9,7 +9,7 @@
 1. 启动桌面应用，载入或创建工作区。
 2. 打开 **设置 → MCP**（标题栏右侧的齿轮），按宿主复制命令或配置：Claude Code 命令、Codex TOML、通用 `mcpServers` JSON（地址字段因宿主而异）或 Stdio 代理。「复制安装提示词」生成一段让 Agent 自行配置的短提示。
 3. 优先使用 Streamable HTTP 和 Bearer 令牌。不要改用已废弃的 `/sse` 端点。
-4. 仅支持 Stdio 的宿主使用 Python 3 运行根目录 `mcp_proxy.py`；代理读取 `PSD2LIVE_MCP_ENDPOINT` 和 `PSD2LIVE_MCP_TOKEN`，未设置时在 Windows 上读取应用保存的端口与令牌。脚本与命令行也用它调用：`python mcp_proxy.py call <操作> [JSON | @文件] [--edit] [--out 目录]`（`--edit` 自动填入当前 `state`，图片存为 PNG）、`python mcp_proxy.py operations`；Python 中 `from mcp_proxy import Client` 后 `call` / `edit`，两种工具档案都适用，后台操作等到结束再返回结果。
+4. 仅支持 Stdio 的宿主使用 Python 3 运行 `tools/mcp_proxy.py`；代理读取 `PSD2LIVE_MCP_ENDPOINT` 和 `PSD2LIVE_MCP_TOKEN`，未设置时在 Windows 上读取应用保存的端口与令牌。脚本与命令行也用它调用：`python tools/mcp_proxy.py call <操作> [JSON | @文件] [--edit] [--out 目录]`（`--edit` 自动填入当前 `state`，图片存为 PNG）、`python tools/mcp_proxy.py operations`；Python 中 `from mcp_proxy import Client` 后 `call` / `edit`，两种工具档案都适用，后台操作等到结束再返回结果。
 5. 列出工具后调用 `workspace_inspect`，读取实际对象 ID、参数、当前 `project_id` 与 `state`。
 
 同一对话框设置是否启用服务、端口（1024–65535，默认 23871）、访问令牌（32–256 个字母、数字、`-`、`_`，可重新生成或自行填写）和工具集，保存在用户偏好中，应用后重启端点。重启保留进程内任务与请求去重记录；已连接的宿主需重连，改了端口或令牌还要更新宿主配置。

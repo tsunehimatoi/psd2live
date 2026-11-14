@@ -62,7 +62,7 @@ Windows 也可以直接运行根目录的 `run-gui.bat`。不带参数启动 GUI
 
 ### 无界面 MCP 服务
 
-`./gradlew run --args="mcp [--port N] [--token T] [--store DIR] [--profile core|full]"` 不开窗口，只启动 MCP 端点，供智能体单独工作：工作区由应用层宿主承载，不创建 ViewModel 与 Compose 状态（见[无窗口宿主](../spec/HEADLESS_HOST.md)）；启动后打印 `endpoint`、`token`、`profile`、`store` 与 `capabilities`（`view_sample_motion=yes|no`，构建是否带 Cubism Core），直到进程结束。脚本用 `python mcp_proxy.py call <操作> [JSON] --edit` 或 Python 的 `mcp_proxy.Client` 调用，设 `PSD2LIVE_MCP_ENDPOINT` 与 `PSD2LIVE_MCP_TOKEN` 指向它。工作区存储默认在用户目录的 `psd2live-mcp` 下，与编辑器分开（不共用历史与实例锁）。`--token` 须为 32–256 个 URL 安全 Base64 字符，省略时随机生成。
+`./gradlew run --args="mcp [--port N] [--token T] [--store DIR] [--profile core|full]"` 不开窗口，只启动 MCP 端点，供智能体单独工作：工作区由应用层宿主承载，不创建 ViewModel 与 Compose 状态；启动后打印 `endpoint`、`token`、`profile`、`store` 与 `capabilities`（`view_sample_motion=yes|no`，构建是否带 Cubism Core），直到进程结束。脚本用 `python tools/mcp_proxy.py call <操作> [JSON] --edit` 或 Python 的 `mcp_proxy.Client` 调用，设 `PSD2LIVE_MCP_ENDPOINT` 与 `PSD2LIVE_MCP_TOKEN` 指向它。工作区存储默认在用户目录的 `psd2live-mcp` 下，与编辑器分开（不共用历史与实例锁）。`--token` 须为 32–256 个 URL 安全 Base64 字符，省略时随机生成。
 
 ## 导出到其他格式
 
@@ -208,6 +208,45 @@ PSD2LIVE_TOOLS=1 PSD2LIVE_SAMPLE=ds ./gradlew test --tests "io.github.psd2live.t
 
 ## 代码结构
 
+```text
+psd2live/
+├─ src/                               # 产品层（根 Gradle 项目）
+│  ├─ main/kotlin/io/github/psd2live/
+│  │  ├─ core/                        # 生成流水线、质量检查与可重放编辑
+│  │  ├─ document/                    # 源图、图层变换与纹理值类型
+│  │  ├─ project/                     # WorkspaceDocument、WorkspaceStore、.psd2live 归档
+│  │  ├─ application/                 # WorkspaceRuntime、宿主、命令注册与 schema
+│  │  ├─ history/                     # 分支式撤销 / 重做
+│  │  ├─ agent/                       # 本地 MCP 服务与工具定义
+│  │  ├─ render/                      # 编辑画布与 p2lrt GPU 渲染
+│  │  ├─ ui/                          # Compose Desktop 界面、ViewModel、主题与交互教程
+│  │  ├─ i18n/                        # 多语言加载
+│  │  └─ util/                        # 通用工具
+│  ├─ main/resources/                 # i18n 文案、whatsnew、manual、皮肤预设等资源
+│  └─ test/kotlin/io/github/psd2live/ # 回归测试与开发工具（tools/）
+├─ umamo/                             # 通用引擎（GPL）：runtime、format、interop、render、edit
+├─ umamo-ir-bridge/                   # GPL 转换桥（PuppetIr）
+├─ format-model/                      # 中立绑定 IR（MIT）
+├─ format-compile/                    # 导出编译框架与损失报告（MIT）
+├─ format-eval/                       # 运行时求值绑定（MIT）
+├─ algorithm-api/                     # 独立 JVM 算法契约与清单
+├─ algorithm-worker/                  # 外部算法进程宿主机
+├─ algorithms/                        # 内置算法模块（binding / motion / physics / simulation / swing）
+├─ targets/                           # 导出目标（cubism / raster / psd / spine / runtime / web / gltf / unity / dragonbones）
+├─ plugin-sdk/                        # 插件 SDK（Python / Rust）与打包脚本
+├─ plugins/                           # 内置 / 示例原生插件（native-core）
+├─ runtime/                           # Rust 运行时（p2lrt）、Web / Godot 绑定与一致性测试
+├─ native/                            # 可选 Cubism Native 预览桥接（C++ / CMake）
+├─ packaging/                         # Windows / macOS 安装包与启动器脚本
+├─ tools/                             # mcp_proxy.py、示例拉取/校验与目标检查脚本
+├─ examples/                          # 示例说明与多语言插件示例
+├─ docs/                              # 中文主文档与图片资源
+├─ licenses/                          # 第三方许可证文本
+├─ build.gradle.kts                   # Gradle 构建与打包配置
+├─ settings.gradle.kts                # 22 个 Gradle 子模块定义
+└─ run-gui.bat                        # Windows 快捷启动脚本
+```
+
 源码分为多个 Gradle 模块，模块间依赖由 Gradle 在编译期约束。从 Umamo 移植的引擎 `org.umamo.*` 位于 `:umamo`（`umamo/src/main/kotlin/`），不依赖产品代码。中立绑定 IR `:format-model`、导出框架 `:format-compile`、光栅导出 `:targets:raster`、运行时模型 `:targets:runtime` 与运行时绑定 `:format-eval` 为 MIT，不依赖任何 GPL 模块。GPL 模块 `:umamo-ir-bridge` 只依赖 `:umamo` 和 `:format-model`，拥有通用转换器 `io.github.psd2live.bridge.PuppetIr`；算法和导出目标共用它，不经由目标降级、编译或写出实现。`:targets:cubism` 保留 Cubism 目标降级、编译及写出，`:targets:psd` 使用引擎。详见[中立绑定 IR 与导出目标](../spec/EXPORT_TARGETS.md)。
 
 产品层 `io.github.psd2live.*` 位于根项目（`src/main/kotlin/`）。应用层 `application/SourceExport.kt` 选择源文件导出用例及 CLI 预设，并提供 `PSD2LivePipeline.run` 扩展；`core/PSD2LivePipeline.kt` 保留生成与导出计算。源图、图层变换和纹理值类型归根项目的 `document` 包，它不是独立 Gradle 模块；`project` 中的兼容别名保留旧包名。
@@ -244,13 +283,13 @@ PSD2LIVE_TOOLS=1 PSD2LIVE_SAMPLE=ds ./gradlew test --tests "io.github.psd2live.t
 2. 作者阶段（`RigEditOverlay.replayAuthored`）：从日志中最后一条 `rig_checkpoint` 记录保存的 Rig 开始，没有时从基础 Rig 开始并先重放旧格式的静态字段（参数删除 / 创建、Warp、结构、关键形），然后按实际顺序重放其后的 `authoringJournal`；
 3. 收尾（`RigEditOverlay.finish`）：按生成器依赖图（`core/DocumentGenerators.kt`）运行摆动、模拟等生成器，三方合并生成结果覆盖（`generated_override`），再重放引用生成参数的面板编辑。
 
-已存有作者 Rig 的修订（本进程构建过的，或归档 `rig/` 中保存的）直接从它构建，不生成基础 Rig、也不重放日志。详见[固化 Rig](../spec/MATERIALIZED_RIG.md)与[文档层](../spec/DOCUMENT_LAYER.md)。
+已存有作者 Rig 的修订（本进程构建过的，或归档 `rig/` 中保存的）直接从它构建，不生成基础 Rig、也不重放日志。详见[文档层](../spec/DOCUMENT_LAYER.md)。
 
 因此新增编辑功能时：
 
 - 修改必须写入 `RigEditOverlay` 的可序列化字段（新命令优先作为编辑日志中的 JSON 命令），并在工作区状态编解码中保存与恢复。只改 `PuppetModel` 的修改会在重建后丢失。
 - 界面与 MCP 应调用同一套编辑命令。`org.umamo.edit` 中的底层方法不自动等同于公开接口。
-- 验收链路：领域数据 → 历史重放 → 工程保存与恢复 → 目标 Cubism 版本处理 → 导出读回 → 视觉检查。详见[运行时与导出边界](../spec/RUNTIME_EXPORT_ARCHITECTURE_AND_GAPS.md)。
+- 验收链路：领域数据 → 历史重放 → 工程保存与恢复 → 目标 Cubism 版本处理 → 导出读回 → 视觉检查。
 
 界面文案新增时，`Messages.properties`、`Messages_zh_CN.properties`、`Messages_ja.properties`、`Messages_ko.properties` 四个文件需要同时添加，保持键数一致（`CatalogContractsTest` 检查）。
 

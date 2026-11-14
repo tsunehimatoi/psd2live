@@ -2003,7 +2003,7 @@ PSD2Live has a built-in local MCP service. Once it is on, AI hosts such as Claud
 All operations can be called under either tool set, with exactly the same execution and validation.
 ## Notes
 - The service runs only on this machine, using Streamable HTTP and Bearer token authentication. The token can edit your workspace and is stored only in the configuration of the host on this machine; after changing the port or token, update the configuration of the connected hosts to match.
-- For hosts that support only Stdio, use Python 3 to run `mcp_proxy.py` in the repository root to bridge.
+- For hosts that support only Stdio, use Python 3 to run `tools/mcp_proxy.py` to bridge.
 - When no window is open, the command-line `mcp` subcommand can start the MCP endpoint on its own.
 @@ external-application-integration-api | Live2D Cubism Editor External API Integration
 When writing scripts or troubleshooting host calls, you need to know the calling conventions of MCP operations. Every operation has strict request and result schemas, which you can list with `workspace_list_operations` and inspect field by field with `workspace_get_operation`.

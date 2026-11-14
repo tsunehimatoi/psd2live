@@ -213,7 +213,7 @@ PSD2Live 不依赖 Cubism Editor 或 SDK 运行，但与 Cubism 格式保持兼�
 ## 连接 Agent（MCP）
 
 1. MCP 服务默认开启，随 PSD2Live 启动监听 `http://127.0.0.1:23871/mcp`。打开 **设置 → MCP**（标题栏右侧的齿轮）可关闭它，或设置端口、访问令牌和发布的工具集（默认精简）。访问令牌以明文保存在本机用户偏好（Java Preferences）中。
-2. 复制与你的宿主对应的命令或配置（Claude Code、Codex、通用 JSON）。只支持 Stdio 的宿主使用仓库根目录的 [`mcp_proxy.py`](mcp_proxy.py)。
+2. 复制与你的宿主对应的命令或配置（Claude Code、Codex、通用 JSON）。只支持 Stdio 的宿主使用 [`tools/mcp_proxy.py`](tools/mcp_proxy.py)。
 3. 让 Agent 先用 `workspace_overview` 读取工程概况、`workspace_inspect` 查看单个对象；未列为工具的操作用 `workspace_list_operations` 查找、经 `workspace_call` 调用。
 
 多项编辑可用 `workspace_apply_edits` 原子提交（全部成功或全部不生效），也可先用 `workspace_preview_edits` 试运行。接口说明见 [MCP 使用与接口](docs/zh/agent/MCP_AUTHORING.md)。已有显式栈的工程可参阅[修改器栈指南](docs/zh/guide/MODIFIERS.md)，其中说明当前入口和仍待完成的部分。

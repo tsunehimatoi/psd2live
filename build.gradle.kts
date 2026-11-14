@@ -399,7 +399,7 @@ afterEvaluate {
 // License texts and the stdio MCP bridge ship inside every package, under the app's resources directory, beside the runtime.
 tasks.withType<Sync>().matching { it.name == "prepareAppResources" }.configureEach {
 	dependsOn(buildRuntime, fetchPrebuiltRuntime)
-	from("LICENSE", "THIRD_PARTY_NOTICES.md", "mcp_proxy.py")
+	from("LICENSE", "THIRD_PARTY_NOTICES.md", "tools/mcp_proxy.py")
 	from("licenses") { into("licenses") }
 	from(runtimeLibrary.parentFile) { include(runtimeLibrary.name) }
 	bundledFfmpeg?.let { dir ->
