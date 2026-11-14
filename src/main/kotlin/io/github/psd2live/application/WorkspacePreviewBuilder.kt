@@ -25,7 +25,10 @@ internal class WorkspacePreviewProgress(val update: (Float) -> Unit) : kotlin.co
 }
 
 /** Rebuild and ordered replay are application work; adapters only project the resulting model. */
-internal class WorkspacePreviewBuilder {
+internal class WorkspacePreviewBuilder(
+    private val modifierCachesEnabled: Boolean = true,
+    private val observeBuildPlan: (WorkspaceBuildPlan) -> Unit = {},
+) {
     private val pipeline = PSD2LivePipeline()
 
     private companion object {
@@ -253,20 +256,49 @@ internal class WorkspacePreviewBuilder {
             val config = if ("drawOrderOverrides" in document.settings) decoded
                 else decoded.copy(drawOrderOverrides = legacyDrawOrders)
             if (config.rigEdits.modifierStack != null || current?.config?.rigEdits?.modifierStack != null) {
+                val prepared = draftInputs?.pipeline
+                val inputs = WorkspaceBuildInputs(document, config,
+                    io.github.psd2live.core.modifier.ModifierPluginStore.shared.revision.value,
+                    io.github.psd2live.i18n.I18n.currentLanguage.toString(), prepared?.rawSourceRotations ?: pipeline.rawSourceRotations)
+                val previous = current?.modifierEvaluation?.buildInputs as? WorkspaceBuildInputs
+                val plan = WorkspaceBuildPlanner.plan(previous, inputs,
+                    WorkspaceBuildPlanner.completeBundledReads(previous, inputs), modifierCachesEnabled)
+                WorkspaceBuildPlanner.record(plan)
+                observeBuildPlan(plan)
                 val before = current?.config?.rigEdits?.modifierStack
                 val after = config.rigEdits.modifierStack
-                // Folder placement is document content, but it does not change evaluation or generated geometry.
-                if (current != null && before != null && after != null &&
-                    current.analysis.source == document.source && before - "organization" == after - "organization" &&
-                    config.copy(rigEdits = config.rigEdits.copy(modifierStack = before)) == current.config)
-                    return@runInterruptible current.copy(config = config).retainModifierCachesFrom(current)
-                val prepared = draftInputs?.pipeline
-                if (prepared != null) {
-                    prepared.deferRuntimeBundles = false
-                    return@runInterruptible prepared.buildPreview(document.source, config, progress, current?.atlas)
+                if (plan.route == WorkspaceBuildRoute.EXISTING_PIPELINE) {
+                    // Keep established cache-key checks for empty stacks and non-pilot edits, including
+                    // layer/parameter renames and simulation preparation. No new reuse is authorized here.
+                    val environmentUnchanged = previous == null || (previous.pluginRevision == inputs.pluginRevision &&
+                        previous.language == inputs.language && previous.rawSourceRotations == inputs.rawSourceRotations)
+                    if (current != null && before != null && after != null && environmentUnchanged &&
+                        current.analysis.source == document.source && before - "organization" == after - "organization" &&
+                        config.copy(rigEdits = config.rigEdits.copy(modifierStack = before)) == current.config)
+                        return@runInterruptible current.copy(config = config).retainModifierCachesFrom(current).also {
+                            it.modifierEvaluation = it.modifierEvaluation?.copy(buildInputs = inputs)
+                        }
+                    val existing = prepared?.apply { deferRuntimeBundles = false }
+                        ?: pipeline.apply { reuseModifierInputs(current) }
+                    return@runInterruptible existing.buildPreview(document.source, config, progress, current?.atlas)
+                        .also { model -> model.modifierEvaluation = model.modifierEvaluation?.copy(buildInputs = inputs) }
                 }
-                pipeline.reuseModifierInputs(current)
-                return@runInterruptible pipeline.buildPreview(document.source, config, progress, current?.atlas)
+                // Candidate-local pipeline state prevents a failed attempt from replacing the current snapshot.
+                // Sharing the existing owner is allowed only when the author-input keys may be checked again.
+                val candidate = PSD2LivePipeline().apply { rawSourceRotations = inputs.rawSourceRotations }
+                if (!plan.fullyInvalidated) {
+                    candidate.reuseModifierInputs(current)
+                    val reusable = plan.modifiers.filter { it.action == WorkspaceBuildAction.CHECK_EXISTING_KEY }.mapTo(HashSet()) { it.id }
+                    candidate.modifierCache.snapshot = candidate.modifierCache.snapshot?.let { saved -> saved.copy(
+                        algorithms = saved.algorithms.filterKeys { it in reusable },
+                        readAlgorithms = saved.readAlgorithms.filterKeys { it in reusable }) }
+                }
+                // Preparation remains responsible for baked draft content, but its speculative caches do not
+                // bypass this plan. Do not release an owner still backing the captured current model.
+                prepared?.modifierBuildOwner?.takeIf { it !== candidate.modifierBuildOwner && it !== current?.modifierBuildOwner && !it.published }?.close()
+                return@runInterruptible candidate.buildPreview(document.source, config, progress,
+                    current?.atlas?.takeIf { plan.stages.single { it.stage == WorkspaceBuildStage.ATLAS }.action == WorkspaceBuildAction.CHECK_EXISTING_KEY })
+                    .also { model -> model.modifierEvaluation = model.modifierEvaluation?.copy(buildInputs = inputs) }
             }
             val materializable = pipeline.materializable(config)
             val revision = if (materializable) WorkspaceRevisions.of(document) else null
