@@ -8,16 +8,29 @@ import kotlinx.coroutines.withContext
 
 /**
  * Wall time spent in each stage of a rig build, summed over every build while [recording] is on. Off - the
- * default - a stage costs one volatile read. Only the measurement tools turn it on.
+ * default - a stage only checks volatile flags. Only the measurement tools turn it on.
  */
 internal object RigBuildProfile {
-	@Volatile var recording: Boolean = false
-		set(value) {
-			field = value
-			ModifierAlgorithmStages.observer = if (value) { name, elapsed ->
-				if (recording) add("algorithm stage: $name", elapsed)
-			} else null
-		}
+	@Volatile private var requestedRecording = false
+    @Volatile private var observationSubscribers = 0
+    var recording: Boolean
+        get() = requestedRecording || (observationSubscribers != 0 && operation.get() != null)
+        set(value) { synchronized(this) { requestedRecording = value; updateAlgorithmObserver() } }
+
+    private fun updateAlgorithmObserver() {
+        ModifierAlgorithmStages.observer = if (requestedRecording || observationSubscribers != 0) { name, elapsed ->
+            if (recording) add("algorithm stage: $name", elapsed)
+        } else null
+    }
+
+    @Synchronized fun observeOperations(): AutoCloseable {
+        observationSubscribers++
+        updateAlgorithmObserver()
+        var closed = false
+        return AutoCloseable { synchronized(this) {
+            if (!closed) { closed = true; observationSubscribers--; updateAlgorithmObserver() }
+        } }
+    }
 	private val nanos = ConcurrentHashMap<String, AtomicLong>()
 	private val calls = ConcurrentHashMap<String, AtomicLong>()
 	private val modifierConsumer = ThreadLocal<String>()
@@ -25,11 +38,13 @@ internal object RigBuildProfile {
 	private const val LEGACY_TEMPLATE = "modifier legacy template: "
 
 	data class Operation(val task: String, val startRevision: String, val candidate: String,
-	                     val scenario: String, val meshes: Int, val vertices: Long)
+	                     val scenario: String, val meshes: Int, val vertices: Long,
+                         val correlation: io.github.psd2live.util.WorkspaceBuildCorrelation? = null)
 	data class Memory(val heapUsed: Long, val heapCommitted: Long, val nonHeapUsed: Long)
 	data class Measurement<T>(val value: T, val operation: Operation, val elapsedMillis: Double,
 	                          val stages: Map<String, Pair<Double, Long>>, val gauges: Map<String, Long>,
-	                          val before: Memory, val after: Memory)
+	                          val before: Memory, val after: Memory,
+                              val startedAtNanos: Long = 0, val finishedAtNanos: Long = 0)
 	private class OperationRecording {
 		val nanos = ConcurrentHashMap<String, AtomicLong>()
 		val counts = ConcurrentHashMap<String, AtomicLong>()
@@ -46,10 +61,11 @@ internal object RigBuildProfile {
 		operation.set(sample)
 		try {
 			val value = block()
-			return Measurement(value, identity, (System.nanoTime() - start) / 1e6,
+            val end = System.nanoTime()
+			return Measurement(value, identity, (end - start) / 1e6,
 				sample.nanos.keys.union(sample.counts.keys).sorted().associateWith {
 					(sample.nanos[it]?.get() ?: 0L) / 1e6 to (sample.counts[it]?.get() ?: 0L)
-				}, sample.gauges.toSortedMap(), before, memory())
+				}, sample.gauges.toSortedMap(), before, memory(), start, end)
 		} finally { if (previous == null) operation.remove() else operation.set(previous) }
 	}
 
@@ -61,12 +77,32 @@ internal object RigBuildProfile {
 		val start = System.nanoTime()
 		return withContext(operation.asContextElement(sample)) {
 			val value = block()
-			Measurement(value, identity, (System.nanoTime() - start) / 1e6,
+            val end = System.nanoTime()
+			Measurement(value, identity, (end - start) / 1e6,
 				sample.nanos.keys.union(sample.counts.keys).sorted().associateWith {
 					(sample.nanos[it]?.get() ?: 0L) / 1e6 to (sample.counts[it]?.get() ?: 0L)
-				}, sample.gauges.toSortedMap(), before, memory())
+				}, sample.gauges.toSortedMap(), before, memory(), start, end)
 		}
 	}
+
+    /** Scoped recording needs no global recording flag and preserves partial evidence on failure/cancellation. */
+    suspend fun <T> observeSuspending(identity: Operation, completed: (Measurement<Unit>, Throwable?) -> Unit,
+                                     block: suspend () -> T): T {
+        val sample = OperationRecording()
+        val before = memory()
+        val start = System.nanoTime()
+        var failure: Throwable? = null
+        try { return withContext(operation.asContextElement(sample)) { block() } }
+        catch (error: Throwable) { failure = error; throw error }
+        finally {
+            val end = System.nanoTime()
+            val measurement = Measurement(Unit, identity, (end - start) / 1e6,
+                sample.nanos.keys.union(sample.counts.keys).sorted().associateWith {
+                    (sample.nanos[it]?.get() ?: 0L) / 1e6 to (sample.counts[it]?.get() ?: 0L)
+                }, sample.gauges.toSortedMap(), before, memory(), start, end)
+            completed(measurement, failure)
+        }
+    }
 
 	/** Explicit propagation to a worker executor, without inheriting context in long-lived pool threads. */
 	fun <T> propagate(block: () -> T): () -> T {
@@ -114,8 +150,10 @@ internal object RigBuildProfile {
 	}
 
 	private fun record(name: String, elapsed: Long) {
-		nanos.computeIfAbsent(name) { AtomicLong() }.addAndGet(elapsed)
-		calls.computeIfAbsent(name) { AtomicLong() }.incrementAndGet()
+        if (requestedRecording) {
+            nanos.computeIfAbsent(name) { AtomicLong() }.addAndGet(elapsed)
+            calls.computeIfAbsent(name) { AtomicLong() }.incrementAndGet()
+        }
 		operation.get()?.let {
 			it.nanos.computeIfAbsent(name) { AtomicLong() }.addAndGet(elapsed)
 			it.counts.computeIfAbsent(name) { AtomicLong() }.incrementAndGet()
@@ -125,7 +163,7 @@ internal object RigBuildProfile {
 	fun count(name: String, amount: Long = 1): Long {
 		if (!recording) return 0L
 		operation.get()?.counts?.computeIfAbsent(name) { AtomicLong() }?.addAndGet(amount)
-		return calls.computeIfAbsent(name) { AtomicLong() }.addAndGet(amount)
+		return if (requestedRecording) calls.computeIfAbsent(name) { AtomicLong() }.addAndGet(amount) else 0L
 	}
 
 	fun reset() { nanos.clear(); calls.clear() }

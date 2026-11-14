@@ -28,6 +28,7 @@ internal data class WorkspaceCapture<M>(
     val auxiliary: JsonObject,
     val dirty: Boolean,
     val loadingIdentity: String,
+    val observation: io.github.psd2live.util.WorkspacePublishedObservation? = null,
 )
 
 internal data class WorkspaceRuntimeState<M>(
@@ -57,7 +58,8 @@ internal fun interface WorkspaceDraftEdit<M> {
 internal data class WorkspaceCommit<M>(val capture: WorkspaceCapture<M>, val applied: Boolean, val geometryDiagnostics: JsonObject? = null)
 
 /** A rebuilt private candidate; preparation has no history, projection or persistence effects. */
-internal data class WorkspacePreparedDraft<M>(val before: WorkspaceCapture<M>, val draft: WorkspaceDraft, val model: M)
+internal data class WorkspacePreparedDraft<M>(val before: WorkspaceCapture<M>, val draft: WorkspaceDraft, val model: M,
+    val observation: WorkspaceEditObservation.Trace? = null)
 
 /** A validated, immutable installation candidate. Preparing it never touches the live runtime. */
 internal class WorkspaceInstallation private constructor(
@@ -224,11 +226,11 @@ internal class WorkspaceRuntime<M>(
         taskId: String? = null,
         editFailure: (Int, Exception) -> Exception = { _, failure -> failure },
         beforeCommit: (WorkspaceCapture<M>, WorkspaceDraft, M) -> Unit = { _, _, _ -> },
-    ): WorkspaceCommit<M> {
+    ): WorkspaceCommit<M> = WorkspaceEditObservation.observe(expectedState, summary, taskId) {
         require(summary.isNotBlank()) { "History summary must not be blank" }
         val prepared = prepareDraft(projectId, expectedState, edits, editFailure)
         val changed = prepared.draft.auxiliary.takeIf { it != prepared.before.auxiliary }
-        return commitPrepared(projectId, expectedState, summary, author, prepared.draft.document, prepared.model, taskId, auxiliary = changed) { capture, next, committed ->
+        commitPrepared(projectId, expectedState, summary, author, prepared.draft.document, prepared.model, taskId, auxiliary = changed, observation = prepared.observation) { capture, next, committed ->
             beforeCommit(capture, WorkspaceDraft(next, changed ?: capture.auxiliary), committed)
         }
     }
@@ -242,6 +244,7 @@ internal class WorkspaceRuntime<M>(
             checkState(expectedState)
             capture().also { require(it.projectId == projectId) { "Operation targets another project" } }
         }
+        val observation = WorkspaceEditObservation.current()?.also { it.bind(before) }
         var document = before.document
         var auxiliary = before.auxiliary
         var model = before.model
@@ -256,7 +259,10 @@ internal class WorkspaceRuntime<M>(
                     // Later commands must observe the rig produced by earlier commands in this draft. Reference images
                     // are view data no build reads: moving one keeps the model.
                     model = if (onlyReferenceImagesChanged(document, candidate.document)) model
-                        else rebuildFrom?.invoke(candidate.document, model) ?: rebuild(candidate.document)
+                        else if (observation == null) rebuildFrom?.invoke(candidate.document, model) ?: rebuild(candidate.document)
+                        else observation.build(nextRevision, model) {
+                            rebuildFrom?.invoke(candidate.document, model) ?: rebuild(candidate.document)
+                        }
                     document = adopted(candidate.document, model)
                     revision = WorkspaceRevisions.of(document)
                 }
@@ -265,7 +271,7 @@ internal class WorkspaceRuntime<M>(
             catch (failure: Exception) { throw editFailure(index, failure) }
         }
         currentCoroutineContext().ensureActive()
-        return WorkspacePreparedDraft(before, WorkspaceDraft(document, auxiliary), model)
+        return WorkspacePreparedDraft(before, WorkspaceDraft(document, auxiliary), model, observation)
     }
 
     /** The desktop adapter may prepare a model with incremental algorithms before entering this CAS. */
@@ -273,6 +279,7 @@ internal class WorkspaceRuntime<M>(
         projectId: String, expectedState: String, summary: String, author: MutationAuthor,
         document: WorkspaceDocument, model: M, taskId: String? = null, checkpoint: Boolean = false,
         auxiliary: JsonObject? = null,
+        observation: WorkspaceEditObservation.Trace? = null,
         beforeCommit: (WorkspaceCapture<M>, WorkspaceDocument, M) -> Unit = { _, _, _ -> },
     ): WorkspaceCommit<M> {
         require(summary.isNotBlank()) { "History summary must not be blank" }
@@ -284,7 +291,7 @@ internal class WorkspaceRuntime<M>(
         val auxiliary = auxiliary ?: adoptedAuxiliary(before.model, model, before.auxiliary)
         val revision = WorkspaceRevisions.of(document)
         val documentChanged = checkpoint || revision != before.revision
-        return commitModel(model) {
+        val result = commitModel(model) {
             checkState(expectedState)
             if (!documentChanged && auxiliary == before.auxiliary) return@commitModel WorkspaceCommit(before, false)
             // Projection validation is atomic and must fail before touching the authoritative history.
@@ -294,8 +301,11 @@ internal class WorkspaceRuntime<M>(
                 else requireNotNull(tree).head()
             version++
             WorkspaceCommit(publish(before.copy(state = token(), historyHead = head.node.id, revision = head.node.revisionId,
-                document = document, model = model, auxiliary = auxiliary, dirty = true)), true).also { notifyCommitted() }
+                document = document, model = model, auxiliary = auxiliary, dirty = true,
+                observation = observation?.published(token(), head.node.revisionId))), true).also { notifyCommitted() }
         }
+        if (!result.applied) observation?.unchanged()
+        return result
     }
 
     suspend fun checkout(projectId: String, expectedState: String, nodeId: String,
@@ -411,7 +421,12 @@ internal class WorkspaceRuntime<M>(
         released.forEach { it.close() }
     }
 
-    private fun publish(capture: WorkspaceCapture<M>): WorkspaceCapture<M> = capture.also {
+    private fun publish(capture: WorkspaceCapture<M>): WorkspaceCapture<M> = capture.let {
+        // A later auxiliary edit, reload or unobserved commit cannot inherit another state's observation.
+        val observation = it.observation?.takeIf { stamp -> stamp.state == it.state && stamp.revision == it.revision &&
+            stamp.edit.loadingIdentity == it.loadingIdentity }
+        if (observation === it.observation) it else it.copy(observation = observation)
+    }.also {
         (it.model as? io.github.psd2live.core.RigPreviewModel)?.modifierBuildOwner?.let { owner ->
             owner.published = true
             buildCacheOwners.add(owner)

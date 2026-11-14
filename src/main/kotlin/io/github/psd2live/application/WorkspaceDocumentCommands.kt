@@ -26,7 +26,7 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
     suspend fun execute(projectId: String, state: String, summary: String, edits: List<WorkspaceDocumentOperation>,
                         author: MutationAuthor, taskId: String? = null,
                         poses: (Map<String, WorkspacePose>) -> Unit = {},
-                        beforeCommit: (WorkspaceCapture<RigPreviewModel>, WorkspaceDocument, RigPreviewModel) -> Unit = { _, _, _ -> }): WorkspaceCommit<RigPreviewModel> {
+                        beforeCommit: (WorkspaceCapture<RigPreviewModel>, WorkspaceDocument, RigPreviewModel) -> Unit = { _, _, _ -> }): WorkspaceCommit<RigPreviewModel> = WorkspaceEditObservation.observe(state, summary, taskId) {
         require(edits.size in 1..128) { "Use 1..128 edits" }
         require(edits.all { it.operation in WorkspaceDocumentEdits.supported }) { "Batch contains an unsupported document operation" }
         val (before, resources) = runtime.withCapture { capture ->
@@ -43,7 +43,7 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
         if (!geometry.safe) throw GeometrySafetyRejectedException(geometry)
         val diagnostics = geometry.takeIf { it.affectedTargets.isNotEmpty() }?.toJson()
         val result = runtime.commitPrepared(projectId, state, summary, author, prepared.draft.document, prepared.model,
-            taskId = taskId, auxiliary = prepared.draft.auxiliary.takeIf { it != prepared.before.auxiliary },
+            taskId = taskId, observation = prepared.observation, auxiliary = prepared.draft.auxiliary.takeIf { it != prepared.before.auxiliary },
             beforeCommit = { captured, document, model ->
                 batch?.committing()
                 beforeCommit(captured, document, model)
@@ -51,7 +51,7 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
             }).copy(geometryDiagnostics = diagnostics)
         // No suspension between the authoritative CAS and retaining its complete public result.
         batch?.committed(mutationResult(before, result, summary, edits))
-        return result
+        result
     }
 
     /** Same preparation and gate as commit, without projection, CAS, history or resource publication. */
@@ -195,7 +195,7 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
                                  taskId: String? = null,
                                  mutation: (WorkspaceDocument, RigPreviewModel) -> WorkspaceDocument,
                                  beforeCommit: (WorkspaceCapture<RigPreviewModel>, WorkspaceDocument, RigPreviewModel) -> Unit = { _, _, _ -> },
-                                 validate: (WorkspaceDocument, RigPreviewModel, WorkspaceDocument, RigPreviewModel) -> Unit = { _, _, _, _ -> }): WorkspaceCommit<RigPreviewModel> {
+                                 validate: (WorkspaceDocument, RigPreviewModel, WorkspaceDocument, RigPreviewModel) -> Unit = { _, _, _, _ -> }): WorkspaceCommit<RigPreviewModel> = WorkspaceEditObservation.observe(state, summary, taskId) {
         val prepared = runtime.prepareDraft(projectId, state, listOf(WorkspaceDraftEdit { draft, model ->
             val candidate = runInterruptible(Dispatchers.Default) { mutation(draft.document, model) }
             draft.copy(document = normalizeCandidate(candidate, model))
@@ -205,8 +205,8 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
         val geometry = checkGeometry(prepared)
         if (!geometry.safe) throw GeometrySafetyRejectedException(geometry)
         val diagnostics = geometry.takeIf { it.affectedTargets.isNotEmpty() }?.toJson()
-        return runtime.commitPrepared(projectId, state, summary, author, prepared.draft.document, prepared.model,
-            taskId = taskId, auxiliary = prepared.draft.auxiliary, beforeCommit = beforeCommit).copy(geometryDiagnostics = diagnostics)
+        runtime.commitPrepared(projectId, state, summary, author, prepared.draft.document, prepared.model,
+            taskId = taskId, observation = prepared.observation, auxiliary = prepared.draft.auxiliary, beforeCommit = beforeCommit).copy(geometryDiagnostics = diagnostics)
     }
 
     /** Settings commands that may release authored poses; other generation inputs keep [executeCandidate]. */

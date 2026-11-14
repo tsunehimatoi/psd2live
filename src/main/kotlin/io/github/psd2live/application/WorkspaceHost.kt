@@ -140,7 +140,7 @@ internal class WorkspaceHost<V>(
         return documentCommands.previewRegeneration(before.projectId, before.state, edits)
     }
     override suspend fun applyDocumentEdits(state: String, summary: String, edits: List<WorkspaceDocumentOperation>,
-                                            author: MutationAuthor): WorkspaceMutationResult = editMutex.withLock {
+                                            author: MutationAuthor): WorkspaceMutationResult = WorkspaceEditObservation.observe(state, summary) { editMutex.withLock {
         require(edits.size in 1..128) { "Use 1..128 edits" }
         require(edits.all { it.operation in WorkspaceDocumentEdits.supported }) { "Batch contains an unsupported document operation" }
         val before = captureForMutation()
@@ -158,7 +158,7 @@ internal class WorkspaceHost<V>(
             presentation.modelPublished(result.capture.model)
         }
         WorkspaceDocumentCommands.mutationResult(before, result, summary, edits)
-    }
+    } }
 
     override fun savedProjectData(): WorkspaceAuxiliarySnapshot {
         val read = runtime.read()
