@@ -132,6 +132,9 @@ internal class SyntheticBaselineReport(name: String, scope: String,
         "processors" to Runtime.getRuntime().availableProcessors().toString(),
         "cpu" to (System.getenv("PROCESSOR_IDENTIFIER") ?: "unavailable"),
         "max_heap_bytes" to Runtime.getRuntime().maxMemory().toString(),
+        "median_rule" to "middle value for odd n; arithmetic mean of the two middle values for even n",
+        "p95_rule" to "nearest rank: sorted[ceil(n * 0.95) - 1]",
+        "outlier_rule" to "elapsed_ms > 3 * median_ms",
         "cold_definition" to "new worker/session in the same JVM; not cold OS page cache or JVM startup",
         "memory_scope" to "samples.jsonl: JVM heap/nonheap and cache accounting; memory.jsonl: separate OS snapshots, not constrained by the geometry budget or proof of no leak",
         "os_memory_scope" to "Windows resident=WorkingSet64/private=PrivateMemorySize64 (committed); Linux resident=VmRSS/private=smaps_rollup private resident; unsupported/failed reads explicitly unavailable",
@@ -214,10 +217,12 @@ internal class SyntheticBaselineReport(name: String, scope: String,
             putJsonObject("metadata") { metadata.forEach { (key, value) -> put(key, value) } }
             if (complete) putJsonObject("scenarios") { times.forEach { (name, values) ->
                 val sorted = values.sorted()
+                val middle = sorted.size / 2
+                val median = if (sorted.size % 2 == 0) (sorted[middle - 1] + sorted[middle]) / 2 else sorted[middle]
                 putJsonObject(name) {
-                    put("samples", values.size); put("median_ms", sorted[sorted.size / 2])
+                    put("samples", values.size); put("median_ms", median)
                     put("p95_ms", sorted[kotlin.math.ceil(sorted.size * .95).toInt() - 1]); put("max_ms", sorted.last())
-                    putJsonArray("outliers_over_3x_median_ms") { values.filter { it > sorted[sorted.size / 2] * 3 }.forEach { add(it) } }
+                    putJsonArray("outliers_over_3x_median_ms") { values.filter { it > median * 3 }.forEach { add(it) } }
                 }
             } }
         }.toString())

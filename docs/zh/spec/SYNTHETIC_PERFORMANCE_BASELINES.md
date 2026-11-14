@@ -31,6 +31,8 @@ $env:PSD2LIVE_BASELINE_EDITS = '1000'
 
 每个工具写 `samples.jsonl`（每次立即落盘）与 `summary.json`（样本数、中位数、P95、最大值和大于中位数三倍的样本）。报告记录 JDK、操作系统、处理器数量、最大堆、输入或插件 digest。当前冷样本是同 JVM 的新会话／worker，不是操作系统冷缓存或 JVM 冷启动；需要进程冷启动数据时单独重启测试进程。
 
+中位数在奇数样本时取中间值，偶数时取两个中间值的算术均值；P95 使用 nearest-rank（排序后第 `ceil(n × 0.95)` 个值）。异常值阈值复用同一中位数，统计规则同时写入 metadata。
+
 报告默认 `complete=false`，启动时立即覆盖旧的成功状态。只有所有场景及关闭释放校验通过才写 `complete=true` 和分位数汇总；失败或未完成时保留已写样本、样本数、最后场景及可捕获的错误上下文，不输出 `scenarios` 成功汇总。`acceptance_run=true` 仅说明使用正式采样配置，不能代替 `complete=true`。
 
 `memory.jsonl` 单独记录阶段边界及每 100 次压力编辑后的宿主 JVM／已知 worker 进程快照，不放入操作计时块；每次快照批量采样所有 PID，另记采样耗时。Windows 通过系统 PowerShell 读取 `WorkingSet64` 和 `PrivateMemorySize64`（私有提交量）；Linux 读取 `/proc/PID/status` 的 `VmRSS` 和 `smaps_rollup` 私有驻留量，两平台的 private 指标不可直接等同。其他平台或读取失败显式写 `unavailable` 与空数值，存活状态仍由 `ProcessHandle` 检查。正常结束在释放后验证记录过的 worker 已退出；失败诊断写入后才抛错。采样器开销虽不进入延迟样本，仍可能影响后续执行；它不是零扰动测量。

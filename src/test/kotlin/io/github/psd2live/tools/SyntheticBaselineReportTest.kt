@@ -12,8 +12,8 @@ class SyntheticBaselineReportTest {
         try { block(directory) } finally { directory.deleteRecursively() }
     }
     private fun summary(directory: File) = Json.parseToJsonElement(directory.resolve("summary.json").readText()).jsonObject
-    private fun sample() = RigBuildProfile.Measurement(Unit,
-        RigBuildProfile.Operation("task", "revision", "candidate", "edit", 1, 3), 12.0,
+    private fun sample(elapsed: Double = 12.0) = RigBuildProfile.Measurement(Unit,
+        RigBuildProfile.Operation("task", "revision", "candidate", "edit", 1, 3), elapsed,
         emptyMap(), emptyMap(), RigBuildProfile.Memory(1, 2, 3), RigBuildProfile.Memory(4, 5, 6))
 
     @Test fun defaultIncompleteReportPreservesSamplesWithoutPercentiles() = directory { directory ->
@@ -64,6 +64,31 @@ class SyntheticBaselineReportTest {
             assertFalse(result.getValue("complete").jsonPrimitive.boolean)
             assertFalse("scenarios" in result)
         }
+    }
+
+    @Test fun evenMedianAveragesMiddleValuesAndDrivesOutlierThreshold() = directory { directory ->
+        SyntheticBaselineReport("test", "unit test", directory).use { report ->
+            listOf(25.0, 2.0, 1.0, 10.0).forEach { report.append(sample(it)) }
+            report.complete()
+        }
+        val result = summary(directory)
+        val values = result.getValue("scenarios").jsonObject.getValue("edit").jsonObject
+        assertEquals(6.0, values.getValue("median_ms").jsonPrimitive.double)
+        assertEquals(25.0, values.getValue("p95_ms").jsonPrimitive.double)
+        assertEquals(listOf(25.0), values.getValue("outliers_over_3x_median_ms").jsonArray.map { it.jsonPrimitive.double })
+        assertTrue(result.getValue("metadata").jsonObject.getValue("median_rule").jsonPrimitive.content.contains("arithmetic mean"))
+    }
+
+    @Test fun oddMedianUsesMiddleValueAndNearestRankP95() = directory { directory ->
+        SyntheticBaselineReport("test", "unit test", directory).use { report ->
+            listOf(20.0, 1.0, 4.0).forEach { report.append(sample(it)) }
+            report.complete()
+        }
+        val result = summary(directory)
+        val values = result.getValue("scenarios").jsonObject.getValue("edit").jsonObject
+        assertEquals(4.0, values.getValue("median_ms").jsonPrimitive.double)
+        assertEquals(20.0, values.getValue("p95_ms").jsonPrimitive.double)
+        assertTrue(result.getValue("metadata").jsonObject.getValue("p95_rule").jsonPrimitive.content.contains("nearest rank"))
     }
 
     @Test fun osMemoryUsesOneBatchAndSeparateOutputWithoutChangingLatency() = directory { directory ->
