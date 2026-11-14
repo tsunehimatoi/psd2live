@@ -114,8 +114,14 @@ python tools/examples/fetch.py --case ds
 PSD2LIVE_TOOLS=1 PSD2LIVE_SAMPLE=ds ./gradlew test --tests "io.github.psd2live.tools.MotionSheetTool.body"
 ```
 
+The first-frame tools measure different intervals. The offscreen tool includes GPU synchronization and readback, but excludes model generation, GL context creation, Compose composition and window presentation. `renderer_cold` means a fresh renderer, not a cold process. The window tool obtains GPU completion receipts through the real application, viewport and Skiko playback, currently using P2LRT only. Model generation has finished and the JVM and window are warm; window swaps, OS composition and display scanout are excluded. Neither metric is full edit latency, and neither can simply be added to algorithm generation time.
+
+`verifyReadback` and `smoke` are functional checks without performance percentiles; `measure` collects at least 30 valid samples per scenario/mode, excluding warmup samples from statistics. Timeouts or failed checks are not zero-latency samples and do not produce success statistics. Configure `PSD2LIVE_COMPOSITOR=1` or `0` before graphics initialization, run each mode separately and check the actual mode; preserve the report before switching. Run GPU/performance sampling exclusively, without concurrent builds or other performance tasks. See [First correct frame measurement boundaries](../../zh/guide/FIRST_CORRECT_FRAME_MEASUREMENT.md) (Chinese) for entrypoint parameters and the full scope.
+
 | Tool | What it produces | Output |
 | --- | --- | --- |
+| `FirstCorrectFrameTool.verifyReadback` / `.measure` | Known-pixel checks and capture-to-offscreen-edit-canvas GPU readback measurement for three synthetic mesh sizes, with fresh and warmed renderers | `first-correct-frame-check/report.json`, `first-correct-frame/report.json` |
+| `WindowActivationTool.smoke` / `.measure` | Receipt checks and measurement from P2LRT model activation capture to window GPU completion in the real application, run separately in both compositor modes | `window-activation-smoke/report.json`, `window-activation/report.json` |
 | `DeformerDeletionVisualTool` | Synthetic asymmetric meshes before and after deleting their parent deformer, and after MOC3 export and readback | `deformer-deletion/comparison.png` |
 | `MotionSheetTool.motions` | Every preset motion laid out over time, the idle loop, a breath with its difference image, body Z | `motion-sheet/<sample>-*.png` |
 | `MotionSheetTool.body` | Body X × body Y, close-ups of the legs and the upper body, lean, proportion and leg poses, without a skeleton and on the auto skeleton | `motion-sheet/<sample>-{stance,lean,size,legposes}*.png` |
@@ -196,7 +202,13 @@ The `modifier legacy template` rows count compatibility template builds. The `mo
 
 ## Code layout
 
-Sources are split into Gradle modules whose dependencies only point downward, which the build enforces: the engine ported from Umamo, `org.umamo.*`, lives in `:umamo` (`umamo/src/main/kotlin/`; it cannot depend on product code); the neutral rig IR `:format-model`, the export framework `:format-compile` and the raster exports `:targets:raster`, the runtime rig `:targets:runtime` and the runtime bindings `:format-eval` are MIT and depend on no GPL module; `:targets:cubism` (IR converter, moc3, cmo3) and `:targets:psd` use the engine; the product layer, `io.github.psd2live.*`, lives in the root project (`src/main/kotlin/`). See [Neutral rig IR and export targets](../spec/EXPORT_TARGETS.md). The engine packages:
+Sources are split into Gradle modules, with module dependencies constrained by the build. The engine ported from Umamo, `org.umamo.*`, lives in `:umamo` (`umamo/src/main/kotlin/`) and cannot depend on product code. The neutral rig IR `:format-model`, export framework `:format-compile`, raster exports `:targets:raster`, runtime rig `:targets:runtime` and runtime bindings `:format-eval` are MIT and depend on no GPL module. The GPL module `:umamo-ir-bridge` depends only on `:umamo` and `:format-model` and owns the general converter `io.github.psd2live.bridge.PuppetIr`. Algorithms and export targets share this bridge without depending on target lowering, compilation or writers. `:targets:cubism` retains Cubism target lowering, compilation and writers; `:targets:psd` uses the engine. See [Neutral rig IR and export targets](../spec/EXPORT_TARGETS.md).
+
+The product layer, `io.github.psd2live.*`, lives in the root project (`src/main/kotlin/`). The application layer's `application/SourceExport.kt` selects source export use cases and CLI presets and provides the `PSD2LivePipeline.run` extension; `core/PSD2LivePipeline.kt` retains generation and export computation. Source artwork, layer transforms and texture value types belong to the root project's `document` package, not a separate Gradle module. Compatibility aliases in `project` preserve the old package names.
+
+`LayerDependencyTest` checks product package dependencies: `core/project/history/document/util` must not call back into `application/agent/ui`, and `document/util/history` must not depend on `core/project`. The existing strongly connected `core/project/render` group remains, with cross-package symbol exceptions listed in `src/test/resources/architecture/product-layer-exceptions.txt`. Do not add cycles, expand these exceptions or bypass the checks with cross-package wildcard imports.
+
+The engine packages:
 
 | Package | Responsibility |
 | --- | --- |

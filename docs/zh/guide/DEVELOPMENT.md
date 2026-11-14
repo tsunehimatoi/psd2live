@@ -114,8 +114,14 @@ python tools/examples/fetch.py --case ds
 PSD2LIVE_TOOLS=1 PSD2LIVE_SAMPLE=ds ./gradlew test --tests "io.github.psd2live.tools.MotionSheetTool.body"
 ```
 
+首帧工具的测量范围不同：离屏工具包含 GPU 同步和读回，不包含模型生成、GL context 创建、Compose 合成或窗口呈现；`renderer_cold` 仅指新建 renderer，不是进程冷启动。窗口工具经真实应用、视口和 Skiko 回放取得 GPU 完成回执，当前限定 P2LRT；模型生成已完成，JVM 与窗口已热，不覆盖窗口交换、系统桌面合成或显示器扫描。两项指标均不是完整编辑延迟，也不能直接与算法生成耗时拼接。
+
+`verifyReadback` 和 `smoke` 用于功能检查，不输出性能分位数；`measure` 每种场景／模式采集至少 30 个有效样本，预热样本不纳入统计。超时或校验失败不记作零延迟，不输出成功统计。窗口工具须在图形初始化前配置 `PSD2LIVE_COMPOSITOR=1` 或 `0`，分别运行并核对实际模式，切换前保存报告。GPU／性能采样应独占运行，避免与构建或其他性能任务并行。入口参数与完整边界见[首个正确画面的测量边界](FIRST_CORRECT_FRAME_MEASUREMENT.md)。
+
 | 工具 | 内容 | 输出 |
 | --- | --- | --- |
+| `FirstCorrectFrameTool.verifyReadback` / `.measure` | 三档合成网格的已知像素检查与捕获修订至离屏编辑画布 GPU 读回完成的测量，分别覆盖新建和预热后的 renderer | `first-correct-frame-check/report.json`、`first-correct-frame/report.json` |
+| `WindowActivationTool.smoke` / `.measure` | 真实应用窗口中，P2LRT 模型激活捕获至窗口 GPU 完成的回执检查与测量；分别运行两种 compositor 模式 | `window-activation-smoke/report.json`、`window-activation/report.json` |
 | `DeformerDeletionVisualTool` | 合成非对称网格在删除父变形器前后及 MOC3 导出读回后的剪影对照 | `deformer-deletion/comparison.png` |
 | `MotionSheetTool.motions` | 每个预设动作按时间展开的拼图、待机循环、呼吸前后与差分图、身体 Z | `motion-sheet/<示例>-*.png` |
 | `MotionSheetTool.body` | 身体 X × 身体 Y、腿部和上半身特写、前后倾、大小变、腿部姿势，分别为无骨架和自动骨架 | `motion-sheet/<示例>-{stance,lean,size,legposes}*.png` |
@@ -200,7 +206,13 @@ PSD2LIVE_TOOLS=1 PSD2LIVE_SAMPLE=ds ./gradlew test --tests "io.github.psd2live.t
 
 ## 代码结构
 
-源码分为多个 Gradle 模块，依赖只能向下，由编译期保证：从 Umamo 移植的引擎 `org.umamo.*` 在 `:umamo`（`umamo/src/main/kotlin/`，不依赖产品代码）；中立绑定 IR `:format-model`、导出框架 `:format-compile` 与光栅导出 `:targets:raster`、运行时模型 `:targets:runtime` 与运行时绑定 `:format-eval` 为 MIT，不依赖任何 GPL 模块；`:targets:cubism`（IR 转换器、moc3、cmo3）与 `:targets:psd` 使用引擎；产品层 `io.github.psd2live.*` 在根项目（`src/main/kotlin/`）。导出模块见[中立绑定 IR 与导出目标](../spec/EXPORT_TARGETS.md)。引擎包如下：
+源码分为多个 Gradle 模块，模块间依赖由 Gradle 在编译期约束。从 Umamo 移植的引擎 `org.umamo.*` 位于 `:umamo`（`umamo/src/main/kotlin/`），不依赖产品代码。中立绑定 IR `:format-model`、导出框架 `:format-compile`、光栅导出 `:targets:raster`、运行时模型 `:targets:runtime` 与运行时绑定 `:format-eval` 为 MIT，不依赖任何 GPL 模块。GPL 模块 `:umamo-ir-bridge` 只依赖 `:umamo` 和 `:format-model`，拥有通用转换器 `io.github.psd2live.bridge.PuppetIr`；算法和导出目标共用它，不经由目标降级、编译或写出实现。`:targets:cubism` 保留 Cubism 目标降级、编译及写出，`:targets:psd` 使用引擎。详见[中立绑定 IR 与导出目标](../spec/EXPORT_TARGETS.md)。
+
+产品层 `io.github.psd2live.*` 位于根项目（`src/main/kotlin/`）。应用层 `application/SourceExport.kt` 选择源文件导出用例及 CLI 预设，并提供 `PSD2LivePipeline.run` 扩展；`core/PSD2LivePipeline.kt` 保留生成与导出计算。源图、图层变换和纹理值类型归根项目的 `document` 包，它不是独立 Gradle 模块；`project` 中的兼容别名保留旧包名。
+
+产品包依赖由 `LayerDependencyTest` 检查：`core/project/history/document/util` 不反向调用 `application/agent/ui`，`document/util/history` 不依赖 `core/project`。既有 `core/project/render` 强连通组仍存在，其跨包符号例外列在 `src/test/resources/architecture/product-layer-exceptions.txt`；不能新增循环、扩大例外或用跨包通配导入绕过检查。
+
+引擎包如下：
 
 | 包 | 职责 |
 | --- | --- |

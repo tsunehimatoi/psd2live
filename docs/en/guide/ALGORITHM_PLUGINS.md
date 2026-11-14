@@ -162,7 +162,7 @@ Compatibility reads recognize only known historical host fingerprints. A `builti
 
 The motion implementation lives in `:algorithms:motion`, with package ID `builtin.6d6f74696f6e.v1`, entrypoint `/clip` and stable alias `motion`. `MotionData` provides the original data model, JSON codec and curve conversion shared by the editor and standalone worker. The module does not depend on playback sessions, UI or Umamo. Build it with `./gradlew :algorithms:motion:pluginPackage`; the output directory is `algorithms/motion/build/plugin`.
 
-The swing implementation lives in `:algorithms:swing`: package `builtin.7377696e67.v1`, entrypoint `/sway`, stable alias `swing`. Mesh wrapping, keyform evaluation and swing physics groups run in the algorithm module without project or history APIs. It uses the GPL Umamo engine and Cubism format converter, so it is a GPL algorithm, not part of the MIT API/format modules. It does not include the proprietary Cubism SDK. Build with `./gradlew :algorithms:swing:pluginPackage`.
+The swing implementation lives in `:algorithms:swing`: package `builtin.7377696e67.v1`, entrypoint `/sway`, stable alias `swing`. Mesh wrapping, keyform evaluation and swing physics groups run in the algorithm module without project or history APIs. It uses the GPL Umamo engine and the general IR bridge `:umamo-ir-bridge`, so it is a GPL algorithm, not part of the MIT API/format modules. It does not include the proprietary Cubism SDK. Build with `./gradlew :algorithms:swing:pluginPackage`.
 
 Baked simulation evaluation lives in `:algorithms:simulation`: package `builtin.73696d756c6174696f6e.v1`, entrypoint `/baked`, stable alias `simulation`. Input includes the existing bake and captured automatic weights. The plugin checks bake validity and upstream inputs before writing weights, mode keyforms and physics groups. Authored weights take precedence; missing or stale bakes reject evaluation rather than produce partial content. Numerical baking remains in its existing pipeline without solver changes. This module also uses the GPL engine. Build with `./gradlew :algorithms:simulation:pluginPackage`.
 
@@ -236,6 +236,8 @@ New IDs use `modifier:<instance-id>:<UTF-8 hex of local name>`. The host validat
 
 ## Performance boundaries
 
+Algorithm generation, worker communication and synchronous baking timings differ from the intervals measured from revision capture to offscreen GPU readback and from model activation capture to window GPU completion. See [Development tools](DEVELOPMENT.md#development-tools) for the latter tools, modes and exclusions; these timings cannot be added together as full edit latency.
+
 Bundled calls avoid IPC. External workers reuse processes, content-addressed buffers, and incremental input synchronization. Author input, binding templates, and algorithms with declared dependencies have separate caches. Folder edits do not evaluate algorithms.
 
 Migration acceptance checks generation through the independent algorithms, output equivalence and historical replay. Performance optimization follows the migration. The diagnostic tool reports the first and repeated generation times with synchronous baking shown separately.
@@ -264,6 +266,8 @@ The installation stores dependency locks. Persisted plugin references additional
 `plugin_list` / `plugin_inspect` return `available`, `issues`, `dependencies`, `conflicts`, and `resolved_dependencies`. `enabled` describes the user switch, not actual availability. Preferences display the failure reasons. Request `dependencies` contains locked package identities, not callable plugin handles. Algorithms collaborate through model inputs and stack dependencies.
 
 ## Low-level interface and ownership
+
+`:algorithms:binding`, `:algorithms:swing` and `:algorithms:simulation` share `io.github.psd2live.bridge.PuppetIr` from the GPL module `:umamo-ir-bridge`, rather than obtaining general conversion through `:targets:cubism`. The bridge depends only on `:umamo` and `:format-model`; target lowering, compilation and writers remain with export targets. The MIT modules `:algorithm-api`, `:format-model` and `:format-compile` do not depend on this GPL implementation.
 
 | Module | Responsibility |
 | --- | --- |

@@ -73,6 +73,7 @@ For hands-on learning, open the **Tutorials** on the Help page (`F1`). Chinese i
 | [网格拓扑与图层拆分](zh/spec/MESH_TOPOLOGY_AND_SPLIT.md) | 自适应网格生成、填充算法、图层拆分 |
 | [绘画系统](zh/spec/PAINT_SYSTEM_ARCHITECTURE_AND_PRD.md) | 绘画会话、组件分工、坐标与提交 |
 | [画布渲染器](zh/spec/CANVAS_RENDERER.md) | 编辑画布、纹理集页面与预览的渲染架构，播放与跟踪会话 |
+| [首帧测量边界](zh/guide/FIRST_CORRECT_FRAME_MEASUREMENT.md) | 离屏读回与模型激活至窗口 GPU 完成的指标、开发工具和验收范围 |
 
 ## 其他
 

@@ -18,7 +18,8 @@ Every export starts from the same neutral rig IR: the editor compiles the curren
 | `:targets:gltf` | `gltf`: glTF 2.0 binary (`.glb`); deformation is baked per parameter key into morph targets, sampled by the host-supplied geometry evaluator | MIT |
 | `:targets:unity` | `unity`: Unity prefab (`.p2lunity` + textures + Editor import script); parameter keys are baked into Blend Shapes, motions are written as Animator clips | MIT |
 | `:targets:web` | `web`: web player (WebAssembly build of the runtime, WebGL playback script, page and model) | MIT |
-| `:targets:cubism` | Two-way converter between `PuppetModel` and the IR (`PuppetIr`), `moc3`, `cmo3`, `vtube-studio`, motion3 / physics3 / exp3 / pose3 writers | GPL-3 |
+| `:umamo-ir-bridge` | General two-way converter between `PuppetModel` and the IR, `io.github.psd2live.bridge.PuppetIr`; depends only on `:umamo` and `:format-model`, without target lowering, compilation or writers | GPL-3 |
+| `:targets:cubism` | Cubism target lowering, `moc3`, `cmo3`, `vtube-studio` compilation and motion3 / physics3 / exp3 / pose3 writers | GPL-3 |
 | `:targets:psd` | `psd-pose`: layered PSD at a given pose | GPL-3 |
 | Root project | `RigIrCompiler` (preview model → IR), `IrFrameRenderer` (host-supplied renderer), `ExportService`, CLI and UI | GPL-3 |
 
@@ -30,7 +31,7 @@ MIT modules depend on no GPL module; Gradle's dependency graph enforces this at 
 - All IDs are stable and survive regeneration.
 - Motion clips are already compiled from presets into parameter curves; Bezier control-point times are restricted to their segment, and the curve parameter is evaluated advancing linearly with time (matching Cubism's `AreBeziersRestricted`).
 - `restPose` gives the parameter values used when baking a base mesh for formats that need a canvas-space base mesh (for example, the mouth held open so texture coordinates cover the whole image).
-- `PuppetIr` is lossless both ways: `toPuppet(toIr(model))` matches the original model field by field. A field added on either side requires updating the converters in the same change.
+- `PuppetIr` maps `PuppetModel` fields in both directions; the `toPuppet(toIr(model))` round-trip contract covers those mapped fields. Packed images, page bindings, physics, clips and parameter roles do not live in `PuppetModel` and must be passed explicitly to `toIr`. IR-only rest poses, tile artwork, hit areas and advanced runtime data remain the caller’s responsibility; do not assume the entire IR round-trips losslessly. Additions to either side of the mapped fields require updating the converter in the same change.
 
 ## Export targets
 

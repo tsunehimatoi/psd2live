@@ -16,7 +16,8 @@
 | `:targets:gltf` | `gltf`：glTF 2.0 二进制（`.glb`），变形按参数关键点烘焙为变形目标，由宿主提供的几何求值器采样 | MIT |
 | `:targets:unity` | `unity`：Unity 预制体（`.p2lunity` + 贴图 + Editor 导入脚本），参数关键点烘焙为 Blend Shape，动作写成 Animator 片段 | MIT |
 | `:targets:web` | `web`：网页播放器（运行时的 WebAssembly 构建、WebGL 播放脚本、页面与模型） | MIT |
-| `:targets:cubism` | `PuppetModel` 与 IR 的双向转换器（`PuppetIr`）、`moc3`、`cmo3`、`vtube-studio`、motion3 / physics3 / exp3 / pose3 写出 | GPL-3 |
+| `:umamo-ir-bridge` | `PuppetModel` 与 IR 的通用双向转换器 `io.github.psd2live.bridge.PuppetIr`；仅依赖 `:umamo` 和 `:format-model`，不含目标降级、编译或写出 | GPL-3 |
+| `:targets:cubism` | Cubism 目标降级、`moc3`、`cmo3`、`vtube-studio` 编译及 motion3 / physics3 / exp3 / pose3 写出 | GPL-3 |
 | `:targets:psd` | `psd-pose`：指定姿势的分层 PSD | GPL-3 |
 | 根项目 | `RigIrCompiler`（预览模型 → IR）、`IrFrameRenderer`（宿主提供的渲染器）、`ExportService`、CLI 与界面 | GPL-3 |
 
@@ -29,7 +30,7 @@ MIT 模块不依赖任何 GPL 模块，由 Gradle 依赖关系在编译期保证
 - 动作片段已经从预设编译成参数曲线；Bezier 段的控制点时间限制在段内，按时间线性推进曲线参数求值（与 Cubism 的 `AreBeziersRestricted` 一致）。
 - 表情、姿势与动作事件来自工程（`RigEditOverlay.expressions` / `pose`、`MotionClip.events`，见[表情、姿势与事件](#表情姿势与事件)），编译时去掉模型中已不存在的参数与部件；表情和姿势在 `advanced` 中，片段事件在 `Clip.events` 中。
 - `restPose` 给出需要画布空间基础网格的格式烘焙基础网格时使用的参数值（例如嘴保持张开，使纹理坐标覆盖整幅图）。
-- `PuppetIr` 双向无损：`toPuppet(toIr(model))` 与原模型逐字段一致。两边新增字段时须在同一改动中更新转换器。
+- `PuppetIr` 双向映射 `PuppetModel` 字段，`toPuppet(toIr(model))` 的往返约定限于这些映射字段。打包图像、贴图页绑定、物理、动作片段和参数角色不保存在 `PuppetModel` 中，须显式传给 `toIr`；仅存在于 IR 的静止姿态、图块素材、命中区域和高级运行时数据由调用方保留，不能假定整个 IR 自动无损往返。映射两端新增字段时须在同一改动中更新转换器。
 
 ## 导出目标
 

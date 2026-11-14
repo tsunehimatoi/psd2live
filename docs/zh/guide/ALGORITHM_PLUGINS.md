@@ -20,7 +20,7 @@ Gradle 的 `processResources` 从 `bundledAlgorithm` 资源声明生成内置包
 
 动作实现已迁到 `:algorithms:motion`，包 ID 为 `builtin.6d6f74696f6e.v1`，入口为 `/clip`，稳定别名为 `motion`。`MotionData` 提供原格式的数据模型、JSON 读写和曲线转换，应用编辑器与独立工作进程共用此实现；模块不依赖播放会话、UI 或 Umamo。构建命令为 `./gradlew :algorithms:motion:pluginPackage`，输出目录为 `algorithms/motion/build/plugin`。
 
-摆动实现位于 `:algorithms:swing`，包 ID 为 `builtin.7377696e67.v1`，入口 `/sway`，稳定别名 `swing`。网格包裹、关键形求值和摆动物理组均在算法模块完成，不调用工程或历史接口。此模块使用 GPL Umamo 引擎与 Cubism 格式转换器，属于 GPL 算法，不能作为 MIT API／格式模块分发；不包含 Cubism 专有 SDK。构建命令为 `./gradlew :algorithms:swing:pluginPackage`。
+摆动实现位于 `:algorithms:swing`，包 ID 为 `builtin.7377696e67.v1`，入口 `/sway`，稳定别名 `swing`。网格包裹、关键形求值和摆动物理组均在算法模块完成，不调用工程或历史接口。此模块使用 GPL Umamo 引擎与 `:umamo-ir-bridge` 通用 IR 转换桥，属于 GPL 算法，不能作为 MIT API／格式模块分发；不包含 Cubism 专有 SDK。构建命令为 `./gradlew :algorithms:swing:pluginPackage`。
 
 烘焙模拟求值位于 `:algorithms:simulation`，包 ID 为 `builtin.73696d756c6174696f6e.v1`，入口 `/baked`，稳定别名 `simulation`。输入包含原烘焙结果和捕获的自动权重；插件检查烘焙与上游输入是否匹配，再写回权重、模式关键形和物理组。既有作者权重优先，不允许通过缺失或过期烘焙生成残缺结果。数值烘焙仍由原流程执行，此迁移不改变求解器。此模块同样依赖 GPL 引擎；构建命令为 `./gradlew :algorithms:simulation:pluginPackage`。
 
@@ -236,6 +236,8 @@ API JAR 本身不是可安装算法包。独立编译契约不等于内置实现
 
 ## 性能边界
 
+算法生成、worker 通信与同步烘焙计时，与捕获修订至离屏 GPU 读回、模型激活捕获至窗口 GPU 完成是不同指标。后两者的开发工具、模式及排除范围见[开发工具](DEVELOPMENT.md#开发工具)；不能把它们相加当作完整编辑延迟。
+
 内置算法直接调用，不承担跨进程序列化开销。外部插件复用进程、按内容寻址传输缓冲，并增量同步输入。作者基础输入、绑定中间模板和可声明依赖的算法结果分别缓存；文件夹调整不触发算法求值。
 
 本轮验收检查独立算法生成、输出等价和历史重放。性能优化在迁移完成后进行。诊断工具继续记录首次和重复生成耗时，并单列同步烘焙耗时。
@@ -269,6 +271,8 @@ API JAR 本身不是可安装算法包。独立编译契约不等于内置实现
 依赖关系不是跨插件函数调用。算法协作通过上游模型内容和算法 `requires` 完成；请求中的 `dependencies` 提供锁定的包身份，不暴露工程对象或其他工作进程句柄。
 
 ## 底层能力与模块边界
+
+`:algorithms:binding`、`:algorithms:swing` 与 `:algorithms:simulation` 共用 GPL 模块 `:umamo-ir-bridge` 的 `io.github.psd2live.bridge.PuppetIr`，不通过 `:targets:cubism` 获取通用转换能力。桥仅依赖 `:umamo` 和 `:format-model`；目标降级、编译和写出仍归导出目标。MIT 的 `:algorithm-api`、`:format-model`、`:format-compile` 不依赖此 GPL 实现。
 
 | 层 | 责任 |
 | --- | --- |
