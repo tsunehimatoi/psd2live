@@ -421,7 +421,7 @@ internal fun registerPluginDevOperations(
         val state = request.getValue("state").jsonPrimitive.content
         val planToken = request.getValue("plan_token").jsonPrimitive.content
         val requestId = request.getValue("request_id").jsonPrimitive.content
-        val job = jobs.start("modifier_code_apply", state, "modifier", WorkspacePluginDevSchemas.result("modifier_code_apply")) {
+        val job = jobs.start("modifier_code_apply", workspace.snapshot().projectId, state, WorkspacePluginDevSchemas.result("modifier_code_apply")) {
             val completion = kotlin.coroutines.coroutineContext[WorkspaceJobCompletion]
             val applied = WorkspaceModifierCodeSwap.apply(workspace, state, planToken, requestId)
             val result = WorkspaceOperationOutput(applied)

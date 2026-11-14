@@ -28,7 +28,7 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
                         poses: (Map<String, WorkspacePose>) -> Unit = {},
                         beforeCommit: (WorkspaceCapture<RigPreviewModel>, WorkspaceDocument, RigPreviewModel) -> Unit = { _, _, _ -> }): WorkspaceCommit<RigPreviewModel> = WorkspaceEditObservation.observe(state, summary, taskId) {
         require(edits.size in 1..128) { "Use 1..128 edits" }
-        require(edits.all { it.operation in WorkspaceDocumentEdits.supported }) { "Batch contains an unsupported document operation" }
+        require(edits.all { it.operation in WorkspaceDocumentEdits.supported || it.operation == "modifier_rebind" }) { "Batch contains an unsupported document operation" }
         val (before, resources) = runtime.withCapture { capture ->
             if (capture.state != state) throw WorkspaceConflict(state, capture.state)
             require(capture.projectId == projectId) { "Operation targets another project" }

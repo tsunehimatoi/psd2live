@@ -197,6 +197,7 @@ internal object PluginDevScaffold {
                 putJsonArray("targets") { request.targets.sorted().forEach { add(it) } }
                 putJsonArray("reads") { add("mesh") }
                 putJsonArray("writes") { add("mesh") }
+                putJsonArray("composableKinds") { add("mesh") }
                 putJsonArray("creates") {}
                 putJsonArray("modifies") { add("mesh.opacity") }
                 putJsonObject("configSchema") {

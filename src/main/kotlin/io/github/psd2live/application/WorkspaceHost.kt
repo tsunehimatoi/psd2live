@@ -142,7 +142,7 @@ internal class WorkspaceHost<V>(
     override suspend fun applyDocumentEdits(state: String, summary: String, edits: List<WorkspaceDocumentOperation>,
                                             author: MutationAuthor): WorkspaceMutationResult = WorkspaceEditObservation.observe(state, summary) { editMutex.withLock {
         require(edits.size in 1..128) { "Use 1..128 edits" }
-        require(edits.all { it.operation in WorkspaceDocumentEdits.supported }) { "Batch contains an unsupported document operation" }
+        require(edits.all { it.operation in WorkspaceDocumentEdits.supported || it.operation == "modifier_rebind" }) { "Batch contains an unsupported document operation" }
         val before = captureForMutation()
         if (state != before.state) throw WorkspaceConflict(state, before.state)
         val current = presentation.current()

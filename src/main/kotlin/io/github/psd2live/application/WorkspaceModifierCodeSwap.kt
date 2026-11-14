@@ -48,6 +48,9 @@ internal object WorkspaceModifierCodeSwap {
 
     fun plan(workspace: WorkspaceBackend, artifactId: String, instanceIds: List<String>): JsonObject {
         val queries = workspace.captureQueries()
+        if (queries is WorkspaceReadSession) {
+            return plan(queries.captureSnapshot(), artifactId, instanceIds)
+        }
         val snapshot = queries.snapshot()
         val projectId = snapshot.projectId
             ?: throw PluginDevException(PluginDevErrorCodes.STATE_CONFLICT, "No project is loaded")

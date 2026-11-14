@@ -87,7 +87,7 @@ class PluginDevSwapAndIsolationTest {
 
         val stagedA = tempDir.resolve("staged-a")
         writeStagedPlugin(stagedA, "custom.test", "1.0.0+dev.1", "custom.test/op")
-        val artA = devStore.seal(stagedA, "src-1", ttlMillis = 50L)
+        val artA = devStore.seal(stagedA, "src-1", ttlMillis = 60_000L)
         assertEquals(PluginDevRetention.CANDIDATE, artA.retention)
         assertNotNull(artA.expiresAt)
 

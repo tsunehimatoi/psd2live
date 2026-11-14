@@ -188,6 +188,7 @@ internal class WorkspaceReadSession(
     }
     override fun rigModules(): JsonObject = read.runtime.capture.let { RigModuleCatalog.describe(it?.document, it?.model) }
     override fun modifierStack(): JsonObject = WorkspaceModifierQueries.describe(capture())
+    internal fun captureSnapshot(): WorkspaceCapture<RigPreviewModel> = capture()
     override fun modifierPlan(request: JsonObject): JsonObject = WorkspaceModifierPlan.prepare(capture(), request)
     override fun generatedOverrideIssues(): List<GeneratedOverrideIssue> = read.runtime.capture?.model?.rig?.overrideIssues.orEmpty()
     override fun supersededEntryNotes(): List<SupersededEntryNote> = read.runtime.capture?.model?.rig?.supersededEntryNotes.orEmpty()

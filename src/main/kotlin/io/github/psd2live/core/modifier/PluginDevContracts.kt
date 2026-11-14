@@ -364,6 +364,7 @@ internal object PluginDevContracts {
                         putJsonArray("targets") { add("mesh") }
                         putJsonArray("reads") { add("mesh") }
                         putJsonArray("writes") { add("mesh") }
+                        putJsonArray("composableKinds") { add("mesh") }
                         putJsonArray("creates") {}
                         putJsonArray("modifies") { add("mesh.opacity") }
                         putJsonObject("configSchema") {
