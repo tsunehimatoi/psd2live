@@ -200,7 +200,7 @@ internal object WorkspaceModifierCodeSwap {
         val canApply = blockers.isEmpty() && changes.isNotEmpty()
         val expiresAt = System.currentTimeMillis() + PLAN_TTL_MILLIS
         val planId = UUID.randomUUID().toString()
-        val planToken = if (canApply) {
+        val planToken: String? = if (canApply) {
             val stored = StoredPlan(
                 planId = planId,
                 projectId = projectId,
@@ -220,10 +220,10 @@ internal object WorkspaceModifierCodeSwap {
             }
             plans[planId] = stored
             signToken(planId, expiresAt)
-        } else ""
+        } else null
 
         return buildJsonObject {
-            put("plan_token", planToken)
+            put("plan_token", planToken?.let(::JsonPrimitive) ?: JsonNull)
             put("expires_at", expiresAt)
             put("state", state)
             put("changes", JsonArray(changes))

@@ -98,7 +98,7 @@ internal object WorkspacePluginDevSchemas {
     private val detachResult = s.obj(mapOf("source_id" to s.handle(), "detached" to s.boolean()))
     private val codePlanResult = s.obj(
         mapOf(
-            "plan_token" to s.handle(),
+            "plan_token" to s.nullable(s.handle()),
             "expires_at" to s.integer(0),
             "state" to s.handle(),
             "changes" to s.array(s.dictionary(JsonObject(emptyMap()))),

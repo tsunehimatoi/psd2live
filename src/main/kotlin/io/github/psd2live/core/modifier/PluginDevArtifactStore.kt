@@ -52,7 +52,8 @@ internal object PluginDevArtifactStore {
             val checked = ModifierPluginStore.inspectPackageDirectory(stagedDir)
             val dependencyDigests = dependencyLock.associate { "${it.id}@${it.version}" to it.digest }
             val reference = checked.reference.copy(dependencyDigests = dependencyDigests)
-            val artifactId = "art_${reference.digest.take(24)}"
+            val buildDigest = computeBuildDigest(checked.reference.digest, dependencyDigests)
+            val artifactId = "art_${buildDigest.take(24)}"
             val now = System.currentTimeMillis()
             synchronized(lock) {
                 entries[artifactId]?.let { (existing, projects) ->
@@ -85,7 +86,7 @@ internal object PluginDevArtifactStore {
                     val artifact = PluginDevArtifact(
                         artifactId = artifactId,
                         sourceId = sourceId,
-                        buildDigest = reference.digest,
+                        buildDigest = buildDigest,
                         packages = listOf(reference),
                         manifest = checked.manifest,
                         directory = targetDir.resolve("payload"),
@@ -262,6 +263,19 @@ internal object PluginDevArtifactStore {
                     }
                 }
             }
+        }
+
+        private fun computeBuildDigest(payloadDigest: String, dependencyDigests: Map<String, String>): String {
+            if (dependencyDigests.isEmpty()) return payloadDigest
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            digest.update(payloadDigest.toByteArray(Charsets.UTF_8))
+            for ((key, value) in dependencyDigests.entries.sortedBy { it.key }) {
+                digest.update(0)
+                digest.update(key.toByteArray(Charsets.UTF_8))
+                digest.update(0)
+                digest.update(value.toByteArray(Charsets.UTF_8))
+            }
+            return digest.digest().joinToString("") { "%02x".format(it) }
         }
 
         private fun moveDirectory(source: Path, destination: Path) {

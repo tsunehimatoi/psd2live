@@ -268,9 +268,10 @@ class PluginDevSwapAndIsolationTest {
             }
         } as WorkspaceBackend
 
-        // Incompatible config schema blocks plan
+        // Incompatible config schema blocks plan and emits null plan_token matching strict result schema
         val badPlan = WorkspaceModifierCodeSwap.plan(backend, artBadCfg.artifactId, listOf("m1"))
         assertFalse(badPlan.getValue("can_apply").jsonPrimitive.boolean)
+        assertEquals(JsonNull, badPlan.getValue("plan_token"))
         assertEquals(
             PluginDevErrorCodes.PLUGIN_CONFIG_INCOMPATIBLE,
             badPlan.getValue("blockers").jsonArray.single().jsonObject.getValue("code").jsonPrimitive.content,
@@ -313,5 +314,23 @@ class PluginDevSwapAndIsolationTest {
             }
             assertEquals(PluginDevErrorCodes.STATE_CONFLICT, conflict.code)
         }
+    }
+
+    @Test
+    fun `sealing same payload with different dependency locks produces distinct artifacts`(@TempDir tempDir: Path) {
+        val devStore = PluginDevArtifactStore.Store(tempDir.resolve("dev-artifacts"))
+        val staged = tempDir.resolve("staged")
+        writeStagedPlugin(staged, "custom.dep", "1.0.0+dev.1", "custom.dep/op")
+
+        val depV1 = ModifierPluginReference(id = "builtin.base", version = "1.0.0", digest = "1".repeat(64))
+        val depV2 = ModifierPluginReference(id = "builtin.base", version = "2.0.0", digest = "2".repeat(64))
+
+        val art1 = devStore.seal(staged, "src-dep", dependencyLock = listOf(depV1), ttlMillis = 60_000L)
+        val art2 = devStore.seal(staged, "src-dep", dependencyLock = listOf(depV2), ttlMillis = 60_000L)
+
+        assertNotEquals(art1.artifactId, art2.artifactId)
+        assertNotEquals(art1.buildDigest, art2.buildDigest)
+        assertEquals(mapOf("builtin.base@1.0.0" to "1".repeat(64)), art1.packages.single().dependencyDigests)
+        assertEquals(mapOf("builtin.base@2.0.0" to "2".repeat(64)), art2.packages.single().dependencyDigests)
     }
 }

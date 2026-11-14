@@ -1775,6 +1775,8 @@ class PSD2LiveViewModel : AutoCloseable {
     internal fun modifierEditState(): String? = modifiers.modifierEditState()
     internal fun editModifier(operation: String, request: kotlinx.serialization.json.JsonObject, expectedState: String? = modifierEditState(),
                               onComplete: (String?) -> Unit = {}) = modifiers.editModifier(operation, request, expectedState, onComplete)
+    internal fun editModifiers(operations: List<io.github.psd2live.application.WorkspaceDocumentOperation>, expectedState: String? = modifierEditState(),
+                               onComplete: (String?) -> Unit = {}) = modifiers.editModifiers(operations, expectedState, onComplete)
 
     internal fun locateModifierContent(kind: String, id: String) {
         val model = _state.value.previewModel ?: return

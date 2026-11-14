@@ -106,26 +106,28 @@ internal fun ModifierCodeUpdateDialog(
                 }
 
                 stage = CodeUpdateStage.APPLYING
-                runInterruptible(Dispatchers.IO) {
-                    val projectKey = state.projectFile ?: state.projectId ?: "workspace"
-                    PluginDevArtifactStore.adopt(artifact.artifactId, projectKey)
-                }
-
                 val expected = vm.modifierEditState()
-                for (target in targetInstances) {
-                    val deferred = CompletableDeferred<String?>()
-                    vm.editModifier(
+                val operations = targetInstances.map { target ->
+                    io.github.psd2live.application.WorkspaceDocumentOperation(
                         operation = "modifier_rebind",
                         request = buildJsonObject {
                             put("id", target.id)
                             put("plugin", Json.encodeToJsonElement(ModifierPluginReference.serializer(), newRef))
                             put("version", newAlg.version)
                         },
-                        expectedState = expected,
-                        onComplete = { deferred.complete(it) },
                     )
-                    val failure = deferred.await()
-                    if (failure != null) throw IllegalStateException(failure)
+                }
+                val deferred = CompletableDeferred<String?>()
+                vm.editModifiers(
+                    operations = operations,
+                    expectedState = expected,
+                    onComplete = { deferred.complete(it) },
+                )
+                val failure = deferred.await()
+                if (failure != null) throw IllegalStateException(failure)
+                runInterruptible(Dispatchers.IO) {
+                    val projectKey = state.projectFile ?: state.projectId ?: "workspace"
+                    PluginDevArtifactStore.adopt(artifact.artifactId, projectKey)
                 }
                 stage = CodeUpdateStage.DONE
                 onDismiss()

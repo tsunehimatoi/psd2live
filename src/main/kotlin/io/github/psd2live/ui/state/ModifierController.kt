@@ -131,8 +131,14 @@ internal class ModifierController(
 
     fun editModifier(operation: String, request: kotlinx.serialization.json.JsonObject, expectedState: String? = modifierEditState(),
                               onComplete: (String?) -> Unit = {}) {
+        editModifiers(listOf(io.github.psd2live.application.WorkspaceDocumentOperation(operation, request)), expectedState, onComplete)
+    }
+
+    fun editModifiers(operations: List<io.github.psd2live.application.WorkspaceDocumentOperation>, expectedState: String? = modifierEditState(),
+                               onComplete: (String?) -> Unit = {}) {
+        if (operations.isEmpty()) { onComplete(null); return }
         val expected = expectedState ?: run { onComplete(tr("modifier.stale")); return }
-        submit(expected, tr("modifier.history.edit"), listOf(io.github.psd2live.application.WorkspaceDocumentOperation(operation, request))) { failure ->
+        submit(expected, tr("modifier.history.edit"), operations) { failure ->
             if (failure != null) reportError(failure)
             onComplete(failure)
         }
