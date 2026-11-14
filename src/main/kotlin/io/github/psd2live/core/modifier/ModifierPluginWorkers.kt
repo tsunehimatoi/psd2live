@@ -27,7 +27,7 @@ import java.util.concurrent.TimeoutException
 internal object ModifierPluginWorkers {
     // The manifest names the component separately from the structured IR field.
     private fun typedWrites(writes: Set<String>): Set<String> =
-        if ("rest_pose" in writes) writes + "restPose" else writes
+        writes + listOfNotNull("restPose".takeIf { "rest_pose" in writes }, "hitArea".takeIf { "hit_areas" in writes })
 
     private val CAPABILITIES_JSON = JsonArray((ModifierPluginOutput.operations + setOf(
         "rig_objects", "author_context_v1", "author_context_v2", "input_reads_v1", "input_mesh_ids_v1",
@@ -53,9 +53,105 @@ internal object ModifierPluginWorkers {
 
     private val workers = ConcurrentHashMap<WorkerKey, Worker>()
     private val workerKeys = ConcurrentHashMap<ModifierPluginReference, WorkerKey>()
+    private val geometryBudgets = java.util.Collections.synchronizedMap(java.util.WeakHashMap<ModifierPluginStore, Long>())
     private val executor = Executors.newVirtualThreadPerTaskExecutor()
+    internal val retirements = WorkerRetirementQueue()
     private class QueuedFailure(val original: Throwable) : RuntimeException(original)
-    init { Runtime.getRuntime().addShutdownHook(Thread { workers.values.forEach { it.close() } }) }
+    init { Runtime.getRuntime().addShutdownHook(Thread {
+        workers.entries.toList().forEach { (key, worker) ->
+            runCatching { worker.retire(key.storeRoot) }.onFailure {
+                System.err.println("Plugin worker retirement could not be queued: ${it.message}")
+            }
+        }
+        retirements.shutdown(5_000).forEach {
+            System.err.println("Plugin worker shutdown incomplete (pid=${it.pid}, state=${it.state}): ${it.failure}")
+        }
+    }) }
+
+    /** A workspace owner, distinct from package availability. Closing one owner never stops another's worker. */
+    class Session internal constructor(internal val store: ModifierPluginStore,
+                                       internal val retirementQueue: WorkerRetirementQueue) : AutoCloseable {
+        private val closed = java.util.concurrent.atomic.AtomicBoolean()
+        private val keys = ConcurrentHashMap.newKeySet<WorkerKey>()
+        private val released = java.util.concurrent.CompletableFuture<Unit>()
+        internal fun acquire(entry: InstalledModifierPlugin): Worker {
+            check(!closed.get()) { "Plugin worker session is closed" }
+            val key = workerKey(store, entry)
+            keys.add(key)
+            val worker = acquireWorker(store, entry, key, this)
+            if (closed.get()) {
+                // Close may have detached the key while its process was still being launched.
+                workers.computeIfPresent(key) { _, current ->
+                    if (current !== worker) current else {
+                        current.sessions.remove(this)
+                        current.active--
+                        retireIfUnused(key, current)
+                    }
+                }
+                throw java.util.concurrent.CancellationException("Plugin worker session closed during acquisition")
+            }
+            return worker
+        }
+        override fun close() {
+            if (!closed.compareAndSet(false, true)) return
+            // Acquisition can launch/copy a worker while holding its pool key. Do not wait for that key
+            // under the workspace publication lock, even before the process retirement itself starts.
+            executor.execute {
+                try {
+                    keys.forEach { key -> workers.computeIfPresent(key) { _, worker ->
+                        worker.sessions.remove(this)
+                        retireIfUnused(key, worker)
+                    } }
+                    keys.clear()
+                    released.complete(Unit)
+                } catch (failure: Throwable) { released.completeExceptionally(failure) }
+            }
+        }
+        /** Explicit tool/test synchronization, never needed by runtime close. */
+        fun awaitReleased(timeoutMillis: Long = 10_000) { released.get(timeoutMillis, TimeUnit.MILLISECONDS) }
+    }
+    fun openSession(store: ModifierPluginStore = ModifierPluginStore.shared,
+                    retirementQueue: WorkerRetirementQueue = retirements) = Session(store, retirementQueue)
+
+    data class CacheSnapshot(val pid: Long, val geometry: ModifierGeometryCache.Snapshot,
+                             val protocolBlobBytes: Long, val readEntries: Int)
+    fun cacheSnapshots(store: ModifierPluginStore): List<CacheSnapshot> = workers.entries
+        .filter { it.key.storeRoot == store.root.toAbsolutePath().normalize() }.map { it.value.cacheSnapshot() }
+    fun retirementSnapshots(store: ModifierPluginStore) = retirements.snapshots(store.root.toAbsolutePath().normalize())
+    fun retryRetirements(store: ModifierPluginStore) = retirements.retryFailed(store.root.toAbsolutePath().normalize())
+    fun awaitRetirements(store: ModifierPluginStore) = retirements.await(store.root.toAbsolutePath().normalize())
+
+    /** Configure before starting workers. This is a per-worker budget, not a process-wide heap limit. */
+    fun geometryBudget(store: ModifierPluginStore, bytes: Long) {
+        require(bytes >= 0)
+        val root = store.root.toAbsolutePath().normalize()
+        check(workers.keys.none { it.storeRoot == root }) { "Configure geometry budget before starting workers" }
+        geometryBudgets[store] = bytes
+    }
+
+    /** Drop recomputable state at a request boundary; active frames keep their bytes until decoding completes. */
+    fun releaseCaches(store: ModifierPluginStore) {
+        workers.entries.filter { it.key.storeRoot == store.root.toAbsolutePath().normalize() }
+            .forEach { it.value.releaseCaches() }
+    }
+
+    private fun acquireWorker(store: ModifierPluginStore, entry: InstalledModifierPlugin, key: WorkerKey, session: Session?): Worker =
+        workers.compute(key) { _, existing ->
+            val current = if (existing != null && !existing.isClosed) existing else Worker(store.workerPackage(entry.reference), store,
+                session?.retirementQueue ?: retirements)
+            current.also {
+                it.refs.add(entry.reference)
+                if (session == null) it.unscoped = true else it.sessions.add(session)
+                it.active++
+            }
+        }!!
+
+    private fun retireIfUnused(key: WorkerKey, worker: Worker): Worker? {
+        if (worker.active != 0 || worker.unscoped || worker.sessions.isNotEmpty()) return worker
+        worker.retire(key.storeRoot)
+        worker.refs.forEach { workerKeys.remove(it, key) }
+        return null
+    }
     fun stop(reference: ModifierPluginReference) {
         val key = workerKeys.remove(reference) ?: return
         workers.computeIfPresent(key) { _, worker ->
@@ -71,14 +167,13 @@ internal object ModifierPluginWorkers {
                  instance: RigModifierInstance, checkpoint: () -> Unit, store: ModifierPluginStore = ModifierPluginStore.shared,
                  timeoutMillis: Long = 120_000, context: ModifierAlgorithmContext = ModifierAlgorithmContext.Empty,
                  declaredParameters: List<io.github.psd2live.format.model.Parameter> = emptyList(),
-                 resolveRasters: ModifierRasterResolver = RigModifierRasterAssets::resolve): RigIR {
+                 resolveRasters: ModifierRasterResolver = RigModifierRasterAssets::resolve,
+                 session: Session? = null): RigIR {
         require(timeoutMillis > 0)
         store.requireAvailable(entry.reference)
         val key = workerKey(store, entry)
-        val worker = workers.compute(key) { _, existing ->
-            val current = if (existing != null && !existing.isClosed) existing else Worker(store.workerPackage(entry.reference), store)
-            current.also { it.refs.add(entry.reference) }
-        }!!
+        require(session == null || session.store === store) { "Worker session belongs to another store" }
+        val worker = session?.acquire(entry) ?: acquireWorker(store, entry, key, null)
         workerKeys[entry.reference] = key
         try {
             val result = worker.evaluate(entry, algorithm, rig, instance, checkpoint, timeoutMillis, context, declaredParameters, resolveRasters)
@@ -92,6 +187,10 @@ internal object ModifierPluginWorkers {
                 runCatching { worker.close() }.exceptionOrNull()?.let(failure::addSuppressed)
             }
             throw failure
+        } finally {
+            workers.computeIfPresent(key) { _, current ->
+                if (current !== worker) current else { current.active--; retireIfUnused(key, current) }
+            }
         }
     }
 
@@ -102,8 +201,12 @@ internal object ModifierPluginWorkers {
     private data class SentInput(val meshes: Map<String, Mesh>, val deformers: Map<String, Deformer>,
                                  val objects: Map<String, JsonElement>)
 
-    private class Worker(launchEntry: InstalledModifierPlugin, private val store: ModifierPluginStore) : AutoCloseable {
+    internal class Worker(launchEntry: InstalledModifierPlugin, private val store: ModifierPluginStore,
+                          private val retirementQueue: WorkerRetirementQueue) : AutoCloseable {
         val refs: MutableSet<ModifierPluginReference> = ConcurrentHashMap.newKeySet()
+        val sessions = HashSet<Session>()
+        var unscoped = false
+        var active = 0
         private val readResults = object : LinkedHashMap<Pair<ModifierPluginReference, String>, ReadResult>(16, .75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Pair<ModifierPluginReference, String>, ReadResult>?): Boolean = size > 256
         }
@@ -111,8 +214,18 @@ internal object ModifierPluginWorkers {
         private val writtenHashes = HashSet<String>()
         private val sentObjectBlobs = HashMap<String, ByteArray>()
         private var nextBlobId = 0L
-        private val geometryBlobs = java.util.IdentityHashMap<io.github.psd2live.format.model.MeshGeometry, Pair<JsonObject, JsonObject>>()
-        private val geometryRawBlobs = java.util.IdentityHashMap<io.github.psd2live.format.model.MeshGeometry, Pair<ByteArray, ByteArray>>()
+        private val geometryBudget = geometryBudgets[store] ?: ModifierGeometryCache.DEFAULT_BUDGET_BYTES
+        // Only one representation is used by a worker. Both maps charge the geometry keys they retain.
+        private val geometryBlobs = ModifierGeometryCache<Pair<JsonObject, JsonObject>>(if (protocol == 1) geometryBudget else 0) {
+            512L + 2L * (it.first.toString().length + it.second.toString().length)
+        }
+        private val geometryRawBlobs = ModifierGeometryCache<Pair<ByteArray, ByteArray>>(if (protocol == 2) geometryBudget else 0) {
+            it.first.size.toLong() + it.second.size + 48L
+        }
+        private val releaseRequested = java.util.concurrent.atomic.AtomicBoolean()
+        @Volatile private var protocolBlobBytes = 0L
+        @Volatile private var readEntryCount = 0
+        private var resetInput = true
         private val resources = Files.createTempDirectory("psd2live-plugin-")
         private val resolvedDeps = store.resolution(launchEntry.reference).dependencies
         private val runtimeDir = try {
@@ -182,9 +295,46 @@ internal object ModifierPluginWorkers {
         @Volatile private var closed = false
         val isClosed: Boolean get() = closed || !process.isAlive
         private val requests = java.util.concurrent.locks.ReentrantLock(true)
+        private val disposal = Any()
+        private val descendantHandles = ConcurrentHashMap.newKeySet<ProcessHandle>()
+
+        fun retire(storeRoot: Path) {
+            closed = true
+            retirementQueue.enqueue(WorkerRetirementQueue.Key(storeRoot, process.pid()), forceStop = ::forceStop) { close() }
+        }
+
+        private fun forceStop() {
+            descendantHandles.addAll(process.descendants().toList())
+            descendantHandles.forEach { it.destroyForcibly() }
+            process.destroyForcibly()
+        }
+
+        fun cacheSnapshot() = CacheSnapshot(process.pid(),
+            if (protocol == 2) geometryRawBlobs.snapshot() else geometryBlobs.snapshot(), protocolBlobBytes, readEntryCount)
+
+        fun releaseCaches() {
+            releaseRequested.set(true)
+            if (!requests.isHeldByCurrentThread && requests.tryLock()) try { clearRequestedCaches() } finally { requests.unlock() }
+        }
+
+        private fun clearRequestedCaches() {
+            if (!releaseRequested.getAndSet(false)) return
+            geometryBlobs.clear()
+            geometryRawBlobs.clear()
+            readResults.clear()
+            readEntryCount = 0
+            previous = null
+            sentObjectBlobs.clear()
+            protocolBlobBytes = 0
+            resetInput = true
+            writtenHashes.forEach { Files.deleteIfExists(resources.resolve(it)) }
+            writtenHashes.clear()
+            RigBuildProfile.count("plugin cache releases")
+        }
 
         fun evaluate(entry: InstalledModifierPlugin, algorithm: ModifierPluginAlgorithm, rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit, timeoutMillis: Long, context: ModifierAlgorithmContext, declaredParameters: List<io.github.psd2live.format.model.Parameter>, resolveRasters: ModifierRasterResolver): RigIR {
             // A cancelled queued request must neither wait on a JVM monitor nor kill the active request.
+            val queueStart = if (RigBuildProfile.recording) System.nanoTime() else 0L
             try {
                 val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
                 while (true) {
@@ -194,8 +344,16 @@ internal object ModifierPluginWorkers {
                     if (requests.tryLock(minOf(remaining, TimeUnit.MILLISECONDS.toNanos(50)), TimeUnit.NANOSECONDS)) break
                 }
             } catch (failure: Throwable) { throw QueuedFailure(failure) }
+            if (RigBuildProfile.recording) RigBuildProfile.add("plugin worker queue", System.nanoTime() - queueStart)
             try { return evaluateLocked(entry, algorithm, rig, instance, checkpoint, timeoutMillis, context, declaredParameters, resolveRasters) }
-            finally { requests.unlock() }
+            finally {
+                try {
+                    clearRequestedCaches()
+                    val snapshot = cacheSnapshot()
+                    RigBuildProfile.gauge("plugin geometry retained bytes", snapshot.geometry.retainedBytes)
+                    RigBuildProfile.gauge("plugin protocol blob bytes", snapshot.protocolBlobBytes)
+                } finally { requests.unlock() }
+            }
         }
 
         private fun evaluateLocked(entry: InstalledModifierPlugin, algorithm: ModifierPluginAlgorithm, rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit, timeoutMillis: Long, context: ModifierAlgorithmContext, declaredParameters: List<io.github.psd2live.format.model.Parameter>, resolveRasters: ModifierRasterResolver): RigIR {
@@ -204,9 +362,16 @@ internal object ModifierPluginWorkers {
             checkpoint()
             val input = ModifierInputCache.project(rig, algorithm.reads + algorithm.writes)
             val cacheKey = entry.reference to instance.id
-            val cached = readResults[cacheKey]?.takeIf {
-                it.algorithm == algorithm && it.instance == instance && it.context == context && it.reads.matches(input, context)
+            val previousResult = readResults[cacheKey]
+            val invalidation = when {
+                previousResult == null -> "cold"
+                previousResult.algorithm != algorithm -> "algorithm"
+                previousResult.instance != instance -> "instance"
+                previousResult.context != context -> "author context"
+                !previousResult.reads.matches(input, context) -> "observed input"
+                else -> null
             }
+            val cached = previousResult.takeIf { invalidation == null }
             if (cached != null) {
                 cached.changes.requireWrites(typedWrites(algorithm.writes))
                 val output = try { cached.changes.applyWithResources(rig, checkpoint, resolveRasters) } catch (_: IllegalArgumentException) { null }
@@ -218,6 +383,7 @@ internal object ModifierPluginWorkers {
                     return validated
                 }
             }
+            RigBuildProfile.count("plugin read cache miss: ${invalidation ?: "write precondition"}")
             readResults.remove(cacheKey)
             val requestBlobs = if (protocol == 2) LinkedHashMap<String, ByteArray>() else null
             fun writeBlob(bytes: ByteArray): JsonObject = if (requestBlobs != null) {
@@ -230,7 +396,7 @@ internal object ModifierPluginWorkers {
             val earlier = previous?.objects.orEmpty()
             require(context.upstream.isEmpty() || algorithm.contextVersion >= 2) { "Plugin does not support upstream capability inputs" }
             val requestId = ++sequence
-            val request = buildJsonObject {
+            val request = RigBuildProfile.stage("plugin request encoding") { buildJsonObject {
                 put("protocol", protocol); put("id", requestId); put("method", "evaluate")
                 put("type", algorithm.type); put("version", instance.version); put("instance", instance.id)
                 put("capabilities", CAPABILITIES_JSON)
@@ -241,7 +407,7 @@ internal object ModifierPluginWorkers {
                 }))
                 put("config", instance.config)
                 if (protocol == 1) put("resource_directory", resources.toString())
-                put("reset", requestId == 1L)
+                put("reset", resetInput)
                 put("changed", JsonObject(current.filter { (key, value) -> earlier[key] != value }))
                 put("removed", JsonArray((earlier.keys - current.keys).map(::JsonPrimitive)))
                 put("mesh_order", JsonArray(input.meshes.map { JsonPrimitive(it.id) }))
@@ -288,7 +454,7 @@ internal object ModifierPluginWorkers {
                 // Portable geometry views avoid requiring a language-specific full model decoder.
                 val targetMeshIds = instance.targets.filter { it.kind == "mesh" }.mapTo(HashSet()) { it.id }
                 val readsMeshes = "mesh" in algorithm.reads || "*" in algorithm.reads
-                val puppet by lazy { PuppetIr.toPuppet(input) }
+                val puppet by lazy { RigBuildProfile.stage("plugin portable view conversion") { PuppetIr.toPuppet(input) } }
                 val visibleIds by lazy { puppet.visibleDrawableIds().mapTo(HashSet()) { it.raw } }
                 val drawablesById by lazy { puppet.drawables.associateBy { it.id.raw } }
                 putJsonArray("meshes") {
@@ -342,28 +508,33 @@ internal object ModifierPluginWorkers {
                         }
                     }
                 } } }
-            }
-            val task = executor.submit<AlgorithmFrames.Frame> {
+            } }
+            val exchange = RigBuildProfile.propagate {
                 RigBuildProfile.count("plugin worker evaluations")
                 if (protocol == 2) {
-                    AlgorithmFrames.write(frameOut!!, request, requestBlobs!!)
-                    AlgorithmFrames.read(frameIn!!)
+                    if (RigBuildProfile.recording) RigBuildProfile.count("plugin sent header bytes", request.toString().toByteArray(Charsets.UTF_8).size.toLong())
+                    RigBuildProfile.count("plugin sent blob bytes", requestBlobs!!.values.sumOf { it.size.toLong() })
+                    RigBuildProfile.stage("plugin frame write") { AlgorithmFrames.write(frameOut!!, request, requestBlobs) }
+                    RigBuildProfile.stage("plugin frame read and worker") { AlgorithmFrames.read(frameIn!!) }
                         ?: error("Algorithm plugin exited (${entry.manifest.name}): ${synchronized(errors) { errors.toString() }}")
                 } else {
                     val text = request.toString()
                     RigBuildProfile.count("plugin sent bytes", text.toByteArray().size.toLong())
-                    writer!!.write(text); writer.newLine(); writer.flush()
-                    val line = reader!!.readLine()
+                    RigBuildProfile.stage("plugin text write") { writer!!.write(text); writer.newLine(); writer.flush() }
+                    val line = RigBuildProfile.stage("plugin text read and worker") { reader!!.readLine() }
                         ?: error("Algorithm plugin exited (${entry.manifest.name}): ${synchronized(errors) { errors.toString() }}")
                     require(line.length < 16 * 1024 * 1024) { "Plugin response exceeds size limit" }
                     AlgorithmFrames.Frame(Json.parseToJsonElement(line).jsonObject, emptyMap())
                 }
             }
+            val task = executor.submit<AlgorithmFrames.Frame> { exchange() }
             val frame = try { awaitResponse(entry, task, checkpoint, timeoutMillis) }
             catch (failure: ExecutionException) { throw failure.cause ?: failure }
             catch (failure: Exception) { task.cancel(true); throw failure }
             val response = frame.header
+            if (RigBuildProfile.recording) RigBuildProfile.count("plugin received header bytes", response.toString().toByteArray(Charsets.UTF_8).size.toLong())
             val responseBlobs = frame.blobs
+            RigBuildProfile.count("plugin received blob bytes", responseBlobs.values.sumOf { it.size.toLong() })
             checkpoint()
             require(response.keys.all { it in setOf("protocol", "id", "commands", "objects", "changes", "reads", "error") } && response["protocol"]?.jsonPrimitive?.int == protocol && response["id"]?.jsonPrimitive?.long == requestId) { "Invalid plugin response envelope" }
             response["error"]?.let { error("${entry.manifest.name}: ${it.jsonPrimitive.content}") }
@@ -380,7 +551,7 @@ internal object ModifierPluginWorkers {
                 } else AlgorithmObjects.readInline(responseBlobs, ref)
             } else AlgorithmObjects.read(resources, ref)
             var readResult: ReadResult? = null
-            val output = response["changes"]?.let { value ->
+            val output = RigBuildProfile.stage("plugin response decode and apply") { response["changes"]?.let { value ->
                 val changes = io.github.psd2live.algorithm.worker.AlgorithmChanges.decode(value.jsonObject, ::readResponseBlob)
                 changes.requireWrites(typedWrites(algorithm.writes))
                 val reads = response["reads"]?.let { encoded ->
@@ -405,9 +576,10 @@ internal object ModifierPluginWorkers {
                 val commands = response.getValue("commands").jsonArray
                 require(commands.size <= 10000) { "Too many plugin commands" }
                 ModifierPluginOutput.apply(rig, instance, algorithm, JsonArray(commands.map { expand(it, responseBlobs) }), checkpoint, declaredParameters)
-            }
+            } }
             checkpoint()
             previous = sent
+            resetInput = false
             if (requestBlobs != null) {
                 val retainedKeys = current.values.mapNotNullTo(HashSet()) { it.jsonObject["inline"]?.jsonPrimitive?.content }
                 sentObjectBlobs.keys.retainAll(retainedKeys)
@@ -416,6 +588,8 @@ internal object ModifierPluginWorkers {
                 }
             }
             readResult?.let { readResults[cacheKey] = it }
+            readEntryCount = readResults.size
+            protocolBlobBytes = sentObjectBlobs.values.sumOf { it.size.toLong() }
             return output
         }
 
@@ -499,21 +673,20 @@ internal object ModifierPluginWorkers {
             is JsonArray -> JsonArray(value.map { expand(it, responseBlobs) })
             else -> value
         }
-        override fun close() {
+        override fun close(): Unit = synchronized(disposal) {
             closed = true
+            releaseCaches()
             val interrupted = Thread.interrupted()
             try {
-                val descendants = process.descendants().toList()
-                descendants.forEach { it.destroyForcibly() }
-                process.destroyForcibly()
+                forceStop()
                 // On Windows executable/JAR handles remain locked until the process actually exits.
                 check(process.waitFor(5, TimeUnit.SECONDS)) { "Plugin worker did not exit; package remains installed" }
-                descendants.forEach { runCatching { it.onExit().get(5, TimeUnit.SECONDS) } }
+                descendantHandles.forEach { it.onExit().get(5, TimeUnit.SECONDS) }
                 stderr.cancel(true)
                 runCatching { process.inputStream.close() }
                 runCatching { process.outputStream.close() }
                 runCatching { process.errorStream.close() }
-                runCatching { ModifierPluginStore.deleteTree(resources) }
+                ModifierPluginStore.deleteTree(resources)
             } finally { if (interrupted) Thread.currentThread().interrupt() }
         }
     }

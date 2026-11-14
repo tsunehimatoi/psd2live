@@ -21,7 +21,8 @@ internal object ModifierPluginDependencies {
             }
             if (visited.add(entry.reference)) for (dependency in entry.manifest.dependencies) {
                 val candidate = packages.filter { it.enabled && it.reference.id == dependency.id && dependency.version.accepts(it.reference.version) &&
-                        (entry.dependencyLock == null || it.reference in entry.dependencyLock) }
+                        (if (entry.dependencyLock != null) it.reference in entry.dependencyLock
+                        else !it.reference.id.startsWith("builtin.") || it.reference == BuiltinModifierPlugins.entry(it.reference.id)?.reference) }
                     .maxWithOrNull(compareBy<InstalledModifierPlugin> { ModifierPluginVersion.parse(it.reference.version, legacy = true) }.thenBy { it.reference.version }.thenBy { it.reference.digest })
                 if (candidate == null) issues += "Missing dependency: ${entry.reference.id}@${entry.reference.version} requires ${dependency.id} ${dependency.version}"
                 else { resolved += candidate.reference; visit(candidate) }

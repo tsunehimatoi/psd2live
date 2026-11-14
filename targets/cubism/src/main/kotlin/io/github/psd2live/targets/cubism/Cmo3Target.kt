@@ -45,10 +45,28 @@ public class Cmo3Target(
 	 * setting) says, at canvas resolution by default.
 	 */
 	public fun convert(ir: RigIR, options: ExportOptions): Cmo3Conversion.Result {
+		val textured = materializeTextureSources(ir)
 		val layerArt = Cmo3LayerArt.of(options.setting(Cmo3LayerArt.SETTING))
-		val lowered = if (layerArt == Cmo3LayerArt.CANVAS) Cmo3LayerArtLowering.canvasResolution(ir) else ir
-		val native = if (layerArt == Cmo3LayerArt.NATIVE) Cmo3LayerArtLowering.nativeResolution(ir) else null
+		val lowered = if (layerArt == Cmo3LayerArt.CANVAS) Cmo3LayerArtLowering.canvasResolution(textured) else textured
+		val native = if (layerArt == Cmo3LayerArt.NATIVE) Cmo3LayerArtLowering.nativeResolution(textured) else null
 		return convertLowered(lowered, options) { root -> native?.invoke(root); decorate(root) }
+	}
+
+	/** CMO3 stores concrete texture bindings, not the runtime's mesh-to-mesh binding alias. */
+	private fun materializeTextureSources(ir: RigIR): RigIR {
+		if (ir.meshes.none { it.textureSource != null }) return ir
+		val originals = ir.meshes.associateBy { it.id }
+		val bindings = ir.textures.bindings.toMutableMap()
+		val meshes = ir.meshes.map { mesh ->
+			val sourceId = mesh.textureSource ?: return@map mesh
+			val source = requireNotNull(originals[sourceId]) { "Missing texture source $sourceId for ${mesh.id}" }
+			// Resolve against the input, never against already materialized meshes: the runtime
+			// chooses the referenced mesh's binding once and keeps the consumer's own UVs/forms.
+			val page = ir.textures.bindings[sourceId] ?: source.page
+			bindings[mesh.id] = page
+			mesh.copy(textureSource = null, page = page, tile = source.tile)
+		}
+		return ir.copy(meshes = meshes, textures = ir.textures.copy(bindings = bindings))
 	}
 
 	/**
@@ -57,12 +75,12 @@ public class Cmo3Target(
 	 */
 	public fun textureLosses(ir: RigIR, options: ExportOptions): List<LossEntry> =
 		if (Cmo3LayerArt.of(options.setting(Cmo3LayerArt.SETTING)) == Cmo3LayerArt.NATIVE) emptyList()
-		else Cmo3LayerArtLowering.losses(Cmo3LayerArtLowering.canvasResolution(ir))
+		else Cmo3LayerArtLowering.losses(Cmo3LayerArtLowering.canvasResolution(materializeTextureSources(ir)))
 
 	/** [textureLosses] in one line for a log; null when there are none. */
 	public fun textureLossSummary(ir: RigIR, options: ExportOptions): String? =
 		if (Cmo3LayerArt.of(options.setting(Cmo3LayerArt.SETTING)) == Cmo3LayerArt.NATIVE) null
-		else Cmo3LayerArtLowering.summary(Cmo3LayerArtLowering.canvasResolution(ir))
+		else Cmo3LayerArtLowering.summary(Cmo3LayerArtLowering.canvasResolution(materializeTextureSources(ir)))
 
 	/**
 	 * The can3 of [ir]'s clips on [converted], the cmo3 of the same export; null when `clips` is false or no clip
@@ -109,8 +127,12 @@ public class Cmo3Target(
 		return converted
 	}
 
-	/** Expressions and the pose, which Cubism keeps beside the model (exp3 and pose3, as the moc3 export writes them), not in it. */
+	/** Authoring vertex groups and runtime sidecars which CMO3 cannot store. */
 	public fun sidecarLosses(ir: RigIR): List<LossEntry> = buildList {
+		ir.authoring.vertexGroups.forEach { group ->
+			add(LossEntry(group.mesh, Feature.STRUCTURE, Handling.DROPPED,
+				note = "Vertex group ${group.name} (${group.kind}) is not stored in cmo3"))
+		}
 		if (ir.advanced.expressions.isNotEmpty()) add(LossEntry(ir.advanced.expressions.joinToString(",") { it.id }, Feature.STRUCTURE, Handling.DROPPED,
 			note = "Expressions are not stored in cmo3 or can3; the moc3 export writes them as exp3"))
 		if (ir.advanced.pose != null) add(LossEntry("*", Feature.STRUCTURE, Handling.DROPPED,

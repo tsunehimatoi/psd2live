@@ -84,6 +84,10 @@ Expressions, the pose and motion events are project data that, like motion clips
 - **Export changes (after 3.6.0)**: a generated rig now also writes the standard expressions' exp3 files, model3 `Expressions` and the VTube Studio toggle hotkeys in `moc3` / `vtube-studio`; an imported CMO3 with unedited expressions no longer carries the standard expressions in `p2lrt`; replacing a generated rig with a CMO3 import takes the standard expressions of that moment into the document.
 - **Read-back**: the bundle check in `PSD2LivePipeline` parses every exp3, pose3 and motion3 model3 references. Mesh-only export writes no expressions or pose; `cmo3` / `can3` do not store expressions or the pose and report them as `structure` / `dropped`.
 
+## CMO3 references and authoring data
+
+Before CMO3 export, mesh texture-source references are materialized into the source mesh's texture page and tile while retaining the consumer's own UVs and keyforms. Both `canvas` and `native` layer-art modes use these bindings. Authored Glue IDs survive export and import; anonymous Glue receives a deterministic fallback name. Runtime vertex weight groups cannot be stored in CMO3, so each group produces a `structure` / `dropped` loss associated with its mesh ID.
+
 ## Cubism Animator
 
 The `cmo3` target writes `<base>.cmo3` and also writes the IR's motion clips as `<base>.can3` (`Can3`, `:targets:cubism`); the legacy **Export Live2D model…** writes it too when CMO3 is ticked. With motion3/motion export off, or a mesh-only model, there are no clips and no can3 is written.

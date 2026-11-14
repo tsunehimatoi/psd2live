@@ -1396,7 +1396,7 @@ internal object RigStaticSourceCollector {
             teethFade = tuning.teethFade,
             closedMouth = context.hasClosedMouth,
             formName = tr("model.parameter.mouthForm"),
-            openName = tr("model.parameter.mouthOpenY"),
+            openName = tr("model.parameter.mouthOpen"),
             groupName = tr("model.group.mouth"),
             scaffold = scaffoldContext,
         ).encode()

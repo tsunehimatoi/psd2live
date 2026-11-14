@@ -83,6 +83,10 @@ MIT 模块不依赖任何 GPL 模块，由 Gradle 依赖关系在编译期保证
 - **导出变化（3.6.0 之后）**：生成的 Rig 在 `moc3` / `vtube-studio` 中多写标准表情的 exp3、model3 的 `Expressions` 与 VTube Studio 的切换热键；导入的 CMO3 未编辑表情时不再在 `p2lrt` 中带标准表情；生成的 Rig 被 CMO3 替换导入时，当时的标准表情收进工程。
 - **读回**：`PSD2LivePipeline` 的 bundle 校验解析 model3 引用的每个 exp3、pose3 与 motion3。仅网格导出不写表情与姿势。
 
+## CMO3 引用与作者数据
+
+CMO3 写出前将网格的纹理来源引用物化为对应来源的贴图页与图块，保留消费网格自己的 UV 和关键形；`canvas` 与 `native` 两种图层写出模式都使用此绑定。Glue 的已有 ID 随文件写出并在导入时恢复，无 ID 的 Glue 使用确定性后备名称。运行时顶点权重组无法存入 CMO3，每组按网格 ID 报告 `structure` / `dropped`，不将其静默视为无损。
+
 ## Cubism Animator
 
 `cmo3` 目标在写出 `<base>.cmo3` 的同时把 IR 的动作片段写成 `<base>.can3`（`Can3`，`:targets:cubism`），旧版“导出 Live2D 模型”在勾选 CMO3 时同样写出；“导出 motion3/动作”关闭或模型只有网格时没有片段，也就不写 can3。

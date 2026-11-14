@@ -10,6 +10,23 @@ Import PSD (`Ctrl+Shift+O`) → inspect classifications and preview → edit →
 
 An existing Cubism model opens from **File → New → New project from CMO3…** or **Model → Replace the model with a CMO3…**: **Replace the model with a CMO3…** replaces the objects in the file by ID and adds the new ones, keeping what the file does not contain; **New project from CMO3…** clears the current model first, so the model comes from that CMO3 alone. Neither generates presets; the imported parameters, keyforms, deformers, textures and physics are saved with the project.
 
+## Save status
+
+With a project open, the bottom status bar shows its current save status. Finish any active text edit or drag, then press `Ctrl+S`. The first save asks for a `.psd2live` file location; use `Ctrl+Shift+S` to save as another file.
+
+| Status bar text | Meaning and action |
+| --- | --- |
+| Editing draft | A text edit or drag is active, or its draft is being submitted. Finish the current edit first. |
+| Changes committed in memory | Changes are in the current project, but the current recovery copy has not yet been confirmed written. The project file still needs saving. |
+| Saving recovery copy… | The local recovery copy is being written and is not yet complete. |
+| Recovery copy saved · Project unsaved | The current recovery copy has been written. Press `Ctrl+S` to save the changes to the project file. |
+| Recovery failed · Retry | Click to retry writing the recovery copy; hover to see the error. Retrying adds no edit history and does not replace saving the project file. |
+| Saving project… | The project file is being written. Wait for completion. |
+| Project save failed | Hover to see the error, address it, then save again or save as to another location. |
+| Project saved | Current changes have been saved to the project file. Further edits change the status again. |
+
+The recovery copy helps recover work after an unexpected exit. To back up, share, or continue on another computer, save and use the `.psd2live` project file. See [Presets: Part features and physics](MODIFIERS.md#part-features-and-physics) for local part settings.
+
 ## Start, Help and Settings pages
 
 The head of the workspace strip holds the app's own pages: **Start**, **Help** and **Settings**. They are not saved with a project and are not dialogs: their panels behave like the editor's, so you can drag a header to redock it, tab panels together, tear one off into a floating window or close it. The **Windows** menu reopens closed panels, and **Reset layout** at its end restores the default arrangement. A page's layout is kept in your local preferences across launches.
