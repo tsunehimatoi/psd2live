@@ -95,10 +95,9 @@ class MouthSourceTopologyTest {
         val cache = RigModifierEvaluationCache()
         val material = PuppetIr.toIr(ordinary.puppet)
         evaluator.evaluate(material, interleaved.copy(instances = interleaved.instances.dropLast(1)), cache)
-        val prior = cache.snapshot
-        val failure = assertFailsWith<IllegalArgumentException> { evaluator.evaluate(material, interleaved, cache) }
-        assertContains(requireNotNull(failure.message), "fitted source mesh")
-        assertSame(prior, cache.snapshot)
+        val result = evaluator.evaluate(material, interleaved, cache)
+        assertEquals(evaluator.evaluate(material, interleaved).rig, result.rig)
+        assertTrue(result.rig.parameters.any { it.id == "ParamA" })
         assertEquals(saved, interleaved.toJson())
     }
 }

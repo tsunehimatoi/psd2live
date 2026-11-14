@@ -8,6 +8,10 @@ import java.util.UUID
 
 /** Source-space fill geometry and the two paths attached to its shared contour columns. */
 object MouthOutlineOwner {
+    /** This is a source parent ID, before scaffold aliases are applied. */
+    fun headOnMesh(canonicalParent: String?, fittedFaceCarries: Boolean = false): Boolean =
+        canonicalParent?.startsWith("DeformMouthShape") != true && !fittedFaceCarries
+
     fun mesh(
         contour: MouthContour.Contour,
         frame: ModifierSourceBounds,

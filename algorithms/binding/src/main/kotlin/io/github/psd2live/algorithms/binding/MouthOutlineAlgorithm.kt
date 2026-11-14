@@ -119,7 +119,10 @@ class MouthOutlineAlgorithm : ReadingModifierAlgorithmPlugin {
         }
         val loweringInput = model.copy(drawables = listOf(posed), parameters = model.parameters + axes)
         val lowered = BlendShapeLowering({ _, meshName -> meshName }, checkpoint).lawful(loweringInput)
-        val drawable = BindingProjection.retain(lowered, active, mapOf(open to 1f), checkpoint).drawables.single()
+        // Raster outputs own a mesh, not additional carrier deformers. Keep source forms when
+        // lowering needs a carrier; the export lowering can retain that complete hierarchy.
+        val local = if (lowered.drawables.single().parentDeformerId == owner.parentDeformerId) lowered else loweringInput
+        val drawable = BindingProjection.retain(local, active, mapOf(open to 1f), checkpoint).drawables.single()
             .copy(parentDeformerId = owner.parentDeformerId)
         val points = stroke.handles(frame).mapNotNull { handle ->
             try {

@@ -39,7 +39,7 @@ class BodyPartWorkerParityTest {
         val input = ScaffoldAlgorithm().evaluate(PuppetIr.toIr(ordinary.puppet), scaffold, expandedSource.scaffoldContext(scaffold)) {}
         val painted = input.meshes.first { it.geometry != null }
         val geometry = requireNotNull(painted.geometry)
-        val positions = geometry.positions.shared().copyOf().apply { this[0] += .01f }
+        val positions = geometry.positions.shared().copyOf().apply { this[0] += .000001f }
         val edited = input.copy(meshes = input.meshes.map {
             if (it.id == painted.id) it.copy(geometry = geometry.copy(positions = Floats.wrap(positions)), opacity = .6f) else it
         })
@@ -62,6 +62,10 @@ class BodyPartWorkerParityTest {
                     try {
                         for (candidate in listOf(input, edited)) {
                             val expected = LegacyBodyAlgorithm().changes(candidate, legacy, legacyContext) {}.apply(candidate)
+                            val puppet = PuppetIr.toPuppet(expected)
+                            val carried = BindingFrames.carriedToParent(puppet, puppet,
+                                org.umamo.runtime.model.DrawableId(painted.id))
+                            assertEquals(expected, PuppetIr.toIr(carried), "Identical frame transport preserves every float bit")
                             val direct = BodyPartAlgorithm().changes(candidate, part, partContext) {}.apply(candidate)
                             assertEquals(expected, direct, "expanded versus part")
                             val actual = ModifierPluginWorkers.evaluate(installed, installed.manifest.algorithms.single(), candidate,
@@ -69,7 +73,12 @@ class BodyPartWorkerParityTest {
                                 declaredParameters = if (instance.type == "body") foldedSource.partParameters(part)
                                     else RigLegacyBindings.definition(RigLegacyBindings.spec("body/legacy"), expandedSource).parameters(legacy))
                             assertEquals(expected, actual, "${instance.type} worker, install $it")
-                            if (candidate === edited) assertEquals(.6f, actual.meshes.single { it.id == painted.id }.opacity)
+                            if (candidate === edited) {
+                                val output = actual.meshes.single { it.id == painted.id }
+                                assertEquals(.6f, output.opacity)
+                                assertEquals(candidate.meshes.single { it.id == painted.id }.geometry, output.geometry,
+                                    "Body's neutral frame preserves a sub-millipixel authored edit")
+                            }
                         }
                     } finally { ModifierPluginWorkers.stop(installed.reference); store.uninstall(installed.reference) }
                 }

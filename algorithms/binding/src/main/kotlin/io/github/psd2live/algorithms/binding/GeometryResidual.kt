@@ -25,11 +25,13 @@ object GeometryResidual {
         val mapping = requireNotNull(drawableSpaceMapping(current, emptyMap(), id))
         val indices = (0 until mesh.vertexCount).toSet()
         val coordinates = coordinates(axes, mesh.positions.size)
+        var unchanged = true
         val cells = coordinates.map { coordinate ->
             checkpoint()
             val pose = live + axes.indices.associate { axes[it].parameterId to axes[it].keys[coordinate[it]] }
             val before = transfer(world(oldProjection, old, pose, oldDefaults), previousSources)
             val after = transfer(world(nextProjection, next, pose, nextDefaults), desiredSources)
+            if (!before.contentEquals(after)) unchanged = false
             val authored = local(actual, pose, live)
             val oldLocal = mapping.worldToLocalLinearized(before, mesh.positions, before, indices)
             val newLocal = mapping.worldToLocalLinearized(after, mesh.positions, after, indices)
@@ -40,6 +42,9 @@ object GeometryResidual {
             val local = FloatArray(authored.size) { authored[it] - oldLocal[it] + newLocal[it] }
             KeyformCell(coordinate, MeshDeltaForm(FloatArray(local.size) { local[it] - mesh.positions[it] }))
         }
+        // An exactly zero generated correction must not round-trip authored keyforms
+        // through inverse mapping and subtraction, which can manufacture tiny residuals.
+        if (unchanged) return actual.geometryGrid
         if (axes.isEmpty() && cells.single().form.positionDeltas.all { it == 0f }) return null
         return KeyformGrid(axes, cells)
     }

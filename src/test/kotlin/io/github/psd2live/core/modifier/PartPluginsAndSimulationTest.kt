@@ -103,9 +103,12 @@ class PartPluginsAndSimulationTest {
             RigModifierInstance("body-1", "body/legacy", 1, targets, config = buildJsonObject { put("scaffold", "scaffold-1") }),
             RigModifierInstance("bust-1", "body.bust", 1, targets, config = buildJsonObject {
                 put("scaffold", "scaffold-1")
-                putJsonObject("dependencies") { put("body/legacy", "body-1") }
+                putJsonObject("dependencies") { put("body/legacy", "body-1"); put("face/legacy", "face-1") }
             }),
-            RigModifierInstance("hair-1", "hair/chains", 1, targets, config = buildJsonObject { put("scaffold", "scaffold-1") }),
+            RigModifierInstance("hair-1", "hair/chains", 1, targets, config = buildJsonObject {
+                put("scaffold", "scaffold-1")
+                putJsonObject("dependencies") { put("body/legacy", "body-1"); put("face/legacy", "face-1") }
+            }),
         )
 
         val face = RigPartFolding.foldFace(instances).single()

@@ -22,6 +22,7 @@ object BindingFrames {
         fun carried(local: FloatArray, seed: FloatArray): FloatArray {
             checkpoint()
             val world = from.localToWorld(local)
+            if (world.contentEquals(to.localToWorld(local))) return local.copyOf()
             return to.worldToLocalLinearized(world, seed, world, all).also { result ->
                 require(result.all(Float::isFinite)) { "The new parent cannot place the mesh" }
             }
@@ -31,7 +32,11 @@ object BindingFrames {
         require(reached.indices.all { abs(reached[it] - shown[it]) < 0.05f }) { "The new parent cannot hold the mesh where it shows" }
         fun delta(deltas: FloatArray): FloatArray {
             if (deltas.all { it == 0f }) return FloatArray(deltas.size)
-            val moved = carried(FloatArray(deltas.size) { mesh.positions[it] + deltas[it] }, rest)
+            val local = FloatArray(deltas.size) { mesh.positions[it] + deltas[it] }
+            if (rest.contentEquals(mesh.positions) && from.localToWorld(local).contentEquals(to.localToWorld(local))) {
+                return deltas.copyOf()
+            }
+            val moved = carried(local, rest)
             return FloatArray(deltas.size) { moved[it] - rest[it] }
         }
         val carriedDrawable = drawable.copy(

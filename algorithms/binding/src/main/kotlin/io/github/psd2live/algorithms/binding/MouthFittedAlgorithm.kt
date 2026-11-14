@@ -412,8 +412,6 @@ class MouthFittedSourceAlgorithm : ChangingModifierAlgorithmPlugin {
         val ordinary = ScaffoldAlgorithm().buildSource(ModifierAlgorithmContext(coarse,
             context.resources.filterKeys { it.startsWith("ordinary:") }.mapKeys { it.key.removePrefix("ordinary:") }), checkpoint)
             .drawables.associate { it.id.raw to PuppetIr.meshToIr(it).geometry }
-        val body = context.upstream.any { it.capability == "body/legacy" && it.type in setOf("body/legacy", "body") }
-        val live by lazy { PuppetIr.toPuppet(input) }
         // Upgrade untouched ordinary geometry only. Authored or split topology keeps its own
         // vertices, UVs and indices; sub-features retain their explicit eligibility checks.
         val indexed = buildSet {
@@ -431,19 +429,7 @@ class MouthFittedSourceAlgorithm : ChangingModifierAlgorithmPlugin {
             val target = vertices.targets[mesh.id] ?: return@filter true
             val expected = ordinary[target.canonical]
             val geometry = mesh.geometry
-            // Body's frame transport can alter float bits even at the neutral pose. Compare
-            // the exact transported baseline; closeness alone cannot identify an authored edit.
-            val transported = if (!body || geometry == expected || expected == null) false else {
-                val id = DrawableId(mesh.id)
-                val baseline = live.copy(drawables = live.drawables.map { drawable ->
-                    if (drawable.id != id) drawable else drawable.copy(
-                        mesh = DrawableMesh(expected.positions.shared(), expected.uvs.shared(), expected.indices.shared()),
-                        geometryGrid = null, blendShapes = emptyList())
-                })
-                val carried = BindingFrames.carriedToParent(baseline, baseline, id, checkpoint).drawables.single { it.id == id }
-                geometry == PuppetIr.meshToIr(carried).geometry
-            }
-            mesh.id in indexed || geometry != expected && !transported || mesh.shapes.any {
+            mesh.id in indexed || geometry != expected || mesh.shapes.any {
                     captured.head == null || !captured.layers.getValue(mesh.id).turnsWithHeadMesh ||
                         it.parameter !in setOf("ParamAngleX", "ParamAngleY")
                 }

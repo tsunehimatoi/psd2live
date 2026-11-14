@@ -18,6 +18,13 @@ class WorkspacePartInitializationTest {
         validateOperationSchema(observed, WorkspaceModifierSchemas.stack)
         val stack = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack))
         assertTrue(stack.instances.any { it.type in setOf("mouth", "mouth/fitted") })
+        val mouth = stack.instances.single { it.type == "mouth" }
+        val capture = RigModifierSource.of(model).mouthPartContext(mouth)
+            .values.getValue("sub_contexts").jsonObject.getValue("mouth.outline").jsonObject
+        val targets = capture.getValue("targets").jsonObject
+        assertTrue(targets.isNotEmpty())
+        assertTrue(targets.values.none { it.jsonObject["headOnMesh"]?.jsonPrimitive?.boolean == true },
+            "The canonical mouth parent already carries head motion, including with aliased scaffold IDs")
         assertEquals(stack, RigModifierStack.fromJson(Json.parseToJsonElement(stack.toJson().toString()).jsonObject))
         for (entry in stack.instances) validateOperationSchema(buildJsonObject {
             put("id", entry.id); put("type", entry.type); put("config", entry.config); put("state", runtime.capture().state)
@@ -34,6 +41,9 @@ class WorkspacePartInitializationTest {
         assertTrue(ir.parameters.map { it.id }.containsAll(listOf("ParamMouthForm", "ParamMouthOpenY")))
         assertEquals(ir.parameters.size, ir.parameters.map { it.id }.distinct().size)
         assertTrue(stack.instances.first { it.type == "rig.scaffold" }.outputAliases.isNotEmpty())
+        val lips = ir.meshes.filter { it.id.startsWith("ArtMeshMouth_lip_") }
+        assertEquals(2, lips.size)
+        assertTrue(lips.all { lip -> ir.deformers.any { it.id == lip.parent } }, "Lowered lip carriers must remain in the exported hierarchy")
     }
 
     @Test fun freshDefaultFoldsButRequestedVersionsAndOverridesRemainExplicit() {

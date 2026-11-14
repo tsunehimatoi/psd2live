@@ -1192,15 +1192,21 @@ internal class RigModifierSource(
                 it.config["scaffold"] == instance.config["scaffold"]
         }?.id
         val targetLayers = instance.targets.mapNotNull { t -> layersByMesh[t.id]?.let { layersById[it] }?.let { t.id to it } }.toMap()
-        val owners = targetLayers.mapNotNull { (id, layer) ->
-            if (layer.semantic.tag !in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) || layer.semantic.role != null) null
-            else id to RigMouthOutlineSource.Owner(layer.source.id.raw, id, fittedProvider = fittedProvider, headOnMesh = headProvider != null)
-        }.toMap()
         val thickness = instance.config["values"]?.jsonObject?.get("thickness")?.jsonPrimitive?.floatOrNull ?: 1.5f
         val color = instance.config["color"]?.jsonPrimitive?.intOrNull
         val outlineConfig = activeRecipeConfig(instance).copy(mouthOutlineEnabled = true, mouthThickness = thickness, mouthColor = color)
+        val outlineRigContext by lazy { RigBuilder.rigContext(analysis, outlineConfig, meshCache) }
+        val owners = targetLayers.mapNotNull { (id, layer) ->
+            if (layer.semantic.tag !in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) || layer.semantic.role != null) null
+            else {
+                val parent = outlineRigContext.parentAndFrame(layer, outlineConfig).first
+                val carriedByFace = outlineRigContext.faceTurn(outlineConfig) != null &&
+                    (parent == io.github.psd2live.algorithms.binding.ScaffoldHead.faceId || parent in outlineRigContext.underFace)
+                id to RigMouthOutlineSource.Owner(layer.source.id.raw, id, fittedProvider = fittedProvider,
+                    headOnMesh = headProvider != null && io.github.psd2live.algorithms.binding.MouthOutlineOwner.headOnMesh(parent?.raw, carriedByFace))
+            }
+        }.toMap()
         val head = headProvider?.let { providerId ->
-            val outlineRigContext = RigBuilder.rigContext(analysis, outlineConfig, meshCache)
             io.github.psd2live.core.RigFittedFaceSource.headTurn(outlineRigContext, outlineConfig)?.let { turn ->
                 io.github.psd2live.algorithms.binding.MouthFittedInputs.Head(
                     providerId, turn.centerX, turn.centerY, turn.radiusX, turn.radiusY, turn.turn, turn.depth, turn.chinY,
