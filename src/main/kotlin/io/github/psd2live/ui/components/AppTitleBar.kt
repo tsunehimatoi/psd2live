@@ -59,6 +59,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -251,6 +252,8 @@ fun AppTitleBar(
 	// With the native frame, the system draws the window buttons and owns the bar's empty middle (drag, double-click,
 	// Snap); the bar tells it its height and leaves room for the buttons it reports.
 	val nativeTitleBar = LocalNativeTitleBar.current
+	val systemTitleBar = window?.isUndecorated == false && NativeTitleBar.useSystemTitleBar(transparent = false)
+	val currentWindowMode by rememberUpdatedState(windowMode)
 	val density = LocalDensity.current
 	var nativeInsets by remember(nativeTitleBar) { mutableStateOf(0.dp to 0.dp) }
 	// The runtime lays its buttons out after a height or size change, so their room is read once that has run.
@@ -798,7 +801,7 @@ fun AppTitleBar(
 						macSlotWidth = it.size.width
 					}
 				}
-				.then(if (nativeTitleBar != null) Modifier.titleBarHitTest(nativeTitleBar, client = false) else Modifier
+				.then(if (systemTitleBar) Modifier else if (nativeTitleBar != null) Modifier.titleBarHitTest(nativeTitleBar, client = false) else Modifier
 				.pointerInput(window) {
 					detectTapGestures(onDoubleTap = { AppSettings.toggleMaximized() })
 				}
@@ -814,12 +817,13 @@ fun AppTitleBar(
 							val initMouse = initialMouseLocation
 							var initWin = initialWindowLocation
 							// A full-screen window stays put; a maximized one comes off the edge under the pointer.
-							if (mouse != null && initMouse != null && initWin != null && window != null && windowMode != WindowMode.FULLSCREEN) {
-								if (windowMode == WindowMode.MAXIMIZED) {
+							if (mouse != null && initMouse != null && initWin != null && window != null && currentWindowMode != WindowMode.FULLSCREEN) {
+								if (currentWindowMode == WindowMode.MAXIMIZED) {
 									if (mouse.distance(initMouse) < 4.0) return@detectDragGestures
 									initWin = MainWindowModes.restoreForDrag(window, mouse)
 									initialWindowLocation = initWin
 									initialMouseLocation = mouse
+									return@detectDragGestures
 								}
 								window.setLocation(
 									initWin.x + (mouse.x - initMouse.x),
@@ -911,7 +915,7 @@ fun AppTitleBar(
 
 			Spacer(modifier = Modifier.width(4.dp))
 
-			if (nativeTitleBar != null || (io.github.psd2live.ui.utils.MacShell.active && window?.isUndecorated == false)) {
+			if (systemTitleBar || nativeTitleBar != null || (io.github.psd2live.ui.utils.MacShell.active && window?.isUndecorated == false)) {
 				Spacer(Modifier.width(nativeInsets.second))
 				return@Row
 			}

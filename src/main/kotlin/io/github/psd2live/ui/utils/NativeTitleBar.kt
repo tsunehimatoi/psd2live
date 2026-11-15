@@ -9,7 +9,8 @@ import java.awt.Frame
  * The main window's native frame with the title bar drawn by the app: the JetBrains Runtime's custom title bar keeps
  * the system window (maximize to the work area, Snap, resize edges, shadow, the window buttons) and lets the app draw
  * in the title bar, saying per mouse event whether the pointer is on a control of its own or on the bar itself.
- * Other runtimes, and a transparent window (which the system only allows undecorated), draw the whole bar themselves.
+ * Linux uses the system's separate title bar. Elsewhere, other runtimes and transparent windows (which the system
+ * only allows undecorated) draw the whole bar themselves.
  *
  * The runtime's objects are proxies without a usable equality, so the bar is held here, compared by identity, before
  * it keys anything in a composition.
@@ -32,6 +33,10 @@ class NativeTitleBar private constructor(private val bar: WindowDecorations.Cust
 	fun forceHitTest(client: Boolean) = bar.forceHitTest(client)
 
 	companion object {
+		/** Linux window managers own the opaque window's caption, movement and resize edges, on any JDK. */
+		internal fun useSystemTitleBar(transparent: Boolean, osName: String = System.getProperty("os.name").orEmpty()): Boolean =
+			!transparent && osName.contains("linux", ignoreCase = true)
+
 		/** Whether this runtime gives a frame a custom title bar. */
 		val supported: Boolean by lazy { runCatching { JBR.isWindowDecorationsSupported() }.getOrDefault(false) }
 
@@ -47,5 +52,5 @@ class NativeTitleBar private constructor(private val bar: WindowDecorations.Cust
 	}
 }
 
-/** The main window's custom title bar, or null when the app draws the whole bar (another runtime, a transparent window). */
+/** The JBR custom title bar, or null for a separate system caption or an app-drawn, undecorated window. */
 val LocalNativeTitleBar = staticCompositionLocalOf<NativeTitleBar?> { null }
