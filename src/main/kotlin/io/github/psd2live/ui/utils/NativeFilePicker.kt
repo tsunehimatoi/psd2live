@@ -12,13 +12,95 @@ import java.awt.Window
 import java.io.File
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.FutureTask
 import javax.swing.JDialog
 import javax.swing.JFileChooser
+import javax.swing.JOptionPane
 import javax.swing.UIManager
+import javax.swing.filechooser.FileNameExtensionFilter
+import javax.swing.plaf.metal.MetalFileChooserUI
 
 object NativeFilePicker {
 
 	private val isPicking = AtomicBoolean(false)
+	private val isLinux = System.getProperty("os.name").orEmpty().contains("linux", ignoreCase = true)
+
+	/** Includes callers on Dispatchers.IO as well as menu callbacks already on the EDT. */
+	internal fun <T> onPickerThread(action: () -> T): T {
+		if (EventQueue.isDispatchThread()) return action()
+		val task = FutureTask<T> { action() }
+		EventQueue.invokeLater(task)
+		return task.get()
+	}
+
+	internal fun withExtension(file: File, extension: String): File =
+		if (file.name.endsWith(".$extension", ignoreCase = true)) file else File(file.parentFile, "${file.name}.$extension")
+
+	/**
+	 * GTK's in-process FileDialog can fail to paint after Skia is loaded (GTK reports FreeType drawing errors).
+	 * It still opens successfully, so exception-based fallback cannot help. Use Swing on Linux, including folder
+	 * and multi-select pickers; a local Java UI delegate avoids GTK without changing the process's look and feel.
+	 */
+	internal fun linuxChooser(title: String, extensions: List<String>, filterLabel: String, initialPath: String?,
+		defaultName: String?, selectionMode: Int, multiple: Boolean): JFileChooser = object : JFileChooser() {
+		override fun updateUI() { setUI(MetalFileChooserUI(this)) }
+		override fun createDialog(parent: Component?): JDialog = super.createDialog(parent).also { openPicker = it }
+		override fun approveSelection() {
+			if (dialogType == SAVE_DIALOG && extensions.size == 1) {
+				selectedFile?.takeIf { it.isDirectory }?.let { currentDirectory = it; return }
+				val target = selectedFile?.let { withExtension(it, extensions.single()) } ?: return
+				if (target.isDirectory) { currentDirectory = target; return }
+				if (target.exists() && JOptionPane.showConfirmDialog(this,
+					"${target.absolutePath}\n${tr("project.overwriteTitle")}", tr("project.overwriteTitle"),
+					JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.YES_OPTION) return
+				selectedFile = target
+			}
+			super.approveSelection()
+		}
+	}.apply {
+		dialogTitle = title
+		fileSelectionMode = selectionMode
+		isMultiSelectionEnabled = multiple
+		if (extensions.isNotEmpty()) {
+			fileFilter = FileNameExtensionFilter(filterLabel, *extensions.toTypedArray())
+			isAcceptAllFileFilterUsed = false
+		}
+		initialPath?.takeIf { it.isNotBlank() }?.let(::File)?.let { path ->
+			val directory = if (path.isDirectory) path else path.parentFile
+			if (directory?.isDirectory == true) currentDirectory = directory
+		}
+		if (!defaultName.isNullOrBlank()) selectedFile = File(defaultName).let { if (it.isAbsolute) it else File(currentDirectory, defaultName) }
+	}
+
+	private fun chooseLinux(window: Window?, title: String, extensions: List<String> = emptyList(), filterLabel: String = "",
+		initialPath: String? = null, defaultName: String? = null, saveExtension: String? = null,
+		selectionMode: Int = JFileChooser.FILES_ONLY, multiple: Boolean = false): List<File> = onPickerThread {
+		if (!isPicking.compareAndSet(false, true)) { focusOpenPicker(); return@onPickerThread emptyList() }
+		try {
+			val chooser = linuxChooser(title, extensions, filterLabel, initialPath, defaultName, selectionMode, multiple)
+			val parent = owner(window)
+			val result = if (saveExtension != null) chooser.showSaveDialog(parent) else chooser.showOpenDialog(parent)
+			if (result != JFileChooser.APPROVE_OPTION) emptyList()
+			else {
+				val files = if (multiple) chooser.selectedFiles.toList() else listOfNotNull(chooser.selectedFile)
+				files.map { if (saveExtension == null) it else withExtension(it, saveExtension) }
+					.filter { file ->
+						when {
+							saveExtension != null -> true
+							file.isDirectory -> selectionMode != JFileChooser.FILES_ONLY
+							!file.isFile || selectionMode == JFileChooser.DIRECTORIES_ONLY -> false
+							else -> extensions.isEmpty() || extensions.any { file.name.endsWith(".$it", ignoreCase = true) }
+						}
+					}
+			}
+		} finally {
+			openPicker?.dispose()
+			openPicker = null
+			isPicking.set(false)
+		}
+	}
+
+	private fun List<File>.singlePath(): String? = firstOrNull()?.toPath()?.toAbsolutePath()?.normalize()?.toString()
 
 	/** The picker window on screen, while one is. */
 	@Volatile private var openPicker: Window? = null
@@ -81,6 +163,7 @@ object NativeFilePicker {
 		chooseSourceFile(window, initialPath, listOf("cmo3"), tr("cmo3.chooseFile"), "Cubism model (*.cmo3)")
 
 	private fun chooseSourceFile(window: Window?, initialPath: String?, extensions: List<String>, title: String, filterLabel: String): String? {
+		if (isLinux) return chooseLinux(window, title, extensions, filterLabel, initialPath).singlePath()
 		fun accepted(name: String) = extensions.any { name.endsWith(".$it", ignoreCase = true) }
 		if (!isPicking.compareAndSet(false, true)) {
 			focusOpenPicker()
@@ -137,6 +220,7 @@ object NativeFilePicker {
 
 	/** Opens the native OS file picker for a Cubism physics3.json to import. */
 	fun choosePhysicsFile(window: Window? = null): String? {
+		if (isLinux) return chooseLinux(window, tr("dialog.choosePhysics"), listOf("json"), tr("dialog.physicsFilter")).singlePath()
 		if (!isPicking.compareAndSet(false, true)) { focusOpenPicker(); return null }
 		try {
 			val title = tr("dialog.choosePhysics")
@@ -172,6 +256,7 @@ object NativeFilePicker {
 	 * Opens the native OS file picker for selecting an existing .psd2live project file.
 	 */
 	fun chooseProjectFile(window: Window? = null, initialPath: String? = null): String? {
+		if (isLinux) return chooseLinux(window, tr("project.open"), listOf("psd2live"), "PSD2Live (*.psd2live)", initialPath).singlePath()
 		if (!isPicking.compareAndSet(false, true)) {
 			focusOpenPicker()
 			return null
@@ -226,6 +311,8 @@ object NativeFilePicker {
 	 * Opens the native OS file picker for saving a single .psd2live project file.
 	 */
 	fun chooseSaveProjectFile(window: Window? = null, defaultName: String? = null, initialDir: String? = null): String? {
+		if (isLinux) return chooseLinux(window, tr("project.saveAs"), listOf("psd2live"), "PSD2Live (*.psd2live)", initialDir,
+			withExtension(File(defaultName?.takeIf { it.isNotBlank() } ?: "project"), "psd2live").path, "psd2live").singlePath()
 		if (!isPicking.compareAndSet(false, true)) {
 			focusOpenPicker()
 			return null
@@ -283,6 +370,8 @@ object NativeFilePicker {
 	 * Opens the native OS file picker for saving a PSD (.psd) file.
 	 */
 	fun chooseSavePsdFile(window: Window? = null, defaultName: String? = null, initialDir: String? = null): String? {
+		if (isLinux) return chooseLinux(window, tr("menu.file.reexportPsd"), listOf("psd"), "Photoshop Document (*.psd)", initialDir,
+			withExtension(File(defaultName?.takeIf { it.isNotBlank() } ?: "export"), "psd").path, "psd").singlePath()
 		if (!isPicking.compareAndSet(false, true)) {
 			focusOpenPicker()
 			return null
@@ -343,6 +432,9 @@ object NativeFilePicker {
         chooseSaveFile(window, title, defaultName ?: "image.png", "png", "PNG (*.png)")
 
     private fun chooseSaveFile(window: Window?, title: String, defaultName: String?, extension: String, filter: String): String? {
+		if (isLinux) return chooseLinux(window, title, listOf(extension), filter,
+			defaultName = withExtension(File(defaultName?.takeIf { it.isNotBlank() } ?: if (extension == "png") "image" else "preset"), extension).path,
+			saveExtension = extension).singlePath()
 		if (!isPicking.compareAndSet(false, true)) {
 			focusOpenPicker()
 			return null
@@ -390,6 +482,8 @@ object NativeFilePicker {
 	 * Opens the modern native OS directory picker.
 	 */
 	fun chooseDirectory(window: Window? = null, initialPath: String? = null, title: String? = null): String? {
+		if (isLinux) return chooseLinux(window, title ?: tr("dialog.chooseOutput"), initialPath = initialPath,
+			selectionMode = JFileChooser.DIRECTORIES_ONLY).singlePath()
 		if (!isPicking.compareAndSet(false, true)) {
 			focusOpenPicker()
 			return null
@@ -463,6 +557,9 @@ object NativeFilePicker {
 	 * ([io.github.psd2live.application.WorkspaceMaterialFiles.fileExtensions]).
 	 */
 	fun chooseMaterialFiles(window: Window? = null): List<File> {
+		if (isLinux) return chooseLinux(window, tr("materials.import.title"),
+			io.github.psd2live.application.WorkspaceMaterialFiles.fileExtensions.toList(), tr("materials.import.filter"),
+			selectionMode = JFileChooser.FILES_AND_DIRECTORIES, multiple = true)
 		if (!isPicking.compareAndSet(false, true)) {
 			focusOpenPicker()
 			return emptyList()
@@ -490,6 +587,8 @@ object NativeFilePicker {
 	 * Opens a multi-select picker for transparent raster images (PNG / WebP / TIFF / BMP).
 	 */
 	fun chooseTransparentImages(window: Window? = null, initialPath: String? = null): List<File> {
+		if (isLinux) return chooseLinux(window, tr("dialog.chooseTransparentImages"), listOf("png", "webp", "tif", "tiff", "bmp"),
+			tr("dialog.transparentImageFilter"), initialPath, multiple = true).filter { it.isFile }
 		if (!isPicking.compareAndSet(false, true)) {
 			focusOpenPicker()
 			return emptyList()
