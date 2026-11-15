@@ -79,6 +79,12 @@ jobs:
         shell: cmd
         run: gradlew.bat test --no-daemon
 
+      - name: Verify packaged Linux launcher
+        if: runner.os == 'Linux'
+        run: |
+          ./gradlew createDistributable --no-daemon
+          python3 packaging/linux/smoke-test.py build/compose/binaries/main/app/PSD2Live
+
       - name: Upload test results on failure
         if: failure()
         uses: actions/upload-artifact@v4

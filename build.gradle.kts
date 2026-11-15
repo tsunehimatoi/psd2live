@@ -6,6 +6,10 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.time.Duration
+import java.util.jar.Attributes
+import java.util.jar.JarEntry
+import java.util.jar.JarOutputStream
+import java.util.jar.Manifest
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
@@ -438,6 +442,50 @@ compose.desktop {
 			}
 		}
 	}
+}
+
+// JDK-8380085: Linux's jpackage launcher can read only part of its startup data from a pipe when the
+// expanded classpath is long, then crash in setenv before starting Java. Keep the native launcher's
+// classpath short; the JVM reads the original, ordered dependencies from a standard JAR manifest.
+// https://github.com/openjdk/jdk/commit/54c5e41cbaabcd21d7bbf8f5667b2e35cfe12dd7
+if (hostOs == "linux") afterEvaluate {
+	tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask>()
+		.matching { it.name in setOf("createDistributable", "createReleaseDistributable") }.configureEach {
+			val name = compose.desktop.application.nativeDistributions.packageName!!
+			val image = destinationDir.dir(name)
+			doLast {
+				val app = image.get().asFile.resolve("lib/app")
+				val config = app.resolve("$name.cfg")
+				val lines = config.readLines()
+				val entries = lines.filter { it.startsWith("app.classpath=") }
+				if (entries.size <= 1) return@doLast
+				val prefix = "app.classpath=\$APPDIR/"
+				val paths = entries.map { entry ->
+					check(entry.startsWith(prefix)) { "Unexpected Linux launcher classpath: $entry" }
+					val relative = entry.removePrefix(prefix)
+					check(app.resolve(relative).isFile) { "Packaged classpath entry is missing: $relative" }
+					URI(null, null, "./$relative", null).toASCIIString()
+				}
+				val manifest = Manifest().apply {
+					mainAttributes[Attributes.Name.MANIFEST_VERSION] = "1.0"
+					mainAttributes[Attributes.Name.CLASS_PATH] = paths.joinToString(" ")
+				}
+				val classpathJar = "psd2live-classpath.jar"
+				JarOutputStream(app.resolve(classpathJar).outputStream()).use { jar ->
+					jar.putNextEntry(JarEntry("META-INF/MANIFEST.MF").apply { time = 0L })
+					manifest.write(jar)
+					jar.closeEntry()
+				}
+				val first = lines.indexOf(entries.first())
+				config.writeText(lines.mapIndexedNotNull { index, line ->
+					when {
+						index == first -> "${prefix}$classpathJar"
+						line.startsWith("app.classpath=") -> null
+						else -> line
+					}
+				}.joinToString("\n", postfix = "\n"))
+			}
+		}
 }
 
 // The released Windows app runs on the JetBrains Runtime: its custom title bar keeps the main window's native frame

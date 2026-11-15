@@ -14,10 +14,29 @@ import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
+import java.util.jar.Attributes
+import java.util.jar.JarOutputStream
+import java.util.jar.Manifest
 
 class PluginDevScaffoldAndBuildTest {
     @TempDir
     lateinit var tempDir: Path
+
+    @Test
+    fun `SDK discovery follows manifest dependencies with encoded names and cycles`() {
+        fun jar(name: String, classpath: String): Path = tempDir.resolve(name).also { path ->
+            val manifest = Manifest().apply {
+                mainAttributes[Attributes.Name.MANIFEST_VERSION] = "1.0"
+                mainAttributes[Attributes.Name.CLASS_PATH] = classpath
+            }
+            JarOutputStream(Files.newOutputStream(path), manifest).use { }
+        }
+        val compile = jar("format-compile with spaces.jar", "wrapper.jar")
+        val wrapper = jar("wrapper.jar", "format-compile%20with%20spaces.jar https://invalid.example/remote.jar")
+        val ordinary = jar("algorithm-api.jar", "")
+        val classpath = listOf(wrapper, ordinary, compile).joinToString(java.io.File.pathSeparator)
+        assertEquals(listOf(wrapper, compile, ordinary), PluginDevContracts.classpathEntries(classpath))
+    }
 
     @Test
     fun `contracts describe host capabilities and stage SDK jars`() {
