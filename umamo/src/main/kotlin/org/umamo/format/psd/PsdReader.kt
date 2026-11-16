@@ -52,6 +52,7 @@ object PsdReader : ArtReader {
 	override fun read(bytes: ByteArray): SourceArt {
 		val parse = PsdLayerRecords.parse(bytes)
 		val header = parse.header
+		psdCheckpoint()
 
 		// Fail fast on color modes / depths the channel decoder does not handle, with a clear message
 		// rather than producing garbled pixels (CMYK/Lab need ICC color management we deliberately omit).
@@ -70,16 +71,26 @@ object PsdReader : ArtReader {
 		val ids = PsdLayerIds(parse.records.mapNotNull { it.layerId })
 		val warnings = parse.warnings.toMutableList()
 		val folderStack = ArrayDeque<String>()
+		val groupPaths = HashSet<String>()
+		val groupSuffixes = HashMap<String, Int>()
 		val layersTopToBottom = ArrayList<SourceLayer>()
 		var emittedOrder = 0
 		for (recordIndex in parse.records.indices.reversed()) {
+			psdCheckpoint()
 			val record = parse.records[recordIndex]
 			when (record.dividerType) {
 				1, 2 -> {
 					// Folder header (open/closed): name the group and push it onto the path stack.
 					val parentPath = folderStack.joinToString("/")
-					val path = if (parentPath.isEmpty()) record.name else "$parentPath/${record.name}"
-					folderStack.addLast(record.name)
+					val baseName = record.name.replace('/', '／').ifBlank { "Group" }
+					fun pathOf(name: String) = if (parentPath.isEmpty()) name else "$parentPath/$name"
+					var component = baseName
+					var suffix = groupSuffixes[pathOf(baseName)] ?: 2
+					while (!groupPaths.add(pathOf(component))) component = "$baseName (${suffix++})"
+					groupSuffixes[pathOf(baseName)] = suffix
+					val path = pathOf(component)
+					if (component != record.name) warnings += "PSD group ${record.name} uses unique path $path."
+					folderStack.addLast(component)
 					groups +=
 						PsdSourceGroup(
 							path = path,
@@ -121,10 +132,20 @@ object PsdReader : ArtReader {
 							opacity = record.opacity,
 							clipped = record.clipped,
 							blend = record.blend,
-							raster = PsdRaster.decodeLayer(bytes, header, parse.colorModeData, record),
+							raster = try { PsdRaster.decodeLayer(bytes, header, parse.colorModeData, record) }
+							catch (failure: IllegalArgumentException) {
+								warnings += "PSD layer ${record.name} ($id) could not be decoded; kept as an empty layer: ${failure.message}"
+								LayerRaster(0, 0, ByteArray(0))
+							},
 						)
 				}
 			}
+		}
+		if (parse.records.isEmpty() && parse.compositeOffset < bytes.size && parse.compositeOffset > 0) {
+			layersTopToBottom += PsdSourceLayer(LayerId("psd:composite"), false, "Background", true, "", 0,
+				LayerBounds(0, 0, header.width, header.height), 1f, false, LayerBlend.Normal,
+				PsdRaster.decodeComposite(bytes, header, parse.colorModeData, parse.compositeOffset))
+			warnings += "PSD has no editable layers; imported the merged image as one layer."
 		}
 		// The compositor and re-import expect layers bottom-to-top (painter's order), matching KRA.
 		return PsdSourceArt(
@@ -135,6 +156,10 @@ object PsdReader : ArtReader {
 			warnings = warnings,
 		)
 	}
+}
+
+internal fun psdCheckpoint() {
+	if (Thread.currentThread().isInterrupted) throw java.util.concurrent.CancellationException("PSD import cancelled")
 }
 
 /**

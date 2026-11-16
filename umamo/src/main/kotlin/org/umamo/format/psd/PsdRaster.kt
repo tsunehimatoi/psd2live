@@ -22,6 +22,31 @@ import org.umamo.format.binary.inflateZlib
  * @see <a href="https://docs.umamo.org/format/PSD.md">PSD.md §4 Channel image data</a>
  */
 internal object PsdRaster {
+	/** The merged image has one compression header and all channel rows in planar order. */
+	fun decodeComposite(bytes: ByteArray, header: PsdHeaderInfo, palette: ByteArray, offset: Int): LayerRaster {
+		val colors = if (header.colorMode == MODE_RGB) 3 else 1
+		require(header.channels >= colors && offset <= bytes.size - 2) { "PSD merged image is truncated" }
+		val pixels = header.width.toLong() * header.height
+		val rowBytes = bytesPerRow(header.width, header.depth)
+		require(pixels * 4 <= Int.MAX_VALUE - 8 && rowBytes.toLong() * header.height * header.channels <= Int.MAX_VALUE - 8) {
+			"PSD merged image is too large"
+		}
+		val samples = decodeChannel(bytes, offset + 2, bytes.size, readU16BE(bytes, offset), header.width,
+			header.height * header.channels, header.depth, rowBytes)
+		val planeSize = rowBytes * header.height
+		val planes = (0 until colors).associateWith { channel ->
+			psdCheckpoint()
+			samplesToPlane(samples.copyOfRange(channel * planeSize, (channel + 1) * planeSize), header.width, header.height, header.depth, rowBytes)
+		}
+		val rgba = ByteArray(pixels.toInt() * 4)
+		when (header.colorMode) {
+			MODE_RGB -> assembleRgb(planes, rgba, pixels.toInt())
+			MODE_INDEXED -> assembleIndexed(planes, palette, rgba, pixels.toInt())
+			MODE_BITMAP -> assembleBitmap(planes, rgba, pixels.toInt())
+			else -> assembleGrayscale(planes, rgba, pixels.toInt())
+		}
+		return LayerRaster(header.width, header.height, rgba)
+	}
 	// PSD: channel image-data compression codes (PSD.java COMPRESSION_*).
 	private const val COMPRESSION_NONE = 0
 	private const val COMPRESSION_RLE = 1
@@ -83,8 +108,9 @@ internal object PsdRaster {
 		if (mask.disabled || mask.width <= 0 || mask.height <= 0) return null
 		var cursor = record.channelDataOffset
 		for (channel in record.channels) {
+			psdCheckpoint()
 			val blockStart = cursor
-			require(channel.length >= 0 && blockStart.toLong() + channel.length <= bytes.size) { "PSD channel data is truncated" }
+			require(channel.length >= 2 && blockStart >= 0 && blockStart.toLong() + channel.length <= bytes.size) { "PSD channel data is truncated" }
 			cursor = blockStart + channel.length.toInt()
 			if (channel.id != -2) continue
 			val rowBytes = bytesPerRow(mask.width, depth)
@@ -128,14 +154,16 @@ internal object PsdRaster {
 		val planes = HashMap<Int, ByteArray>(record.channels.size)
 		var cursor = record.channelDataOffset
 		for (channel in record.channels) {
+			psdCheckpoint()
 			val blockStart = cursor
-			require(channel.length >= 0 && blockStart.toLong() + channel.length <= bytes.size) { "PSD channel data is truncated" }
+			require(channel.length >= 0 && blockStart >= 0 && blockStart.toLong() + channel.length <= bytes.size) { "PSD channel data is truncated" }
 			val blockEnd = blockStart + channel.length.toInt()
 			cursor = blockEnd
 			// PSD: channel id < -1 is a user/vector layer mask (-2/-3) - not displayable color, skip it.
 			if (channel.id < CHANNEL_ALPHA) {
 				continue
 			}
+			require(channel.length >= 2) { "PSD channel compression header is truncated" }
 			// PSD: each channel block begins with a 2-byte compression code, then the (possibly
 			// compressed) sample bytes for that one channel.
 			val compression = readU16BE(bytes, blockStart)
@@ -159,6 +187,9 @@ internal object PsdRaster {
 	 * @return ByteArray The raw, row-major sample bytes for this channel.
 	 */
 	private fun decodeChannel(bytes: ByteArray, dataStart: Int, blockEnd: Int, compression: Int, width: Int, height: Int, depth: Int, rowBytes: Int): ByteArray {
+		psdCheckpoint()
+		require(height.toLong() * rowBytes in 0..(Int.MAX_VALUE - 8).toLong()) { "PSD channel is too large" }
+		require(dataStart in 0..blockEnd && blockEnd <= bytes.size) { "PSD channel data is truncated" }
 		val total = height * rowBytes
 		return when (compression) {
 			COMPRESSION_NONE -> {
@@ -180,7 +211,7 @@ internal object PsdRaster {
 				inflated
 			}
 
-			else -> error("unknown PSD compression $compression")
+			else -> throw IllegalArgumentException("unknown PSD compression $compression")
 		}
 	}
 
@@ -208,9 +239,10 @@ internal object PsdRaster {
 		val out = ByteArray(height * rowBytes)
 		var rowCursor = countCursor
 		for (rowIndex in 0 until height) {
+			psdCheckpoint()
 			// A row count past the block reads only what the block holds; the rest of the row stays empty.
 			unpackBits(bytes, rowCursor, rowCounts[rowIndex].coerceAtMost((blockEnd - rowCursor).coerceAtLeast(0)), out, rowIndex * rowBytes, rowBytes)
-			rowCursor += rowCounts[rowIndex]
+			rowCursor = (rowCursor.toLong() + rowCounts[rowIndex]).coerceAtMost(blockEnd.toLong()).toInt()
 		}
 		return out
 	}

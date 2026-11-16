@@ -24,7 +24,7 @@ object LayerClassifier {
 		names(SemanticTag.NOSE, "nose", "鼻子", "鼻", "はな", "코")
 		names(SemanticTag.MOUTH, "mouth", "口", "嘴", "嘴巴", "口内", "口腔", "嘴部", "くち", "입", "입술", "입안", "입 안", "구강",
 			"lip", "lips", "upper lip", "lower lip", "upper lip line", "lower lip line", "唇", "嘴唇", "上唇", "下唇", "上嘴唇", "下嘴唇", "唇线", "唇線",
-			"上唇线", "下唇线", "上唇線", "下唇線", "嘴皮", "上嘴皮", "下嘴皮", "くちびる", "上くちびる", "下くちびる", "윗입술", "아랫입술")
+			"上唇线", "下唇线", "上唇線", "下唇線", "上嘴线", "下嘴线", "嘴线", "嘴皮", "上嘴皮", "下嘴皮", "くちびる", "上くちびる", "下くちびる", "윗입술", "아랫입술")
 		names(SemanticTag.MOUTH_OPEN, "mouth open", "mouth_open", "mouth o", "mouth_o", "open mouth", "open_mouth", "张嘴", "張嘴", "开口", "開口", "口開き", "开嘴", "開嘴", "开嘴巴", "벌린 입", "벌린입", "입 벌림", "입벌림", "입 열림", "입열림")
 		names(SemanticTag.MOUTH_CLOSE, "mouth close", "mouth_close", "mouth c", "mouth_c", "close mouth", "close_mouth", "闭嘴", "閉嘴", "闭口", "閉口", "口閉じ", "다문 입", "다문입", "입 다묾", "입 닫힘", "입닫힘")
 		names(SemanticTag.TOOTH_T, "tooth-t", "tooth_t", "tooth t", "upper tooth", "upper teeth", "上牙", "上歯", "上齿", "윗니", "위 이빨", "윗 이빨", "윗이빨")
@@ -120,6 +120,24 @@ object LayerClassifier {
 			else -> Side.RIGHT
 		}
 
+	/** A specific part folder supplies missing semantics; broad eye/body folders are not pixel roles. */
+	internal fun classifyArtwork(name: String, groupPath: String): LayerSemantic {
+		val own = classify(name)
+		if (own.tag != SemanticTag.UNKNOWN) return own
+		for (folder in groupPath.split('/').asReversed()) {
+			val parent = classify(folder)
+			if (parent.tag == SemanticTag.UNKNOWN) continue
+			if (parent.confidence != 1f || parent.tag !in inheritedParts) return own
+			// Generic layer numbers identify artwork, not alternate expressions of the inherited part.
+			return own.copy(tag = parent.tag, side = own.side.takeUnless { it == Side.NONE } ?: parent.side,
+				variant = parent.variant, confidence = .7f)
+		}
+		return own
+	}
+
+	private val inheritedParts = setOf(SemanticTag.FACE, SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN, SemanticTag.MOUTH_CLOSE,
+		SemanticTag.EYEBROW, SemanticTag.EYEWHITE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE)
+
 	/** A raster's opaque box, pixel count and coordinate sums at one threshold - all [classify] reads of its pixels. */
 	private class AlphaStats(val width: Int, val threshold: Int, val minX: Int, val minY: Int, val maxX: Int, val maxY: Int,
 	                         val count: Int, val sumX: Long, val sumY: Long)
@@ -176,7 +194,7 @@ object LayerClassifier {
 		}
 		return ClassifiedLayer(
 			source = layer,
-			semantic = IrisGroupSide.inherit(layer, classify(layer.name), alphaThreshold, count),
+			semantic = IrisGroupSide.inherit(layer, classifyArtwork(layer.name, layer.groupPath), alphaThreshold, count),
 			bounds = bounds,
 			centroidX = if (count == 0) bounds.centerX else layer.bounds.left + sumX.toFloat() / count,
 			centroidY = if (count == 0) bounds.centerY else layer.bounds.top + sumY.toFloat() / count,

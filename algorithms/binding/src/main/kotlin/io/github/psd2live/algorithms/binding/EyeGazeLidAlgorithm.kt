@@ -5,7 +5,6 @@ import io.github.psd2live.format.model.*
 import io.github.psd2live.format.model.Parameter
 import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.*
-import org.umamo.render.eval.drawableSpaceMapping
 import org.umamo.runtime.eval.colorAt
 import org.umamo.runtime.eval.scalarAt
 import org.umamo.runtime.model.BlendShapeBinding
@@ -122,15 +121,9 @@ class EyeGazeLidAlgorithm : ReadingModifierAlgorithmPlugin {
             val branch = input.parentsOfMesh(target.id)
             val model = PuppetIr.toPuppet(RigIR(input.canvas, live, deformers = branch, meshes = listOf(mesh)))
             val drawable = model.drawables.single()
-            val mapping = requireNotNull(drawableSpaceMapping(model, emptyMap(), drawable.id))
-            // The evaluator uses y-up world coordinates while the captured artwork uses y-down canvas pixels.
-            val world = mapping.localToWorld(geometry.positions.shared())
-            require((world.indices step 2).all { i ->
-                val x = raw.rigPositions[i]
-                val y = raw.rigPositions[i + 1]
-                val canvas = source.alignment?.canvas(x, y) ?: (x to y)
-                kotlin.math.abs(world[i] - canvas.first) <= .5f && kotlin.math.abs(-world[i + 1] - canvas.second) <= .5f
-            }) { "Lid gaze v2 cannot migrate an edited neutral lid frame: ${target.id}" }
+            // Shapes and captured topology share this unchanged parent-local frame. Ancestor
+            // motion (including the scaffold's neutral warps) composes after these local deltas;
+            // it need not map the undeformed vertices back onto the original PSD pixels.
             val previousShapes = neutralized(shapes(lidOptions.copy(gaze = false)), drawable, live)
             require(shapesMatch(PuppetIr.meshToIr(drawable.copy(blendShapes = previousShapes)).shapes, mesh.shapes)) {
                 "Lid gaze v2 cannot migrate edited or lowered lid shapes: ${target.id}"

@@ -63,8 +63,8 @@ object PartRoles {
 	private val names: List<Pair<PartRole, List<String>>> = listOf(
 		PartRole.PUPIL to listOf("瞳孔", "pupil", "동공"),
 		// Before the lips: a lip's line names the lip too.
-		PartRole.UPPER_LINE to listOf("上唇线", "上唇線", "上嘴唇线", "上嘴唇線", "上唇ライン", "上唇の線", "upper lip line", "upper lipline", "upperline", "윗입술 선", "윗입술선"),
-		PartRole.LOWER_LINE to listOf("下唇线", "下唇線", "下嘴唇线", "下嘴唇線", "下唇ライン", "下唇の線", "lower lip line", "lower lipline", "lowerline", "아랫입술 선", "아랫입술선"),
+		PartRole.UPPER_LINE to listOf("上唇线", "上唇線", "上嘴线", "上嘴唇线", "上嘴唇線", "上唇ライン", "上唇の線", "upper lip line", "upper lipline", "upperline", "윗입술 선", "윗입술선"),
+		PartRole.LOWER_LINE to listOf("下唇线", "下唇線", "下嘴线", "下嘴唇线", "下嘴唇線", "下唇ライン", "下唇の線", "lower lip line", "lower lipline", "lowerline", "아랫입술 선", "아랫입술선"),
 		PartRole.UPPER_LIP to listOf("上唇", "上嘴唇", "上くちびる", "上嘴皮", "upper lip", "upperlip", "윗입술"),
 		PartRole.LOWER_LIP to listOf("下唇", "下嘴唇", "下くちびる", "下嘴皮", "lower lip", "lowerlip", "아랫입술"),
 		PartRole.HIGHLIGHT to listOf("高光", "高亮", "反光", "光点", "ハイライト", "ﾊｲﾗｲﾄ", "highlight", "shine", "gloss", "sparkle", "glint", "하이라이트", "반사광"),

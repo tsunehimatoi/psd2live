@@ -109,6 +109,7 @@ internal data class PsdParse(
 	val colorModeData: ByteArray,
 	val records: List<PsdLayerRecord>,
 	val warnings: List<String> = emptyList(),
+	val compositeOffset: Int = 0,
 )
 
 internal object PsdLayerRecords {
@@ -137,6 +138,7 @@ internal object PsdLayerRecords {
 		val width = buffer.readU32AsInt()
 		val depth = buffer.readU16()
 		val colorMode = buffer.readU16()
+		require(width in 1..30000 && height in 1..30000 && channels in 1..56) { "Invalid PSD canvas or channel count" }
 		val header = PsdHeaderInfo(width = width, height = height, channels = channels, depth = depth, colorMode = colorMode)
 
 		// PSD: Color Mode Data section (u32 length + data) - holds the indexed palette; empty otherwise.
@@ -150,7 +152,7 @@ internal object PsdLayerRecords {
 		// Layer Info inside it); what follows is the merged image, not a layer count. A 16-bit file often
 		// leaves that layer info empty and stores the real layers in an Lr16 additional-info block.
 		val layerAndMaskLength = buffer.readU32AsInt()
-		if (layerAndMaskLength == 0) return PsdParse(header = header, colorModeData = colorModeData, records = emptyList())
+		if (layerAndMaskLength == 0) return PsdParse(header = header, colorModeData = colorModeData, records = emptyList(), compositeOffset = buffer.position)
 		require(layerAndMaskLength <= bytes.size - buffer.position) { "PSD layer section is truncated" }
 		val sectionEnd = buffer.position + layerAndMaskLength
 		val layerInfoLength = buffer.readU32AsInt()
@@ -160,7 +162,7 @@ internal object PsdLayerRecords {
 		val lr16 = if (header.depth == 16) lr16Range(buffer, standardEnd, sectionEnd) else null
 		val infoStart = lr16?.first ?: standardStart
 		val infoEnd = lr16?.second ?: standardEnd
-		if (infoStart == infoEnd) return PsdParse(header = header, colorModeData = colorModeData, records = emptyList())
+		if (infoStart == infoEnd) return PsdParse(header = header, colorModeData = colorModeData, records = emptyList(), compositeOffset = sectionEnd)
 		buffer.position = infoStart
 
 		// PSD: layer count, signed i16; a negative value means the first alpha channel holds the
@@ -169,6 +171,7 @@ internal object PsdLayerRecords {
 
 		val records = ArrayList<PsdLayerRecord>(layerCount)
 		repeat(layerCount) {
+			psdCheckpoint()
 			// PSD: layer rectangle, top/left/bottom/right as i32 (top-left origin).
 			val top = buffer.readU32AsInt()
 			val left = buffer.readU32AsInt()
@@ -252,6 +255,7 @@ internal object PsdLayerRecords {
 			colorModeData = colorModeData,
 			records = withOffsets,
 			warnings = withOffsets.flatMap { record -> record.notes.map { note -> "${record.name}: $note" } },
+			compositeOffset = sectionEnd,
 		)
 	}
 

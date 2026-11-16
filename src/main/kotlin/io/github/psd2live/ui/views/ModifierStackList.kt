@@ -230,7 +230,7 @@ internal fun ModifierStackList(stack: RigModifierStack, reports: Map<String, Jso
                                         modifier = Modifier.widthIn(min = 14.dp),
                                     )
                                 }
-                                CompactCheckbox(instance.enabled, { value -> vm.editModifier("modifier_enable", buildJsonObject {
+                                CompactCheckbox(instance.enabled && status !in setOf("failed", "missing_dependency", "missing_plugin"), { value -> vm.editModifier("modifier_enable", buildJsonObject {
                                     put("id", instance.id); put("enabled", value)
                                 }) }, enabled = enabled)
                                 val rowColor = when {
@@ -248,6 +248,7 @@ internal fun ModifierStackList(stack: RigModifierStack, reports: Map<String, Jso
                                     modifier = Modifier.weight(1f),
                                 )
                                 val badgeColor = when {
+                                    status == "failed" -> colors.error
                                     conflict.severity == ModifierConflictSeverity.HARD -> colors.error
                                     conflict.severity == ModifierConflictSeverity.SOFT -> colors.warning
                                     status != "active" -> colors.textMuted

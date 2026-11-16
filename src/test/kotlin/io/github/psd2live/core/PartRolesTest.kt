@@ -14,6 +14,14 @@ import kotlin.test.assertTrue
 
 /** What a layer is within its part ([PartRole]): read off its name, its place among its part's layers, and set by the user's tags. */
 class PartRolesTest {
+	@Test fun unnamedUnilateralBrowsUsePlacementAndBilateralArtworkStaysIntact() {
+		val right = layer("right", SemanticTag.EYEBROW, Side.NONE, 5, 5, 20, 9)
+		val left = layer("left", SemanticTag.EYEBROW, Side.NONE, 44, 5, 59, 9)
+		val both = layer("both", SemanticTag.EYEBROW, Side.NONE, 5, 5, 59, 9)
+		val inferred = CharacterAnalyzer.inferBrowSides(listOf(right, left, both), 32f)
+		assertEquals(listOf(Side.RIGHT, Side.LEFT, Side.NONE), inferred.map { it.semantic.side })
+		assertEquals(Side.NONE, CharacterAnalyzer.inferBrowSides(listOf(right), 32f, setOf("right")).single().semantic.side)
+	}
 	private fun layer(id: String, tag: SemanticTag, side: Side, x0: Int, y0: Int, x1: Int, y1: Int, grey: Int = 120,
 	                  blend: LayerBlend = LayerBlend.Normal, name: String = id): ClassifiedLayer {
 		val width = 64; val height = 64

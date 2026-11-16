@@ -44,7 +44,14 @@ internal object WorkspacePresetInitialization {
         fun build(stage: String): RigPreviewModel = RigBuildProfile.stage("source preset: $stage") {
             work.checkpoint()
             val candidate = current()
-            pipeline.buildPreview(candidate.source, configOf(candidate), ProgressListener { _, _ -> work.checkpoint() })
+            var lastProgress: Pair<String, Double>? = null
+            pipeline.buildPreview(candidate.source, configOf(candidate), ProgressListener { message, fraction ->
+                work.checkpoint()
+                if (lastProgress != (message to fraction)) {
+                    lastProgress = message to fraction
+                    work.progress(fraction.toFloat(), "$stage: $message")
+                }
+            })
         }
         // Planning needs the package graph, but making the ordinary source meshes only needs the empty stack.
         val catalog = FutureTask { RigModifierAlgorithms.registry }.also {
@@ -187,11 +194,12 @@ internal object WorkspacePresetInitialization {
         stack = RigBuildProfile.stage("source preset: simulation preparation") {
             WorkspaceModifierSimulation.prepare(current(), stack, work, pipeline = pipeline)
         }
-        return current() to build("final preview").also {
+        val finalModel = build("final preview").also {
             work.checkpoint()
             if (rawConfig == null) it.runtimeBundle.materialize()
             work.checkpoint()
         }
+        return current() to finalModel
     }
 
     internal fun freshSource(config: PipelineConfig): Boolean =

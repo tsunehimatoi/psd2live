@@ -182,7 +182,8 @@ object SimBaker {
                 minimum = if (edit.vertical == true) 0f else MIN_BOUNCE_PX, progress = progress(1))
         }
         val groups = each(listOf(main, bounce)) { it() }.filterNotNull()
-        require(groups.isNotEmpty() || statics.isNotEmpty()) { "${edit.id} barely moves under its inputs; nothing to bake" }
+        // A correctly configured body can remain stationary under all selected inputs.
+        // Its measured zero response is a valid bake, not a malformed PSD or simulation.
         options.progress(1f)
         val method = options.method.name.lowercase()
         if (groups.isEmpty()) return SimBakeResult(fingerprint, space.counts, statics, emptyList(), inputs = checks, method = method)
