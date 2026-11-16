@@ -6,7 +6,7 @@
 
 ## 环境
 
-- JDK 21，推荐 JetBrains Runtime（JBR）21：Windows 发布包用它，主窗口在它上面保留系统窗口框架（最大化、贴靠、拖边调整大小由系统处理），标题栏由程序绘制；其他 JDK 也能构建、测试和运行，主窗口改为无边框、整条标题栏由程序绘制。Windows 打包（`createDistributable`、`packageExe`）要求 JBR 21 SDK（带 jpackage），用其他 JDK 打包需加 `-Ppsd2live.allowNonJbr=true`。macOS 的 DMG（`packageDmg`）用运行 Gradle 的 JDK 构建，不需要 JBR，因为 Swift 外壳保留系统窗口框架。Gradle 使用仓库自带的 Wrapper，无需单独安装。
+- JDK 21，Windows 推荐 JetBrains Runtime（JBR）21：Windows 发布包用它，主窗口在它上面保留系统窗口框架（最大化、贴靠、拖边调整大小由系统处理），标题栏由程序绘制；其他 JDK 也能构建、测试和运行。Linux 的不透明窗口在所有 JDK 上都保留系统标题栏，透明窗口仍用程序标题栏；Windows 在其他 JDK 上使用无边框窗口。Windows 打包（`createDistributable`、`packageExe`）要求 JBR 21 SDK（带 jpackage），用其他 JDK 打包需加 `-Ppsd2live.allowNonJbr=true`。macOS 的 DMG（`packageDmg`）用运行 Gradle 的 JDK 构建，不需要 JBR，因为 Swift 外壳保留系统窗口框架。Gradle 使用仓库自带的 Wrapper，无需单独安装。
 - Windows 用 `.\gradlew.bat`，Linux / macOS 用 `./gradlew`。下文示例统一写作 `./gradlew`。
 - 官方 Cubism SDK 不是构建前提。源码构建默认使用内置渲染；原生预览见 [Cubism Native 预览](CUBISM_SDK_SETUP.md)。
 
@@ -96,6 +96,31 @@ Windows 也可以直接运行根目录的 `run-gui.bat`。不带参数启动 GUI
 - 项目没有独立的 lint 任务，代码风格为 `kotlin.code.style=official`。
 - Rust 运行时在 `runtime/` 中用 `cargo test`、`cargo build --release` 构建，见[运行时](../spec/RUNTIME.md)。`./gradlew run` 和打包在没有可用 cargo 时，Linux 上会下载 CI（`runtime-prebuilt.yml`）按同一份源码构建的库，按 `runtime/src`、`Cargo.toml`、`Cargo.lock` 的哈希匹配（`./gradlew printRuntimeHash`）并校验 sha256；找不到或离线则回退到内置求值器。`-Ppsd2live.prebuiltRuntime=false` 关闭下载。改 `runtime/` 反复运行时可加 `-Ppsd2live.fastRuntime=true`，关闭 LTO 以大幅缩短编译，生成的库更慢，不要用于打包。
 - 测试套件只保留快速的单元与契约测试，全量 `./gradlew test` 应在 1 分钟内完成。不要加入在示例 PSD（tml、ds）上跑完整流水线、逐步对比冷重放或渲染整幅画面的测试；这类检查写成下面的开发工具，需要时手动运行。
+
+### Linux 窗口回归检查
+
+需要真实的图形会话；JDK 21 的 AWT 在 Wayland 会话中通过 XWayland 运行。
+不透明窗口的移动、调整大小与最大化交给窗口管理器，避免把整个桌面的工作区误当成单个显示器的工作区。
+
+```bash
+./gradlew :test --tests '*NativeTitleBarTest' --tests '*BugListRegressionTest'
+PSD2LIVE_TOOLS=1 ./gradlew :test --tests '*LinuxWindowModesTool'
+```
+
+图形工具检查最大化工作区、还原尺寸、外部窗口状态和单轴最大化；普通测试运行会跳过它。
+人工检查系统标题栏拖动、边角调整大小、最大化按钮与桌面快捷键，以及不同尺寸/缩放的显示器之间移动、
+拔掉显示器后重开、F11 全屏切换、透明窗口拖动还原。Windows/macOS 也应做窗口操作的冒烟测试。
+
+使用独立设置运行源码构建，避免与已安装的程序共用工作区（先把 `JAVA_HOME` 指向 JDK 21）：
+
+```bash
+./gradlew writeRunArgs
+mkdir -p build/gui-check/home
+"$JAVA_HOME/bin/java" \
+  "-Duser.home=$PWD/build/gui-check/home" \
+  "-Djava.util.prefs.userRoot=$PWD/build/gui-check/home/prefs" \
+  @build/run/jvm.args
+```
 
 ## 外部示例与验收
 
