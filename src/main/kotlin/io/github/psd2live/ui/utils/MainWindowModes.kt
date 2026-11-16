@@ -1,5 +1,7 @@
 package io.github.psd2live.ui.utils
 
+import androidx.compose.ui.awt.ComposeWindow
+import androidx.compose.ui.window.WindowPlacement
 import io.github.psd2live.ui.state.AppSettings
 import io.github.psd2live.ui.state.WindowMode
 import java.awt.EventQueue
@@ -24,13 +26,17 @@ import java.lang.ref.WeakReference
  * system's maximize and restore (the title bar, Win+Up, Snap) become the mode. Full screen covers the monitor, the
  * frame's invisible resize edges past it.
  *
- * An undecorated window takes every mode as bounds set here: the system's maximize covers the taskbar of a borderless
+ * Linux delegates every placement to Compose/the window manager, including transparent windows. AWT's desktop-wide
+ * work area is not a reliable per-monitor maximized rectangle there.
+ *
+ * On other platforms an undecorated window takes every mode as bounds set here: the system's maximize covers the taskbar of a borderless
  * window, and the JetBrains Runtime scales maximized bounds twice, so the frame itself stays in its normal state and
  * a maximize from outside is taken back and becomes [WindowMode.MAXIMIZED].
  */
 object MainWindowModes {
 
 	private val isWindows = System.getProperty("os.name").orEmpty().contains("windows", ignoreCase = true)
+	internal val isLinux = System.getProperty("os.name").orEmpty().contains("linux", ignoreCase = true)
 
 	/**
 	 * The bounds a maximized window takes on a screen of [screen] bounds with [insets] reserved (taskbar, docks).
@@ -86,7 +92,7 @@ object MainWindowModes {
 
 	/** The windowed size to save on exit: the current one when windowed, else the one the window returns to. */
 	fun windowedSize(frame: Frame): java.awt.Dimension =
-		if (AppSettings.windowMode == WindowMode.WINDOWED) frame.size
+		if (AppSettings.windowMode == WindowMode.WINDOWED && !(isLinux && frame.maximized)) frame.size
 		else windowed?.size ?: java.awt.Dimension(AppSettings.windowWidth.toInt(), AppSettings.windowHeight.toInt())
 
 	private val Frame.maximized: Boolean get() = extendedState and Frame.MAXIMIZED_BOTH != 0
@@ -103,6 +109,23 @@ object MainWindowModes {
 		val previous = applied?.takeIf { it.first.get() === frame }?.second
 		if (previous == WindowMode.WINDOWED && mode != WindowMode.WINDOWED && !frame.maximized) windowed = frame.bounds
 		applied = WeakReference(frame) to mode
+		if (isLinux && frame is ComposeWindow) {
+			// A mode just followed from the WM is already applied. In particular, don't turn a native
+			// partial maximize into a full maximize/unmaximize when Compose observes the settings change.
+			if (previous == mode) return
+			// XToolkit derives insets from the desktop-wide _NET_WORKAREA. With unequal monitors this can
+			// subtract another monitor's height from ours. Let the WM handle its per-monitor work area and
+			// restore geometry, including transparent windows. Compose fullscreen uses the WM protocol too.
+			if (frame.placement == WindowPlacement.Fullscreen && mode != WindowMode.FULLSCREEN) {
+				frame.placement = WindowPlacement.Floating
+			}
+			frame.placement = when (mode) {
+				WindowMode.WINDOWED -> WindowPlacement.Floating
+				WindowMode.MAXIMIZED -> WindowPlacement.Maximized
+				WindowMode.FULLSCREEN -> WindowPlacement.Fullscreen
+			}
+			return
+		}
 		val insets = insetsOf(gc)
 		fun windowedHere() = windowedBounds(windowed?.size ?: java.awt.Dimension(AppSettings.windowWidth.toInt(), AppSettings.windowHeight.toInt()),
 			windowed?.location, workArea(gc.bounds, insets))
@@ -154,6 +177,7 @@ object MainWindowModes {
 		val location = Point(pointer.x - (size.width * across).toInt(), pointer.y - (pointer.y - before.y).coerceAtMost(size.height - 1))
 		applied = WeakReference(frame) to WindowMode.WINDOWED
 		AppSettings.windowMode = WindowMode.WINDOWED
+		if (frame.maximized) frame.extendedState = frame.extendedState and Frame.MAXIMIZED_BOTH.inv()
 		frame.bounds = Rectangle(location, size)
 		return location
 	}
@@ -164,28 +188,38 @@ object MainWindowModes {
 	 * again when the window is activated (after a taskbar or display change) or moves to another screen.
 	 */
 	fun install(frame: Frame): () -> Unit {
-		val native = !frame.isUndecorated
+		val linuxWindow = isLinux && frame is ComposeWindow
+		val native = !frame.isUndecorated || linuxWindow
 		val states = WindowStateListener { event ->
 			val maximized = event.newState and Frame.MAXIMIZED_BOTH != 0
 			EventQueue.invokeLater {
 				val mode = AppSettings.windowMode
+				// Fullscreen can retain the WM's maximized bits. Those are not a request to leave fullscreen.
+				if (linuxWindow && mode == WindowMode.FULLSCREEN) return@invokeLater
+				val nowMaximized = if (linuxWindow) frame.extendedState and Frame.MAXIMIZED_BOTH == Frame.MAXIMIZED_BOTH else maximized
 				when {
-					native && maximized && mode != WindowMode.MAXIMIZED -> follow(frame, WindowMode.MAXIMIZED)
-					native && !maximized && mode == WindowMode.MAXIMIZED -> follow(frame, WindowMode.WINDOWED)
+					native && nowMaximized && mode != WindowMode.MAXIMIZED -> follow(frame, WindowMode.MAXIMIZED)
+					native && !nowMaximized && mode == WindowMode.MAXIMIZED -> follow(frame, WindowMode.WINDOWED)
 					native || !maximized -> Unit
 					mode == WindowMode.WINDOWED -> AppSettings.windowMode = WindowMode.MAXIMIZED
 					else -> apply(frame)
 				}
 			}
 		}
-		fun setsBounds() = AppSettings.windowMode == WindowMode.FULLSCREEN || (!native && AppSettings.windowMode != WindowMode.WINDOWED)
+		fun setsBounds() = !linuxWindow && (AppSettings.windowMode == WindowMode.FULLSCREEN || (!native && AppSettings.windowMode != WindowMode.WINDOWED))
 		val activation = object : WindowAdapter() {
 			override fun windowActivated(e: WindowEvent) { if (setsBounds()) apply(frame) }
 		}
 		// Moving between screens of different scales replaces the configuration: fit the new screen.
 		val moves = object : ComponentAdapter() {
 			private var screen = frame.graphicsConfiguration?.device
+			private fun rememberWindowed() {
+				if (linuxWindow && AppSettings.windowMode == WindowMode.WINDOWED && !frame.maximized &&
+					frame.placement == WindowPlacement.Floating) windowed = frame.bounds
+			}
+			override fun componentResized(e: ComponentEvent) = rememberWindowed()
 			override fun componentMoved(e: ComponentEvent) {
+				rememberWindowed()
 				val now = frame.graphicsConfiguration?.device
 				if (now !== screen) { screen = now; if (setsBounds()) apply(frame) }
 			}

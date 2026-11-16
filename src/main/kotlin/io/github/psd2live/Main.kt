@@ -202,9 +202,9 @@ private fun runGui() {
 			// Opens in the mode it last closed in, already at that mode's bounds; windowed is the saved size centred. A
 			// native frame maximizes the system's way, restoring to the windowed bounds.
 			val windowState = remember {
-				val nativeMaximized = AppSettings.windowMode == WindowMode.MAXIMIZED && NativeTitleBar.supported &&
+				val nativeMaximized = AppSettings.windowMode == WindowMode.MAXIMIZED && (NativeTitleBar.supported || MainWindowModes.isLinux) &&
 					!viewModel.uiState.value.canvasBackground.windowTransparent
-				val bounds = MainWindowModes.initialBounds(if (nativeMaximized) WindowMode.WINDOWED else AppSettings.windowMode,
+				val bounds = MainWindowModes.initialBounds(if (nativeMaximized || MainWindowModes.isLinux) WindowMode.WINDOWED else AppSettings.windowMode,
 					AppSettings.windowWidth, AppSettings.windowHeight)
 				val placement = if (nativeMaximized) WindowPlacement.Maximized else WindowPlacement.Floating
 				if (bounds == null) WindowState(placement, position = WindowPosition(Alignment.Center), size = DpSize(AppSettings.windowWidth.dp, AppSettings.windowHeight.dp))
@@ -267,13 +267,16 @@ private fun runGui() {
 						title = tr("app.title"),
 						icon = painterResource("icons/psd2live.png"),
 						state = windowState,
-						undecorated = transparent || (!NativeTitleBar.supported && !io.github.psd2live.ui.utils.MacShell.active),
+						undecorated = transparent || (!NativeTitleBar.supported && !io.github.psd2live.ui.utils.MacShell.active &&
+							!NativeTitleBar.useSystemTitleBar(transparent)),
 						transparent = transparent,
 					) {
 						if (io.github.psd2live.ui.utils.MacShell.active && !window.isUndecorated && !NativeTitleBar.supported) {
 							io.github.psd2live.ui.utils.MacShell.installChrome(window)
 						}
-						val titleBar = remember(window) { if (window.isUndecorated) null else NativeTitleBar.install(window) }
+						val titleBar = remember(window) {
+							if (window.isUndecorated || MainWindowModes.isLinux || !NativeTitleBar.supported) null else NativeTitleBar.install(window)
+						}
 						DisposableEffect(window) {
 							mainFrame.set(window)
 							val uninstall = MainWindowModes.install(window)
