@@ -419,7 +419,8 @@ compose.desktop {
 			// runtime module scan can miss this API because it is only loaded when
 			// the optional texture-upscale workflow is opened.
 			// LWJGL (the canvas GPU renderer) reaches native memory through sun.misc.Unsafe.
-			modules("java.net.http", "jdk.unsupported")
+			// FreezeWatchdog needs ManagementFactory even when no freeze occurs during module scanning.
+			modules("java.net.http", "jdk.unsupported", "java.management")
 			// Compose only packages formats supported on the build host; Deb is for Linux. The Windows
 			// installer is built below from the app image instead, with Inno Setup.
 			targetFormats(org.jetbrains.compose.desktop.application.dsl.TargetFormat.Deb)

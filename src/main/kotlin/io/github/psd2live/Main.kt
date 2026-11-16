@@ -152,6 +152,7 @@ private fun runGui() {
 		System.err.println("Instance lock unavailable, continuing without it: ${failure.message}")
 		null
 	}
+	AppSettings.beginCanvasBackgroundSession()
 	val viewModel = PSD2LiveViewModel()
 	val failureReports = UiFailureReports()
 	val agentWorkspace = DesktopWorkspace(viewModel)
@@ -302,6 +303,9 @@ private fun runGui() {
 	}
 	watchdog.arm()
 	shutdown()
+	if (status == 0 && quitByUser.get()) {
+		runCatching { AppSettings.finishCanvasBackgroundSession() }.onFailure { it.printStackTrace() }
+	}
 	runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
 	instanceLock?.close()
 	// AWT, Skiko and pooled threads would otherwise keep the JVM alive.

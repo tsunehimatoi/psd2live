@@ -306,21 +306,24 @@ object AppSettings {
 		}
 	}
 
-	private const val KEY_CANVAS_BG_KIND = "canvas_bg_kind"
+	private val canvasBackgroundRecovery by lazy { CanvasBackgroundRecovery(preferences) }
+
+	fun beginCanvasBackgroundSession() = canvasBackgroundRecovery.begin()
+	fun finishCanvasBackgroundSession() = canvasBackgroundRecovery.finish()
 	private const val KEY_CANVAS_BG_SOLID = "canvas_bg_solid"
 	private const val KEY_CANVAS_BG_CHECKER_LIGHT = "canvas_bg_checker_light"
 	private const val KEY_CANVAS_BG_CHECKER_DARK = "canvas_bg_checker_dark"
 	private const val KEY_CANVAS_BG_CHECKER_SIZE = "canvas_bg_checker_size"
 
 	/**
-	 * Colours are stored as 0xRRGGBB, with -1 for "follow the theme". The setter does not flush: the
-	 * colour picker writes on every drag move, and Preferences syncs on its own and at exit.
+	 * Colours are stored as 0xRRGGBB, with -1 for "follow the theme". Desktop is only saved after
+	 * normal GUI shutdown; entering it first flushes a recovery marker before window replacement.
 	 */
 	var canvasBackground: CanvasBackground
 		get() = runCatching {
 			fun color(key: String) = preferences.getInt(key, -1).takeIf { it in 0..0xFFFFFF }
 			CanvasBackground(
-				kind = CanvasBackgroundKind.fromId(preferences.get(KEY_CANVAS_BG_KIND, null)),
+				kind = canvasBackgroundRecovery.kind,
 				solidColor = color(KEY_CANVAS_BG_SOLID),
 				checkerLight = color(KEY_CANVAS_BG_CHECKER_LIGHT),
 				checkerDark = color(KEY_CANVAS_BG_CHECKER_DARK),
@@ -329,8 +332,8 @@ object AppSettings {
 			)
 		}.getOrDefault(CanvasBackground())
 		set(value) {
+			canvasBackgroundRecovery.select(value.kind)
 			runCatching {
-				preferences.put(KEY_CANVAS_BG_KIND, value.kind.id)
 				preferences.putInt(KEY_CANVAS_BG_SOLID, value.solidColor ?: -1)
 				preferences.putInt(KEY_CANVAS_BG_CHECKER_LIGHT, value.checkerLight ?: -1)
 				preferences.putInt(KEY_CANVAS_BG_CHECKER_DARK, value.checkerDark ?: -1)
