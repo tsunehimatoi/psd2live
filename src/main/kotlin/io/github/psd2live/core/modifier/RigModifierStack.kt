@@ -36,6 +36,10 @@ internal data class RigModifierStack(
     val nextId: Long = 1,
     /** Presentation folders and sibling order never change evaluation order. */
     val organization: List<ModifierPanelNode>? = null,
+    /** Preparation failures remain visible after saving and reopening. */
+    val initializationFailures: Map<String, String> = emptyMap(),
+    /** Explicit retries invalidate a suspended runtime result without changing plugin configuration. */
+    val retryRevisions: Map<String, Long> = emptyMap(),
 ) {
     init {
         require(nextId > 0) { "Invalid modifier ID sequence" }
@@ -63,7 +67,8 @@ internal data class RigModifierStack(
             updated.outputAliases == instances[index].outputAliases && updated.plugin == instances[index].plugin) {
             "Updating a modifier cannot change its identity or algorithm version"
         }
-        return copy(instances = instances.toMutableList().apply { set(index, updated) })
+        return copy(instances = instances.toMutableList().apply { set(index, updated) },
+            initializationFailures = if (updated.enabled && updated != instances[index]) initializationFailures - id else initializationFailures)
     }
 
     /** Rebind an existing modifier instance to a compatible package revision while preserving identity, config, targets, order, and overrides. */

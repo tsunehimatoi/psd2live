@@ -140,14 +140,24 @@ class EyeAftershockAlgorithm : ReadingModifierAlgorithmPlugin {
             val model = PuppetIr.toPuppet(RigIR(input.canvas, live, deformers = branch, meshes = listOf(mesh)))
             val drawable = model.drawables.single()
             val mapping = requireNotNull(drawableSpaceMapping(model, emptyMap(), drawable.id))
-            // The evaluator uses y-up world coordinates while the captured artwork uses y-down canvas pixels.
             val world = mapping.localToWorld(geometry.positions.shared())
-            require((world.indices step 2).all { i ->
-                val x = raw.rigPositions[i]
-                val y = raw.rigPositions[i + 1]
-                val canvas = source.alignment?.canvas(x, y) ?: (x to y)
-                kotlin.math.abs(world[i] - canvas.first) <= .5f && kotlin.math.abs(-world[i + 1] - canvas.second) <= .5f
-            }) { "Blink aftershock v2 cannot migrate an edited neutral lid frame: ${target.id}" }
+            if (loweredCarrier) {
+                val original = FloatArray(raw.rigPositions.size) { i ->
+                    val value = raw.rigPositions[i]
+                    if (material.parent == null) value
+                    else if (i % 2 == 0) (value - frame.left) / frame.width.coerceAtLeast(1e-4f)
+                    else (value - frame.top) / frame.height.coerceAtLeast(1e-4f)
+                }
+                // Both frames must pass through the same live ancestors; their neutral
+                // deformation is not an authored edit to the original lid.
+                val reference = PuppetIr.toPuppet(RigIR(input.canvas, live, deformers = branch,
+                    meshes = listOf(mesh.copy(parent = material.parent, geometry = geometry.copy(positions = Floats.wrap(original))))))
+                val referenceMapping = requireNotNull(drawableSpaceMapping(reference, emptyMap(), reference.drawables.single().id))
+                val expected = referenceMapping.localToWorld(original)
+                require(world.indices.all { kotlin.math.abs(world[it] - expected[it]) <= .5f }) {
+                    "Blink aftershock v2 cannot migrate an edited neutral lid frame: ${target.id}"
+                }
+            }
             val scaledShapes = if (!loweredCarrier) shapes else {
                 val corners = mapping.localToWorld(floatArrayOf(0f, 0f, 1f, 1f))
                 val carrierW = kotlin.math.abs(corners[2] - corners[0]).coerceAtLeast(1e-4f)

@@ -47,6 +47,8 @@ internal object RigModifierPipeline {
         }
         if (retained != null) RigBuildProfile.count("modifier author input cache hits")
         val input = retained?.input ?: RigIrCompiler.compileAuthored(base.analysis, base.atlas, base.rig, config)
+        // A failed binding does not invalidate its immutable ordinary artwork input.
+        pipeline.modifierBase = ModifierBaseSnapshot(baseKey, base, input)
         val source = RigModifierSource(base.analysis, base.atlas, config, base.rig.layerIdByDrawableId, base.rig.copiedDrawableIds, base.rig.puppet, pipeline.meshCache)
         // Saving the initial automatic layout as an explicit arrangement is presentation bookkeeping.
         // Compare the resolved layout and let the evaluator compare the complete authored IR, including
@@ -57,7 +59,7 @@ internal object RigModifierPipeline {
             RigModifierAlgorithms.evaluator(source, stack, pipeline.rawSourceRotations,
                 workerSession = pipeline.modifierBuildOwner.workerSession()).evaluate(
                 input, stack, pipeline.modifierCache, context,
-                reuseCapturedAuthorInputs = true) {
+                reuseCapturedAuthorInputs = true, isolateFailures = true) {
                 if (Thread.currentThread().isInterrupted) throw CancellationException("Modifier evaluation cancelled")
                 progress.update("Evaluating modifier stack", .85)
             }
@@ -67,11 +69,12 @@ internal object RigModifierPipeline {
         val extra = RigModifierRasterAssets.layers(evaluated, config).filterNot { it.source.id.raw in base.atlas.placementByLayerId }
         val appended = RigModifierRasterAssets.append(base.atlas, extra, config)
         val arranged = RigModifierRasterAssets.arranged(extra, config)
-        val composed = when {
+        val composedSource = when {
             extra.isEmpty() -> base.analysis
             arranged -> base.analysis.copy(layers = RigModifierRasterAssets.sourceOrder(base.analysis.layers, extra))
             else -> base.analysis.copy(layers = base.analysis.layers + extra)
         }
+        val composed = composedSource
         val atlas = if (arranged) AtlasLayout.pack(composed.layers, config, previous = previousAtlas) else appended
         val rig = if (arranged) requireNotNull(RigLayerDeletion.rebind(evaluated, composed, appended, composed, atlas)) {
             "The arranged atlas cannot bind every generated mesh"

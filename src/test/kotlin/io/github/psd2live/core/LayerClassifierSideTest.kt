@@ -4,6 +4,19 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class LayerClassifierSideTest {
+	@Test fun specificFoldersSupplyMissingArtworkNamesWithoutOverridingNamedParts() {
+		assertEquals(null, LayerClassifier.classifyArtwork("Layer 9", "mouth").variant)
+		assertEquals(2, LayerClassifier.classifyArtwork("Layer 9", "mouth2").variant)
+		assertEquals(SemanticTag.MOUTH, LayerClassifier.classifyArtwork("Layer 9", "mouth/Group 7").tag)
+		assertEquals(SemanticTag.MOUTH, LayerClassifier.classifyArtwork("Layer 9", "lips").tag)
+		assertEquals(SemanticTag.FACE, LayerClassifier.classifyArtwork("Layer 9", "face").tag)
+		assertEquals(SemanticTag.TOOTH_T, LayerClassifier.classifyArtwork("上牙", "mouth").tag)
+		assertEquals(SemanticTag.UNKNOWN, LayerClassifier.classifyArtwork("Layer 9", "face/left eye").tag)
+		assertEquals(SemanticTag.UNKNOWN, LayerClassifier.classifyArtwork("Layer 9", "body").tag)
+		assertEquals(SemanticTag.MOUTH, LayerClassifier.classify("上嘴线").tag)
+		assertEquals(PartRole.UPPER_LINE, PartRoles.fromName("上嘴线", "", SemanticTag.MOUTH))
+		assertEquals(PartRole.LOWER_LINE, PartRoles.fromName("下嘴线", "", SemanticTag.MOUTH))
+	}
 	private fun parse(name: String) = LayerClassifier.classify(name).let { it.tag to it.side }
 
 	@Test fun arrowMarksNameTheSideLikeKoreanOnes() {

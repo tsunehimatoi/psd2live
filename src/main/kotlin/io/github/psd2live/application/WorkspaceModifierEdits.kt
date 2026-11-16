@@ -43,6 +43,10 @@ internal object WorkspaceModifierEdits {
                 request["plugin"]?.let { require(Json.decodeFromJsonElement(ModifierPluginReference.serializer(), it) == instance.plugin) { "Modifier plugin identity does not match" } }
                 request["type"]?.let { require(it.jsonPrimitive.content == instance.type) { "Modifier type does not match" } }
                 val config = request.getValue("config").jsonObject
+                // Invalid requests must not persist configurations that the public stack schema cannot describe.
+                // Runtime artwork incompatibility is isolated later, when the valid configuration is evaluated.
+                if (instance.type in WorkspaceModifierSchemas.types)
+                    validateOperationSchema(config, WorkspaceModifierSchemas.configuration(instance.type), "config")
                 captureParameterProviders(instance.copy(config = JsonObject(
                     instance.config.filterKeys { it == "automatic_weights" } + config)), model)
             }
@@ -52,7 +56,16 @@ internal object WorkspaceModifierEdits {
                 val current = stack.instances[stack.index(requireNotNull(id))]
                 stack.rebind(current.id, plugin, version ?: current.version)
             }
-            "modifier_enable" -> stack.update(requireNotNull(id)) { it.copy(enabled = request.getValue("enabled").jsonPrimitive.boolean) }
+            "modifier_enable" -> {
+                val target = requireNotNull(id)
+                val enable = request.getValue("enabled").jsonPrimitive.boolean
+                val updated = stack.update(target) { it.copy(enabled = enable) }
+                val failed = target in stack.initializationFailures || model.modifierEvaluation?.entries.orEmpty()
+                    .any { it.instance.id == target && it.status == ModifierStatus.FAILED }
+                if (enable && failed) updated.copy(initializationFailures = updated.initializationFailures - target,
+                    retryRevisions = updated.retryRevisions + (target to Math.addExact(updated.retryRevisions[target] ?: 0L, 1L)))
+                else updated
+            }
             "modifier_remove" -> stack.remove(requireNotNull(id))
             "modifier_move" -> stack.move(requireNotNull(id), request.getValue("index").jsonPrimitive.int)
             "modifier_apply" -> return applyPrefix(document, model, stack, requireNotNull(id), work)

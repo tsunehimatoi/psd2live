@@ -100,12 +100,9 @@ class MouthCheekLidAlgorithm : ReadingModifierAlgorithmPlugin {
                 else if (i % 2 == 0) (point - frame.left) / frame.width.coerceAtLeast(1e-4f)
                 else (point - frame.top) / frame.height.coerceAtLeast(1e-4f)
             })
-            val grid = if (side == Side.NONE) EyeModules.pairedLidGrid(lid, layer.id, positions, frame, motion)
-            else EyeModules.lidGrid(lid, side, positions, frame, motion.rigs.getValue(side), options, layer.id)
-            val expected = grid?.let {
-                KeyGrid(it.axes.map { axis -> KeyAxis(axis.parameterId.raw, Floats.wrap(axis.keys)) },
-                    it.cells.map { cell -> KeyCell(Ints.wrap(cell.coordinate), MeshOffsets(Floats.wrap(cell.form.positionDeltas))) })
-            }
+            val geometry = requireNotNull(mesh.geometry)
+            require(geometry.positions.size == positions.size && geometry.uvs == Floats.wrap(raw.atlasUvs) &&
+                geometry.indices == Ints.wrap(raw.triangles)) { "Cheek and lid v2 requires the captured lid topology: ${target.id}" }
             require(mesh.shapes.none { it.parameter == MOUTH_FORM } &&
                 mesh.offsets?.axes.orEmpty().none { it.parameter == MOUTH_FORM }) {
                 "Cheek and lid v2 requires no existing mouth form cheek-lid tracks: ${target.id}"
@@ -128,12 +125,15 @@ class MouthCheekLidAlgorithm : ReadingModifierAlgorithmPlugin {
             val drawable = model.drawables.first()
             val mapping = requireNotNull(drawableSpaceMapping(model, emptyMap(), drawable.id))
             val world = mapping.localToWorld(requireNotNull(mesh.geometry).positions.shared())
+            // Compare both frames through the same live ancestors. A scaffold's neutral
+            // deformation is not an edit to the captured lid geometry.
+            val reference = PuppetIr.toPuppet(RigIR(input.canvas, parameters, deformers = contextDeformers,
+                meshes = listOf(mesh.copy(parent = material.parent,
+                    geometry = mesh.geometry!!.copy(positions = points)))))
+            val referenceMapping = requireNotNull(drawableSpaceMapping(reference, emptyMap(), reference.drawables.single().id))
+            val expectedWorld = referenceMapping.localToWorld(points.shared())
             require((world.indices step 2).all { i ->
-                val x = positions[i]
-                val y = positions[i + 1]
-                val source = materials.alignment?.canvas(x, y) ?: (x to y)
-                // World space is y-up, while captured source positions are y-down.
-                kotlin.math.abs(world[i] - source.first) <= .5f && kotlin.math.abs(-world[i + 1] - source.second) <= .5f
+                kotlin.math.abs(world[i] - expectedWorld[i]) <= .5f && kotlin.math.abs(world[i + 1] - expectedWorld[i + 1]) <= .5f
             }) { "Cheek and lid v2 cannot migrate an edited neutral lid frame: ${target.id}" }
             val opacity = drawable.channelGrids.scalarAt(FormChannel.OPACITY, drawable.opacity, atDefault)
             val order = drawable.channelGrids.scalarAt(FormChannel.DRAW_ORDER, drawable.drawOrder, atDefault)

@@ -185,6 +185,8 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                             verticalArrangement = Arrangement.spacedBy(Spacing.Margin),
                         ) {
                             val missing = report?.get("missing_dependencies")?.jsonArray.orEmpty()
+                            val failure = report?.get("error")?.jsonPrimitive?.contentOrNull ?: stack.initializationFailures[selected.id]
+                            if (failure != null) InspectorHint(tr("modifier.failure", failure), warning = true)
                             if (missing.isNotEmpty()) InspectorHint(tr("modifier.dependencies", missing.joinToString { it.jsonPrimitive.content }), warning = true)
                             when (page) {
                                 0 -> {

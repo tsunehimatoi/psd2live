@@ -163,16 +163,17 @@ internal object WorkspaceModifierSchemas {
         "key" to s.dictionary(s.number()), "points" to s.integer(0), "total" to s.integer(0),
         "reason" to s.nullable(s.choices("missing_keyform", "shape_mismatch", "superseded")), "channel" to s.nullable(s.handle())))
     private val observedFields = mapOf("id" to s.handle(), "version" to s.integer(1), "enabled" to s.boolean(),
-        "targets" to s.array(target, 1, 4096), "status" to s.choices("active", "disabled", "missing_dependency", "missing_plugin"),
+        "targets" to s.array(target, 1, 4096), "status" to s.choices("active", "disabled", "failed", "missing_dependency", "missing_plugin"),
+        "effective_enabled" to s.boolean(), "error" to s.string(),
         "parameter_providers" to s.dictionary(s.handle()), "missing_dependencies" to s.array(s.handle()), "contributions" to s.array(contribution), "group" to s.handle(),
         "owned_keyforms" to s.array(ownedKeyform), "override_issues" to s.array(overrideIssue))
     /** Candidate observations, without configuration or geometry payloads, for the shared dry-run result. */
-    val reportEntries: JsonObject get() = s.array(s.obj(observedFields - "group" + ("type" to s.handle())))
+    val reportEntries: JsonObject get() = s.array(s.obj(observedFields - "group" + ("type" to s.handle()), observedFields.keys - "group" - "error" + "type"))
     val stack: JsonObject get() = s.obj(s.identity + mapOf("revision" to s.handle(), "legacy" to s.boolean(),
         "entries" to s.array(s.union(types.map { type ->
             val fields = fields(type, summary = true) + observedFields + if (type == "simulation") mapOf("bake" to WorkspaceSimulationResultSchemas.bakeSummary) else emptyMap()
-            s.obj(fields, fields.keys - "group" - "bake" - "plugin")
-        } + s.obj(pluginFields + observedFields, (pluginFields.keys + observedFields.keys) - "group" - "plugin"))), "retired_ids" to s.array(s.handle()), "next_id" to s.integer(1), "organization" to organization))
+            s.obj(fields, fields.keys - "group" - "bake" - "plugin" - "error")
+        } + s.obj(pluginFields + observedFields, (pluginFields.keys + observedFields.keys) - "group" - "plugin" - "error"))), "retired_ids" to s.array(s.handle()), "next_id" to s.integer(1), "organization" to organization))
     val planRequest: JsonObject get() = s.union(listOf(
         s.obj(mapOf("type" to s.choices(*WorkspaceModifierPlan.sourceTypes.toTypedArray()), "targets" to s.array(target, 1, 4096))),
         s.obj(mapOf("group" to s.choices(*WorkspaceModifierPlan.groups.keys.toTypedArray()), "targets" to s.array(target, 1, 4096)))) +

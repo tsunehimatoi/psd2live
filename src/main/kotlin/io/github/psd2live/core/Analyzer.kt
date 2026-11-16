@@ -42,7 +42,8 @@ object CharacterAnalyzer {
 		// reference generated :r/:l IDs, so retain those identities when they carry edits.
 		val unitScale = MeshResolution.unitScale(config, source)
 		val references = LegacySplitReferences(config)
-		val layers = PartRoles.infer(initiallyClassified.flatMap { expandLayer(it, config, unitScale, references) }
+		val sided = inferBrowSides(initiallyClassified, source.widthPx / 2f, config.layerOverrides.keys)
+		val layers = PartRoles.infer(sided.flatMap { expandLayer(it, config, unitScale, references) }
 			.filter { it.source.id.raw !in config.deletedLayerIds }, config.layerOverrides)
 		if (RigBuildProfile.recording) RigBuildProfile.add("analyze: classify layers", System.nanoTime() - classifyStart)
 		val warnings = source.warnings.toMutableList()
@@ -73,6 +74,23 @@ object CharacterAnalyzer {
         }
         return PipelineAnalysis(source, layers, calibration?.anchors ?: anchors, warnings,
             RigBuildProfile.stage("analyze: composite preview") { preview() }, calibration)
+	}
+
+	/** Unnamed unilateral brows use artwork placement; drawings spanning both eyes remain bilateral. */
+	internal fun inferBrowSides(layers: List<ClassifiedLayer>, canvasCenter: Float, explicit: Set<String> = emptySet()): List<ClassifiedLayer> {
+		val whites = layers.filter { it.semantic.tag == SemanticTag.EYEWHITE && it.opaquePixels > 0 }
+		val center = if (whites.isEmpty()) canvasCenter else (whites.minOf { it.bounds.left } + whites.maxOf { it.bounds.right }) / 2f
+		return layers.map { layer ->
+			if (layer.semantic.tag != SemanticTag.EYEBROW || layer.semantic.side != Side.NONE || layer.source.id.raw in explicit) layer
+			else {
+				val side = when {
+					layer.bounds.right <= center -> Side.RIGHT
+					layer.bounds.left >= center -> Side.LEFT
+					else -> Side.NONE
+				}
+				if (side == Side.NONE) layer else layer.copy(semantic = layer.semantic.copy(side = side))
+			}
+		}
 	}
 
 	/** Refit rig anchors after the actual renderable mesh footprints replace pixel alpha boxes. */

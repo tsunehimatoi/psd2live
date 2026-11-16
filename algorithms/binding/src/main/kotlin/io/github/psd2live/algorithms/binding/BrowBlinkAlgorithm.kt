@@ -45,12 +45,13 @@ class BrowBlinkAlgorithm : ReadingModifierAlgorithmPlugin {
             val smileProvider = providers.lastOrNull { it.capability == "eye.smile" }
                 ?: eye?.takeIf { it.type == "eye" && it.config["smile"]?.jsonPrimitive?.booleanOrNull == true }
             val smile = EyeModules.smile(side).takeIf { target.eye != null && smileProvider != null }
-            val wide = eye != null && (providers.any { it.capability == "eye.wide" } ||
-                (eye.type == "eye" && eye.config["wide"]?.jsonPrimitive?.booleanOrNull == true))
             val openParam = requireNotNull(input.parameter(open.raw))
-            require(!openParam.blend && openParam.min == 0f && openParam.default == 1f && openParam.max == (if (wide) 2f else 1f))
+            require(!openParam.blend && openParam.min == 0f && openParam.default == 1f && openParam.max in 1f..2f)
+            // Folded eye providers need not expose eye.wide separately. The resolved axis
+            // is the contract shared by both folded and individual eye plugins.
+            val wide = openParam.max > 1f
             val smileParam = smile?.let { requireNotNull(input.parameter(it.raw)) }
-            require(smileParam == null || !smileParam.blend && smileParam.min == 0f && smileParam.max == 1f && smileParam.default == 0f)
+            require(smileParam == null || smileParam.min == 0f && smileParam.max == 1f && smileParam.default == 0f)
             val mesh = requireNotNull(input.mesh(id))
             val geometry = requireNotNull(mesh.geometry)
             val raw = target.raw
@@ -72,12 +73,14 @@ class BrowBlinkAlgorithm : ReadingModifierAlgorithmPlugin {
             val height = ParameterId("ParamBrow${suffix}Y")
             val angle = ParameterId("ParamBrow${suffix}Angle")
             val grid = rig.grid(raw.rigPositions, frame, height, angle)
-            require(mesh.offsets == KeyGrid(grid.axes.map { KeyAxis(it.parameterId.raw, Floats.wrap(it.keys)) },
-                grid.cells.map { KeyCell(Ints.wrap(it.coordinate), MeshOffsets(Floats.wrap(it.form.positionDeltas))) }) &&
+            val expectedGrid = KeyGrid(grid.axes.map { KeyAxis(it.parameterId.raw, Floats.wrap(it.keys)) },
+                grid.cells.map { KeyCell(Ints.wrap(it.coordinate), MeshOffsets(Floats.wrap(it.form.positionDeltas))) })
+            val retainsFittedAxes = expectedGrid.axes.all { axis -> mesh.offsets?.axes?.contains(axis) == true }
+            require(retainsFittedAxes && mesh.offsets?.axes?.none { it.parameter == open.raw || it.parameter == smile?.raw } == true &&
                 mesh.channels.isEmpty() && mesh.shapes.all { it.parameter in setOf("ParamBrow${suffix}X", "ParamBrow${suffix}Form", "ParamBrow${suffix}Spring") }) {
-                "Brow blink v2 requires the fitted height and angle grid without other local motion or drawing tracks: $id"
+                "Brow blink v2 requires fitted height and angle axes without existing blink or drawing tracks: $id"
             }
-            val lid = smile?.let { parameter ->
+            val lid = smile?.takeIf { smileParam?.blend != true }?.let { parameter ->
                 requireNotNull(requireNotNull(smileProvider).targets.asSequence().mapNotNull { input.mesh(it.id) }
                     .firstOrNull { other -> other.offsets?.axes?.any { it.parameter == parameter.raw } == true }) {
                     "Brow blink v2 requires an upstream lid grid keyed by ${parameter.raw}"

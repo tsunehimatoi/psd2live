@@ -15,6 +15,8 @@ internal fun RigModifierResult.report(): JsonObject = buildJsonObject {
             put("version", entry.instance.version)
             put("enabled", entry.instance.enabled)
             put("status", entry.status.name.lowercase())
+            put("effective_enabled", entry.status == ModifierStatus.ACTIVE)
+            entry.error?.let { put("error", it) }
             putJsonArray("targets") {
                 entry.instance.targets.forEach { target -> addJsonObject { put("kind", target.kind); put("id", target.id) } }
             }

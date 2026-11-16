@@ -154,8 +154,11 @@ object SimBaker {
                 else -> null
             }, forced = input.id in edit.forcedInputs)
         }
-        if (dof) require(side.isNotEmpty() || up.isNotEmpty() || statics.isNotEmpty()) {
-            "No input moves ${edit.id} by ${SimKinematics.MIN_MOTION_PX} px or more; add inputs to bake it"
+        if (dof && side.isEmpty() && up.isEmpty()) {
+            check()
+            options.progress(1f)
+            return SimBakeResult(fingerprint, space.counts, statics, emptyList(), inputs = checks,
+                method = options.method.name.lowercase())
         }
         val mainSideways = if (dof) side.isNotEmpty() else sideways.isNotEmpty()
         val hasMain = if (dof) side.isNotEmpty() || up.isNotEmpty() else sideways.isNotEmpty() || vertical.isNotEmpty()
@@ -182,7 +185,8 @@ object SimBaker {
                 minimum = if (edit.vertical == true) 0f else MIN_BOUNCE_PX, progress = progress(1))
         }
         val groups = each(listOf(main, bounce)) { it() }.filterNotNull()
-        require(groups.isNotEmpty() || statics.isNotEmpty()) { "${edit.id} barely moves under its inputs; nothing to bake" }
+        // A correctly configured body can remain stationary under all selected inputs.
+        // Its measured zero response is a valid bake, not a malformed PSD or simulation.
         options.progress(1f)
         val method = options.method.name.lowercase()
         if (groups.isEmpty()) return SimBakeResult(fingerprint, space.counts, statics, emptyList(), inputs = checks, method = method)
