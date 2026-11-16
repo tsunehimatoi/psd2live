@@ -33,7 +33,7 @@ class NativeFilePickerTest {
                 chooser.updateUI()
                 assertIs<MetalFileChooserUI>(chooser.ui)
                 assertSame(lookAndFeel, UIManager.getLookAndFeel())
-                assertEquals(directory, chooser.currentDirectory)
+                assertEquals(directory.canonicalFile, chooser.currentDirectory.canonicalFile)
                 assertTrue(chooser.fileFilter.accept(directory))
                 assertTrue(chooser.fileFilter.accept(File(directory, "character.PSD")))
                 assertTrue(chooser.fileFilter.accept(File(directory, "layout.json")))
@@ -44,7 +44,7 @@ class NativeFilePickerTest {
 
                 val save = NativeFilePicker.linuxChooser("Save", listOf("psd2live"), "Project", directory.path,
                     "character.psd2live", JFileChooser.FILES_ONLY, false)
-                assertEquals(File(directory, "character.psd2live"), save.selectedFile)
+                assertEquals(File(directory, "character.psd2live").canonicalFile, save.selectedFile.canonicalFile)
                 val materials = NativeFilePicker.linuxChooser("Materials", listOf("psd", "png"), "Materials",
                     directory.path, null, JFileChooser.FILES_AND_DIRECTORIES, true)
                 assertEquals(JFileChooser.FILES_AND_DIRECTORIES, materials.fileSelectionMode)
