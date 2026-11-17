@@ -33,7 +33,7 @@ class MouthCaptureAlgorithm : ReadingModifierAlgorithmPlugin {
             context.resources, context.upstream))
         val vertices = requireNotNull(captured.sourceVertices)
         val raw = ScaffoldMeshContext.decodeRawMeshes(vertices.resource, checkpoint)
-        val mouth = requireNotNull(captured.source).rig()
+        val mouth = (captured.source ?: return ModifierModelChanges()).rig()
         require(mouth.options.capture)
         val lippedSkin = context.values.getValue("lippedSkin").jsonArray.mapTo(hashSetOf()) { it.jsonPrimitive.content }
         val follows = context.values.getValue("follows").jsonObject

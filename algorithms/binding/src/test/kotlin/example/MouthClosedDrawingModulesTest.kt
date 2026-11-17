@@ -218,4 +218,66 @@ class MouthClosedDrawingModulesTest {
                 "Zero-opacity layer must remain invisible for ${axis.first}")
         }
     }
+
+    @Test fun nullFittedSourceTurnsDownstreamMouthModifiersIntoCleanNoOps() {
+        val frame = Bounds(0f, 0f, 1f, 1f)
+        val raw = ScaffoldMesh.RawMesh(
+            floatArrayOf(.1f, .3f, .9f, .3f, .1f, .7f, .9f, .7f),
+            floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f), intArrayOf(0, 1, 2, 1, 3, 2))
+        val mesh = Mesh("mouth", "Mouth", null,
+            geometry = MeshGeometry(Floats.wrap(raw.rigPositions), Floats.wrap(raw.atlasUvs), Ints.wrap(raw.triangles)),
+            offsets = null)
+        val input = RigIR(Canvas(1f, 1f), listOf(
+            Parameter("ParamMouthForm", "Form", -1f, 1f, 0f),
+            Parameter("ParamMouthOpenY", "Open", 0f, 1f, 0f)), meshes = listOf(mesh))
+        val resource = ScaffoldMeshContext.capture(listOf(
+            ScaffoldMeshContext.Material("mouth", "mouth", raw, ScaffoldMesh.Geometry.Zero))).resources.getValue("source_meshes")
+        val fallback = MouthFittedInputs(null, .9f, null,
+            closedMouth = false, separateInside = false, teethFade = 20f,
+            layers = mapOf("mouth" to MouthFittedInputs.Layer("MOUTH", null, "NONE", null,
+                frame, frame, .5f, .5f, opaque = true, clipped = false, preset = true)),
+            maskSources = emptyList(),
+            fallback = MouthFittedInputs.Fallback(MouthCurve.preset("smile"), true, 10f, 10f, 50f, 15f, 15f),
+            sourceVertices = MouthFittedInputs.SourceVertices(resource,
+                mapOf("mouth" to MouthFittedInputs.SourceVertexTarget("mouth", null))))
+        val targets = listOf(ModifierTarget("mesh", "mouth"))
+        val config = buildJsonObject { put("scaffold", "scaffold"); put("base", "base") }
+        val providers = listOf(
+            ModifierUpstreamCapability("rig.scaffold", "rig.scaffold", 2, targets, "scaffold"),
+            ModifierUpstreamCapability("mouth/fitted", "mouth/fitted", 2, targets, "base", config),
+            ModifierUpstreamCapability("face/legacy", "face/legacy", 2, targets, "face"),
+            ModifierUpstreamCapability("mouth.capture", "mouth.capture", 2, targets, "capture", config),
+            ModifierUpstreamCapability("mouth.jaw", "mouth.jaw", 2, targets, "jaw", config))
+        val follows = mapOf("mouth" to MouthRig.Follow.WHOLE_TIGHT)
+        assertEquals(input, MouthVowelAlgorithm().changes(ModifierEvaluationInput(input,
+            MouthVowelAlgorithm.context(fallback.encode(), follows,
+                MouthRig.VOWELS.associate { it.second.raw to it.first.toString() }, "Mouth").withUpstream(providers)),
+            RigModifierInstance("vowels", "mouth.vowel", 2, targets, config = config)) {}.apply(input))
+        assertEquals(input, MouthCaptureAlgorithm().changes(ModifierEvaluationInput(input,
+            MouthCaptureAlgorithm.context(fallback.encode(), follows, emptySet(),
+                mapOf(MouthRig.MOUTH_X.raw to MouthRig.MOUTH_X.raw), "Mouth").withUpstream(providers)),
+            RigModifierInstance("capture", "mouth.capture", 2, targets, config = config)) {}.apply(input))
+        assertEquals(input, MouthTongueAlgorithm().changes(ModifierEvaluationInput(input,
+            MouthTongueAlgorithm.context(fallback.encode(), follows, "Tongue", "Mouth").withUpstream(providers)),
+            RigModifierInstance("tongue", "mouth.tongue", 2, targets,
+                config = JsonObject(config + ("dependencies" to buildJsonObject { put("mouth.capture", "capture") })))) {}.apply(input))
+        val encodedFallback = fallback.encode()
+        assertEquals(input, MouthDepthAlgorithm().changes(ModifierEvaluationInput(input,
+            ModifierAlgorithmContext(buildJsonObject {
+                put("schema", "mouth-depth/1")
+                put("source", encodedFallback.values)
+                put("interior", buildJsonObject {
+                    put("mouth", buildJsonObject {
+                        put("follow", MouthRig.Follow.WHOLE_TIGHT.name)
+                        put("parallax", 0f)
+                    })
+                })
+            }, encodedFallback.resources).withUpstream(providers)),
+            RigModifierInstance("depth", "mouth.interior-depth", 2, targets,
+                config = JsonObject(config + ("dependencies" to buildJsonObject { put("face/legacy", "face") })))) {}.apply(input))
+        assertEquals(input, MouthSpringAlgorithm().changes(ModifierEvaluationInput(input,
+            MouthSpringAlgorithm.context(fallback.encode(), emptySet(), "Spring", "Physics", "Mouth physics").withUpstream(providers)),
+            RigModifierInstance("spring", "mouth.spring", 2, targets,
+                config = JsonObject(config + ("dependencies" to buildJsonObject { put("mouth.jaw", "jaw") })))) {}.apply(input))
+    }
 }

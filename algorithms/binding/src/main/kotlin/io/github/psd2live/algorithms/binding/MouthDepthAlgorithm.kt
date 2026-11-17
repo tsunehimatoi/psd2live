@@ -35,7 +35,7 @@ class MouthDepthAlgorithm : ReadingModifierAlgorithmPlugin {
         val raw = ScaffoldMeshContext.decodeRawMeshes(vertices.resource, checkpoint)
         val amount = instance.config["values"]?.jsonObject?.get("depth")?.jsonPrimitive?.float ?: 100f
         require(amount in 0f..200f)
-        val source = requireNotNull(measurements.source)
+        val source = measurements.source ?: return ModifierModelChanges()
         val mouth = source.copy(options = source.options.copy(depth = true, depthAmount = amount / 100f)).rig()
         val scaffoldInstance = RigModifierInstance(scaffold, structure.type, structure.version, structure.targets,
             config = structure.config, outputAliases = structure.outputAliases, plugin = structure.plugin)

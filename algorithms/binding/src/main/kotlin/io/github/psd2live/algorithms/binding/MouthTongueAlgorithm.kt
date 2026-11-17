@@ -38,7 +38,7 @@ class MouthTongueAlgorithm : ReadingModifierAlgorithmPlugin {
         val declared = parameter(context)
         val captured = MouthFittedInputs.decode(ModifierAlgorithmContext(context.values.getValue("source").jsonObject,
             context.resources, context.upstream))
-        val mouth = requireNotNull(captured.source).rig()
+        val mouth = (captured.source ?: return ModifierModelChanges()).rig()
         require(mouth.options.capture && mouth.options.tongue) { "Mouth tongue v2 requires fitted capture and tongue motion" }
         val vertices = requireNotNull(captured.sourceVertices)
         val raw = ScaffoldMeshContext.decodeRawMeshes(vertices.resource, checkpoint)

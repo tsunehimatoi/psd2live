@@ -42,7 +42,7 @@ class MouthSpringAlgorithm : ReadingModifierAlgorithmPlugin {
             config = scaffold.config, outputAliases = scaffold.outputAliases, plugin = scaffold.plugin)
         val context = input.context
         val captured = MouthFittedInputs.decode(ModifierAlgorithmContext(context.values.getValue("source").jsonObject, context.resources))
-        val source = requireNotNull(captured.source)
+        val source = captured.source ?: return ModifierModelChanges()
         val mouth = source.rig()
         require(mouth.options.jaw && mouth.options.spring && !mouth.options.tongue)
         val vertices = requireNotNull(captured.sourceVertices)
