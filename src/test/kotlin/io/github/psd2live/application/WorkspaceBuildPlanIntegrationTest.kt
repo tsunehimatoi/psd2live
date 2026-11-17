@@ -134,7 +134,10 @@ class WorkspaceBuildPlanIntegrationTest {
                 RigModifierStack.fromJson(f.document.rigEdits.modifierStack!!).let {
                     it.copy(instances = it.instances + badSplit)
                 }.toJson()))
-            assertFailsWith<IllegalArgumentException> { builder.build(bad, f.model) }
+            val isolated = retain(builder.build(bad, f.model))
+            val entry = isolated.modifierEvaluation!!.entries.single { it.instance.id == badSplit.id }
+            assertEquals(io.github.psd2live.core.modifier.ModifierStatus.FAILED, entry.status)
+            assertEquals(RigIrCompiler.compile(f.model).meshes, RigIrCompiler.compile(isolated).meshes)
             assertEquals(captured, runtime.capture())
             assertSame(snapshot, f.model.modifierEvaluation)
             assertFalse(f.model.modifierBuildOwner!!.isClosed)

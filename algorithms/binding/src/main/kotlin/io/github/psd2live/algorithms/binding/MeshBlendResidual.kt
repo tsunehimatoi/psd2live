@@ -43,10 +43,15 @@ object MeshBlendResidual {
             val base = reference.mapping.localToWorld(reference.positions)
             val worldDelta = BindingVertices.transfer(FloatArray(base.size) { moved[it] - base[it] }, sources)
             val shifted = FloatArray(neutralWorld.size) { neutralWorld[it] + worldDelta[it] }
-            val local = result.mapping.worldToLocalLinearized(shifted, result.positions, shifted, indices)
+            // Editing's lattice-relative inverse tolerance can exceed the absolute projection
+            // budget on large canvases. Solve more accurately rather than accepting a bad transfer.
+            val local = result.mapping.worldToLocalLinearized(shifted, result.positions, shifted, indices, worldTolerance = .01f)
             require(local.all(Float::isFinite)) { "A generated blend shape cannot be mapped into its authored parent" }
             val reached = result.mapping.localToWorld(local)
-            require(reached.indices.all { kotlin.math.abs(reached[it] - shifted[it]) <= .05f }) { "A generated blend shape cannot invert its authored neutral frame" }
+            val maximumError = reached.indices.maxOfOrNull { kotlin.math.abs(reached[it] - shifted[it]) } ?: 0f
+            require(maximumError.isFinite() && maximumError <= .05f) {
+                "A generated blend shape cannot invert its authored neutral frame (maximum residual: $maximumError px)"
+            }
             return FloatArray(local.size) { local[it] - result.positions[it] }
         }
         fun difference(value: Float, reference: Float) = if (value.isFinite()) value - reference else 0f

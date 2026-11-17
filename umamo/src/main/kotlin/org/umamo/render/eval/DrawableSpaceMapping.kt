@@ -142,7 +142,17 @@ class DrawableSpaceMapping(
 	 * @param Set<Int> indices The vertex indices to solve.
 	 * @return FloatArray The interleaved local positions (a new array).
 	 */
-	fun worldToLocalLinearized(world: FloatArray, seedLocal: FloatArray, worldRest: FloatArray, indices: Set<Int>): FloatArray {
+	fun worldToLocalLinearized(world: FloatArray, seedLocal: FloatArray, worldRest: FloatArray, indices: Set<Int>): FloatArray =
+		worldToLocalLinearized(world, seedLocal, worldRest, indices, null)
+
+	/**
+	 * [worldTolerance] optionally bounds the warp inverse's world-space residual. Absolute-error
+	 * projection callers can request tighter precision than editing's lattice-relative tolerance.
+	 * The four-argument overload preserves the binary interface used by existing plugin packages.
+	 */
+	fun worldToLocalLinearized(world: FloatArray, seedLocal: FloatArray, worldRest: FloatArray, indices: Set<Int>,
+		worldTolerance: Float?): FloatArray {
+		require(worldTolerance == null || worldTolerance.isFinite() && worldTolerance > 0f) { "Invalid inverse world tolerance" }
 		val local = seedLocal.copyOf()
 		when (parentWorld) {
 			null -> {
@@ -169,7 +179,8 @@ class DrawableSpaceMapping(
 
 			is WarpWorld -> {
 				// Constant per mapping, so it's computed once here rather than per vertex.
-				val toleranceSquared = warpInverseToleranceSquared(parentWorld.cp)
+				val relativeTolerance = warpInverseToleranceSquared(parentWorld.cp)
+				val toleranceSquared = worldTolerance?.let { minOf(relativeTolerance, it * it) } ?: relativeTolerance
 				val scratch = FloatArray(2)
 				for (vertexIndex in indices) {
 					val coordIndex = vertexIndex * 2

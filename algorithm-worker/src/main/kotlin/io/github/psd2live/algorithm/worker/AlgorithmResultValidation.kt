@@ -47,7 +47,10 @@ object AlgorithmResultValidation {
             }
             done += chain
         }
-        fun vector(values: Floats, size: Int) { require(values.size == size); require(values.shared().all(Float::isFinite)) }
+        fun vector(values: Floats, size: Int) {
+            require(values.size == size) { "Vector size ${values.size} does not match geometry size $size" }
+            require(values.shared().all(Float::isFinite)) { "Vector contains non-finite coordinates" }
+        }
         fun <T> grid(value: KeyGrid<T>?, form: (T) -> Unit) {
             if (value == null) return
             require(value.axes.map { it.parameter }.distinct().size == value.axes.size)
@@ -114,7 +117,12 @@ object AlgorithmResultValidation {
                 require(g.positions.size % 2 == 0 && g.indices.size % 3 == 0)
                 vector(g.positions, g.positions.size); vector(g.uvs, g.positions.size)
                 require(g.indices.shared().all { it in 0 until g.positions.size / 2 })
-                grid(m.offsets) { vector(it.deltas, g.positions.size) }
+                grid(m.offsets) {
+                    try { vector(it.deltas, g.positions.size) }
+                    catch (failure: IllegalArgumentException) {
+                        throw IllegalArgumentException("Invalid offsets for ${m.id}: ${failure.message}", failure)
+                    }
+                }
             }
         }
         val meshById = rig.meshes.associateBy { it.id }

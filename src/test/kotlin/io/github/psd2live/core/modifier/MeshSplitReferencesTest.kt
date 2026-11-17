@@ -27,6 +27,17 @@ class MeshSplitReferencesTest {
     private fun split(input: RigIR, instance: RigModifierInstance = instance("islands")): RigIR =
         evaluator().evaluate(input, RigModifierStack(listOf(instance))).rig.also(AlgorithmResultValidation::validate)
 
+    private fun rejected(input: RigIR, instance: RigModifierInstance = instance("islands")): MeshSplitRejected {
+        val failure = assertFailsWith<MeshSplitRejected> {
+            MeshSplitAlgorithm().changes(input, instance, ModifierAlgorithmContext()) {}
+        }
+        val isolated = evaluator().evaluate(input, RigModifierStack(listOf(instance)), isolateFailures = true)
+        assertEquals(input, isolated.rig, "A rejected plugin must not publish partial changes")
+        assertEquals(ModifierStatus.FAILED, isolated.entries.single().status)
+        assertTrue(isolated.entries.single().errorDetails.orEmpty().contains(failure.code))
+        return failure
+    }
+
     private fun built(rig: RigIR) = BuiltRig(PuppetIr.toPuppet(rig), mapOf("islands" to 1, "consumer" to 0),
         mapOf("islands" to Bounds(0f, 0f, 2f, 7f)), mapOf("islands" to "layer-0", "consumer" to "layer-0"),
         0f, 0f, 1f, 1f, emptyList())
@@ -129,19 +140,19 @@ class MeshSplitReferencesTest {
         val crossing = base.copy(authoring = base.authoring.copy(paths = listOf(path.copy(points = path.points +
             PathPoint(0, 1, 2, .2f, .3f, .5f)))))
         val bytes = RigIrBinary.encode(crossing)
-        val failure = assertFailsWith<MeshSplitRejected> { split(crossing, instance("consumer", "islands")) }
+        val failure = rejected(crossing, instance("consumer", "islands"))
         assertEquals("mesh.split.path_crosses_islands", failure.code)
         assertTrue(failure.subject.contains("path:path"))
         assertContentEquals(bytes, RigIrBinary.encode(crossing))
 
         val invalidGlue = base.copy(glues = listOf(base.glues.single().copy(pairs = listOf(GluePair(99, 0, .5f, .5f)))))
-        val glueFailure = assertFailsWith<MeshSplitRejected> { split(invalidGlue) }
+        val glueFailure = rejected(invalidGlue)
         assertEquals("mesh.split.glue_vertex_unmapped", glueFailure.code)
         assertTrue(glueFailure.subject.contains("glue:weld"))
         assertTrue(glueFailure.subject.contains("vertex:99"))
         val collider = base.copy(advanced = base.advanced.copy(colliders = listOf(ColliderIR("pin", false,
             mesh = "islands", radiusA = 1f))))
-        assertEquals("mesh.split.collider_reference", assertFailsWith<MeshSplitRejected> { split(collider) }.code)
+        assertEquals("mesh.split.collider_reference", rejected(collider).code)
     }
 
     @Test fun collidingOutputIdsAndUnusedVerticesAreRejectedBeforeChangesAreReturned() {
@@ -158,9 +169,9 @@ class MeshSplitReferencesTest {
                 positions = Floats.of(geometry.positions.shared() + floatArrayOf(8f, 8f)),
                 uvs = Floats.of(geometry.uvs.shared() + floatArrayOf(.8f, .8f))))
         }, authoring = Authoring())
-        assertEquals("mesh.split.unassigned_vertex", assertFailsWith<MeshSplitRejected> { split(unused) }.code)
+        assertEquals("mesh.split.unassigned_vertex", rejected(unused).code)
         val attached = unused.copy(glues = listOf(unused.glues.single().copy(pairs = listOf(GluePair(6, 0, .5f, .5f)))))
-        assertEquals("mesh.split.glue_vertex_unmapped", assertFailsWith<MeshSplitRejected> { split(attached) }.code)
+        assertEquals("mesh.split.glue_vertex_unmapped", rejected(attached).code)
     }
 
     @Test fun generatedGeometryOverrideKeepsItsDeterministicPieceAcrossColdReplay() {
@@ -195,7 +206,7 @@ class MeshSplitReferencesTest {
             SimWelds(Ints.Empty, Ints.Empty, empty, empty, empty), SimLongRange(Ints.Empty, Ints.Empty, empty),
             emptyList(), emptyList(), emptyList())
         val input = fixture().copy(advanced = AdvancedIR(simulations = listOf(sim)))
-        val failure = assertFailsWith<MeshSplitRejected> { split(input) }
+        val failure = rejected(input)
         assertEquals("mesh.split.simulation_reference", failure.code)
         assertEquals("simulation:cloth", failure.subject)
     }
