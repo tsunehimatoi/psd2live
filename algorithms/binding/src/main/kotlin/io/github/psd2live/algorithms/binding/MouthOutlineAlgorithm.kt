@@ -111,7 +111,7 @@ class MouthOutlineAlgorithm : ReadingModifierAlgorithmPlugin {
         val geometry = if (mouth == null) legacy.ribbonGrid(stroke, target.frame, form, open, checkpoint)
         else {
             val grid = mouth.keyed(form, open) { pose ->
-                stroke.vertexDelta(target.frame, positions) { x, y -> mouth.strokePoint(side == 0, x, y, pose) }
+                stroke.ribbonDelta(target.frame, positions) { upper, x, y -> mouth.strokeCenterPoint(upper, x, y, pose) }
             }
             KeyformGrid(grid.axes, grid.cells.map { cell -> KeyformCell(cell.coordinate, MeshDeltaForm(cell.form)) })
         }
@@ -121,7 +121,7 @@ class MouthOutlineAlgorithm : ReadingModifierAlgorithmPlugin {
             geometryGrid = geometry, blendMode = BlendMode.Normal, texturePage = 0, atlasTileId = null,
             textureSourceId = null, drawOrder = (owner.drawOrder + 1f).coerceAtMost(1000f), blendShapes = emptyList())
         val mouthShapes = mouth?.shapes({ pose ->
-            stroke.vertexDelta(target.frame, positions) { x, y -> mouth.strokePoint(side == 0, x, y, pose) }
+            stroke.ribbonDelta(target.frame, positions) { upper, x, y -> mouth.strokeCenterPoint(upper, x, y, pose) }
         }, visible = { if (it) 1f else Float.NaN }).orEmpty()
         val frame = target.frame
         val headShapes = turn?.shapes(stroke.positions(), Bounds(frame.left, frame.top, frame.right, frame.bottom),

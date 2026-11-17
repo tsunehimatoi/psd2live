@@ -798,7 +798,7 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		Follow.DEEP -> deepMove(pose)
 	}
 
-	private fun strokeRaw(upper: Boolean, xRig: Float, yRig: Float, ep: EvaluatedPose): Triple<Float, Float, Float> {
+	private fun strokeRaw(upper: Boolean, xRig: Float, yRig: Float, ep: EvaluatedPose, fadeOffset: Boolean = false): Triple<Float, Float, Float> {
 		val c0 = if (upper) target.u0World else target.l0World
 		val c1 = if (upper) ep.u1World else ep.l1World
 		val t0 = if (upper) target.tU0 else target.tL0
@@ -858,17 +858,18 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		}
 		val keepPx = max(1.6f * target.linePx, 0.045f * target.widthPx)
 		val nuClamped = nu.coerceIn(-keepPx, keepPx)
-		val nuEff = nuClamped * nuScale + (nu - nuClamped) * (1f - closeVal)
+		val nuEff = if (fadeOffset) nu * (1f - closeVal)
+			else nuClamped * nuScale + (nu - nuClamped) * (1f - closeVal)
 
 		val posedX = c1x + tau * t1x + nuEff * n1x
 		val posedY = c1y + tau * t1y + nuEff * n1y
 		return Triple(posedX - xRig, posedY - yRig, uAt)
 	}
 
-	private fun strokeMove(upper: Boolean, u: Float, v: Float, pose: Pose): Pair<Float, Float> {
+	private fun strokeMove(upper: Boolean, u: Float, v: Float, pose: Pose, fadeOffset: Boolean = false): Pair<Float, Float> {
 		val ep = eval(pose)
 		val (xRig, yRig) = fit.toCanvas(u, v)
-		val (ownDx, ownDy, uAt) = strokeRaw(upper, xRig, yRig, ep)
+		val (ownDx, ownDy, uAt) = strokeRaw(upper, xRig, yRig, ep, fadeOffset)
 		val s = (1f - min(uAt, 1f - uAt) / CORNER_ZONE).coerceIn(0f, 1f)
 		if (s <= 0f) return rigDeltaToMouth(ownDx, ownDy)
 		// Both strokes share one corner frame. Projecting the pixel independently onto
@@ -1461,6 +1462,14 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 	fun strokePoint(upper: Boolean, x: Float, y: Float, pose: Pose): Pair<Float, Float> {
 		val (u, v) = fit.toMouth(x, y)
 		val (du, dv) = strokeMove(upper, u, v, pose)
+		val (dx, dy) = fit.canvasDelta(du, dv)
+		return (x + dx) to (y + dy)
+	}
+
+	/** Maps a ribbon centerline point, fading polygonal rim jitter to the smooth seam when closing. */
+	fun strokeCenterPoint(upper: Boolean, x: Float, y: Float, pose: Pose): Pair<Float, Float> {
+		val (u, v) = fit.toMouth(x, y)
+		val (du, dv) = strokeMove(upper, u, v, pose, fadeOffset = true)
 		val (dx, dy) = fit.canvasDelta(du, dv)
 		return (x + dx) to (y + dy)
 	}

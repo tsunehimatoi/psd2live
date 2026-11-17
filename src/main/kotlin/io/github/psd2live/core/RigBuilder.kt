@@ -4363,7 +4363,7 @@ object RigBuilder {
         val stroke = io.github.psd2live.algorithms.binding.MouthOutlineStroke(columns, side, config.mouthThickness)
         val geometry = if (rig != null) {
             val grid = rig.keyed(StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN) { pose ->
-                stroke.vertexDelta(bounds, positions) { x, y -> rig.strokePoint(side == 0, x, y, pose) }
+                stroke.ribbonDelta(bounds, positions) { upper, x, y -> rig.strokeCenterPoint(upper, x, y, pose) }
             }
             KeyformGrid(grid.axes, grid.cells.map { cell -> KeyformCell(cell.coordinate, MeshDeltaForm(cell.form)) })
         } else {
@@ -4391,7 +4391,7 @@ object RigBuilder {
         )
         // The mouth's shapes, laid along the ribbon's own path; the owner's are for its own mesh.
         val mouthShapes = rig?.shapes({ pose ->
-            stroke.vertexDelta(bounds, positions) { x, y -> rig.strokePoint(side == 0, x, y, pose) }
+            stroke.ribbonDelta(bounds, positions) { upper, x, y -> rig.strokeCenterPoint(upper, x, y, pose) }
         }, visible = { opens -> if (opens) 1f else Float.NaN }).orEmpty()
         val lipDrawable = ribbon.copy(blendShapes = neutralized(mouthShapes + headTurnShapes(layer, rawPositions, frame,
             turn.takeIf { MouthOutlineOwner.headOnMesh(owner.parentDeformerId?.raw) }), ribbon))
