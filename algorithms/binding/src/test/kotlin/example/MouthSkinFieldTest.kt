@@ -90,4 +90,28 @@ class MouthSkinFieldTest {
         val dLo = assertNotNull(posed.displacement(0f, -0.5f, false))
         assertTrue(dLo.second >= -1e-5f, "LOWER_LIP must not be pulled up by UPPER_LIP: dy=${dLo.second}")
     }
+
+    @Test
+    fun coincidentClosedSeamBuilds2DCageAndFadesSmoothlyToOuterBoundary() {
+        val count = 17
+        val seam = FloatArray(count * 2) { i ->
+            val u = (i / 2).toFloat() / (count - 1)
+            if (i % 2 == 0) 2f * u - 1f else 0f
+        }
+        val openU = seam.copyOf()
+        val openL = seam.copyOf()
+        for (i in 0 until count) {
+            val hump = kotlin.math.sin(Math.PI.toFloat() * i / (count - 1))
+            openU[i * 2 + 1] -= 0.4f * hump
+            openL[i * 2 + 1] += 0.6f * hump
+        }
+        val field = MouthSkinField(seam, seam, Bounds(-2f, -1.5f, 2f, 1.5f))
+        val posed = field.pose(openU, openL) { _, _ -> 0f to 0f }
+        val nearRim = assertNotNull(posed.displacement(0f, 0.05f, false))
+        val midChin = assertNotNull(posed.displacement(0f, 0.75f, false))
+        val nearBottom = assertNotNull(posed.displacement(0f, 1.45f, false))
+        assertTrue(nearRim.second > 0.50f, "Near seam must follow lower rim opening: ${nearRim.second}")
+        assertTrue(midChin.second in 0.1f..nearRim.second, "Mid lower lip must interpolate smoothly: ${midChin.second}")
+        assertTrue(nearBottom.second < 0.1f, "Outer lower lip must fade smoothly to 0: ${nearBottom.second}")
+    }
 }

@@ -20,19 +20,53 @@ class MouthSkinField(upper: FloatArray, lower: FloatArray, bounds: Bounds) {
     private val locations = ConcurrentHashMap<Triple<Float, Float, Boolean?>, Location>()
 
     init {
+        val apertureSpan = (0 until count).maxOf { i ->
+            hypot(upper[i * 2] - lower[i * 2], upper[i * 2 + 1] - lower[i * 2 + 1])
+        }
+        val collapsed = apertureSpan <= 1e-3f
         for ((s, sample) in samples.withIndex()) {
             val curve = if (sample.first) upper else lower
             val x = curve[sample.second * 2]; val y = curve[sample.second * 2 + 1]
-            val dx = x - centerX; val dy = y - centerY
-            val reachX = if (dx > 0f) (outer.right - centerX) / dx else if (dx < 0f) (outer.left - centerX) / dx else Float.POSITIVE_INFINITY
-            val reachY = if (dy > 0f) (outer.bottom - centerY) / dy else if (dy < 0f) (outer.top - centerY) / dy else Float.POSITIVE_INFINITY
-            // Coincident centre samples collapse their radial ring without 0 * infinity.
-            val reach = min(reachX, reachY).coerceAtLeast(1f).let { if (it.isFinite()) it else 1f }
+            val outX: Float
+            val outY: Float
+            if (collapsed) {
+                // Coincident closed seams have zero vertical ray component; map the upper
+                // half to the top perimeter of [outer] and the lower half to the bottom.
+                val topHalf = s < count
+                val u = if (topHalf) s.toFloat() / (count - 1).coerceAtLeast(1)
+                else 1f - (s - (count - 1)).toFloat() / (sectors - (count - 1)).coerceAtLeast(1)
+                val edgeY = if (topHalf) outer.top else outer.bottom
+                when {
+                    u < 0.2f -> {
+                        val t = u / 0.2f
+                        outX = outer.left
+                        outY = centerY + t * (edgeY - centerY)
+                    }
+                    u > 0.8f -> {
+                        val t = (1f - u) / 0.2f
+                        outX = outer.right
+                        outY = centerY + t * (edgeY - centerY)
+                    }
+                    else -> {
+                        val t = (u - 0.2f) / 0.6f
+                        outX = outer.left + t * (outer.right - outer.left)
+                        outY = edgeY
+                    }
+                }
+            } else {
+                val dx = x - centerX; val dy = y - centerY
+                val reachX = if (dx > 0f) (outer.right - centerX) / dx else if (dx < 0f) (outer.left - centerX) / dx else Float.POSITIVE_INFINITY
+                val reachY = if (dy > 0f) (outer.bottom - centerY) / dy else if (dy < 0f) (outer.top - centerY) / dy else Float.POSITIVE_INFINITY
+                // Coincident centre samples collapse their radial ring without 0 * infinity.
+                val reach = min(reachX, reachY).coerceAtLeast(1f).let { if (it.isFinite()) it else 1f }
+                outX = centerX + dx * reach
+                outY = centerY + dy * reach
+            }
             for (r in 0..rings) {
                 val t = r.toFloat() / rings
                 val i = (r * sectors + s) * 2
-                rest[i] = x + t * (centerX + dx * reach - x)
-                rest[i + 1] = y + t * (centerY + dy * reach - y)
+                rest[i] = x + t * (outX - x)
+                rest[i + 1] = y + t * (outY - y)
             }
         }
         triangles = buildList {
