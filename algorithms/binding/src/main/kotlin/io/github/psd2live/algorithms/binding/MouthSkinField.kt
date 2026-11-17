@@ -26,7 +26,8 @@ class MouthSkinField(upper: FloatArray, lower: FloatArray, bounds: Bounds) {
             val dx = x - centerX; val dy = y - centerY
             val reachX = if (dx > 0f) (outer.right - centerX) / dx else if (dx < 0f) (outer.left - centerX) / dx else Float.POSITIVE_INFINITY
             val reachY = if (dy > 0f) (outer.bottom - centerY) / dy else if (dy < 0f) (outer.top - centerY) / dy else Float.POSITIVE_INFINITY
-            val reach = min(reachX, reachY).coerceAtLeast(1f)
+            // Coincident centre samples collapse their radial ring without 0 * infinity.
+            val reach = min(reachX, reachY).coerceAtLeast(1f).let { if (it.isFinite()) it else 1f }
             for (r in 0..rings) {
                 val t = r.toFloat() / rings
                 val i = (r * sectors + s) * 2
@@ -50,10 +51,12 @@ class MouthSkinField(upper: FloatArray, lower: FloatArray, bounds: Bounds) {
             val l = locations.computeIfAbsent(Triple(x, y, upper)) { locate(x, y, upper) }
             if (l.a < 0) return null
             fun coordinate(axis: Int): Float {
-                fun at(i: Int) = if (i == positions.size / 2) { if (axis == 0) center.first else center.second } else positions[i * 2 + axis]
+                fun at(i: Int) = if (i == positions.size / 2) {
+                    if (axis == 0) center.first - centerX else center.second - centerY
+                } else positions[i * 2 + axis] - rest[i * 2 + axis]
                 return l.wa * at(l.a) + l.wb * at(l.b) + l.wc * at(l.c)
             }
-            return (coordinate(0) - x) to (coordinate(1) - y)
+            return coordinate(0) to coordinate(1)
         }
     }
 
@@ -72,17 +75,35 @@ class MouthSkinField(upper: FloatArray, lower: FloatArray, bounds: Bounds) {
                 p[i + 1] += (1f - t) * dy + t * far.second
             }
         }
-        // The boundary stays exact; area constraints adjust only the intervening skin.
+        // The boundary stays exact; displacement smoothing and area constraints adjust only the intervening skin.
         val wanted = p.copyOf()
+        val scratch = FloatArray(p.size)
         for (iteration in 0 until 120) {
             var corrections = 0
             if (iteration in 1..59) {
-                for (i in sectors * 2 until rings * sectors * 2) p[i] += 0.02f * (wanted[i] - p[i])
+                for (r in 1 until rings) for (s in 0 until sectors) {
+                    val idx = (r * sectors + s) * 2
+                    val prevS = (r * sectors + (s + sectors - 1) % sectors) * 2
+                    val nextS = (r * sectors + (s + 1) % sectors) * 2
+                    val prevR = ((r - 1) * sectors + s) * 2
+                    val nextR = ((r + 1) * sectors + s) * 2
+                    for (axis in 0..1) {
+                        val avgD = 0.25f * (
+                            (p[prevS + axis] - rest[prevS + axis]) +
+                            (p[nextS + axis] - rest[nextS + axis]) +
+                            (p[prevR + axis] - rest[prevR + axis]) +
+                            (p[nextR + axis] - rest[nextR + axis])
+                        )
+                        scratch[idx + axis] = p[idx + axis] + 0.15f * ((rest[idx + axis] + avgD) - p[idx + axis]) +
+                            0.02f * (wanted[idx + axis] - p[idx + axis])
+                    }
+                }
+                System.arraycopy(scratch, sectors * 2, p, sectors * 2, (rings - 1) * sectors * 2)
             }
             for (t in areas.indices) {
                 val a = triangles[t * 3]; val b = triangles[t * 3 + 1]; val c = triangles[t * 3 + 2]
                 val sign = if (areas[t] < 0f) -1f else 1f
-                val deficit = abs(areas[t]) * 0.01f - sign * area(p, a, b, c)
+                val deficit = abs(areas[t]) * 0.05f - sign * area(p, a, b, c)
                 if (deficit <= 1e-6f) continue
                 corrections++
                 val ids = intArrayOf(a, b, c)
@@ -114,7 +135,19 @@ class MouthSkinField(upper: FloatArray, lower: FloatArray, bounds: Bounds) {
             return if (min(wa, min(wb, wc)) >= -1e-5f) Location(a, b, c, wa, wb, wc) else null
         }
         if (x in outer.left..outer.right && y in outer.top..outer.bottom) {
-            for (t in triangles.indices step 3) triangle(triangles[t], triangles[t + 1], triangles[t + 2])?.let { return it }
+            val leftCornerX = min(rest[0], rest[(count - 1) * 2])
+            val rightCornerX = max(rest[0], rest[(count - 1) * 2])
+            val insideCorners = upper != null && x > leftCornerX && x < rightCornerX
+            if (insideCorners) {
+                val sectorRange = if (upper == true) 0 until count - 1 else count - 1 until sectors
+                for (r in 0 until rings) for (s in sectorRange) {
+                    val base = (r * sectors + s) * 6
+                    triangle(triangles[base], triangles[base + 1], triangles[base + 2])?.let { return it }
+                    triangle(triangles[base + 3], triangles[base + 4], triangles[base + 5])?.let { return it }
+                }
+            } else {
+                for (t in triangles.indices step 3) triangle(triangles[t], triangles[t + 1], triangles[t + 2])?.let { return it }
+            }
             if (upper != null) {
                 var nearest = -1
                 var distance = Float.POSITIVE_INFINITY
@@ -129,10 +162,15 @@ class MouthSkinField(upper: FloatArray, lower: FloatArray, bounds: Bounds) {
                 }
                 if (nearest >= 0) {
                     val a = nearest; val b = (a + 1) % sectors; val c = sectors + a
-                    val den = area(rest, a, b, c)
-                    val wb = ((x - rest[a * 2]) * (rest[c * 2 + 1] - rest[a * 2 + 1]) - (y - rest[a * 2 + 1]) * (rest[c * 2] - rest[a * 2])) / den
-                    val wc = ((rest[b * 2] - rest[a * 2]) * (y - rest[a * 2 + 1]) - (rest[b * 2 + 1] - rest[a * 2 + 1]) * (x - rest[a * 2])) / den
-                    return Location(a, b, c, 1f - wb - wc, wb, wc)
+                    // Lip paint can extend into the aperture, outside the skin cage.
+                    // Extrapolating a thin outer-ring triangle through this hole amplifies
+                    // closure motion and folds that paint. Carry it with its own nearest
+                    // lip boundary instead, preserving its rest offset and bounded motion.
+                    val vx = rest[b * 2] - rest[a * 2]
+                    val vy = rest[b * 2 + 1] - rest[a * 2 + 1]
+                    val t = (((x - rest[a * 2]) * vx + (y - rest[a * 2 + 1]) * vy) /
+                        (vx * vx + vy * vy).coerceAtLeast(1e-10f)).coerceIn(0f, 1f)
+                    return Location(a, b, c, 1f - t, t, 0f)
                 }
             }
             for (s in 0 until sectors) triangle(s, (s + 1) % sectors, rest.size / 2, true)?.let { return it }
