@@ -14,6 +14,45 @@ import kotlin.test.*
 class WorkspacePartEditingTest {
     @TempDir lateinit var temp: Path
 
+    @Test fun enablingJawAfterDefaultHairPreservesChainValuesAcrossReopen(): Unit = runBlocking {
+        val builder = WorkspacePreviewBuilder()
+        val empty = Characters.head().copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val targets = builder.build(empty).rig.puppet.drawables.map { ModifierTarget("mesh", it.id.raw) }
+        fun config() = buildJsonObject { put("scaffold", "structure") }
+        val hairConfig = buildJsonObject {
+            put("scaffold", "structure")
+            putJsonObject("dependencies") { put("body/legacy", "body"); put("face/legacy", "face") }
+            putJsonObject("values") { put("swing", 125f); put("softness", 65f) }
+        }
+        val stack = RigModifierStack().add("rig.scaffold", 2, targets, id = "structure")
+            .add("body/legacy", 1, targets, config(), id = "body")
+            .add("face/legacy", 1, targets, config(), id = "face")
+            .add("mouth/fitted", 1, targets, config(), id = "mouth")
+            .add("hair", 1, targets, hairConfig, id = "hair")
+            .add("mouth.jaw", 1, targets, buildJsonObject {
+                put("scaffold", "structure")
+                put("base", "mouth")
+            }, id = "jaw")
+        val disabled = stack.copy(instances = stack.instances.map { if (it.id == "jaw") it.copy(enabled = false) else it })
+        val document = empty.copy(rigEdits = RigEditOverlay(modifierStack = disabled.toJson()))
+        val runtime = WorkspaceRuntime<RigPreviewModel>({ builder.build(it) }, rebuildFrom = { doc, prior -> builder.build(doc, prior) })
+        runtime.install(runtime.state.value.state, "hair-parts", document, builder.build(document))
+        val before = runtime.capture()
+        WorkspaceDocumentCommands(runtime).execute(before.projectId, before.state, "Enable jaw",
+            listOf(WorkspaceDocumentOperation("modifier_enable", buildJsonObject {
+                put("id", "jaw"); put("enabled", true)
+            })), MutationAuthor.USER)
+        val edited = runtime.capture()
+        assertTrue(RigModifierStack.fromJson(edited.document.rigEdits.modifierStack!!).instances.last().enabled)
+        assertEquals(hairConfig, RigModifierStack.fromJson(edited.document.rigEdits.modifierStack!!).instances.single { it.id == "hair" }.config)
+        runtime.checkout(edited.projectId, edited.state, before.historyHead)
+        runtime.checkout(edited.projectId, runtime.capture().state, edited.historyHead)
+        val store = WorkspaceStore(temp.resolve("hair-store"))
+        store.persistHistory("hair-parts", runtime.history())
+        val restored = assertNotNull(WorkspaceStore(store.root).loadHistory("hair-parts")).head().snapshot
+        assertEquals(RigIrCompiler.compile(edited.model), RigIrCompiler.compile(builder.build(restored)))
+    }
+
     @Test fun browLidEditSurvivesPublicReadUndoRedoAndStoreReopen(): Unit = runBlocking {
         val artwork = Characters.browed()
         val builder = WorkspacePreviewBuilder()

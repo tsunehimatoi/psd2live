@@ -108,7 +108,7 @@ class HairChainsAlgorithm : ChangingModifierAlgorithmPlugin {
                     val aliases = chain.aliases(instance)
                     for ((native, alias) in aliases) {
                         parameters.putIfAbsent(alias, IrParameter(alias,
-                            owner.parameterName.replace(NAME_TOKEN, native.removePrefix(chain.kind.prefix)), -1f, 1f, 0f, blend = true, keys = Floats.of(floatArrayOf(-1f, 0f, 1f))))
+                            owner.parameterName.replace(NAME_TOKEN, ChainLabels.parameter(context, chain, native)), -1f, 1f, 0f, blend = true, keys = Floats.of(floatArrayOf(-1f, 0f, 1f))))
                     }
                     val rawWarp = warp(chain, id, owner.warpName, anchor, plane.frame,
                         PartId(ScaffoldBinding.partId(provider, target.id, plane.part)), aliases)
@@ -147,7 +147,7 @@ class HairChainsAlgorithm : ChangingModifierAlgorithmPlugin {
         }.map(inputDeformers::getValue)
         val groupId = instance.outputId("parameter-folder:ParamGroupPhysics")
         val tree = appendParameters(input, groupId, source.physicsFolder, added.map { it.id })
-        val physics = HairChainsPhysics.groups(input, instance, active, parameters.keys, softness, source, checkpoint)
+        val physics = HairChainsPhysics.groups(input, instance, active, parameters.keys, softness, source, context, checkpoint)
         return ModifierModelChanges(
             parameters = ModifierObjectChanges(added = added),
             parameterTree = if (tree == input.parameterTree) null else ModifierFieldChange(input.parameterTree, tree),

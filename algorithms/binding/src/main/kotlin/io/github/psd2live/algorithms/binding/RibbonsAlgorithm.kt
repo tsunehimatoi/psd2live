@@ -70,7 +70,7 @@ class RibbonsAlgorithm : ReadingModifierAlgorithmPlugin {
                 val prior = active.putIfAbsent(chain.key, chain)
                 require(prior == null || prior == chain) { "Conflicting ribbons chain order for ${layer.id}" }
                 for ((native, alias) in aliases) parameters.putIfAbsent(alias, Parameter(alias,
-                    layer.parameterName.replace(TOKEN, native.removePrefix(chain.kind.prefix)), -1f, 1f, 0f,
+                    layer.parameterName.replace(TOKEN, ChainLabels.parameter(input.context, chain, native)), -1f, 1f, 0f,
                     blend = true, keys = Floats.values(-1f, 0f, 1f)))
                 val before = requireNotNull(input.mesh(id)) { "Missing ribbons mesh: $id" }
                 val branch = input.parentsOfMesh(id)
@@ -169,7 +169,7 @@ class RibbonsAlgorithm : ReadingModifierAlgorithmPlugin {
             checkpoint()
             val aliases = chain.aliases(instance)
             for (rule in ChainMotion.physics(available + aliases.keys, .5f) { key, name ->
-                (if (key == "model.physics.clothChain") source.swayLabel else source.bounceLabel).replace(TOKEN, name)
+                (if (key == "model.physics.clothChain") source.swayLabel else source.bounceLabel).replace(TOKEN, ChainLabels.physics(input.context, name))
             }.filter { rule -> rule.outputs.all { it.parameter in aliases } }) {
                 val slot = "chain:${chain.key}:${chain.suffix(rule.outputs.first().parameter)}"
                 rules[slot] = rule.copy(outputs = rule.outputs.map { it.copy(parameter = aliases.getValue(it.parameter)) })

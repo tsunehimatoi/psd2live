@@ -692,7 +692,7 @@ internal class RigModifierSource(
             val base = when {
                 chosen == null -> area.legacy.id
                 chosen.type == area.id || chosen.type.startsWith("${area.id}.") -> {
-                    val mode = chosen.config["mode"]?.jsonPrimitive?.content ?: "fitted"
+                    val mode = chosen.config["mode"]?.jsonPrimitive?.content ?: when (area.id) { "hair" -> "chains"; "body" -> "legacy"; else -> "fitted" }
                     val candidate = "${area.id}/$mode"
                     if (candidate == RigLegacyBindings.FITTED_FACE) area.legacy.id
                     else if (RigLegacyBindings.find(candidate) != null) candidate else area.legacy.id
@@ -727,7 +727,7 @@ internal class RigModifierSource(
             val tuningType = when {
                 RigLegacyBindings.find(prev.type) != null -> prev.type
                 prev.type in partTypes -> {
-                    val mode = prev.config["mode"]?.jsonPrimitive?.content ?: "fitted"
+                    val mode = prev.config["mode"]?.jsonPrimitive?.content ?: when (prev.type) { "hair" -> "chains"; "body" -> "legacy"; else -> "fitted" }
                     val candidate = "${prev.type}/$mode"
                     if (RigLegacyBindings.find(candidate) != null) candidate else "${prev.type}/legacy"
                 }
@@ -809,17 +809,17 @@ internal class RigModifierSource(
     fun skirtContext(instance: RigModifierInstance): ModifierAlgorithmContext =
         io.github.psd2live.core.modifier.source.RigStaticSourceCollector.skirtSourceInputs(
             analysis, sourceConfig(), meshCache, meshesByLayer, instance.targets.mapTo(HashSet()) { it.id },
-            sharedOutfitTargets(instance, "outfit.ribbons"), precedingExpressionIds(instance), outfitMeshContext(instance))
+            sharedOutfitTargets(instance, "outfit.ribbons"), precedingExpressionIds(instance), outfitMeshContext(instance)).withChainLabels()
 
     fun ribbonsContext(instance: RigModifierInstance): ModifierAlgorithmContext =
         io.github.psd2live.core.modifier.source.RigStaticSourceCollector.ribbonsSourceInputs(
             analysis, sourceConfig(), meshCache, meshesByLayer, instance.targets.mapTo(HashSet()) { it.id },
-            sharedOutfitTargets(instance, "outfit.skirt"), precedingExpressionIds(instance), outfitMeshContext(instance))
+            sharedOutfitTargets(instance, "outfit.skirt"), precedingExpressionIds(instance), outfitMeshContext(instance)).withChainLabels()
 
     fun creatureContext(instance: RigModifierInstance): ModifierAlgorithmContext =
         io.github.psd2live.core.modifier.source.RigStaticSourceCollector.creatureSourceInputs(
             analysis, sourceConfig(), meshCache, meshesByLayer, instance.targets.mapTo(HashSet()) { it.id },
-            precedingExpressionIds(instance), outfitMeshContext(instance))
+            precedingExpressionIds(instance), outfitMeshContext(instance)).withChainLabels()
 
     fun workerBindingContext(instance: RigModifierInstance): ModifierAlgorithmContext {
         val spec = RigLegacyBindings.spec(instance.type)
@@ -1128,6 +1128,15 @@ internal class RigModifierSource(
         )
     }
 
+    private fun ModifierAlgorithmContext.withChainLabels(): ModifierAlgorithmContext = ModifierAlgorithmContext(
+        JsonObject(values + ("chain_labels" to buildJsonObject {
+            for (word in listOf("Front", "Side", "Back", "Ahoge", "Tail", "Skirt", "Ribbon", "Pendant", "Ear", "AnimalTail", "Wing", "L", "C", "R", "Y")) {
+                put(word, io.github.psd2live.i18n.tr("model.chain.$word"))
+            }
+            put("segment", io.github.psd2live.i18n.tr("model.chain.segment", "{segment}"))
+        })), resources, upstream,
+    )
+
     fun hairChainsContext(instance: RigModifierInstance): ModifierAlgorithmContext {
         val scaffold = provider(instance)
         val frontHairSway = scaffold.config["frontHairSway"]?.jsonPrimitive?.boolean ?: true
@@ -1135,7 +1144,7 @@ internal class RigModifierSource(
         return io.github.psd2live.core.modifier.source.RigStaticSourceCollector.hairChainsSourceInputs(
             analysis, sourceConfig(), meshCache, meshesByLayer, instance.targets.mapTo(HashSet()) { it.id },
             frontHairSway, backHairSway, precedingExpressionIds(instance),
-        )
+        ).withChainLabels()
     }
 
     fun hairPartContext(instance: RigModifierInstance): ModifierAlgorithmContext {

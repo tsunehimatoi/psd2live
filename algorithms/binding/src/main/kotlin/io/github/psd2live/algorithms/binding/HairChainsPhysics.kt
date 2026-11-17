@@ -17,7 +17,7 @@ internal fun ChainMotion.aliases(instance: RigModifierInstance) =
 
 internal object HairChainsPhysics {
     fun groups(input: RigIR, instance: RigModifierInstance, active: List<ChainMotion>, parameters: Set<String>,
-               softness: Float, source: HairChainsInputs, checkpoint: () -> Unit): List<PhysicsGroup> {
+               softness: Float, source: HairChainsInputs, context: io.github.psd2live.core.modifier.ModifierAlgorithmContext, checkpoint: () -> Unit): List<PhysicsGroup> {
         if (instance.config["physicsEnabled"]?.jsonPrimitive?.booleanOrNull == false) return emptyList()
         val available = input.parameters.mapTo(parameters.toMutableSet()) { it.id }
         val rules = linkedMapOf<String, RigPhysicsEdit>()
@@ -25,7 +25,7 @@ internal object HairChainsPhysics {
             checkpoint()
             val aliases = chain.aliases(instance)
             for (rule in ChainMotion.physics(available + aliases.keys, softness) { key, name ->
-                (source.physicsLabels[key] ?: HairChainsAlgorithm.NAME_TOKEN).replace(HairChainsAlgorithm.NAME_TOKEN, name)
+                (source.physicsLabels[key] ?: HairChainsAlgorithm.NAME_TOKEN).replace(HairChainsAlgorithm.NAME_TOKEN, ChainLabels.physics(context, name))
             }.filter { rule -> rule.outputs.all { it.parameter in aliases } }) {
                 val slot = "chain:${chain.key}:${chain.suffix(rule.outputs.first().parameter)}"
                 rules[slot] = rule.copy(outputs = rule.outputs.map { it.copy(parameter = aliases.getValue(it.parameter)) })
