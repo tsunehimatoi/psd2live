@@ -154,6 +154,7 @@ class MouthTongueAlgorithm : ReadingModifierAlgorithmPlugin {
             shapes.add(index, projected)
             ModifierObjectUpdate(mesh, mesh.copy(shapes = PuppetIr.meshToIr(drawable.copy(blendShapes = shapes)).shapes))
         }
+        val ribbonUpdates = mouthOutlineRibbonUpdates(input, live, context, mouth, setOf(MouthRig.TONGUE_OUT), rest, checkpoint)
         val (partUpdates, rootChildrenChange, renderRootChange) = placeTongueCopies(input, ownerToCopy)
         val folder = PuppetParameterNode.Group(ParameterGroupId(instance.outputId("parameter-folder:ParamGroupMouth")),
             context.values.getValue("folder").jsonPrimitive.content, true, listOf(PuppetParameterNode.Param(MouthRig.TONGUE_OUT)))
@@ -162,7 +163,7 @@ class MouthTongueAlgorithm : ReadingModifierAlgorithmPlugin {
         val convertedTree = PuppetIr.toIr(model.copy(parameterTree = updatedTree)).parameterTree
         return ModifierModelChanges(parameters = ModifierObjectChanges(added = additions),
             parts = ModifierObjectChanges(updated = partUpdates),
-            meshes = ModifierObjectChanges(added = copies, updated = updates),
+            meshes = ModifierObjectChanges(added = copies, updated = updates + ribbonUpdates),
             parameterTree = convertedTree.takeIf { it != tree }?.let { ModifierFieldChange(tree, it) },
             rootChildren = rootChildrenChange,
             renderRoot = renderRootChange)
@@ -226,17 +227,19 @@ class MouthTongueAlgorithm : ReadingModifierAlgorithmPlugin {
         val optionalUpstream = setOf("face/fitted", "face.depth-turn", "mouth.outline", "mouth.vowel")
         private val eyeOpen = setOf("ParamEyeLOpen", "ParamEyeROpen")
 
-        fun context(source: ModifierAlgorithmContext, follows: Map<String, MouthRig.Follow>, name: String, folder: String) =
+        fun context(source: ModifierAlgorithmContext, follows: Map<String, MouthRig.Follow>, name: String,
+                    folder: String, outlineRibbons: JsonArray? = null) =
             ModifierAlgorithmContext(buildJsonObject {
                 put("schema", "mouth-tongue/1")
                 put("source", source.values)
                 put("follows", JsonObject(follows.mapValues { JsonPrimitive(it.value.name) }))
                 put("name", name)
                 put("folder", folder)
+                if (outlineRibbons != null && outlineRibbons.isNotEmpty()) put("outlineRibbons", outlineRibbons)
             }, source.resources)
 
         fun parameter(context: ModifierAlgorithmContext): Parameter {
-            require(context.values.keys == setOf("schema", "source", "follows", "name", "folder") &&
+            require((context.values.keys - "outlineRibbons") == setOf("schema", "source", "follows", "name", "folder") &&
                 context.values.getValue("schema").jsonPrimitive.content == "mouth-tongue/1")
             return Parameter(MouthRig.TONGUE_OUT.raw, context.values.getValue("name").jsonPrimitive.content,
                 0f, 1f, 0f, blend = true, keys = Floats.wrap(floatArrayOf(0f, 1f)))

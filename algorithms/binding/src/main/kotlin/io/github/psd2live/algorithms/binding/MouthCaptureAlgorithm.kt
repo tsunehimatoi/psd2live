@@ -166,6 +166,7 @@ class MouthCaptureAlgorithm : ReadingModifierAlgorithmPlugin {
                 shapes = next.shapes + extra, offsets = next.offsets, channels = next.channels)
             after.takeIf { it != mesh }?.let { ModifierObjectUpdate(mesh, it) }
         }
+        val ribbonUpdates = mouthOutlineRibbonUpdates(input, live, context, mouth, ranges.keys, rest, checkpoint)
         val parameterView = model.copy(parameters = model.parameters.filter { it.id.raw in byParameter })
         val folder = PuppetParameterNode.Group(ParameterGroupId(instance.outputId("parameter-folder:ParamGroupMouth")),
             context.values.getValue("folder").jsonPrimitive.content, true, declared.map { PuppetParameterNode.Param(ParameterId(it.id)) })
@@ -173,7 +174,7 @@ class MouthCaptureAlgorithm : ReadingModifierAlgorithmPlugin {
             instance.outputAliases.keys.any { it.startsWith("parameter-folder:") })
         val convertedTree = PuppetIr.toIr(parameterView.copy(parameterTree = updatedTree)).parameterTree
         return ModifierModelChanges(parameters = ModifierObjectChanges(added = additions),
-            meshes = ModifierObjectChanges(updated = updates),
+            meshes = ModifierObjectChanges(updated = updates + ribbonUpdates),
             deformers = ModifierObjectChanges(added = carriers),
             parameterTree = convertedTree.takeIf { it != tree }?.let { ModifierFieldChange(tree, it) })
     }
@@ -246,7 +247,8 @@ class MouthCaptureAlgorithm : ReadingModifierAlgorithmPlugin {
         private val captureIds = ranges.keys.mapTo(hashSetOf()) { it.raw }
         private val vowelIds = MouthRig.VOWELS.mapTo(hashSetOf()) { it.second }
 
-        fun context(source: ModifierAlgorithmContext, follows: Map<String, MouthRig.Follow?>, lippedSkin: Set<String>, names: Map<String, String>, folder: String) =
+        fun context(source: ModifierAlgorithmContext, follows: Map<String, MouthRig.Follow?>, lippedSkin: Set<String>,
+                    names: Map<String, String>, folder: String, outlineRibbons: JsonArray? = null) =
             ModifierAlgorithmContext(buildJsonObject {
                 put("schema", "mouth-capture/1")
                 put("source", source.values)
@@ -254,10 +256,11 @@ class MouthCaptureAlgorithm : ReadingModifierAlgorithmPlugin {
                 put("lippedSkin", JsonArray(lippedSkin.map(::JsonPrimitive)))
                 put("names", JsonObject(names.mapValues { JsonPrimitive(it.value) }))
                 put("folder", folder)
+                if (outlineRibbons != null && outlineRibbons.isNotEmpty()) put("outlineRibbons", outlineRibbons)
             }, source.resources)
 
         fun parameters(context: ModifierAlgorithmContext): List<Parameter> {
-            require(context.values.keys == setOf("schema", "source", "follows", "lippedSkin", "names", "folder") &&
+            require((context.values.keys - "outlineRibbons") == setOf("schema", "source", "follows", "lippedSkin", "names", "folder") &&
                 context.values.getValue("schema").jsonPrimitive.content == "mouth-capture/1")
             val names = context.values.getValue("names").jsonObject
             return ranges.map { (id, min) ->

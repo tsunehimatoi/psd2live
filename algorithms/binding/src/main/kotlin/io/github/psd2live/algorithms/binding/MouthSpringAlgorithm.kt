@@ -258,6 +258,61 @@ internal fun mouthProjectShapes(
         correspondence, correspondence, checkpoint)
 }
 
+/** Appends fitted-mouth parameter shapes onto any upstream mouth-outline ribbons. */
+internal fun mouthOutlineRibbonUpdates(
+    input: ModifierEvaluationInput,
+    live: List<Parameter>,
+    context: ModifierAlgorithmContext,
+    mouth: MouthRig,
+    parameterIds: Set<ParameterId>,
+    rest: (ParameterId) -> Float,
+    checkpoint: () -> Unit,
+): List<ModifierObjectUpdate<Mesh>> {
+    val entries = context.values["outlineRibbons"]?.jsonArray ?: return emptyList()
+    if (entries.isEmpty()) return emptyList()
+    return entries.mapNotNull { element ->
+        checkpoint()
+        val obj = element.jsonObject
+        val id = obj.getValue("id").jsonPrimitive.content
+        val mesh = input.mesh(id) ?: return@mapNotNull null
+        val geometry = mesh.geometry ?: return@mapNotNull null
+        val side = obj.getValue("side").jsonPrimitive.int
+        val thickness = obj.getValue("thickness").jsonPrimitive.float
+        val frame = Json.decodeFromJsonElement(ModifierSourceBounds.serializer(), obj.getValue("frame"))
+        val columns = Json.decodeFromJsonElement(
+            kotlinx.serialization.builtins.ListSerializer(MouthColumn.serializer()),
+            obj.getValue("columns"),
+        )
+        if (columns.size < 2) return@mapNotNull null
+        val stroke = MouthOutlineStroke(columns, side, thickness)
+        val restPositions = stroke.parentPositions(frame)
+        if (geometry.positions.size != restPositions.size) return@mapNotNull null
+        val shapes = mouth.shapes({ pose ->
+            stroke.delta(frame, restPositions) { x, y -> mouth.point(x, y, pose) }
+        }, visible = { if (it) 1f else Float.NaN }).filter { it.parameterId in parameterIds }
+        if (shapes.isEmpty()) return@mapNotNull null
+        val model = PuppetIr.toPuppet(RigIR(input.canvas, live, meshes = listOf(mesh)))
+        val drawable = model.drawables.single()
+        val opacity = if (drawable.opacity <= 0f) 0f else drawable.channelGrids.scalarAt(FormChannel.OPACITY, drawable.opacity, rest)
+        val order = drawable.channelGrids.scalarAt(FormChannel.DRAW_ORDER, drawable.drawOrder, rest)
+        val multiply = drawable.channelGrids.colorAt(FormChannel.MULTIPLY_COLOR, drawable.multiplyColor, rest)
+        val screen = drawable.channelGrids.colorAt(FormChannel.SCREEN_COLOR, drawable.screenColor, rest)
+        val existingIds = drawable.blendShapes.mapTo(hashSetOf()) { it.parameterId }
+        val neutralized = shapes.filterNot { it.parameterId in existingIds }.map { binding ->
+            binding.copy(forms = binding.forms.map { form ->
+                form?.let {
+                    MeshForm(it.positionDeltas, order,
+                        if (drawable.opacity <= 0f) 0f else if (it.opacity.isNaN()) opacity else it.opacity * drawable.opacity,
+                        multiply, screen)
+                }
+            })
+        }
+        if (neutralized.isEmpty()) return@mapNotNull null
+        val next = PuppetIr.meshToIr(drawable.copy(blendShapes = drawable.blendShapes + neutralized))
+        ModifierObjectUpdate(mesh, mesh.copy(shapes = next.shapes))
+    }
+}
+
 /** Emits only parameter declarations and folder placement when a fitted mouth source is absent. */
 internal fun mouthParameterOnlyChanges(
     input: ModifierEvaluationInput,

@@ -76,6 +76,7 @@ class MouthPartAlgorithm : ChangingModifierAlgorithmPlugin {
         val subContexts = context.values["sub_contexts"]?.jsonObject
         val subConfigs = context.values["sub_configs"]?.jsonObject
         val rasters = mutableListOf<ModifierRasterOutput>()
+        val rasterIds = hashSetOf<String>()
 
         for (feature in subFeatures) {
             if (instance.config[feature.configFlag]?.jsonPrimitive?.booleanOrNull != true) continue
@@ -95,8 +96,23 @@ class MouthPartAlgorithm : ChangingModifierAlgorithmPlugin {
                     else -> error("Unsupported mouth sub-feature plugin: ${feature.type}")
                 }
             }
-            rasters += stepChanges.rasters
+            for (added in stepChanges.rasters) {
+                rasters += added
+                rasterIds += added.mesh.id
+            }
+            val updatedById = stepChanges.meshes.updated.filter { it.after.id in rasterIds }.associate { it.after.id to it.after }
+            if (updatedById.isNotEmpty()) {
+                for (i in rasters.indices) {
+                    updatedById[rasters[i].mesh.id]?.let { updatedMesh ->
+                        val prev = rasters[i]
+                        rasters[i] = ModifierRasterOutput(prev.owner, updatedMesh, prev.layer, prev.pixels, prev.paths, prev.uvSpace)
+                    }
+                }
+            }
             current = stepChanges.copy(rasters = emptyList()).apply(current, checkpoint)
+            if (stepChanges.rasters.isNotEmpty()) {
+                current = current.copy(meshes = current.meshes + stepChanges.rasters.map { it.mesh })
+            }
             upstream += ModifierUpstreamCapability(
                 capability = feature.type,
                 type = feature.type,
@@ -107,6 +123,9 @@ class MouthPartAlgorithm : ChangingModifierAlgorithmPlugin {
             )
         }
 
+        if (rasterIds.isNotEmpty()) {
+            current = current.copy(meshes = current.meshes.filterNot { it.id in rasterIds })
+        }
         val resolvedRasters = rasters.map { raster ->
             val finalOwner = current.meshes.firstOrNull { it.id == raster.owner.id }
             if (finalOwner != null && finalOwner != raster.owner) {

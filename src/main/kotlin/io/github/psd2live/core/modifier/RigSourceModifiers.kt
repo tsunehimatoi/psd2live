@@ -1297,14 +1297,39 @@ internal class RigModifierSource(
         val followsOrNull = targetLayers.mapValues { (_, layer) ->
             if (boundFitted != null && boundFitted.covers(layer)) boundFitted.follow(layer) else null
         }
+        val outlineRibbons = if (module !in setOf(RigModules.MOUTH_VOWEL, RigModules.MOUTH_CAPTURE, RigModules.MOUTH_TONGUE)) null else {
+            val foldedOutline = stack.instances.singleOrNull {
+                it.id == instance.id && it.type == "mouth" && ModifierPartConfig.enabled(it.config, "outline")
+            }?.let { partChild(it, RigModules.MOUTH_OUTLINE.id) }
+            val outlines = preceding.filter { it.type == "mouth.outline" && it.config["scaffold"] == instance.config["scaffold"] } +
+                listOfNotNull(foldedOutline)
+            if (outlines.isEmpty()) null else buildJsonArray {
+                for (outlineInstance in outlines) {
+                    val outlineInputs = io.github.psd2live.algorithms.binding.MouthOutlineInputs.decode(mouthOutlineContext(outlineInstance))
+                    val thickness = outlineInstance.config["values"]?.jsonObject?.get("thickness")?.jsonPrimitive?.floatOrNull ?: 1.5f
+                    for ((ownerId, target) in outlineInputs.targets) {
+                        if (ownerId !in targetLayers || target.rasterColumns.size < 2 || target.sides.isEmpty()) continue
+                        for (side in target.sides.sorted()) addJsonObject {
+                            put("id", outlineInstance.outputId("mouth-lip:$ownerId:$side"))
+                            put("side", side)
+                            put("thickness", thickness)
+                            put("frame", Json.encodeToJsonElement(io.github.psd2live.core.modifier.ModifierSourceBounds.serializer(), target.frame))
+                            put("columns", Json.encodeToJsonElement(
+                                kotlinx.serialization.builtins.ListSerializer(io.github.psd2live.algorithms.binding.MouthColumn.serializer()),
+                                target.rasterColumns))
+                        }
+                    }
+                }
+            }.takeIf { it.isNotEmpty() }
+        }
         return when (module) {
             RigModules.MOUTH_VOWEL -> io.github.psd2live.algorithms.binding.MouthVowelAlgorithm.context(
-                inner, followsOrNull, module.defines.associate { it.id to io.github.psd2live.i18n.tr(it.nameKey) }, folder)
+                inner, followsOrNull, module.defines.associate { it.id to io.github.psd2live.i18n.tr(it.nameKey) }, folder, outlineRibbons)
             RigModules.MOUTH_CAPTURE -> io.github.psd2live.algorithms.binding.MouthCaptureAlgorithm.context(
-                inner, followsOrNull, lippedSkin, module.defines.associate { it.id to io.github.psd2live.i18n.tr(it.nameKey) }, folder)
+                inner, followsOrNull, lippedSkin, module.defines.associate { it.id to io.github.psd2live.i18n.tr(it.nameKey) }, folder, outlineRibbons)
             RigModules.MOUTH_TONGUE -> io.github.psd2live.algorithms.binding.MouthTongueAlgorithm.context(
                 inner, targetLayers.mapValues { (_, layer) -> requireNotNull(boundFitted).follow(layer) },
-                io.github.psd2live.i18n.tr(module.defines.single().nameKey), folder)
+                io.github.psd2live.i18n.tr(module.defines.single().nameKey), folder, outlineRibbons)
             RigModules.MOUTH_SPRING -> io.github.psd2live.algorithms.binding.MouthSpringAlgorithm.context(
                 // Spring captures only the jaw overshoot. Tongue motion belongs to its own
                 // binding and does not affect the neutral/open jaw poses used by spring.

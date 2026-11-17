@@ -182,4 +182,36 @@ class MouthOutlinePluginParityTest {
             assertEquals(instance.outputId("mouth-art:$id:$side"), output.layer.key)
         }
     }
+
+    @Test fun outlineRibbonsFollowDownstreamVowelCaptureAndTongueParameters() {
+        val document = Characters.mouthed()
+        val recipe = RigRecipe(true,
+            bases = mapOf("mouth" to BaseChoice("mouth/fitted")),
+            modules = RigModules.modules.associate {
+                it.id to ModuleChoice(it in setOf(RigModules.MOUTH_OUTLINE, RigModules.MOUTH_VOWEL, RigModules.MOUTH_CAPTURE, RigModules.MOUTH_TONGUE))
+            })
+        val prepared = document.copy(
+            rigEdits = RigEditOverlay(modifierStack = io.github.psd2live.core.modifier.RigModifierStack().toJson()),
+            settings = io.github.psd2live.project.WorkspaceSettingsCodec.encode(
+                document.rawConfig().copy(mouthOutlineEnabled = true, exportMotions = false, generatePhysics = false, recipe = recipe)))
+        val (_, model) = io.github.psd2live.application.WorkspacePresetInitialization.prepare(
+            prepared, io.github.psd2live.application.WorkspaceRasterWork.Direct)
+        val ribbons = model.rig.puppet.drawables.filter {
+            it.id.raw.contains("mouth-lip") || it.id.raw.contains("6d6f7574682d6c6970")
+        }
+        assertEquals(2, ribbons.size)
+        val evaluator = org.umamo.render.eval.CpuDeformationEvaluator()
+        for (parameter in listOf("ParamA", "ParamI", "ParamO", "ParamMouthX", "ParamMouthFunnel", "ParamMouthPuckerWiden", "ParamMouthShrug", "ParamMouthPressLipOpen", "ParamJawOpen")) {
+            val id = org.umamo.runtime.model.ParameterId(parameter)
+            assertTrue(ribbons.all { ribbon -> ribbon.blendShapes.any { it.parameterId == id } },
+                "Every outline ribbon must bind $parameter")
+            val rest = evaluator.evaluate(model.rig.puppet, emptyMap())
+            val posed = evaluator.evaluate(model.rig.puppet, mapOf(id to 1f))
+            assertTrue(ribbons.any { ribbon ->
+                val a = rest.worldPositions.getValue(ribbon.id)
+                val b = posed.worldPositions.getValue(ribbon.id)
+                a.indices.any { kotlin.math.abs(a[it] - b[it]) > .1f }
+            }, "Outline ribbons must follow $parameter")
+        }
+    }
 }
