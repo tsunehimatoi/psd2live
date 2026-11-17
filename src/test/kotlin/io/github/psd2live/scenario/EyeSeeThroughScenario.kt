@@ -128,7 +128,7 @@ class EyeSeeThroughScenario {
 		val plain = SeeThroughLayers.apply(authored, candidates, settings)
 		assertEquals(setOf(hair), plain.windows.keys)
 		val clipped = authored.copy(drawables = authored.drawables.map { if (it.id.raw == hair) it.copy(maskedBy = listOf(DrawableId(mesh("face")))) else it })
-		val kept = SeeThroughLayers.apply(clipped, candidates, settings)
+		val kept = SeeThroughLayers.apply(clipped, candidates, settings.copy(compositeMasks = false))
 		assertTrue(kept.windows.isEmpty() && kept.model.drawables.single { it.id.raw == hair }.maskedBy == listOf(DrawableId(mesh("face"))))
 		assertEquals(setOf(SeeThroughLayers.DropReason.BANGS_CLIPPED), windowParts(kept.notes).map { it.reason }.toSet())
 		assertEquals(4, windowParts(kept.notes).size)

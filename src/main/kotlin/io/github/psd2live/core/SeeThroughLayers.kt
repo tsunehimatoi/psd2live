@@ -18,7 +18,8 @@ import org.umamo.runtime.model.withDerivedRenderRoot
  * - A window in the bangs, for the eyes: each bang over an eye is clipped inverted by the eye's whites and lashes (and
  *   an iris no white clips), and a copy of the bang clipped by them draws in its place at the remaining opacity. The eye
  *   underneath stays whole - irides and highlights clipped by their whites show as they are, which a copy over the bangs
- *   cannot do: clipping masks only add up, so no copy is clipped by both its white and the bangs.
+ *   cannot do with one mask list: clipping masks only add up. On runtimes with offscreen drawing, a bang
+ *   that already has a mask retains it inside an isolated part carrying the additional eye mask.
  *
  * Two stages. The base rig records the [Candidate]s - each brow or eye part whose bangs cover it at rest, with those
  * bangs - in [BuiltRig.seeThrough], whatever the settings say. The finished rig ([apply]), after the journal, the
@@ -54,7 +55,7 @@ object SeeThroughLayers {
 		MASKS_MISSING("masks_missing"),
 		/** Another mesh already has the copy's id. */
 		ID_TAKEN("id_taken"),
-		/** Every bang over the eye part has clipping masks of its own, which a window would replace. */
+		/** Every bang over the eye has its own clipping, and the runtime cannot intersect it with the window. */
 		BANGS_CLIPPED("bangs_clipped"),
 		/** The document's runtime target has no inverted masks, which a window in the bangs needs. */
 		TARGET_UNSUPPORTED("target_unsupported"),
@@ -64,9 +65,9 @@ object SeeThroughLayers {
 
 	/**
 	 * What the document asks for: brows and eyes, their opacity, the gap between generated draw orders, and whether the
-	 * runtime target has the [invertedMasks] a window in the bangs needs.
+	 * runtime target has [invertedMasks] and [compositeMasks] for windows over already clipped bangs.
 	 */
-	data class Settings(val brows: Boolean, val eyes: Boolean, val opacity: Float, val drawOrderStep: Int, val invertedMasks: Boolean = true) {
+	data class Settings(val brows: Boolean, val eyes: Boolean, val opacity: Float, val drawOrderStep: Int, val invertedMasks: Boolean = true, val compositeMasks: Boolean = false) {
 		val enabled get() = brows || eyes
 
 		companion object {
@@ -76,7 +77,7 @@ object SeeThroughLayers {
 			fun of(config: PipelineConfig): Settings =
 				if (config.rigEdits.importedCmo3 != null || config.meshOnly) OFF
 				else Settings(config.seeThroughBrows, config.seeThroughEyes, config.seeThroughOpacity.coerceIn(OPACITY_RANGE), config.drawOrderStep,
-					config.runtimeTarget.supports(RuntimeFeature.ReversedMask))
+					config.runtimeTarget.supports(RuntimeFeature.ReversedMask), compositeMasks = true)
 		}
 	}
 
@@ -115,7 +116,7 @@ object SeeThroughLayers {
 
     private fun kernel() = io.github.psd2live.algorithms.binding.SeeThroughBinding(copyName = { name -> tr("model.drawable.seeThrough", name) })
     private fun Candidate.captured() = io.github.psd2live.algorithms.binding.SeeThroughBinding.Candidate(original, eyes, bangs)
-    private fun Settings.captured() = io.github.psd2live.algorithms.binding.SeeThroughBinding.Settings(brows, eyes, opacity, drawOrderStep, invertedMasks)
+    private fun Settings.captured() = io.github.psd2live.algorithms.binding.SeeThroughBinding.Settings(brows, eyes, opacity, drawOrderStep, invertedMasks, compositeMasks)
 
     fun apply(model: PuppetModel, candidates: List<Candidate>, settings: Settings,
               idFor: (DrawableId) -> DrawableId = ::copyId, earlierCopies: Set<String> = emptySet()): Result {

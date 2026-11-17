@@ -1,5 +1,13 @@
 package io.github.psd2live.algorithms.binding
 
+import org.umamo.runtime.model.AlphaBlendMode
+import org.umamo.runtime.model.BlendMode
+import org.umamo.runtime.model.BlendShapeBinding
+import org.umamo.runtime.model.Part
+import org.umamo.runtime.model.PartId
+import org.umamo.runtime.model.PartForm
+import org.umamo.runtime.model.PartComposite
+import org.umamo.runtime.model.PartGroupMode
 import org.umamo.runtime.model.ChannelGrids
 import org.umamo.runtime.model.ChannelValue
 import org.umamo.runtime.model.Drawable
@@ -21,7 +29,7 @@ class SeeThroughBinding(
     data class Candidate(val original: String, val eyes: Boolean, val bangs: List<String>)
     enum class DropReason { ORIGINAL_MISSING, MASKS_MISSING, ID_TAKEN, BANGS_CLIPPED, TARGET_UNSUPPORTED }
     data class Note(val original: String, val reason: DropReason)
-    data class Settings(val brows: Boolean, val eyes: Boolean, val opacity: Float, val drawOrderStep: Int, val invertedMasks: Boolean = true) {
+    data class Settings(val brows: Boolean, val eyes: Boolean, val opacity: Float, val drawOrderStep: Int, val invertedMasks: Boolean = true, val compositeMasks: Boolean = false) {
         val enabled get() = brows || eyes
     }
     class Result(val model: PuppetModel, val copies: Map<String, String>, val notes: List<Note>, val windows: Map<String, List<String>> = emptyMap())
@@ -45,7 +53,7 @@ class SeeThroughBinding(
 	 * A window opens in each such bang over an unclipped eye part: the bang is clipped inverted by every eye part it
 	 * covers, and a copy of it clipped by them, at its opacity times one minus [Settings.opacity], draws just above it
 	 * (below any feature copy over it) and lists just in front of it in its part. A bang with masks of its own keeps
-	 * them and opens none.
+	 * them on its drawable and applies the eye window on an isolated parent when the runtime supports composite masks.
 	 */
 	fun apply(
 		model: PuppetModel, candidates: List<Candidate>, settings: Settings,
@@ -80,33 +88,61 @@ class SeeThroughBinding(
 		}
 		val windowed = LinkedHashMap<String, Drawable>()
 		val refused = LinkedHashMap<DrawableId, DropReason>()
+		val wrappers = LinkedHashMap<DrawableId, Part>()
+		val openedWindows = LinkedHashMap<String, List<String>>()
+		val partIds = model.parts.mapTo(HashSet()) { it.id }
 		for ((bangId, parts) in windows) {
 			checkpoint()
 			val bang = byId.getValue(bangId)
 			val id = idFor(bang.id)
 			val reason = when {
-				bang.maskedBy.isNotEmpty() || bang.invertMask -> DropReason.BANGS_CLIPPED
+				(bang.maskedBy.isNotEmpty() || bang.invertMask) && !settings.compositeMasks -> DropReason.BANGS_CLIPPED
 				id.raw in byId -> DropReason.ID_TAKEN
 				else -> null
 			}
 			if (reason != null) { parts.forEach { refused.putIfAbsent(it, reason) }; continue }
 			val masks = parts.toList()
-			windowed[bangId] = bang.copy(maskedBy = masks, invertMask = true)
-			made += copyOf(bang, id, masks, windowOrder(model, bang, halfStep, earlierCopies), 1f - settings.opacity) to bang
+			val order = windowOrder(model, bang, halfStep, earlierCopies)
+			if (bang.maskedBy.isNotEmpty() || bang.invertMask) {
+				// A mask list is a union. Nest the old clip inside the new window to form an intersection.
+				val outsideId = PartId(idFor(DrawableId("$bangId:window-outside")).raw)
+				val insideId = PartId(idFor(DrawableId("$bangId:window-inside")).raw)
+				if (outsideId == insideId || outsideId in partIds || insideId in partIds) {
+					parts.forEach { refused.putIfAbsent(it, DropReason.ID_TAKEN) }; continue
+				}
+				partIds += outsideId; partIds += insideId
+				val copy = copyOf(bang, id, bang.maskedBy, order, 1f - settings.opacity).copy(invertMask = bang.invertMask)
+				wrappers[bang.id] = windowPart(bang, outsideId, masks, true)
+				wrappers[id] = windowPart(copy, insideId, masks, false)
+				windowed[bangId] = bang.copy(blendMode = BlendMode.Normal, alphaBlendMode = AlphaBlendMode.Over)
+				made += copy.copy(blendMode = BlendMode.Normal, alphaBlendMode = AlphaBlendMode.Over) to bang
+			} else {
+				windowed[bangId] = bang.copy(maskedBy = masks, invertMask = true)
+				made += copyOf(bang, id, masks, order, 1f - settings.opacity) to bang
+			}
+			openedWindows[bangId] = masks.map { it.raw }
 		}
 		// An eye part is reported only when no bang over it opened.
-		val opened = windowed.values.flatMapTo(HashSet()) { it.maskedBy }
+		val opened = openedWindows.values.flatten().mapTo(HashSet(), ::DrawableId)
 		refused.forEach { (part, reason) -> if (part !in opened) notes += Note(part.raw, reason) }
 		if (made.isEmpty()) return Result(model, emptyMap(), notes)
 		val before = made.groupBy({ it.second.id }, { it.first.id })
+		fun node(id: DrawableId): OrgChild = wrappers[id]?.let { OrgChild.Part(it.id) } ?: OrgChild.Drawable(id)
+		val placedIds = HashSet<DrawableId>()
 		fun placed(children: List<OrgChild>) = children.flatMap { child ->
-			if (child is OrgChild.Drawable) before[child.id].orEmpty().map { OrgChild.Drawable(it) } + child else listOf(child)
+			if (child is OrgChild.Drawable) {
+				placedIds += child.id
+				before[child.id].orEmpty().map(::node) + node(child.id)
+			} else listOf(child)
 		}
+		val placedParts = model.parts.map { it.copy(children = placed(it.children)) }
+		val placedRoot = placed(model.rootChildren)
+		val orphaned = before.keys.filter { it !in placedIds }.flatMap { before[it].orEmpty().map(::node) + node(it) }
 		val finished = model.copy(drawables = model.drawables.map { windowed[it.id.raw] ?: it } + made.map { it.first },
-			parts = model.parts.map { part -> if (part.children.none { it is OrgChild.Drawable && it.id in before }) part else part.copy(children = placed(part.children)) },
-			rootChildren = placed(model.rootChildren)).withDerivedRenderRoot()
+			parts = placedParts + wrappers.values,
+			rootChildren = placedRoot + orphaned).withDerivedRenderRoot()
 		return Result(finished, made.associate { (copy, original) -> copy.id.raw to original.id.raw }, notes,
-			windowed.mapValues { (_, bang) -> bang.maskedBy.map { it.raw } })
+			openedWindows)
 	}
 
 	/**
@@ -141,6 +177,8 @@ class SeeThroughBinding(
 		val before = previous.drawables.associateBy { it.id.raw }
 		val byId = model.drawables.associateBy { it.id.raw }
 		val bangs = candidates.associate { it.original to it.bangs }
+		val wrappers = model.parts.filter { part -> part.groupMode == PartGroupMode.Isolated && part.children.size == 1 }
+			.mapNotNull { part -> (part.children.single() as? OrgChild.Drawable)?.let { it.id.raw to part } }.toMap()
 		val visible by lazy { model.visibleDrawableIds() }
 		val halfStep = (settings.drawOrderStep / 2f).coerceAtLeast(0.5f)
 		var changed = false
@@ -152,8 +190,11 @@ class SeeThroughBinding(
 				// The copy in a bang's window: its masks are the window's eye parts, which it follows by id.
 				if (original === before[originalId]) return@mapNotNull drawable
 				changed = true
-				val masks = drawable.maskedBy.filter { it.raw in byId }.ifEmpty { return@mapNotNull null }
-				return@mapNotNull copyOf(original, drawable.id, masks, windowOrder(model, original, halfStep, copies.keys), 1f - settings.opacity)
+				val nested = wrappers[drawable.id.raw]?.composite?.maskedBy?.map { it.raw } == windows[originalId]
+				val masks = (if (nested) original.maskedBy else drawable.maskedBy).filter { it.raw in byId }
+				if (!nested && masks.isEmpty()) return@mapNotNull null
+				val copy = copyOf(original, drawable.id, masks, windowOrder(model, original, halfStep, copies.keys), 1f - settings.opacity)
+				return@mapNotNull if (nested) copy.copy(invertMask = original.invertMask) else copy
 			}
 			val near =bangs[originalId] ?: drawable.maskedBy.map { it.raw }
 			if (original === before[originalId] && near.all { byId[it] === before[it] }) return@mapNotNull drawable
@@ -164,8 +205,32 @@ class SeeThroughBinding(
 		if (!changed) return model
 		val kept = drawables.mapTo(HashSet()) { it.id }
 		fun live(children: List<OrgChild>) = children.filter { it !is OrgChild.Drawable || it.id in kept }
-		return model.copy(drawables = drawables, parts = model.parts.map { it.copy(children = live(it.children)) },
+		val refreshedById = drawables.associateBy { it.id.raw }
+		val previousParts = previous.parts.associateBy { it.id }
+		val refreshedParts = model.parts.map { part ->
+			val child = (part.children.singleOrNull() as? OrgChild.Drawable)?.id?.raw
+			val originalId = copies[child] ?: child
+			val drawable = refreshedById[child]
+			if (drawable != null && originalId in windows && wrappers[child] === part &&
+				part === previousParts[part.id] && part.composite.maskedBy.map { it.raw } == windows[originalId]) {
+				val fresh = windowPart(drawable, part.id, part.composite.maskedBy, part.composite.invertMask)
+				part.copy(channelGrids = fresh.channelGrids, drawOrder = fresh.drawOrder, blendShapes = fresh.blendShapes)
+			} else part.copy(children = live(part.children))
+		}
+		return model.copy(drawables = drawables, parts = refreshedParts,
 			rootChildren = live(model.rootChildren)).withDerivedRenderRoot()
+	}
+
+	private fun windowPart(drawable: Drawable, id: PartId, masks: List<DrawableId>, inverted: Boolean): Part {
+		val order = drawable.channelGrids[FormChannel.DRAW_ORDER] ?: KeyformGrid(emptyList(),
+			listOf(KeyformCell(intArrayOf(), ChannelValue.Scalar(drawable.drawOrder) as ChannelValue)))
+		return Part(id = id, name = copyName(drawable.name), children = listOf(OrgChild.Drawable(drawable.id)),
+			groupMode = PartGroupMode.Isolated, drawOrder = drawable.drawOrder.toInt(),
+			channelGrids = ChannelGrids(mapOf(FormChannel.DRAW_ORDER to order)),
+			composite = PartComposite(blendMode = drawable.blendMode, alphaBlendMode = drawable.alphaBlendMode,
+				maskedBy = masks, invertMask = inverted),
+			blendShapes = drawable.blendShapes.map { shape -> BlendShapeBinding(shape.parameterId, shape.keys,
+				shape.neutralIndex, shape.forms.map { it?.let { form -> PartForm(form.drawOrder) } }, shape.limits) })
 	}
 
 	private fun copyOf(original: Drawable, id: DrawableId, masks: List<DrawableId>, order: Float, alpha: Float): Drawable {

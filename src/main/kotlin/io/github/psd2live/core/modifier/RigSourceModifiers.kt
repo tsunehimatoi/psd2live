@@ -143,6 +143,8 @@ internal class RigModifierSource(
         put("name_pattern", io.github.psd2live.i18n.tr("model.drawable.seeThrough", "{meshName}"))
         put("draw_order_step", config.drawOrderStep)
         put("inverted_masks", config.runtimeTarget.supports(RuntimeFeature.ReversedMask))
+        // The native rig supports nested masks; target-specific loss is reported by the exporters.
+        put("composite_masks", true)
         putJsonArray("candidates") { seeThroughCandidates.forEach { candidate -> add(buildJsonObject {
             put("original", candidate.original); put("eyes", candidate.eyes)
             put("bangs", JsonArray(candidate.bangs.map(::JsonPrimitive)))

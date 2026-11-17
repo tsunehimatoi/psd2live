@@ -36,7 +36,8 @@ class SeeThroughAlgorithm : ContextualModifierAlgorithmPlugin {
         require(opacity.isFinite() && opacity in 0f..100f) { "See-through opacity must be within 0..100" }
         val result = SeeThroughBinding({ pattern.replace("{meshName}", it) }, checkpoint).apply(model, ordered,
             SeeThroughBinding.Settings(!eyes, eyes, opacity / 100f, source.getValue("draw_order_step").jsonPrimitive.int,
-                source.getValue("inverted_masks").jsonPrimitive.boolean),
+                source.getValue("inverted_masks").jsonPrimitive.boolean,
+                source["composite_masks"]?.jsonPrimitive?.boolean ?: false),
             idFor = { DrawableId(instance.outputId("see-through:${it.raw}")) }, earlierCopies = earlier)
         require(result.notes.none { it.reason == SeeThroughBinding.DropReason.ID_TAKEN || it.reason == SeeThroughBinding.DropReason.BANGS_CLIPPED }) {
             "${instance.id}: see-through output conflicts with existing meshes or masks"

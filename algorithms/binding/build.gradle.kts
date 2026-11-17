@@ -204,7 +204,7 @@ private val bindingManifestSpecs = listOf(
         modifies = listOf("mesh.offsets", "deformer.keyforms", "hierarchy"),
         composableKinds = physicsComposable),
     BindingManifestSpec("see-through-eye", "eye.see-through", "visibility", "eye through bangs", "eye",
-        writes = listOf("*"), creates = listOf("derivedMeshes"), modifies = listOf("mesh.opacity", "mesh.mask"),
+        writes = listOf("*"), creates = listOf("derivedMeshes", "parts"), modifies = listOf("mesh.opacity", "mesh.mask", "hierarchy"),
         composableKinds = defaultComposable),
     BindingManifestSpec("see-through-brow", "brow.see-through", "visibility", "brow through bangs", "brow",
         writes = listOf("*"), creates = listOf("derivedMeshes"), modifies = listOf("mesh.opacity", "mesh.mask"),
