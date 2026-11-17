@@ -62,6 +62,23 @@ class WorkspaceMouthArtworkTest {
         assertEquals(false, result.layerVisibility["tongue"])
         assertEquals(PartRole.PLAIN, result.layerOverrides["upper"]?.role)
     }
+    @Test fun zeroOpacityLayersAreNotTreatedAsVisibleOrSelected() {
+        val zeroSeam = layer("seam", "upper lip line", "mouth/closed", LayerBounds(20, 49, 60, 2)).copy(opacity = 0f)
+        val doc = document().let { d ->
+            d.copy(source = WorkspaceSourceArt(d.source.widthPx, d.source.heightPx,
+                d.source.layers.filterNot { it.id.raw == "seam" } + zeroSeam, d.source.groups))
+        }
+        assertEquals(doc, WorkspaceMouthArtwork.prepare(doc))
+    }
+    @Test fun multipleVisibleOverlappingMouthBasesKeepOnlyThePrimaryOne() {
+        val primary = layer("m1", "mouth", "", LayerBounds(20, 20, 60, 40))
+        val secondary = layer("m2", "mouth 2", "", LayerBounds(25, 25, 50, 20))
+        val doc = WorkspaceDocument(WorkspaceSourceArt(100, 100, listOf(primary, secondary), emptyList()),
+            emptyMap(), emptySet(), emptyMap(), emptyMap(), RigEditOverlay())
+        val prepared = WorkspaceMouthArtwork.prepare(doc)
+        assertEquals(false, prepared.layerVisibility["m2"])
+        assertEquals(null, prepared.layerVisibility["m1"])
+    }
     @Test fun selectionAndClippingSurviveReopeningAndExport() {
         val original = document().copy(rigEdits = RigEditOverlay(modifierStack = io.github.psd2live.core.modifier.RigModifierStack().toJson()))
         val (candidate, choices) = WorkspacePresetInitialize.prepare(original, WorkspaceInitialModifiers.RECOMMENDED)

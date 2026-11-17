@@ -23,6 +23,20 @@ class LayerClassifierSideTest {
 		assertEquals(SemanticTag.MOUTH, LayerClassifier.classify("口腔").tag)
 		assertEquals(SemanticTag.HANDWEAR, LayerClassifier.classify("袖子闭合").tag)
 	}
+	@Test fun posePrefixedMouthNamesAndLipRolesClassifyWithoutCollapsing() {
+		for (name in listOf("微张嘴", "大张嘴", "小张嘴", "露齿")) {
+			assertEquals(SemanticTag.MOUTH_OPEN, LayerClassifier.classify(name).tag, name)
+		}
+		for (name in listOf("自然闭嘴", "抿嘴")) {
+			assertEquals(SemanticTag.MOUTH_CLOSE, LayerClassifier.classify(name).tag, name)
+		}
+		assertEquals(SemanticTag.TOOTH_T, LayerClassifier.classify("牙齿").tag)
+		assertEquals(SemanticTag.MOUTH, LayerClassifier.classify("闭嘴唇底色").tag)
+		assertEquals(PartRole.HIGHLIGHT, PartRoles.fromName("下唇角高光", "", SemanticTag.MOUTH))
+		assertEquals(PartRole.SHADOW, PartRoles.fromName("下唇阴影", "", SemanticTag.MOUTH))
+		assertEquals(PartRole.CLOSED_LINE, PartRoles.fromName("嘴唇中线", "", SemanticTag.MOUTH))
+		assertEquals(PartRole.CLOSED_LINE, PartRoles.fromName("微笑嘴线", "", SemanticTag.MOUTH))
+	}
 	@Test fun specificFoldersSupplyMissingArtworkNamesWithoutOverridingNamedParts() {
 		assertEquals(null, LayerClassifier.classifyArtwork("Layer 9", "mouth").variant)
 		assertEquals(2, LayerClassifier.classifyArtwork("Layer 9", "mouth2").variant)

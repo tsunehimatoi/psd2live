@@ -1296,11 +1296,12 @@ object RigBuilder {
                             classifiedByDrawable: Map<DrawableId, ClassifiedLayer>, context: RigContext, config: PipelineConfig,
                             fittedMouth: io.github.psd2live.core.fit.FittedMouth?, ribbons: Set<DrawableId>): List<Drawable> {
         // The mouth's inside clips what is in the mouth; a layered mouth's lips and lines lie over it and clip nothing.
-        val mouthMasks = maskSources.filter { drawable ->
+        val allMouthMasks = maskSources.filter { drawable ->
             drawable.id !in ribbons &&
             classifiedByDrawable.getValue(drawable.id).let { layer -> layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) &&
                 layer.semantic.role == null && !layer.source.clipped }
         }
+        val mouthMasks = allMouthMasks.filter { classifiedByDrawable.getValue(it.id).source.opacity > 0f }.ifEmpty { allMouthMasks }
         // A highlight or shadow lying inside the opening is in the mouth too, and so is what is clipped onto it: the inside's base.
         fun inMouth(layer: ClassifiedLayer) = layer.semantic.tag in CharacterAnalyzer.MOUTH_COMPONENT_TAGS ||
             fittedMouth != null && layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && (layer.semantic.role != null || layer.source.clipped) && fittedMouth.covers(layer) &&
@@ -4470,6 +4471,7 @@ object RigBuilder {
 		layeredMouth: Boolean = false,
 	): ChannelGrids {
 		val type = override?.type ?: layer.semantic.type
+		val baseOpacity = layer.source.opacity.coerceIn(0f, 1f)
 		// Teeth, tongue and an open mouth fade in over the first teethFade percent of the opening.
 		val fadeIn = (tuning.teethFade / 100f).coerceAtLeast(0.01f)
 		val opacityGrid = when (type) {
@@ -4482,19 +4484,21 @@ object RigBuilder {
 					SemanticTag.EYE_CLOSE -> io.github.psd2live.core.fit.EyeModules.drawingOpacity(layer.semantic.side, true, eyeSwap, eyeOpenMax)
 					SemanticTag.EYELASH -> if (!eyeSwap) null else
 						io.github.psd2live.core.fit.EyeModules.drawingOpacity(layer.semantic.side, false, true, eyeOpenMax)
-					SemanticTag.MOUTH_CLOSE -> if (mouthSwap) scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, io.github.psd2live.algorithms.binding.MouthRig.SWAP, 1f)) { open -> if (open == 0f) 1f else 0f }
-						else scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, 1f)) { 1f - it }
+					SemanticTag.MOUTH_CLOSE -> if (baseOpacity <= 0f) null
+						else if (mouthSwap) scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, io.github.psd2live.algorithms.binding.MouthRig.SWAP, 1f)) { open -> if (open == 0f) baseOpacity else 0f }
+						else scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, 1f)) { (1f - it) * baseOpacity }
 					// A fitted mouth beside a drawn closed one shuts into it: the open drawing hands over as the lips part.
-					SemanticTag.MOUTH -> if (!mouthSwap) null
-						else scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, io.github.psd2live.algorithms.binding.MouthRig.SWAP, 1f)) { open -> if (open == 0f) 0f else 1f }
+					SemanticTag.MOUTH -> if (!mouthSwap || baseOpacity <= 0f) null
+						else scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, io.github.psd2live.algorithms.binding.MouthRig.SWAP, 1f)) { open -> if (open == 0f) 0f else baseOpacity }
 					SemanticTag.TONGUE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B ->
-						if (layeredMouth && !mouthSwap) null else scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, fadeIn, 1f)) { open -> (open / fadeIn).coerceIn(0f, 1f) }
+						if (baseOpacity <= 0f || (layeredMouth && !mouthSwap)) null else scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, fadeIn, 1f)) { open -> (open / fadeIn).coerceIn(0f, 1f) * baseOpacity }
 					// Beside a closed mouth the open one only flattens at rest, and it and its lip ribbons (which copy
 					// its channels) showed as a second, differently coloured line under the closed mouth. Alone it
 					// is the only mouth there is and stays.
-					SemanticTag.MOUTH_OPEN -> if (mouthSwap) scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, io.github.psd2live.algorithms.binding.MouthRig.SWAP, 1f)) { open -> if (open == 0f) 0f else 1f }
+					SemanticTag.MOUTH_OPEN -> if (baseOpacity <= 0f) null
+						else if (mouthSwap) scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, io.github.psd2live.algorithms.binding.MouthRig.SWAP, 1f)) { open -> if (open == 0f) 0f else baseOpacity }
 						else if (!closedMouth) null
-						else scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, fadeIn, 1f)) { open -> (open / fadeIn).coerceIn(0f, 1f) }
+						else scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, fadeIn, 1f)) { open -> (open / fadeIn).coerceIn(0f, 1f) * baseOpacity }
 					else -> null
 				}
 			}

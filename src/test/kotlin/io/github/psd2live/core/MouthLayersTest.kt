@@ -287,10 +287,10 @@ class MouthLayersTest {
 			(drawn("tongue", 18, 31, 46, 47).source as WorkspaceSourceLayer).copy(name = "舌", order = 2),
 			(drawn("opening", 10, 20, 54, 40).source as WorkspaceSourceLayer).copy(name = "interior", groupPath = "嘴", order = 3),
 		)
-		val rearTongue = (layers.single { it.id.raw == "tongue" } as WorkspaceSourceLayer).copy(
+		val rearTongue = layers.single { it.id.raw == "tongue" }.copy(
 			id = LayerId("tongue-rear"), order = 3)
 		val source = io.github.psd2live.project.WorkspaceSourceArt(64, 64,
-			layers.map { if (it.id.raw == "opening") (it as WorkspaceSourceLayer).copy(order = 4) else it } + rearTongue, emptyList())
+			layers.map { if (it.id.raw == "opening") it.copy(order = 4) else it } + rearTongue, emptyList())
 		val document = io.github.psd2live.project.WorkspaceDocument(source, emptyMap(), emptySet(), emptyMap(), emptyMap(),
 			RigEditOverlay(modifierStack = io.github.psd2live.core.modifier.RigModifierStack().toJson()),
 			settings = io.github.psd2live.project.WorkspaceSettingsCodec.encode(PipelineConfig(exportMoc3 = false,
@@ -314,6 +314,88 @@ class MouthLayersTest {
 		assertEquals(0f, rest.opacity.getValue(companion.id))
 		assertTrue(extended.opacity.getValue(companion.id) > 0f)
 		assertTrue(!rest.worldPositions.getValue(companion.id).contentEquals(extended.worldPositions.getValue(companion.id)))
+	}
+
+	@Test fun zeroOpacitySwapMouthDoesNotOverrideVisibleMouthOrResurrectAtOpen() {
+		val visibleBase = (drawn("mouth", 14, 24, 50, 38).source as WorkspaceSourceLayer).copy(name = "嘴", order = 0, opacity = 1f)
+		val swapOpen = (drawn("swap-open", 10, 16, 54, 48).source as WorkspaceSourceLayer).copy(name = "张嘴", order = 1, opacity = 0f)
+		val swapTeeth = (drawn("swap-teeth", 16, 20, 48, 30).source as WorkspaceSourceLayer).copy(name = "上牙", order = 2, opacity = 0f)
+		val source = io.github.psd2live.project.WorkspaceSourceArt(64, 64, listOf(visibleBase, swapOpen, swapTeeth), emptyList())
+		val preview = PSD2LivePipeline().buildPreview(source, PipelineConfig(atlasSize = 256, generatePhysics = false, exportMoc3 = false))
+		val evaluator = org.umamo.render.eval.CpuDeformationEvaluator()
+		val open = evaluator.evaluate(preview.rig.puppet, mapOf(StandardParameters.MOUTH_OPEN to 1f))
+		for (id in listOf("swap-open", "swap-teeth")) {
+			val drawable = preview.rig.puppet.drawables.single { preview.rig.layerIdByDrawableId[it.id.raw] == id }
+			assertEquals(0f, open.opacity.getValue(drawable.id), "$id must stay transparent at Open=1")
+		}
+	}
+
+	@Test fun deepUShapedLowerLineWithSubtleShadingTracesContinuouslyLeftToRight() {
+		val w = 80; val h = 60
+		fun rasterLayer(id: String, role: PartRole, paint: (Int, Int) -> Triple<Int, Int, Int>?): ClassifiedLayer {
+			val rgba = ByteArray(w * h * 4)
+			var minX = w; var minY = h; var maxX = -1; var maxY = -1; var count = 0
+			for (y in 0 until h) for (x in 0 until w) {
+				val rgb = paint(x, y) ?: continue
+				val o = (y * w + x) * 4
+				rgba[o] = rgb.first.toByte(); rgba[o + 1] = rgb.second.toByte(); rgba[o + 2] = rgb.third.toByte(); rgba[o + 3] = -1
+				if (x < minX) minX = x; if (x > maxX) maxX = x
+				if (y < minY) minY = y; if (y > maxY) maxY = y
+				count++
+			}
+			val src = WorkspaceSourceLayer(LayerId(id), id, "", SourceLayerKind.Raster, true, 0,
+				LayerBounds(0, 0, w, h), 1f, false, LayerBlend.Normal, ChannelMask.ALL, LayerRaster(w, h, rgba), null, null, false)
+			val bounds = Bounds(minX.toFloat(), minY.toFloat(), (maxX + 1).toFloat(), (maxY + 1).toFloat())
+			return ClassifiedLayer(src, LayerSemantic(SemanticTag.MOUTH, normalizedName = id, confidence = 1f, role = role),
+				bounds, bounds.centerX, bounds.centerY, count)
+		}
+		val opening = drawn("opening", 16, 14, 64, 50)
+		val upper = rasterLayer("upper", PartRole.UPPER_LINE) { x, y ->
+			if (x in 16..64 && y in 13..16) Triple(20, 20, 20) else null
+		}
+		val lower = rasterLayer("lower", PartRole.LOWER_LINE) { x, y ->
+			val dx = (x - 40f) / 24f
+			if (abs(dx) > 1f) null else {
+				val curveY = 14.5f + 34f * (1f - dx * dx)
+				if (abs(y - curveY) <= 1.8f) {
+					val shade = if (x % 2 == 0) 20 else 44
+					Triple(shade, shade, shade)
+				} else null
+			}
+		}
+		val fit = assertNotNull(MouthFitting.fit(listOf(opening, upper, lower), 1f to 0f) { x, y -> x to y }.fit)
+		val frame = assertNotNull(fit.layered)
+		val leftDist = kotlin.math.hypot(frame.upperLocal65[0] - frame.lowerLocal65[0], frame.upperLocal65[1] - frame.lowerLocal65[1])
+		val last = frame.lowerLocal65.size - 2
+		val rightDist = kotlin.math.hypot(frame.upperLocal65[last] - frame.lowerLocal65[last], frame.upperLocal65[last + 1] - frame.lowerLocal65[last + 1])
+		assertTrue(leftDist < 0.12f, "Left corner of U-stroke must meet upper line, got $leftDist")
+		assertTrue(rightDist < 0.12f, "Right corner of U-stroke must meet upper line, got $rightDist")
+		// Midpoint of lower curve sits well below the endpoints.
+		val mid = frame.lowerLocal65.size / 4
+		assertTrue(frame.lowerLocal65[mid * 2 + 1] > frame.lowerLocal65[1] + 0.3f)
+	}
+
+	@Test fun thinCurvedClosedSmileStrokeIsReportedAsClosed() {
+		val w = 140; val h = 40
+		val rgba = ByteArray(w * h * 4)
+		var count = 0
+		for (x in 10 until 130) {
+			val t = (x - 70f) / 60f
+			val cy = 22f - 10f * t * t
+			for (y in 0 until h) {
+				if (abs(y - cy) <= 1.5f) {
+					val o = (y * w + x) * 4
+					rgba[o] = 40; rgba[o + 3] = -1; count++
+				}
+			}
+		}
+		val src = WorkspaceSourceLayer(LayerId("smile"), "smile", "", SourceLayerKind.Raster, true, 0,
+			LayerBounds(0, 0, w, h), 1f, false, LayerBlend.Normal, ChannelMask.ALL, LayerRaster(w, h, rgba), null, null, false)
+		val layer = ClassifiedLayer(src, LayerSemantic(SemanticTag.MOUTH, normalizedName = "smile", confidence = 1f),
+			Bounds(10f, 10f, 130f, 24f), 70f, 18f, count)
+		val result = MouthFitting.fit(listOf(layer), 1f to 0f) { x, y -> x to y }
+		assertEquals(null, result.fit)
+		assertEquals("the mouth is drawn closed", result.reason)
 	}
 
 }
