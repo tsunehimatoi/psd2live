@@ -182,7 +182,7 @@ internal object RigIrCompiler {
         val switches = if (generatePresets) listOf(config.motionBasic, config.motionIdle, config.motionBlink, config.motionNod,
             config.motionShake, config.motionSkeleton) else emptyList()
 		val key = ClipsKey(config.rigEdits.motionClips, rig.puppet.parameters, config.rigEdits.skeleton, config.rigEdits.motionPresets,
-			switches, physicsDriven, config.rigEdits.idRenames.parameters, generatePresets && MotionPresetSettings.natural(config))
+			switches, physicsDriven, config.rigEdits.idRenames.parameters, generatePresets && MotionPresetSettings.natural(config), config.rigEdits.motionSources)
 		synchronized(clipCache) { clipCache[key] }?.let { return it }
 		return compileClips(rig, config, physicsDriven, parameterIds, generatePresets).also { synchronized(clipCache) { clipCache[key] = it } }
 	}
@@ -192,6 +192,7 @@ internal object RigIrCompiler {
 		val clips: List<MotionClip>, val parameters: List<org.umamo.runtime.model.Parameter>, val skeleton: SkeletonSpec?,
 		val presets: Map<String, MotionPresetSettings>, val switches: List<Boolean>, val physicsDriven: Set<String>,
 		val renames: Map<String, String>, val natural: Boolean,
+        val motionSources: Map<String, kotlinx.serialization.json.JsonObject>,
 	)
 
 	/**
@@ -216,9 +217,12 @@ internal object RigIrCompiler {
 		val clips = MotionClips.reconcileParameters(config.rigEdits.motionClips, rig.puppet.parameters)
 		val result = ArrayList<Clip>()
 		fun add(clip: Clip?) {
-			if (clip != null && clip.curves.any { it.parameter in parameterIds }) result += clip.copy(curves = clip.curves.filter { it.parameter in parameterIds })
+			if (clip != null && (clip.curves.any { it.parameter in parameterIds } || clip.targetCurves.isNotEmpty() ||
+                clip.events.isNotEmpty() || clip.id in config.rigEdits.motionSources)) result += clip.copy(curves = clip.curves.filter { it.parameter in parameterIds })
 		}
-		fun authored(group: String, file: String, clip: MotionClip) = Clip(clip.id, clip.name, group, file, clip.duration, clip.fps, clip.loop,
+		fun authored(group: String, file: String, clip: MotionClip) = config.rigEdits.motionSources[clip.id]
+            ?.let { AppliedMotionRecords.compile(clip, it).copy(group = group, file = file) }
+            ?: Clip(clip.id, clip.name, group, file, clip.duration, clip.fps, clip.loop,
 			clip.fadeIn.takeUnless { clip.runtimeDefaultFades }, clip.fadeOut.takeUnless { clip.runtimeDefaultFades },
 			clip.curves.map(MotionGenerator::curve), clip.events.map { ClipEvent(it.time, it.value) })
 		fun builtin(name: String, exclude: Set<String> = emptySet()) {

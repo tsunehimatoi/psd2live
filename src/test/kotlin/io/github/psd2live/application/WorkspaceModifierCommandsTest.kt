@@ -7,6 +7,7 @@ import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.sim.*
 import io.github.psd2live.format.compile.ExportOptions
 import io.github.psd2live.project.*
+import io.github.psd2live.history.WorkspaceHistoryTree
 import io.github.psd2live.targets.cubism.Cmo3Target
 import io.github.psd2live.bridge.PuppetIr
 import io.github.psd2live.format.model.Deformer as IrDeformer
@@ -14,6 +15,7 @@ import io.github.psd2live.format.model.Floats
 import io.github.psd2live.format.model.KeyGrid
 import io.github.psd2live.format.model.LatticePoints
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.*
 import org.junit.jupiter.api.io.TempDir
 import org.umamo.format.cmo3.Cmo3
@@ -86,6 +88,133 @@ class WorkspaceModifierCommandsTest {
         assertTrue(f.now.document.rigEdits.simEdits.isEmpty())
         assertNotNull(SimulationCatalog.entries(f.now.document.rigEdits).single().bake)
         assertEquals("new-body", RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.single().id)
+    }
+
+    @Test fun appliedMotionRemainsEditableWithoutChangingItsFrozenConfiguration(): Unit = runBlocking {
+        val f = fixture()
+        f.edit("modifier_add", add(f, "motion", MotionClips.toJson(motion()), "motion-owner"))
+        f.edit("modifier_apply", buildJsonObject { put("id", "motion-owner"); put("scope", "selected") })
+        val configuration = stack(f).instances.single().config
+        val clip = MotionCatalog.entries(f.now.document.rigEdits).single()
+        f.edit("motion_rename", buildJsonObject { put("id", clip.id); put("name", "Edited applied motion") })
+        assertEquals(configuration, stack(f).instances.single().config)
+        assertEquals("Edited applied motion", RigIrCompiler.compile(f.now.model).clips.single().name)
+        assertEquals(RigIrCompiler.compile(f.now.model), RigIrCompiler.compile(f.builder.build(f.now.document)))
+        f.edit("modifier_apply", id("motion-owner"))
+        assertTrue(stack(f).appliedNodes.isEmpty())
+        assertEquals("Edited applied motion", f.now.document.rigEdits.motionClips.single().name)
+        assertEquals(RigIrCompiler.compile(f.now.model), RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
+    @Test fun arbitraryAppliedMotionSurvivesPrefixApplyDiskAndOrdinaryEditing(): Unit = runBlocking {
+        val f = fixture()
+        val input = RigModifierPipeline.input(f.now.model)
+        val clip = io.github.psd2live.format.model.Clip("custom", "Custom", "Group", "custom", 2f, 30f, false,
+            fadeOut = .7f, curves = listOf(io.github.psd2live.format.model.Curve("ParamInput", .2f, 0f,
+                listOf(io.github.psd2live.format.model.CurveSegment.Linear(2f, 1f)), .3f, .4f)),
+            events = listOf(io.github.psd2live.format.model.ClipEvent(.5f, "event")),
+            targetCurves = listOf(io.github.psd2live.format.model.TargetCurve(
+                io.github.psd2live.format.model.CurveTarget.ModelOpacity, 0f, 1f,
+                listOf(io.github.psd2live.format.model.CurveSegment.Linear(2f, .5f)))))
+        val definition = RigModifierDefinition("custom.motion", 1, plugin = ModifierAlgorithmPlugin { rig, _, _ ->
+            rig.copy(clips = rig.clips + clip)
+        })
+        val live = RigModifierStack().add("custom.motion", 1, listOf(f.target), id = "custom-owner")
+        val applied = RigModifierEvaluator(RigModifierRegistry(listOf(definition))).applySelected(input, live, "custom-owner")
+        val document = f.now.document.copy(rigEdits = f.now.document.rigEdits.copy(modifierStack = applied.toJson()))
+        f.runtime.install(f.now.state, "custom motion", document, f.builder.build(document))
+        assertEquals(listOf(clip), RigIrCompiler.compile(f.now.model).clips)
+        suspend fun verifyDuplicate() {
+            f.edit("motion_duplicate", buildJsonObject { put("id", clip.id); put("new_id", "copy") })
+            val copied = RigIrCompiler.compile(f.now.model).clips.single { it.id == "copy" }
+            assertEquals(clip.curves, copied.curves)
+            assertEquals(clip.targetCurves, copied.targetCurves)
+            assertEquals(clip.events, copied.events)
+            assertEquals(clip.fadeIn, copied.fadeIn)
+            assertEquals(clip.fadeOut, copied.fadeOut)
+            f.edit("motion_delete", id("copy"))
+        }
+        verifyDuplicate()
+        f.edit("modifier_apply", id("custom-owner"))
+        verifyDuplicate()
+        assertEquals(listOf(clip), RigIrCompiler.compile(f.now.model).clips)
+        assertTrue(stack(f).instances.isEmpty())
+        assertEquals(setOf(clip.id), f.now.document.rigEdits.motionSources.keys)
+        val revision = WorkspaceRevisions.of(f.now.document)
+        val store = WorkspaceStore(temp.resolve("custom-motion-project"))
+        store.persistHistory("project", WorkspaceHistoryTree(f.now.document, revision, revision).state())
+        val reopened = WorkspaceStore(store.root).loadHistory("project")!!.head().snapshot
+        assertEquals(listOf(clip), RigIrCompiler.compile(f.builder.build(reopened)).clips)
+        f.runtime.install(f.now.state, "reopened", reopened, f.builder.build(reopened), discardUnsaved = true)
+        f.edit("motion_rename", buildJsonObject { put("id", clip.id); put("name", "Renamed") })
+        assertEquals(listOf(clip.copy(name = "Renamed")), RigIrCompiler.compile(f.now.model).clips)
+        f.edit("motion_delete", id(clip.id))
+        assertTrue(RigIrCompiler.compile(f.now.model).clips.isEmpty())
+        assertTrue(f.now.document.rigEdits.motionSources.isEmpty())
+    }
+
+    @Test fun appliedMotionRejectsParametersOnlyAvailableDownstream(): Unit = runBlocking {
+        val f = fixture(withWarp = true)
+        f.edit("modifier_add", add(f, "motion", MotionClips.toJson(motion()), "motion-owner"))
+        f.edit("modifier_apply", buildJsonObject { put("id", "motion-owner"); put("scope", "selected") })
+        val swing = RigSwingEdit.single("template", "Swing", SwingKind.LATERAL, listOf("warp"), listOf("P"))
+        f.edit("modifier_add", add(f, "swing", swing.toJson(), "later", ModifierTarget("deformer", "warp")))
+        val parameter = stack(f).instances.last().outputId("swing:lateral:0")
+        val clip = MotionCatalog.entries(f.now.document.rigEdits).single()
+        val before = f.now
+        for (enabled in listOf(true, false)) {
+            val changed = clip.copy(enabled = enabled,
+                curves = listOf(MotionCurve(parameter, listOf(MotionKey(0f, .25f)))))
+            val failure = assertFailsWith<IllegalArgumentException> {
+                MotionCatalog.replacing(before.document.rigEdits, listOf(changed))
+            }
+            assertTrue(failure.message.orEmpty().contains("stack position"))
+        }
+        assertEquals(before, f.now)
+        val valid = clip.copy(curves = listOf(MotionCurve("ParamInput", listOf(MotionKey(0f, .25f)))))
+        f.edit("motion_put", buildJsonObject { put("clip", JsonObject(MotionClips.toJson(valid) - "file")) })
+        assertEquals(valid.curves, MotionCatalog.entries(f.now.document.rigEdits).single().curves)
+        assertEquals(RigIrCompiler.compile(f.now.model), RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
+    @Test fun ordinaryCandidateRejectsNewModifierFailureWithoutPublishingPartialResults(): Unit = runBlocking {
+        val f = fixture()
+        f.edit("modifier_add", add(f, "motion", MotionClips.toJson(motion()), "motion-owner"))
+        val before = f.now
+        val broken = motion().copy(curves = listOf(MotionCurve("MissingParameter", listOf(MotionKey(0f, 0f)))))
+        val invalid = before.document.copy(rigEdits = before.document.rigEdits.copy(
+            modifierStack = stack(f).update("motion-owner") { it.copy(config = MotionClips.toJson(broken)) }.toJson()))
+        // Preview building isolates algorithm failures for diagnostics; an authoring transaction must reject them.
+        val preview = f.builder.build(invalid)
+        assertEquals(ModifierStatus.FAILED, preview.modifierEvaluation!!.entries.single().status)
+        val failure = assertFailsWith<IllegalArgumentException> {
+            f.commands.executeCandidate(before.projectId, before.state, "Ordinary edit", MutationAuthor.USER,
+                mutation = { _, _ -> invalid })
+        }
+        assertTrue(failure.message.orEmpty().contains("Motion parameters are missing"))
+        assertEquals(before, f.now)
+        assertEquals(RigIrCompiler.compile(before.model), RigIrCompiler.compile(f.now.model))
+    }
+
+    @Test fun physicsImportEditsAppliedOutputAndDisablesConflictingAppliedGroups(): Unit = runBlocking {
+        val f = fixture()
+        f.edit("modifier_add", add(f, "physics", physics().toJson(), "physics-owner"))
+        f.edit("modifier_apply", buildJsonObject { put("id", "physics-owner"); put("scope", "selected") })
+        val group = WorkspaceDocumentEdits.physicsCatalog(f.now.document, f.now.model).single()
+        suspend fun import(setting: RigPhysicsEdit) {
+            val text = assertNotNull(Physics3Json.write(listOf(setting), 30))
+            val current = f.now
+            f.commands.executeCandidate(current.projectId, current.state, "Import physics", MutationAuthor.USER,
+                mutation = { doc, model -> WorkspacePhysicsEdits.import(doc, model, text).document })
+        }
+        import(group.setting.copy(name = "Imported applied group"))
+        assertTrue(f.now.document.rigEdits.physicsEdits.isEmpty())
+        assertEquals("Imported applied group", RigIrCompiler.compile(f.now.model).physics.groups.single().name)
+        import(group.setting.copy(id = "replacement", name = "Replacement"))
+        assertEquals(listOf("replacement"), RigIrCompiler.compile(f.now.model).physics.groups.map { it.id })
+        val catalog = WorkspaceDocumentEdits.physicsCatalog(f.now.document, f.now.model)
+        assertFalse(catalog.single { it.id == group.id }.active)
+        assertEquals(RigIrCompiler.compile(f.now.model), RigIrCompiler.compile(f.builder.build(f.now.document)))
     }
 
     @Test fun explicitSimulationRebakeRunsTheBakerAndClearingDiscardsTheStoredBake(): Unit = runBlocking {
@@ -236,7 +365,7 @@ class WorkspaceModifierCommandsTest {
     }
 
     private suspend fun fixture(withWarp: Boolean = false, layerCount: Int = 1,
-                                additionalParameters: List<RigParameterEdit> = emptyList(), physicsOrder: List<String> = emptyList()): Fixture {
+                                additionalParameters: List<RigParameterEdit> = emptyList(), physicsOrder: List<String> = emptyList(), warpDivisions: Int = 1): Fixture {
         val source = SyntheticProject(temp.resolve("source"), layerCount, 12, 1).tree.head().snapshot
         val config = PipelineConfig(atlasSize = 64, meshSpacing = 8, rigEdits = RigEditOverlay(
             physicsOrder = physicsOrder, parameterEdits = listOf(RigParameterEdit("ParamInput", "Input", -1f, 1f, 0f, created = true),
@@ -251,8 +380,12 @@ class WorkspaceModifierCommandsTest {
             val xs = original.indices.filter { it % 2 == 0 }.map { original[it] }
             val ys = original.indices.filter { it % 2 == 1 }.map { original[it] }
             val left = xs.min(); val top = ys.min(); val width = xs.max() - left; val height = ys.max() - top
-            val warp = IrDeformer.Warp("warp", "Warp", null, null, 1, 1, true, KeyGrid.single(
-                LatticePoints(Floats.of(floatArrayOf(left, top, left + width, top, left, top + height, left + width, top + height)))))
+            val lattice = FloatArray((warpDivisions + 1) * (warpDivisions + 1) * 2) { i ->
+                if (i % 2 == 0) left + width * ((i / 2) % (warpDivisions + 1)) / warpDivisions
+                else top + height * ((i / 2) / (warpDivisions + 1)) / warpDivisions
+            }
+            val warp = IrDeformer.Warp("warp", "Warp", null, null, warpDivisions, warpDivisions, true,
+                KeyGrid.single(LatticePoints(Floats.of(lattice))))
             val mesh = ir.meshes.single()
             val geometry = mesh.geometry!!.copy(positions = Floats.of(FloatArray(original.size) { i ->
                 if (i % 2 == 0) (original[i] - left) / width else (original[i] - top) / height
@@ -648,6 +781,57 @@ class WorkspaceModifierCommandsTest {
         }
     }
 
+    @Test fun applyingPrefixPreservesDisabledMaterializedMotionAndPhysicsForReenable(): Unit = runBlocking {
+        val f = fixture()
+        f.edit("modifier_add", add(f, "physics", physics().toJson(), "physics-owner"))
+        f.edit("modifier_add", add(f, "motion", MotionClips.toJson(motion()), "motion-owner"))
+        for (owner in listOf("physics-owner", "motion-owner")) {
+            f.edit("modifier_apply", buildJsonObject { put("id", owner); put("scope", "selected") })
+        }
+        val expected = RigIrCompiler.compile(f.now.model)
+        val physicsId = PhysicsCatalog.active(f.now.model).single().id
+        val motionId = MotionCatalog.entries(f.now.document.rigEdits).single().id
+        f.edit("physics_put", buildJsonObject { put("id", physicsId); put("enabled", false) })
+        f.edit("motion_properties", buildJsonObject { put("id", motionId); put("enabled", false) })
+        val inactive = RigIrCompiler.compile(f.now.model)
+        f.edit("modifier_apply", id("motion-owner"))
+        assertTrue(stack(f).instances.isEmpty())
+        assertEquals(inactive, RigIrCompiler.compile(f.builder.build(f.now.document)))
+        assertEquals(physicsId, f.now.document.rigEdits.physicsEdits.single().id)
+        assertFalse(f.now.document.rigEdits.motionClips.single().enabled)
+        f.edit("physics_put", buildJsonObject { put("id", physicsId); put("enabled", true) })
+        f.edit("motion_properties", buildJsonObject { put("id", motionId); put("enabled", true) })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
+    @Test fun selectedAppliedPhysicsSupportsOrdinaryEditsAndRejectsLaterParameterInputs(): Unit = runBlocking {
+        val f = fixture(withWarp = true)
+        f.edit("modifier_add", add(f, "physics", physics().toJson(), "pendulum"))
+        f.edit("modifier_apply", buildJsonObject { put("id", "pendulum"); put("scope", "selected") })
+        val row = WorkspaceDocumentEdits.physicsCatalog(f.now.document, f.now.model).single()
+        assertEquals(PhysicsOrigin.CUSTOM, row.origin)
+        val edited = row.setting.copy(segments = listOf(PhysicsSegment(mobility = .7f)))
+        f.edit("physics_put", edited.toJson())
+        assertEquals(edited.segments, PhysicsCatalog.active(f.now.model).single().segments)
+        assertTrue(f.now.document.rigEdits.physicsEdits.isEmpty())
+        f.edit("physics_put", buildJsonObject { put("id", edited.id); put("enabled", false) })
+        assertTrue(PhysicsCatalog.active(f.now.model).isEmpty())
+        assertFalse(WorkspaceDocumentEdits.physicsCatalog(f.now.document, f.now.model).single().enabled)
+        f.edit("physics_put", buildJsonObject { put("id", edited.id); put("enabled", true) })
+        assertEquals(edited.segments, PhysicsCatalog.active(f.now.model).single().segments)
+        val swing = RigSwingEdit.single("template", "Swing", SwingKind.LATERAL, listOf("warp"), listOf("P"))
+        f.edit("modifier_add", add(f, "swing", swing.toJson(), "later", ModifierTarget("deformer", "warp")))
+        val laterParameter = stack(f).instances.last().outputId("swing:lateral:0")
+        val before = f.now
+        assertFails { f.edit("physics_put", edited.copy(inputs = listOf(PhysicsInput(laterParameter))).toJson()) }
+        assertEquals(before.state, f.now.state)
+        assertEquals(RigIrCompiler.compile(f.now.model), RigIrCompiler.compile(f.builder.build(f.now.document)))
+        f.edit("physics_delete", id(edited.id))
+        assertTrue(PhysicsCatalog.active(f.now.model).isEmpty())
+        assertTrue(WorkspaceDocumentEdits.physicsCatalog(f.now.document, f.now.model).isEmpty())
+    }
+
     @Test fun workspacePhysicsReadsTheEvaluatedStackAndAppliedGroupsStayOrdinarilyEditable(): Unit = runBlocking<Unit> {
         val f = fixture()
         val initial = f.now
@@ -822,6 +1006,375 @@ class WorkspaceModifierCommandsTest {
         assertEquals(current.revision, f.now.revision)
     }
 
+    @Test fun canvasStagePreviewAndTargetAxesUseTheSameSnapshot(): Unit = runBlocking {
+        val f = fixture(withWarp = true)
+        val swing = RigSwingEdit.single("template", "Swing", SwingKind.LATERAL, listOf("warp"), listOf("P"))
+        f.edit("modifier_add", add(f, "swing", swing.toJson(), "sway", ModifierTarget("deformer", "warp")))
+        io.github.psd2live.ui.state.PSD2LiveViewModel().use { vm ->
+            vm.setStateForTest(vm.state.value.copy(previewModel = f.now.model, rigEdits = f.now.document.rigEdits))
+            kotlinx.coroutines.withTimeout(10_000) {
+                androidx.compose.runtime.snapshotFlow { vm.uiState.value }.first { it.previewModel === f.now.model }
+            }
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                val editor = vm.canvasEditor
+                editor.hierarchyMode = io.github.psd2live.ui.EditHierarchyMode.DEFORM
+                editor.changeGeometryEditStage("base")
+                assertNotNull(editor.displayPuppet)
+                assertSame(editor.editSource, editor.displayPuppet)
+                assertTrue(editor.target(deformerId = "warp")!!.geometry.axes.isEmpty())
+                editor.changeGeometryEditStage("modifier:sway")
+                assertSame(editor.editSource, editor.displayPuppet)
+                assertEquals(1, editor.target(deformerId = "warp")!!.geometry.axes.size)
+                assertTrue("modifier:sway" in editor.geometryEditStages())
+                editor.changeGeometryEditStage("auto")
+                assertNull(editor.displayPuppet)
+                assertSame(f.now.model.rig.puppet, editor.editSource)
+            }
+        }
+    }
+
+    @Test fun vertexGestureFreezesIntermediatePoseAndReleasesItOnCancelAndMouseUp(): Unit = runBlocking {
+        val f = fixture(withWarp = true)
+        val swing = RigSwingEdit.single("template", "Swing", SwingKind.LATERAL, listOf("warp"), listOf("P"))
+        f.edit("modifier_add", add(f, "swing", swing.toJson(), "sway", ModifierTarget("deformer", "warp")))
+        val parameter = org.umamo.runtime.model.ParameterId(stack(f).instances.single().outputId("swing:lateral:0"))
+        io.github.psd2live.ui.state.PSD2LiveViewModel().use { vm ->
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                vm.setStateForTest(vm.state.value.copy(previewModel = f.now.model,
+                    rigEdits = f.now.document.rigEdits, selectedDeformerId = "warp",
+                    parameterValues = mapOf(parameter to .35f),
+                    historySnapshot = io.github.psd2live.project.WorkspaceHistorySnapshot("test", emptyList())))
+                val editor = vm.canvasEditor
+                editor.hierarchyMode = io.github.psd2live.ui.EditHierarchyMode.DEFORM
+                editor.tool = io.github.psd2live.ui.CanvasTool.SELECT
+                editor.editLevel = 1
+                val viewport = CanvasViewport(100.0, 200.0, 200.0, 500f, 500f)
+                for (cancel in listOf(true, false)) {
+                    val target = assertNotNull(editor.target())
+                    val badges = editor.deformerCorners(viewport).values
+                    val position = editor.screen(target.geometry.points, target, viewport).first { point ->
+                        badges.none { it.contains(point.x.toDouble(), point.y.toDouble()) }
+                    }
+                    assertTrue(editor.press(position, viewport, false, false))
+                    assertTrue(editor.inGesture)
+                    assertEquals(.35f, assertNotNull(editor.capturedEditPose)[parameter])
+                    vm.setParameterValues(mapOf(parameter to 0f))
+                    assertEquals(.35f, editor.pose[parameter.raw])
+                    assertEquals(.35f, vm.state.value.parameterValues[parameter])
+                    val originalPoints = target.geometry.points.copyOf()
+                    editor.move(position + androidx.compose.ui.geometry.Offset(10f, 0f), viewport, false)
+                    assertNull(editor.error)
+                    assertFalse(originalPoints.contentEquals(assertNotNull(editor.target()).geometry.points))
+                    assertEquals(.35f, editor.pose[parameter.raw])
+                    if (cancel) editor.cancel() else {
+                        editor.move(position, viewport, false)
+                        editor.release()
+                    }
+                    assertNull(editor.capturedEditPose)
+                    assertFalse(editor.inGesture)
+                    assertNull(editor.displayPuppet)
+                    assertContentEquals(originalPoints, assertNotNull(editor.target()).geometry.points)
+                }
+            }
+        }
+    }
+
+    @Test fun transformAndTemporaryWarpUseTheSharedPoseLockAndCancellation(): Unit = runBlocking {
+        val f = fixture(withWarp = true)
+        val swing = RigSwingEdit.single("template", "Swing", SwingKind.LATERAL, listOf("warp"), listOf("P"))
+        f.edit("modifier_add", add(f, "swing", swing.toJson(), "sway", ModifierTarget("deformer", "warp")))
+        val parameter = org.umamo.runtime.model.ParameterId(stack(f).instances.single().outputId("swing:lateral:0"))
+        for (temporary in listOf(false, true)) io.github.psd2live.ui.state.PSD2LiveViewModel().use { vm ->
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                vm.setStateForTest(vm.state.value.copy(previewModel = f.now.model,
+                    rigEdits = f.now.document.rigEdits, selectedDeformerId = "warp",
+                    parameterValues = mapOf(parameter to .35f),
+                    historySnapshot = io.github.psd2live.project.WorkspaceHistorySnapshot("test", emptyList())))
+                val editor = vm.canvasEditor
+                editor.hierarchyMode = io.github.psd2live.ui.EditHierarchyMode.DEFORM
+                editor.editLevel = 1
+                val viewport = CanvasViewport(100.0, 200.0, 200.0, 500f, 500f)
+                val target = assertNotNull(editor.target())
+                val original = target.geometry.points.copyOf()
+                editor.vertices = (0 until target.count).toSet()
+                val position = if (temporary) {
+                    editor.tool = io.github.psd2live.ui.CanvasTool.SELECT
+                    editor.beginTemporaryWarp()
+                    editor.temporaryWarpScreen(viewport)[4]
+                } else {
+                    editor.tool = io.github.psd2live.ui.CanvasTool.TRANSFORM
+                    assertNotNull(editor.transformFrame(viewport)).bounds.at(androidx.compose.ui.geometry.Offset(1f, 1f))
+                }
+                assertTrue(editor.press(position, viewport, false, false))
+                assertTrue(editor.inGesture)
+                assertEquals(.35f, assertNotNull(editor.capturedEditPose)[parameter])
+                vm.setParameterValues(mapOf(parameter to 0f))
+                editor.move(position + androidx.compose.ui.geometry.Offset(10f, 0f), viewport, false)
+                assertNull(editor.error)
+                assertEquals(.35f, editor.pose[parameter.raw])
+                assertFalse(original.contentEquals(assertNotNull(editor.target()).geometry.points))
+                editor.cancel()
+                assertNull(editor.capturedEditPose)
+                assertFalse(editor.inGesture)
+                assertContentEquals(original, assertNotNull(editor.target()).geometry.points)
+                // This isolated editor has no workspace backend. Change the observed state directly to
+                // verify that cancellation releases the pose used by display, picking and geometry.
+                vm.setStateForTest(vm.state.value.copy(parameterValues = mapOf(parameter to .2f)))
+                assertEquals(.2f, editor.pose[parameter.raw])
+            }
+        }
+    }
+
+    @Test fun pathAndBezierHandlesKeepTheSharedPoseDuringDeformation(): Unit = runBlocking {
+        val f = fixture(withWarp = true, warpDivisions = 4)
+        val drawable = f.now.model.rig.puppet.drawables.single()
+        val mesh = requireNotNull(drawable.mesh)
+        val path = org.umamo.runtime.model.DeformPath("test-path", drawable.id,
+            mesh.indices.take(2).map { i -> DeformPathTools.bind(mesh.positions, mesh.indices, mesh.positions[i * 2], mesh.positions[i * 2 + 1]) },
+            .2f, hardness = 50f, editLevel = 2)
+        f.commands.executeJournal(f.now.projectId, f.now.state, "Path", JsonArray(listOf(DeformPathJournal.encode(path))), MutationAuthor.USER)
+        val swing = RigSwingEdit.single("template", "Swing", SwingKind.LATERAL, listOf("warp"), listOf("P"))
+        f.edit("modifier_add", add(f, "swing", swing.toJson(), "sway", ModifierTarget("deformer", "warp")))
+        val parameter = org.umamo.runtime.model.ParameterId(stack(f).instances.single().outputId("swing:lateral:0"))
+        val layer = f.now.model.rig.ownLayerIdByDrawableId.getValue(drawable.id.raw)
+        for (bezier in listOf(false, true)) io.github.psd2live.ui.state.PSD2LiveViewModel().use { vm ->
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                vm.setStateForTest(vm.state.value.copy(previewModel = f.now.model, rigEdits = f.now.document.rigEdits,
+                    selectedDeformerId = if (bezier) "warp" else null, selectedLayerId = layer,
+                    parameterValues = mapOf(parameter to .35f),
+                    historySnapshot = io.github.psd2live.project.WorkspaceHistorySnapshot("test", emptyList())))
+                val editor = vm.canvasEditor
+                editor.hierarchyMode = io.github.psd2live.ui.EditHierarchyMode.DEFORM
+                editor.tool = io.github.psd2live.ui.CanvasTool.SELECT
+                editor.editLevel = 2
+                editor.pathLevel = 2
+                editor.parameter = parameter.raw
+                val viewport = CanvasViewport(100.0, 200.0, 200.0, 500f, 500f)
+                val target = assertNotNull(editor.target())
+                val original = target.geometry.points.copyOf()
+                val point = if (bezier) {
+                    editor.ensureBezierState()
+                    val handle = assertNotNull(editor.bezierState).handles.values.first()
+                    floatArrayOf(handle.x, handle.y)
+                } else {
+                    val position = DeformPathTools.positions(editor.paths().single(), original).first()
+                    floatArrayOf(position.first, position.second)
+                }
+                val position = editor.screen(point, target, viewport).first()
+                editor.updateHover(position, viewport)
+                if (bezier) assertNotNull(editor.hoveredBezierHandle)
+                assertTrue(editor.press(position, viewport, false, false))
+                if (!bezier) assertEquals(0, editor.pathPoint)
+                assertEquals(.35f, assertNotNull(editor.capturedEditPose)[parameter])
+                editor.move(position + androidx.compose.ui.geometry.Offset(10f, 0f), viewport, false)
+                assertNull(editor.error)
+                assertFalse(original.contentEquals(assertNotNull(editor.target()).geometry.points), "bezier=$bezier")
+                assertEquals(.35f, editor.pose[parameter.raw])
+                editor.cancel()
+                assertNull(editor.capturedEditPose)
+                assertContentEquals(original, assertNotNull(editor.target()).geometry.points)
+            }
+        }
+    }
+
+    @Test fun explicitGeometryStagesSeparateBaseIntermediateAndEndOfStackEdits(): Unit = runBlocking {
+        val f = fixture(withWarp = true)
+        val swing = RigSwingEdit.single("template", "Swing", SwingKind.LATERAL, listOf("warp"), listOf("P"))
+        f.edit("modifier_add", add(f, "swing", swing.toJson(), "sway", ModifierTarget("deformer", "warp")))
+        f.edit("modifier_add", add(f, "motion", MotionClips.toJson(motion()), "motion-owner"))
+        val parameter = stack(f).instances.first().outputId("swing:lateral:0")
+        suspend fun edit(stage: String, key: Map<String, Float>) {
+            val source = GeometryEditStages.resolve(f.now.model, stage).puppet
+            val points = RigGeometryTools.geometry(source, "warp", "warp", key).points
+            val command = buildJsonObject {
+                put("op", "canvas_geometry"); put("kind", "warp"); put("id", "warp"); put("edit_stage", stage)
+                put("key", JsonObject(key.mapValues { JsonPrimitive(it.value) }))
+                put("points", JsonArray(points.mapIndexed { i, value -> JsonPrimitive(if (i == 0) value + .1f else value) }))
+            }
+            val current = f.now
+            f.commands.executeJournal(current.projectId, current.state, "Edit stage", JsonArray(listOf(command)), MutationAuthor.USER)
+        }
+        val baseJournal = f.now.document.rigEdits.authoringJournal.size
+        edit("base", emptyMap())
+        assertTrue(f.now.document.rigEdits.authoringJournal.size > baseJournal)
+        assertTrue(stack(f).overrides.isEmpty())
+        edit("modifier:sway", mapOf(parameter to .35f))
+        assertEquals(setOf("sway"), stack(f).overrides.keys)
+        edit("final", mapOf(parameter to .35f))
+        assertEquals(setOf("sway", "motion-owner"), stack(f).overrides.keys)
+        assertTrue(f.now.model.modifierEvaluation!!.entries.all { it.status == ModifierStatus.ACTIVE })
+        assertEquals(RigIrCompiler.compile(f.now.model), RigIrCompiler.compile(f.builder.build(f.now.document)))
+        val before = f.now
+        assertFails { edit("base", mapOf(parameter to .35f)) }
+        assertEquals(before.state, f.now.state)
+        f.edit("modifier_apply", buildJsonObject { put("id", "motion-owner"); put("scope", "selected") })
+        assertEquals(RigIrCompiler.compile(before.model), RigIrCompiler.compile(f.now.model))
+        assertEquals(RigIrCompiler.compile(before.model), RigIrCompiler.compile(f.builder.build(f.now.document)))
+        f.runtime.checkout(f.now.projectId, f.now.state, before.historyHead)
+        f.edit("modifier_enable", buildJsonObject { put("id", "motion-owner"); put("enabled", false) })
+        assertFails { edit("modifier:motion-owner", mapOf(parameter to .35f)) }
+    }
+
+    @Test fun generatedWarpCanBeEditedWhileKeepingUnkeyedChildrenInPlace(): Unit = runBlocking {
+        val f = fixture(withWarp = true)
+        val swing = RigSwingEdit.single("template", "Swing", SwingKind.LATERAL, listOf("warp"), listOf("P"))
+        f.edit("modifier_add", add(f, "swing", swing.toJson(), "sway", ModifierTarget("deformer", "warp")))
+        val parameter = stack(f).instances.single().outputId("swing:lateral:0")
+        val key = mapOf(parameter to .35f)
+        val pose = key.mapKeys { org.umamo.runtime.model.ParameterId(it.key) }
+        val evaluator = org.umamo.render.eval.CpuDeformationEvaluator()
+        fun assertSameAppearance(a: RigPreviewModel, b: RigPreviewModel) {
+            val expected = evaluator.evaluate(a.rig.puppet, pose).worldPositions
+            val actual = evaluator.evaluate(b.rig.puppet, pose).worldPositions
+            // Child compensation uses the runtime warp inverse, whose world tolerance scales with lattice extent.
+            val lattice = RigGeometryTools.geometry(b.rig.puppet, "warp", "warp", key).points
+            val tolerance = kotlin.math.sqrt(org.umamo.render.eval.warpInverseToleranceSquared(lattice)) * 2f
+            expected.forEach { (id, points) -> points.indices.forEach { i ->
+                assertEquals(points[i], actual.getValue(id)[i], tolerance)
+            } }
+        }
+        val before = f.now
+        val points = RigGeometryTools.geometry(before.model.rig.puppet, "warp", "warp", key).points
+        val command = buildJsonObject {
+            put("op", "canvas_geometry"); put("kind", "warp"); put("id", "warp"); put("preserve_children", true)
+            put("key", JsonObject(key.mapValues { JsonPrimitive(it.value) }))
+            put("points", JsonArray(points.mapIndexed { i, v -> JsonPrimitive(v + if (i % 2 == 0) .1f else 0f) }))
+        }
+        f.commands.executeJournal(before.projectId, before.state, "Move parent", JsonArray(listOf(command)), MutationAuthor.USER)
+        assertSameAppearance(before.model, f.now.model)
+        assertFalse(points.contentEquals(RigGeometryTools.geometry(f.now.model.rig.puppet, "warp", "warp", key).points))
+        val record = stack(f).overrides.getValue("sway").single()
+        assertTrue(record.getValue("preserve_children").jsonPrimitive.boolean)
+        val changed = swing.copy(motions = swing.motions.map { it.copy(shape = it.shape.copy(magnitude = .5f)) })
+        f.edit("modifier_update", buildJsonObject { put("id", "sway"); put("config", changed.toJson()) })
+        val uncorrected = f.builder.build(f.now.document.copy(rigEdits = f.now.document.rigEdits.copy(
+            modifierStack = stack(f).copy(overrides = emptyMap()).toJson())))
+        assertSameAppearance(uncorrected, f.now.model)
+        assertEquals(RigIrCompiler.compile(f.now.model), RigIrCompiler.compile(f.builder.build(f.now.document)))
+        val detached = uncorrected.rig.puppet.copy(drawables = uncorrected.rig.puppet.drawables.map { it.copy(parentDeformerId = null) })
+        assertEquals(GeneratedOverrideOrphanReason.SHAPE_MISMATCH, GeneratedOverrides.apply(detached, record).issues.single().reason)
+        val expected = RigIrCompiler.compile(f.now.model)
+        f.edit("modifier_apply", buildJsonObject { put("id", "sway"); put("scope", "selected") })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+    }
+
+    @Test fun impossibleChildCompensationRejectsTheWholeEdit(): Unit = runBlocking {
+        val f = fixture(withWarp = true)
+        val swing = RigSwingEdit.single("template", "Swing", SwingKind.LATERAL, listOf("warp"), listOf("P"))
+        f.edit("modifier_add", add(f, "swing", swing.toJson(), "sway", ModifierTarget("deformer", "warp")))
+        val parameter = stack(f).instances.single().outputId("swing:lateral:0")
+        val before = f.now
+        val geometry = RigGeometryTools.geometry(before.model.rig.puppet, "warp", "warp", mapOf(parameter to .35f))
+        val collapsed = buildJsonObject {
+            put("op", "canvas_geometry"); put("kind", "warp"); put("id", "warp"); put("preserve_children", true)
+            put("key", buildJsonObject { put(parameter, .35f) })
+            put("points", JsonArray(geometry.points.map { JsonPrimitive(0f) }))
+        }
+        assertFails {
+            f.commands.executeJournal(before.projectId, before.state, "Collapsed parent", JsonArray(listOf(collapsed)), MutationAuthor.USER)
+        }
+        assertEquals(before.state, f.now.state)
+        assertEquals(before.historyHead, f.now.historyHead)
+        assertEquals(RigIrCompiler.compile(before.model), RigIrCompiler.compile(f.now.model))
+    }
+
+    @Test fun generatedWarpKeepsChildIndependentKeyformsInPlace(): Unit = runBlocking {
+        val f = fixture(withWarp = true)
+        val child = f.now.model.rig.puppet.drawables.single().id.raw
+        val childPoints = RigGeometryTools.geometry(f.now.model.rig.puppet, "mesh", child, emptyMap()).points
+        val childCommand = buildJsonObject {
+            put("op", "canvas_geometry"); put("kind", "mesh"); put("id", child)
+            put("key", buildJsonObject { put("ParamInput", 1f) })
+            put("points", JsonArray(childPoints.mapIndexed { i, value -> JsonPrimitive(value + if (i % 2 == 0) .05f else 0f) }))
+        }
+        f.commands.executeJournal(f.now.projectId, f.now.state, "Child key", JsonArray(listOf(childCommand)), MutationAuthor.USER)
+        val swing = RigSwingEdit.single("template", "Swing", SwingKind.LATERAL, listOf("warp"), listOf("P"))
+        f.edit("modifier_add", add(f, "swing", swing.toJson(), "sway", ModifierTarget("deformer", "warp")))
+        val parameter = stack(f).instances.single().outputId("swing:lateral:0")
+        val key = mapOf(parameter to .35f)
+        val pose = key.mapKeys { org.umamo.runtime.model.ParameterId(it.key) }
+        val evaluator = org.umamo.render.eval.CpuDeformationEvaluator()
+        fun assertSameAppearance(a: RigPreviewModel, b: RigPreviewModel) {
+            for (value in (0..30).map { it / 30f }) {
+            val childPose = pose + (org.umamo.runtime.model.ParameterId("ParamInput") to value)
+            val expected = evaluator.evaluate(a.rig.puppet, childPose).worldPositions
+            val actual = evaluator.evaluate(b.rig.puppet, childPose).worldPositions
+            // Child compensation uses the runtime warp inverse, whose world tolerance scales with lattice extent.
+            val lattice = RigGeometryTools.geometry(b.rig.puppet, "warp", "warp", key).points
+            val tolerance = kotlin.math.sqrt(org.umamo.render.eval.warpInverseToleranceSquared(lattice)) * 2f
+            expected.forEach { (id, points) -> points.indices.forEach { i ->
+                assertEquals(points[i], actual.getValue(id)[i], tolerance, "child parameter=$value target=$id component=$i")
+            } }
+            }
+        }
+        val before = f.now
+        val points = RigGeometryTools.geometry(before.model.rig.puppet, "warp", "warp", key).points
+        val command = buildJsonObject {
+            put("op", "canvas_geometry"); put("kind", "warp"); put("id", "warp"); put("preserve_children", true)
+            put("key", JsonObject(key.mapValues { JsonPrimitive(it.value) }))
+            put("points", JsonArray(points.mapIndexed { i, v -> JsonPrimitive(v + if (i % 2 == 0) .1f else 0f) }))
+        }
+        f.commands.executeJournal(before.projectId, before.state, "Move parent", JsonArray(listOf(command)), MutationAuthor.USER)
+        assertSameAppearance(before.model, f.now.model)
+        assertFalse(points.contentEquals(RigGeometryTools.geometry(f.now.model.rig.puppet, "warp", "warp", key).points))
+        val record = stack(f).overrides.getValue("sway").single()
+        assertTrue(record.getValue("preserve_children").jsonPrimitive.boolean)
+        val changed = swing.copy(motions = swing.motions.map { it.copy(shape = it.shape.copy(magnitude = .5f)) })
+        f.edit("modifier_update", buildJsonObject { put("id", "sway"); put("config", changed.toJson()) })
+        val uncorrected = f.builder.build(f.now.document.copy(rigEdits = f.now.document.rigEdits.copy(
+            modifierStack = stack(f).copy(overrides = emptyMap()).toJson())))
+        assertSameAppearance(uncorrected, f.now.model)
+        assertEquals(RigIrCompiler.compile(f.now.model), RigIrCompiler.compile(f.builder.build(f.now.document)))
+        val detached = uncorrected.rig.puppet.copy(drawables = uncorrected.rig.puppet.drawables.map { it.copy(parentDeformerId = null) })
+        assertEquals(GeneratedOverrideOrphanReason.SHAPE_MISMATCH, GeneratedOverrides.apply(detached, record).issues.single().reason)
+        val expected = RigIrCompiler.compile(f.now.model)
+        f.edit("modifier_apply", buildJsonObject { put("id", "sway"); put("scope", "selected") })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+    }
+
+    @Test fun selectedApplicationSurvivesHistoryDiskReloadAndCmo3AtIntermediatePoses(): Unit = runBlocking {
+        val f = fixture(withWarp = true)
+        f.edit("modifier_add", add(f, "physics", physics().toJson(), "upstream"))
+        val swing = RigSwingEdit.single("template", "Swing", SwingKind.LATERAL, listOf("warp"), listOf("P"))
+        f.edit("modifier_add", add(f, "swing", swing.toJson(), "middle", ModifierTarget("deformer", "warp")))
+        f.edit("modifier_add", add(f, "motion", MotionClips.toJson(motion()), "downstream"))
+        val before = f.now
+        val parameter = stack(f).instances[1].outputId("swing:lateral:0")
+        val expected = RigIrCompiler.compile(before.model)
+        f.edit("modifier_apply", buildJsonObject { put("id", "middle"); put("scope", "selected") })
+        val applied = f.now
+        assertEquals(listOf("upstream", "middle", "downstream"), stack(f).instances.map { it.id })
+        assertEquals(expected, RigIrCompiler.compile(applied.model))
+        f.runtime.checkout(f.now.projectId, f.now.state, before.historyHead)
+        assertTrue(stack(f).appliedNodes.isEmpty())
+        f.runtime.checkout(f.now.projectId, f.now.state, applied.historyHead)
+        assertEquals(setOf("middle"), stack(f).appliedNodes.keys)
+        val revision = WorkspaceRevisions.of(applied.document)
+        val store = WorkspaceStore(temp.resolve("applied-project"))
+        store.persistHistory("project", WorkspaceHistoryTree(applied.document, revision, revision).state())
+        val reopened = WorkspaceStore(store.root).loadHistory("project")!!.head().snapshot
+        val rebuilt = f.builder.build(reopened)
+        assertEquals(expected, RigIrCompiler.compile(rebuilt))
+        fun export(model: RigPreviewModel): org.umamo.runtime.model.PuppetModel {
+            val converted = Cmo3Target().convert(RigIrCompiler.compile(model, tileArt = true), ExportOptions("applied"))
+            val bytes = Cmo3.write(converted.model)
+            assertTrue(bytes.isNotEmpty())
+            return org.umamo.interop.cmo3.Cmo3Import.fromModelSource(Cmo3.read(bytes).root as org.umamo.format.cmo3.model.custom.CModelSource)
+        }
+        val exportedBefore = export(before.model)
+        val exportedAfter = export(rebuilt)
+        val evaluator = org.umamo.render.eval.CpuDeformationEvaluator()
+        for (value in listOf(-1f, -.3f, 0f, .35f, 1f)) {
+            val pose = mapOf(org.umamo.runtime.model.ParameterId(parameter) to value)
+            for ((a, b) in listOf(before.model.rig.puppet to rebuilt.rig.puppet, exportedBefore to exportedAfter)) {
+                val first = evaluator.evaluate(a, pose).worldPositions
+                val second = evaluator.evaluate(b, pose).worldPositions
+                assertEquals(first.keys, second.keys)
+                first.forEach { (id, points) -> points.indices.forEach { i -> assertEquals(points[i], second.getValue(id)[i], .0001f) } }
+            }
+        }
+    }
+
     @Test fun applyingAPrefixKeepsTheSuffixAndMakesPhysicsAndMotionOrdinaryEditableContent(): Unit = runBlocking<Unit> {
         val f = fixture()
         f.edit("modifier_add", add(f, "physics", physics().toJson(), "pendulum"))
@@ -901,6 +1454,80 @@ class WorkspaceModifierCommandsTest {
     private fun farPoints(f: Fixture): FloatArray {
         val grid = (f.now.model.rig.puppet.deformers.single() as org.umamo.runtime.model.Deformer.Warp).geometryGrid!!
         return grid.cells.single { it.coordinate.single() == grid.axes.single().keys.lastIndex }.form.controlPoints
+    }
+
+    @Test fun brushCorrectionFollowsModifierChangesAndSurvivesApplication(): Unit = runBlocking {
+        correctionFollowsModifierChangesAndSurvivesApplication("brush")
+    }
+
+    @Test fun directGeometryEditFollowsModifierChangesAndSurvivesApplication(): Unit = runBlocking {
+        correctionFollowsModifierChangesAndSurvivesApplication("direct")
+    }
+
+    @Test fun bezierCorrectionFollowsModifierChangesAndSurvivesApplication(): Unit = runBlocking {
+        correctionFollowsModifierChangesAndSurvivesApplication("bezier")
+    }
+
+    @Test fun fixedDirectGeometryCorrectionKeepsEditedValuesAfterRegeneration(): Unit = runBlocking {
+        correctionFollowsModifierChangesAndSurvivesApplication("direct", "absolute")
+    }
+
+    @Test fun fixedBrushCorrectionUsesTheSameMergePolicy(): Unit = runBlocking {
+        correctionFollowsModifierChangesAndSurvivesApplication("brush", "absolute")
+    }
+
+    private suspend fun correctionFollowsModifierChangesAndSurvivesApplication(tool: String, mode: String = "delta") {
+        val f = fixture(withWarp = true)
+        val swing = RigSwingEdit.single("template", "Swing", SwingKind.LATERAL, listOf("warp"), listOf("P"))
+        f.edit("modifier_add", add(f, "swing", swing.toJson(), "sway", ModifierTarget("deformer", "warp")))
+        val parameter = stack(f).instances.single().outputId("swing:lateral:0")
+        val pose = mapOf(parameter to .35f)
+        fun points(model: RigPreviewModel = f.now.model) = RigGeometryTools.geometry(model.rig.puppet, "warp", "warp", pose).points
+        val before = points().copyOf()
+        if (tool != "brush") {
+            val command = if (tool == "bezier") RigBezierJournal.prepare(f.now.model.rig.puppet,
+                f.now.document.rigEdits, "anchor", buildJsonObject {
+                    put("target", "warp:warp"); putJsonObject("coordinate") { put(parameter, .35f) }
+                    put("row", 0); put("column", 0); put("x", before[0] + .1f); put("y", before[1])
+                }) else buildJsonObject {
+                put("op", "canvas_geometry"); put("kind", "warp"); put("id", "warp")
+                putJsonObject("key") { put(parameter, .35f) }
+                put("points", JsonArray(before.mapIndexed { i, value -> JsonPrimitive(if (i == 0) value + .1f else value) }))
+            }
+            val current = f.now
+            f.commands.executeJournal(current.projectId, current.state, "Edit geometry", JsonArray(listOf(GeometryEditIntent.withMode(command, mode))), MutationAuthor.USER)
+        } else f.edit("canvas_deform_stroke", buildJsonObject {
+            put("correction_mode", mode)
+            putJsonObject("stroke") {
+                put("action", "brush"); put("mode", "deform"); put("radius", 100f); put("strength", 1f)
+                putJsonObject("pose") { put(parameter, .35f) }
+                putJsonArray("targets") { addJsonObject {
+                    put("target", "warp:warp"); putJsonObject("key") { put(parameter, .35f) }
+                } }
+                putJsonArray("samples") {
+                    addJsonObject { put("point", JsonArray(listOf(JsonPrimitive(before[0]), JsonPrimitive(before[1])))) }
+                    addJsonObject { put("point", JsonArray(listOf(JsonPrimitive(before[0] + 2f), JsonPrimitive(before[1])))) }
+                }
+            }
+        })
+        val correction = stack(f).overrides.getValue("sway").single()
+        assertEquals(mode, correction.getValue("merge_mode").jsonPrimitive.content)
+        assertTrue(correction.getValue("insert_keys").jsonPrimitive.boolean)
+        val delta = points().mapIndexed { i, value -> value - before[i] }
+        assertTrue(delta.any { kotlin.math.abs(it) > .001f })
+        val changed = swing.copy(motions = swing.motions.map { it.copy(shape = it.shape.copy(magnitude = .5f)) })
+        f.edit("modifier_update", buildJsonObject { put("id", "sway"); put("type", "swing"); put("config", changed.toJson()) })
+        val withoutCorrection = f.builder.build(f.now.document.copy(rigEdits = f.now.document.rigEdits.copy(
+            modifierStack = stack(f).copy(overrides = emptyMap()).toJson())))
+        val generated = points(withoutCorrection)
+        points().forEachIndexed { i, value ->
+            val editedPair = kotlin.math.abs(delta[i / 2 * 2]) > .0001f || kotlin.math.abs(delta[i / 2 * 2 + 1]) > .0001f
+            val expectedValue = if (mode == "absolute" && editedPair) before[i] + delta[i] else generated[i] + if (mode == "delta") delta[i] else 0f
+            assertEquals(expectedValue, value, .00001f)
+        }
+        val expected = RigIrCompiler.compile(f.now.model)
+        f.edit("modifier_apply", id("sway"))
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
     }
 
     private suspend fun overrideFarPoint(f: Fixture, target: String = "warp") {
@@ -1267,6 +1894,39 @@ class WorkspaceModifierCommandsTest {
         row = WorkspaceModifierQueries.describe(f.now).getValue("entries").jsonArray.last().jsonObject
         assertEquals("active", row.getValue("status").jsonPrimitive.content)
         assertEquals("body", stack(f).instances.last().id)
+    }
+
+    @Test fun deletingTheProviderOfAppliedContentIsRejectedWithoutChangingHistory(): Unit = runBlocking {
+        val f = fixture()
+        f.edit("modifier_add", add(f, RigSourceModifiers.SCAFFOLD, JsonObject(emptyMap()), "structure"))
+        f.edit("modifier_add", add(f, RigBodyModifier.TYPE, body("structure"), "body"))
+        f.edit("modifier_apply", buildJsonObject { put("id", "body"); put("scope", "selected") })
+        val before = f.now
+        for (operation in listOf("modifier_remove", "modifier_enable")) {
+            assertFails {
+                f.edit(operation, buildJsonObject { put("id", "structure"); if (operation == "modifier_enable") put("enabled", false) })
+            }
+            assertEquals(before.state, f.now.state)
+            assertEquals(before.historyHead, f.now.historyHead)
+            assertEquals(RigIrCompiler.compile(before.model), RigIrCompiler.compile(f.now.model))
+        }
+        // Applying the prerequisite prefix is the supported way to release the live provider.
+        f.edit("modifier_apply", buildJsonObject { put("id", "body"); put("scope", "prefix") })
+        assertTrue(stack(f).instances.isEmpty())
+        assertEquals(RigIrCompiler.compile(before.model), RigIrCompiler.compile(f.now.model))
+    }
+
+    @Test fun deletingAnAppliedMotionInputParameterRejectsTheEntireDocumentEdit(): Unit = runBlocking {
+        val f = fixture()
+        f.edit("modifier_add", add(f, "motion", MotionClips.toJson(motion()), "motion-owner"))
+        f.edit("modifier_apply", buildJsonObject { put("id", "motion-owner"); put("scope", "selected") })
+        val before = f.now
+        assertFails {
+            f.edit("parameter_delete", buildJsonObject { put("parameter_id", "ParamInput") })
+        }
+        assertEquals(before.state, f.now.state)
+        assertEquals(before.historyHead, f.now.historyHead)
+        assertEquals(RigIrCompiler.compile(before.model), RigIrCompiler.compile(f.now.model))
     }
 
     @Test fun movingASwingAcrossBodyBindingChangesTheActualCombinedGeometry(): Unit = runBlocking<Unit> {

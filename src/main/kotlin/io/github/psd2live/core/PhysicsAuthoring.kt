@@ -12,6 +12,7 @@ object PhysicsAuthoring {
      * generated values drops the replacement. Another enabled user group may not already drive an output.
      */
     fun put(overlay: RigEditOverlay, edit: RigPhysicsEdit, generated: RigPhysicsEdit? = null): RigEditOverlay {
+        AppliedPhysics.edit(overlay, edit.id, setting = edit)?.let { return it }
         val others = overlay.physicsEdits.filter { it.id != edit.id && it.id !in overlay.disabledPhysicsIds }
         edit.outputParameters.firstOrNull { p -> others.any { p in it.outputParameters } }?.let { p ->
             throw IllegalArgumentException("Output $p is already driven by ${others.first { p in it.outputParameters }.id}")
@@ -27,12 +28,14 @@ object PhysicsAuthoring {
 
     /** Turns a non-preset group on or off; the presets are switched by their own settings. */
     fun setEnabled(overlay: RigEditOverlay, id: String, enabled: Boolean): RigEditOverlay {
+        AppliedPhysics.edit(overlay, id, enabled = enabled)?.let { return it }
         require(overlay.importedCmo3 != null || id !in PhysicsGenerator.presetIds) { "Presets are switched by their settings" }
         return overlay.copy(disabledPhysicsIds = if (enabled) overlay.disabledPhysicsIds - id else overlay.disabledPhysicsIds + id)
     }
 
     /** Deletes a user group, or returns a replaced generated group to its generated values. */
     fun remove(overlay: RigEditOverlay, id: String, generated: Boolean): RigEditOverlay {
+        AppliedPhysics.edit(overlay, id, delete = true)?.let { return it }
         require(overlay.physicsEdits.any { it.id == id }) { "No user physics group $id" }
         return overlay.copy(physicsEdits = overlay.physicsEdits.filterNot { it.id == id },
             disabledPhysicsIds = if (generated) overlay.disabledPhysicsIds else overlay.disabledPhysicsIds - id,
@@ -104,14 +107,23 @@ object PhysicsAuthoring {
         val ids = settings.map { it.id }
         val outputs = settings.flatMapTo(HashSet()) { it.outputParameters }
         val kept = overlay.physicsEdits.filterNot { it.id in ids }
-        val disabled = kept.filter { it.id !in overlay.disabledPhysicsIds && it.outputParameters.any(outputs::contains) }.map { it.id }
+        val applied = groups.filter { AppliedPhysics.owner(overlay, it.id) != null }
+        val disabled = (kept.filter { it.id !in overlay.disabledPhysicsIds && it.outputParameters.any(outputs::contains) }.map { it.id } +
+            applied.filter { it.id !in ids && it.active && it.setting.outputParameters.any(outputs::contains) }.map { it.id }).distinct()
+        val appliedIds = applied.mapTo(HashSet()) { it.id }
         val fps = file.fps?.let { kotlin.math.round(it).toInt() }?.takeIf { it in RigEditOverlay.PHYSICS_FPS_RANGE }
-        val next = overlay.copy(
-            physicsEdits = kept + settings,
-            disabledPhysicsIds = overlay.disabledPhysicsIds - ids.toSet() + disabled,
+        var next = overlay.copy(
+            physicsEdits = kept + settings.filterNot { it.id in appliedIds },
+            disabledPhysicsIds = overlay.disabledPhysicsIds - ids.toSet() + disabled.filterNot { it in appliedIds },
             physicsOrder = groups.map { it.id }.filterNot { it in ids } + ids,
             physicsFps = fps ?: overlay.physicsFps,
         )
+        settings.filter { it.id in appliedIds }.forEach { setting ->
+            next = requireNotNull(AppliedPhysics.edit(next, setting.id, setting = setting, enabled = true))
+        }
+        disabled.filter { it in appliedIds }.forEach { id ->
+            next = requireNotNull(AppliedPhysics.edit(next, id, enabled = false))
+        }
         val missing = settings.associate { it.id to it.parameters.filter { p -> p !in available }.distinct() }.filterValues { it.isNotEmpty() }
         return Imported(next, ids, disabled, missing, fps)
     }

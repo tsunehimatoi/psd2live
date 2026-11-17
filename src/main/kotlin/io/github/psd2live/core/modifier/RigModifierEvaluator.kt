@@ -9,6 +9,8 @@ import io.github.psd2live.core.RigBuildProfile
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.boolean
 
 /** An adapter for a version of an existing algorithm; it receives the actual preceding result. */
 internal data class RigModifierDefinition(
@@ -135,6 +137,7 @@ internal data class ModifierEvaluation(
     val overrideIssues: List<GeneratedOverrideIssue> = emptyList(),
     val error: String? = null,
     val errorDetails: String? = null,
+    val algorithmWrites: List<ModifierWrite>? = null,
 )
 internal data class RigModifierResult(val rig: RigIR, val entries: List<ModifierEvaluation>)
 internal data class AppliedModifierPrefix(val authored: RigIR, val stack: RigModifierStack, val result: RigModifierResult)
@@ -193,7 +196,7 @@ internal class RigModifierEvaluator(
         val authorContexts = HashMap<String, ModifierAlgorithmContext>()
         fun capture(instance: RigModifierInstance): ModifierAlgorithmContext = authorContexts.getOrPut(instance.id) {
             checkpoint()
-            registry.definition(instance).authorContext(instance)
+            requireNotNull(definitions[stack.index(instance.id)]).authorContext(instance)
         }
         fun sameAuthorContext(instance: RigModifierInstance): Boolean = try {
             saved?.authorContexts?.get(instance.id)?.let { it == capture(instance) } ?: true
@@ -205,6 +208,7 @@ internal class RigModifierEvaluator(
         }
         val reuse = saved?.stack?.instances?.zip(stack.instances)?.takeWhile { (a, b) ->
             a == b && saved.stack.overrides[a.id].orEmpty() == stack.overrides[b.id].orEmpty() &&
+                saved.stack.appliedNodes[a.id] == stack.appliedNodes[b.id] &&
                 saved.stack.retryRevisions[a.id] == stack.retryRevisions[b.id] &&
                 (reuseCapturedAuthorInputs || sameAuthorContext(b))
         }?.size ?: 0
@@ -241,7 +245,8 @@ internal class RigModifierEvaluator(
                 outputs += current
                 if (entry.status == ModifierStatus.ACTIVE) {
                     definition.exclusiveFamily?.let { family -> instance.targets.forEach { exclusive[family to it] = instance.id to instance.type } }
-                    entry.contributions.filter { it.change != ModifierChange.REUSED }.forEach {
+                    (entry.algorithmWrites ?: entry.contributions.filter { it.change != ModifierChange.REUSED }
+                        .map { ModifierWrite(it.kind, it.id) }).forEach {
                         writers[it.kind to it.id] = instance.id to definition
                     }
                     available += saved.capabilities.getValue(instance.id)
@@ -396,7 +401,10 @@ internal class RigModifierEvaluator(
                 val contributions = contributions(before, current) + definition.references(before, current, instance) + declared.filter { it.id in existing && compatible(existing.getValue(it.id), current.parameters.single { actual -> actual.id == it.id }) }.map {
                     ModifierContribution("parameter", it.id, ModifierChange.REUSED)
                 }
-                for (contribution in contributions.filter { it.change != ModifierChange.REUSED }) {
+                val algorithmWrites = stack.appliedNodes[instance.id]?.algorithmWrites
+                    ?: contributions(before, generated).filter { it.change != ModifierChange.REUSED }
+                        .map { ModifierWrite(it.kind, it.id) }
+                for (contribution in algorithmWrites) {
                     val key = contribution.kind to contribution.id
                     val previous = writers[key]
                     require(previous == null || contribution.kind in definition.composableKinds && contribution.kind in previous.second.composableKinds) {
@@ -405,9 +413,9 @@ internal class RigModifierEvaluator(
                     writers[key] = instance.id to definition
                 }
                 val keyforms = io.github.psd2live.core.RigBuildProfile.stage("modifier keyform ownership") { ownedKeyforms(before, generated) }
-                val capability = instance.capability(definition.appliedConfig(instance), definition.provides)
+                val capability = stack.appliedNodes[instance.id]?.capability ?: instance.capability(definition.appliedConfig(instance), definition.provides)
                 entries += ModifierEvaluation(instance, ModifierStatus.ACTIVE, contributions = contributions,
-                    ownedKeyforms = keyforms, overrideIssues = overridden.issues)
+                    ownedKeyforms = keyforms, overrideIssues = overridden.issues, algorithmWrites = algorithmWrites)
                 available += capability
                 outputs += current
             } catch (failure: Exception) {
@@ -439,7 +447,7 @@ internal class RigModifierEvaluator(
     fun validateOrder(stack: RigModifierStack) = validateOrder(stack, resolveDefinitions(stack))
 
     private fun resolveDefinitions(stack: RigModifierStack) = stack.instances.map { instance ->
-        registry.definitionOrNull(instance)?.takeIf {
+        stack.appliedNodes[instance.id]?.definition(instance) ?: registry.definitionOrNull(instance)?.takeIf {
             ModifierPluginCatalog.available(instance.type, instance.version, instance.plugin)
         }
     }
@@ -481,9 +489,11 @@ internal class RigModifierEvaluator(
                 val providers = definition.providers(instance)
                 for (type in definition.requires) for (target in instance.targets) {
                     val provider = providers[type]
+                    fun provides(candidate: RigModifierInstance) = stack.appliedNodes[candidate.id]?.capability?.let { registry.provides(it, type) }
+                        ?: registry.provides(candidate, type)
                     val earlier = stack.appliedCapabilities.any { registry.provides(it, type) && target in it.targets && (provider == null || it.id == provider) } ||
-                        prefix.any { it.enabled && registry.provides(it, type) && target in it.targets && (provider == null || it.id == provider) }
-                    val later = suffix.any { it.enabled && registry.provides(it, type) && target in it.targets && (provider == null || it.id == provider) }
+                        prefix.any { it.enabled && provides(it) && target in it.targets && (provider == null || it.id == provider) }
+                    val later = suffix.any { it.enabled && provides(it) && target in it.targets && (provider == null || it.id == provider) }
                     require(earlier || !later) { "${instance.id} must follow ${provider ?: type} ($type) on ${target.id}" }
                 }
             }
@@ -498,7 +508,13 @@ internal class RigModifierEvaluator(
     fun applyThrough(authored: RigIR, stack: RigModifierStack, id: String, checkpoint: () -> Unit = {}): AppliedModifierPrefix {
         val end = stack.index(id) + 1
         val complete = evaluate(authored, stack, checkpoint = checkpoint)
+        val plan = ModifierApplyPlan.prepare(stack, id, complete.report().getValue("entries").jsonArray
+            .associate { it.jsonObject.getValue("id").jsonPrimitive.content to it.jsonObject }, registry)
+        require(plan.getValue("can_apply").jsonPrimitive.boolean) {
+            "Cannot apply modifiers: ${plan.getValue("blockers")}. Resolve missing dependencies or authored corrections first."
+        }
         val prefix = evaluate(authored, stack.copy(instances = stack.instances.take(end),
+            appliedNodes = stack.appliedNodes.filterKeys { owner -> stack.instances.take(end).any { it.id == owner } },
             overrides = stack.overrides.filterKeys { owner -> owner in stack.retiredIds || stack.instances.take(end).any { it.id == owner } }), checkpoint = checkpoint)
         require(prefix.entries.none { it.status in setOf(ModifierStatus.FAILED, ModifierStatus.MISSING_DEPENDENCY, ModifierStatus.MISSING_PLUGIN) }) { "Cannot apply a prefix with failed or missing dependencies or plugins" }
         require(prefix.entries.none { it.overrideIssues.any { issue -> issue.kind == io.github.psd2live.core.GeneratedOverrideIssueKind.ORPHANED } }) {
@@ -506,15 +522,54 @@ internal class RigModifierEvaluator(
         }
         val consumed = stack.instances.take(end).mapTo(HashSet()) { it.id }
         val capabilities = prefix.entries.filter { it.status == ModifierStatus.ACTIVE }.map {
-            val definition = registry.definition(it.instance)
-            it.instance.capability(definition.appliedConfig(it.instance), definition.provides)
+            stack.appliedNodes[it.instance.id]?.capability ?: registry.definition(it.instance).let { definition ->
+                it.instance.capability(definition.appliedConfig(it.instance), definition.provides)
+            }
         }
         val baked = prefix.entries.filter { it.status == ModifierStatus.ACTIVE }.mapTo(HashSet()) { it.instance.id }
         val remaining = stack.copy(instances = stack.instances.drop(end), overrides = stack.overrides - baked,
+            appliedNodes = stack.appliedNodes - consumed,
             retiredIds = stack.retiredIds + consumed, appliedCapabilities = (stack.appliedCapabilities + capabilities).distinct())
         val result = evaluate(prefix.rig, remaining, checkpoint = checkpoint)
+        require(result.entries.none { entry -> entry.instance.enabled &&
+            (entry.status != ModifierStatus.ACTIVE || entry.overrideIssues.any {
+                it.kind == io.github.psd2live.core.GeneratedOverrideIssueKind.ORPHANED
+            }) }) { "Applying this prefix would invalidate retained modifiers or their authored corrections" }
         require(complete.rig == result.rig) { "Applying this prefix would change the remaining modifiers' result" }
         return AppliedModifierPrefix(prefix.rig, remaining, result)
+    }
+
+    /** Freeze one stage without moving it in front of its ancestors. Full-result equality remains mandatory. */
+    fun applySelected(authored: RigIR, stack: RigModifierStack, id: String, checkpoint: () -> Unit = {}): RigModifierStack {
+        require(id !in stack.appliedNodes) { "This content is already applied" }
+        val index = stack.index(id)
+        val instance = stack.instances[index]
+        require(instance.enabled) { "Enable the selected modifier before applying its output" }
+        val cache = RigModifierEvaluationCache()
+        val complete = evaluate(authored, stack, cache, checkpoint = checkpoint)
+        require(complete.entries.all { !it.instance.enabled || it.status == ModifierStatus.ACTIVE && it.overrideIssues.none {
+            issue -> issue.kind == io.github.psd2live.core.GeneratedOverrideIssueKind.ORPHANED
+        } }) { "Resolve failed dependencies and unmatched authored edits before applying" }
+        val snapshot = requireNotNull(cache.snapshot)
+        val definition = registry.definition(instance)
+        val input = if (index == 0) authored else snapshot.outputs[index - 1]
+        val output = snapshot.outputs[index]
+        val readKeys = snapshot.readAlgorithms[id]?.reads?.keys?.filter { it.section !in setOf("context", "upstream") }
+        val node = AppliedModifierNode(AppliedModifierNode.encode(input), AppliedModifierNode.encode(output),
+            snapshot.capabilities.getValue(id), definition.requires, definition.providers(instance),
+            definition.composableKinds, definition.exclusiveFamily, readKeys,
+            motionInputs = definition.motionInputs(instance), motionOutputs = definition.motionOutputs(instance),
+            algorithmWrites = snapshot.entries[index].algorithmWrites,
+            physicsValidationOnly = definition.plugin is io.github.psd2live.algorithms.physics.PendulumAlgorithm,
+            patchInputs = snapshot.entries[index].contributions.filter { it.change in setOf(ModifierChange.MODIFIED, ModifierChange.REMOVED) }
+                .map { ModifierWrite(it.kind, it.id) }.distinct())
+            .captureMotion(instance).capturePhysics()
+        val candidate = stack.copy(appliedNodes = stack.appliedNodes + (id to node), overrides = stack.overrides - id)
+        val verified = evaluate(authored, candidate, checkpoint = checkpoint)
+        require(verified.rig == complete.rig && verified.entries.all { !it.instance.enabled || it.status == ModifierStatus.ACTIVE }) {
+            "Applying the selected modifier would change the retained result"
+        }
+        return candidate
     }
 
     private fun compatible(a: Parameter, b: Parameter) =
@@ -575,30 +630,40 @@ internal class RigModifierEvaluator(
     private fun ownedKeyforms(before: RigIR, after: RigIR): List<ModifierKeyform> = buildList {
         fun <F> forms(kind: String, id: String, previous: io.github.psd2live.format.model.KeyGrid<F>?,
                       next: io.github.psd2live.format.model.KeyGrid<F>?, channel: String? = null) {
-            if (next == null || previous?.axes == next.axes) return
-            val old = previous?.axes.orEmpty().associateBy { it.parameter }
-            if (old.keys != next.axes.mapTo(HashSet()) { it.parameter }) {
-                next.axes.filter { it.parameter !in old }.forEach { add(ModifierKeyform(kind, id, it.parameter, channel)) }
-                return
+            if (next == null || previous == next) return
+            val oldAxes = previous?.axes.orEmpty().associateBy { it.parameter }
+            if (oldAxes.keys != next.axes.mapTo(HashSet()) { it.parameter }) {
+                val addedAxes = next.axes.filter { it.parameter !in oldAxes }
+                addedAxes.forEach { add(ModifierKeyform(kind, id, it.parameter, channel)) }
+                if (addedAxes.isNotEmpty()) return
             }
-            val addedIndices = next.axes.map { axis ->
-                val previousKeys = old.getValue(axis.parameter).keys
-                BooleanArray(axis.keys.size) { key ->
-                    (0 until previousKeys.size).none { previousKeys[it] == axis.keys[key] }
-                }
-            }
-            if (addedIndices.none { keys -> keys.any { it } }) return
+            // Ownership follows every actual write, including changes on an existing axis or rest cell.
+            fun coordinate(axes: List<io.github.psd2live.format.model.KeyAxis>, cell: io.github.psd2live.format.model.KeyCell<F>) =
+                axes.mapIndexed { index, axis -> axis.parameter to axis.keys[cell.coordinate[index]] }.toMap()
+            val previousCells = previous?.cells.orEmpty().associateBy { coordinate(previous!!.axes, it) }
             for (cell in next.cells) {
-                val changed = addedIndices.indices.firstOrNull { addedIndices[it][cell.coordinate[it]] } ?: continue
-                val key = next.axes.mapIndexed { index, axis -> axis.parameter to axis.keys[cell.coordinate[index]] }.toMap()
-                add(ModifierKeyform(kind, id, next.axes[changed].parameter, channel, key))
+                val key = coordinate(next.axes, cell)
+                if (previousCells[key]?.form == cell.form) continue
+                val changedAxis = next.axes.firstOrNull { axis ->
+                    val old = oldAxes[axis.parameter]?.keys
+                    old == null || (0 until old.size).none { old[it] == key[axis.parameter] }
+                } ?: next.axes.firstOrNull()
+                add(ModifierKeyform(kind, id, changedAxis?.parameter.orEmpty(), channel, key))
             }
         }
+
         fun channels(kind: String, id: String, previous: io.github.psd2live.format.model.Channels, next: io.github.psd2live.format.model.Channels) {
             if (previous === next) return
             for ((channel, grid) in next) forms(kind, id, previous[channel], grid, channel.name.lowercase())
         }
         if (before.deformers !== after.deformers) {
+            val rotations = before.deformers.filterIsInstance<Deformer.Rotation>().associateBy { it.id }
+            for (rotation in after.deformers.filterIsInstance<Deformer.Rotation>()) {
+                val previous = rotations[rotation.id]
+                if (previous === rotation) continue
+                forms("rotation", rotation.id, previous?.pivot, rotation.pivot)
+                channels("rotation", rotation.id, previous?.channels.orEmpty(), rotation.channels)
+            }
             val warps = before.deformers.filterIsInstance<Deformer.Warp>().associateBy { it.id }
             for (warp in after.deformers.filterIsInstance<Deformer.Warp>()) {
                 val previous = warps[warp.id]

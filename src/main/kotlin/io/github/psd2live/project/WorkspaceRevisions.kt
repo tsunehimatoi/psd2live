@@ -58,6 +58,7 @@ internal object WorkspaceRevisions {
 			val index = text.lastIndexOf(token)
 			if (index >= 0) text = text.removeRange(index, index + token.length)
 		}
+		if (rig.motionSources.isEmpty()) strip(", motionSources={}")
 		if (rig.hitAreas.isEmpty()) strip(", hitAreas=[]")
 		if (rig.interiorEffects.isEmpty()) strip(", interiorEffects=[]")
 		if (rig.pose == null) strip(", pose=null")

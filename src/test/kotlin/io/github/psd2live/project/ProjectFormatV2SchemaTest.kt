@@ -82,6 +82,15 @@ class ProjectFormatV2SchemaTest {
 			.let { JsonObject(it.filterKeys { key -> key in setOf("motions", "expressions", "pose") }) })
 	}
 
+	@Test fun exactMotionSourcesRequireTheirSchemaAndSurviveNodeSplitting(@org.junit.jupiter.api.io.TempDir root: java.nio.file.Path) {
+        val sources = buildJsonObject { putJsonObject("custom") { put("source", "encoded") } }
+        val edits = buildJsonObject { put("motionSources", sources) }
+        assertEquals(ProjectFormatV2.NODE_SCHEMA_MOTION_SOURCES, ProjectFormatV2.clipsSchema(edits))
+        val index = ProjectFormatV2.split(root, buildJsonObject { put("rigEdits", edits) })
+        val joined = ProjectFormatV2.join(root, index).getValue("rigEdits") as JsonObject
+        assertEquals(sources, joined["motionSources"])
+    }
+
 	@Test fun unpackFindsExactPluginLocksInHistoricalRevisions(@org.junit.jupiter.api.io.TempDir root: java.nio.file.Path) {
 		val swing = ModifierPluginReference("example.swing", "1.2.0", "1".repeat(64))
 		val physics = ModifierPluginReference("example.physics", "1.0.0", "2".repeat(64))

@@ -39,7 +39,7 @@ internal object WorkspaceCanvasDeformSchemas {
         put("required", JsonArray(listOf("action", "mode", "targets", "samples", "radius").map(::JsonPrimitive)))
         put("oneOf", JsonArray(listOf("brush", "smooth", "inflate").map(::branch)))
     }
-    val request = obj(mapOf("stroke" to stroke), listOf("stroke"))
+    val request = obj(mapOf("stroke" to stroke, "correction_mode" to choice("delta", "absolute"), "edit_stage" to buildJsonObject { put("type", "string") }), listOf("stroke"))
 }
 
 internal fun registerCanvasDeformOperations(registry: WorkspaceOperationRegistry, port: WorkspaceDocumentPort) {

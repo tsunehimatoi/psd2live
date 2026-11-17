@@ -177,6 +177,7 @@ internal object Cmo3ModelImport {
             physicsFps = incoming.fps ?: if (incoming.physics.isNotEmpty()) RigEditOverlay.UNLIMITED_FPS
                 else if (replace) config.rigEdits.physicsFps else RigEditOverlay.DEFAULT_PHYSICS_FPS,
             motionClips = if (replace) config.rigEdits.motionClips else emptyList(),
+            motionSources = if (replace) config.rigEdits.motionSources else emptyMap(),
             motionPresets = if (replace) config.rigEdits.motionPresets else emptyMap(),
             // Expressions and the pose name parameters and parts by ID, as the replacement keeps them. An imported model
             // has no standard expressions, so a generated rig's are kept as the document's own.

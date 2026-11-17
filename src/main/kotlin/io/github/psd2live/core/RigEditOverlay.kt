@@ -239,6 +239,8 @@ data class RigEditOverlay(
     val authoringJournal: List<kotlinx.serialization.json.JsonObject> = emptyList(),
     /** Authored motions and overrides of the generated ones; they do not touch the rig. */
     val motionClips: List<MotionClip> = emptyList(),
+    /** Exact materialized clips paired with the editable record from which subsequent edits are measured. */
+    val motionSources: Map<String, JsonObject> = emptyMap(),
     /** How the user tuned each generated motion, by name, and which ones they deleted. */
     val motionPresets: Map<String, MotionPresetSettings> = emptyMap(),
     /** Simulated bodies; they read the rebuilt rig and, once baked, write back through their own generator. */

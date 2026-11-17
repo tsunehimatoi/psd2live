@@ -1,0 +1,118 @@
+package io.github.psd2live.scenario
+
+import io.github.psd2live.application.WorkspaceInitialModifiers
+import io.github.psd2live.core.*
+import io.github.psd2live.core.modifier.RigModifierStack
+import io.github.psd2live.project.MutationAuthor
+import io.github.psd2live.ui.*
+import io.github.psd2live.ui.state.*
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.first
+import kotlinx.serialization.json.*
+import org.junit.jupiter.api.io.TempDir
+import org.umamo.runtime.model.ParameterId
+import java.nio.file.Path
+import kotlin.test.*
+
+class ModifierGeometryGestureTest {
+    @TempDir lateinit var temp: Path
+
+    @Test fun skeletonPoseDragChangesParametersWithoutTakingTheGeometryPoseLock() = runBlocking {
+        PSD2LiveViewModel().use { vm ->
+            vm.setStateForTest(vm.state.value.copy(atlasSize = 256, exportMoc3 = false, generatePhysics = false))
+            DesktopWorkspace(vm, temp.resolve("skeleton-store")).use { workspace ->
+                vm.attachWorkspace(workspace)
+                workspace.importPsd(Characters.figurePsd(temp).toString(), true, WorkspaceInitialModifiers.EMPTY)
+                workspace.applyDocumentEdits(requireNotNull(workspace.stateToken()), "Skeleton", listOf(
+                    io.github.psd2live.application.WorkspaceDocumentOperation("skeleton_put", buildJsonObject {
+                        put("spec", SkeletonSpec(bones = listOf(SkeletonBone("arm", "Arm", null, BoneRole.FOREARM, Side.LEFT,
+                            150f, 150f, 200f, 150f, drawableIds = listOf(vm.state.value.previewModel!!.rig.puppet.drawables.first().id.raw)))).toJson())
+                    })
+                ), MutationAuthor.USER)
+                withContext(Dispatchers.Main) {
+                    val editor = vm.canvasEditor
+                    editor.beginSkeletonPose()
+                    editor.skeletonPoseSubTool = SkeletonPoseSubTool.FK
+                    assertTrue(editor.posing())
+                    val bone = editor.posedBones().first { it.bone.role == BoneRole.FOREARM }
+                    val parameter = bone.bone.parameterId
+                    val before = editor.pose[parameter] ?: 0f
+                    val viewport = CanvasViewport(2.0, 100.0, 100.0, 1000f, 1000f)
+                    val position = androidx.compose.ui.geometry.Offset(
+                        viewport.x((bone.headX + bone.tailX) * .5f).toFloat(),
+                        (viewport.offsetY + (bone.headY + bone.tailY) * .5f * viewport.scale).toFloat())
+                    assertTrue(editor.press(position, viewport, false, false))
+                    assertTrue(editor.inGesture)
+                    assertNull(editor.capturedEditPose)
+                    editor.move(position + androidx.compose.ui.geometry.Offset(0f, -20f), viewport, false)
+                    assertNull(editor.error)
+                    assertNull(editor.capturedEditPose)
+                    assertNotEquals(before, editor.pose[parameter], "Bone posing must remain able to change its parameter")
+                    editor.cancel()
+                    assertFalse(editor.inGesture)
+                    assertNull(editor.capturedEditPose)
+                }
+            }
+        }
+    }
+
+    @Test fun intermediatePoseSurvivesRealGestureCommitUndoRedoAndParameterChange() = runBlocking {
+        PSD2LiveViewModel().use { vm ->
+            vm.setStateForTest(vm.state.value.copy(atlasSize = 256, exportMoc3 = false, generatePhysics = false))
+            DesktopWorkspace(vm, temp.resolve("store")).use { workspace ->
+                vm.attachWorkspace(workspace)
+                workspace.importPsd(Characters.mouthPsd(temp).toString(), true, WorkspaceInitialModifiers.RECOMMENDED)
+                val parameter = ParameterId("ParamMouthOpenY")
+                workspace.authorPose(buildJsonObject {
+                    put("state", workspace.stateToken()); putJsonObject("values") { put(parameter.raw, .35f) }
+                }, MutationAuthor.USER)
+                val before = requireNotNull(vm.state.value.previewModel)
+                val drawable = before.rig.puppet.drawables.firstOrNull {
+                    it.geometryGrid?.axes.orEmpty().any { axis -> axis.parameterId == parameter }
+                } ?: error("Synthetic mouth has no geometry driven by ${parameter.raw}")
+                val layer = before.rig.ownLayerIdByDrawableId.getValue(drawable.id.raw)
+                val history = workspace.history()
+                val original = RigIrCompiler.compile(before)
+                withContext(Dispatchers.Main) {
+                    vm.setStateForTest(vm.state.value.copy(selectedDeformerId = null, selectedLayerId = layer))
+                    val editor = vm.canvasEditor
+                    editor.hierarchyMode = EditHierarchyMode.DEFORM
+                    editor.tool = CanvasTool.SELECT
+                    editor.editLevel = 1
+                    val viewport = CanvasViewport(100.0, 200.0, 200.0, 500f, 500f)
+                    val target = assertNotNull(editor.target())
+                    val badges = editor.deformerCorners(viewport).values
+                    val position = editor.screen(target.geometry.points, target, viewport).first { point ->
+                        badges.none { it.contains(point.x.toDouble(), point.y.toDouble()) }
+                    }
+                    assertTrue(editor.press(position, viewport, false, false))
+                    assertEquals(.35f, assertNotNull(editor.capturedEditPose)[parameter])
+                    vm.setParameterValues(mapOf(parameter to 0f))
+                    editor.move(position + androidx.compose.ui.geometry.Offset(10f, 0f), viewport, false)
+                    assertNull(editor.error)
+                    editor.release()
+                    assertTrue(editor.busy)
+                    assertEquals(.35f, assertNotNull(editor.capturedEditPose)[parameter])
+                    vm.setParameterValues(mapOf(parameter to 0f))
+                }
+                withTimeout(30_000) { vm.state.first { !it.canvasEditBusy } }
+                assertFalse(vm.canvasEditor.busy)
+                assertNull(vm.canvasEditor.error)
+                assertNull(vm.canvasEditor.capturedEditPose)
+                assertEquals(.35f, vm.state.value.parameterValues[parameter])
+                val edited = RigIrCompiler.compile(requireNotNull(vm.state.value.previewModel))
+                assertNotEquals(original, edited)
+                val committed = workspace.history()
+                assertEquals(history.nodes.size + 1, committed.nodes.size)
+                assertTrue(RigModifierStack.fromJson(vm.state.value.rigEdits.modifierStack!!).overrides.isNotEmpty())
+                workspace.checkoutHistory(history.headNodeId, MutationAuthor.USER)
+                assertEquals(original, RigIrCompiler.compile(requireNotNull(vm.state.value.previewModel)))
+                workspace.checkoutHistory(committed.headNodeId, MutationAuthor.USER)
+                assertEquals(edited, RigIrCompiler.compile(requireNotNull(vm.state.value.previewModel)))
+                withContext(Dispatchers.Main) { vm.setParameterValues(mapOf(parameter to .2f)) }
+                withTimeout(30_000) { vm.state.first { it.parameterValues[parameter] == .2f } }
+                assertNull(vm.canvasEditor.capturedEditPose)
+            }
+        }
+    }
+}

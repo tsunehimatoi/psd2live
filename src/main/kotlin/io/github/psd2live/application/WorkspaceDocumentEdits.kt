@@ -292,8 +292,13 @@ internal object WorkspaceDocumentEdits {
     fun journal(document: WorkspaceDocument, model: RigPreviewModel, edits: JsonArray): WorkspaceDocument {
         refuseCopies(model, edits)
         // Recorded on the shown rig, they replay on the authored one, before the generators.
-        val recorded = JournalRecording.record(model.rig.puppet, model.authored.rig.puppet, document.rigEdits, edits, model.primitiveSkins,
-            model.rig.modifierReport)
+        val stage = GeometryEditStages.stage(edits)
+        val selected = GeometryEditStages.resolve(model, stage)
+        val clean = GeometryEditStages.clean(edits)
+        if (stage != "auto") GeometryEditStages.validateExplicit(selected.puppet, clean)
+        val recorded = if (stage != "auto" && selected.generator == null) RigAuthoringJournal.compile(selected.puppet, clean).second
+        else JournalRecording.record(selected.puppet, model.authored.rig.puppet, document.rigEdits, clean, model.primitiveSkins,
+            selected.report, selected.generator)
         var overlay = document.rigEdits
         val journal = if (overlay.modifierStack == null) recorded else {
             var stack = io.github.psd2live.core.modifier.RigModifierStack.fromJson(overlay.modifierStack)
@@ -410,12 +415,35 @@ internal object WorkspaceDocumentEdits {
             reserveBuiltinNames = document.rigEdits.modifierStack == null)
         if (request["mode"]?.jsonPrimitive?.content == "duplicate") {
             val stack = document.rigEdits.modifierStack?.let(io.github.psd2live.core.modifier.RigModifierStack::fromJson)
-            val owner = stack?.instances?.firstOrNull { it.type == "motion" && it.outputId("motion") == request["id"]?.jsonPrimitive?.content }
+            val owner = stack?.instances?.firstOrNull { it.id !in stack.appliedNodes && it.type == "motion" && it.outputId("motion") == request["id"]?.jsonPrimitive?.content }
             if (owner != null) {
                 val copy = clips.last()
                 val next = stack.add("motion", owner.version, owner.targets, MotionClips.toJson(copy),
                     outputAliases = mapOf("motion" to copy.id))
                 return document.copy(rigEdits = document.rigEdits.copy(modifierStack = next.toJson()))
+            }
+            val sourceId = request.getValue("id").jsonPrimitive.content
+            val record = MotionCatalog.entries(document.rigEdits).single { it.id == sourceId }
+            val appliedOwner = stack?.instances?.asReversed()?.firstOrNull { instance ->
+                stack.appliedNodes[instance.id]?.authoredMotions.orEmpty().any { MotionClips.fromJson(it).id == sourceId }
+            }
+            if (appliedOwner != null) {
+                val copy = clips.last().let { it.copy(fileStem = MotionClips.exportStems(clips).getValue(it.id)) }
+                val node = stack.appliedNodes.getValue(appliedOwner.id).duplicateMotion(sourceId, copy)
+                return document.copy(rigEdits = document.rigEdits.copy(modifierStack =
+                    stack.copy(appliedNodes = stack.appliedNodes + (appliedOwner.id to node)).toJson()))
+            }
+            val materialized = document.rigEdits.motionSources[sourceId]?.let { AppliedMotionRecords.compile(record, it) }
+                ?: stack?.instances?.asReversed()?.firstNotNullOfOrNull { instance ->
+                    stack.appliedNodes[instance.id]?.materializedMotions()?.firstOrNull { it.id == sourceId }
+                }
+            if (materialized != null) {
+                val copy = clips.last()
+                val raw = materialized.copy(id = copy.id, name = copy.name, file = MotionClips.exportStems(clips).getValue(copy.id),
+                    group = copy.exportGroup ?: if (copy.loop) "Idle" else copy.name)
+                val overlay = MotionCatalog.replacing(document.rigEdits, clips.dropLast(1) + copy)
+                return document.copy(rigEdits = overlay.copy(motionSources = overlay.motionSources +
+                    (copy.id to AppliedMotionRecords.source(copy, raw))))
             }
         }
         return document.copy(rigEdits = MotionCatalog.replacing(document.rigEdits, clips))
@@ -460,7 +488,7 @@ internal object WorkspaceDocumentEdits {
         }
         val request = PhysicsAuthoring.request(physicsCatalog(document, model), arguments,
             model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw })
-        if (document.rigEdits.modifierStack != null && request.edit != null) {
+        if (document.rigEdits.modifierStack != null && request.edit != null && AppliedPhysics.owner(document.rigEdits, id) == null) {
             val authored = model.authored.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }
             val generated = model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw } - authored
             require(request.edit.parameters.none { it in generated }) { "Generated parameter references belong in a physics modifier; use modifier_add or modifier_update" }
@@ -483,7 +511,7 @@ internal object WorkspaceDocumentEdits {
         val group = physicsCatalog(document, model).firstOrNull { it.id == id }
             ?: throw IllegalArgumentException("Physics group not found: $id")
         require(group.origin != PhysicsOrigin.MODIFIER) { "$id belongs to a modifier; use modifier_enable or modifier_remove on its owner" }
-        require(document.rigEdits.physicsEdits.any { it.id == id }) {
+        require(document.rigEdits.physicsEdits.any { it.id == id } || AppliedPhysics.owner(document.rigEdits, id) != null) {
             "$id is generated; physics_put enabled=false turns it off, or edit its source (swing, skeleton, preset setting)"
         }
         return document.copy(rigEdits = PhysicsAuthoring.remove(document.rigEdits, id, group.generated != null))

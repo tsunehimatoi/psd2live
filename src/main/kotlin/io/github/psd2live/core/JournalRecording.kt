@@ -15,10 +15,10 @@ import org.umamo.runtime.model.PuppetModel
  */
 internal object JournalRecording {
 	fun record(shown: PuppetModel, authored: PuppetModel, overlay: RigEditOverlay, edits: JsonArray,
-			   skins: PrimitiveSkins = PrimitiveSkins.None, modifierReport: JsonObject? = null): List<JsonObject> {
+			   skins: PrimitiveSkins = PrimitiveSkins.None, modifierReport: JsonObject? = null, generatorOverride: String? = null): List<JsonObject> {
         val graph = DocumentGenerators.graph(overlay, primitives = skins, modifierReport = modifierReport)
-		val (_, compiled) = RigAuthoringJournal.compile(shown, GeneratedOverrides.capture(shown, overlay, edits, skins, graph))
-		val owned = GeneratedOverrides.ownedWrites(shown, overlay, GeneratedOverrides.journalOnly(shown, authored, compiled), skins, authored, graph)
+		val (_, compiled) = RigAuthoringJournal.compile(shown, GeneratedOverrides.capture(shown, overlay, edits, skins, graph, generatorOverride))
+		val owned = GeneratedOverrides.ownedWrites(shown, overlay, GeneratedOverrides.journalOnly(shown, authored, compiled), skins, authored, graph, generatorOverride)
         if (modifierReport == null) return GeneratedParameterAdoption.adopted(shown, authored, owned)
         val ordinary = ArrayList<JsonObject>()
         val routed = ArrayList<JsonObject>()

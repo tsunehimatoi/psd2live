@@ -232,7 +232,7 @@ internal fun ModifierStackList(stack: RigModifierStack, reports: Map<String, Jso
                                 }
                                 CompactCheckbox(instance.enabled && status !in setOf("failed", "missing_dependency", "missing_plugin"), { value -> vm.editModifier("modifier_enable", buildJsonObject {
                                     put("id", instance.id); put("enabled", value)
-                                }) }, enabled = enabled)
+                                }) }, enabled = enabled && instance.id !in stack.appliedNodes)
                                 val rowColor = when {
                                     conflict.severity == ModifierConflictSeverity.HARD -> if (instance.enabled) colors.error else colors.error.copy(alpha = 0.7f)
                                     conflict.severity == ModifierConflictSeverity.SOFT -> if (instance.enabled) colors.warning else colors.warning.copy(alpha = 0.7f)
@@ -240,7 +240,7 @@ internal fun ModifierStackList(stack: RigModifierStack, reports: Map<String, Jso
                                     else -> colors.textMuted
                                 }
                                 Text(
-                                    text = name,
+                                    text = if (instance.id in stack.appliedNodes) tr("modifier.applied.name", name) else name,
                                     style = typography.body.copy(fontSize = 11.sp),
                                     color = rowColor,
                                     maxLines = 1,
@@ -286,9 +286,9 @@ internal fun ModifierStackList(stack: RigModifierStack, reports: Map<String, Jso
                                         )
                                     }
                                 }
-                                ParameterDragHandle({ position, row -> startDrag(layout, position, row) }, rowCoords)
+                                if (instance.id !in stack.appliedNodes) ParameterDragHandle({ position, row -> startDrag(layout, position, row) }, rowCoords)
                                 CompactIconButton({ vm.editModifier("modifier_remove", buildJsonObject { put("id", instance.id) }) },
-                                    enabled = enabled, tooltip = tr("modifier.remove"), size = 20.dp) { IconClose() }
+                                    enabled = enabled && instance.id !in stack.appliedNodes, tooltip = tr("modifier.remove"), size = 20.dp) { IconClose() }
                             }
                         }
                     }

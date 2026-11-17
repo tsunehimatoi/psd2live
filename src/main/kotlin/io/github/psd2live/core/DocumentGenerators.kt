@@ -189,6 +189,13 @@ internal object DocumentGenerators {
                 }
                 kinds.map { kind -> "object:$kind:" + it.getValue("id").jsonPrimitive.content }
             } }.flatten()
+            // A later writer owns the same cell/channel; object creation alone does not move edits upstream.
+            val rewritten = forms.toSet()
+            for (index in nodes.indices) {
+                val node = nodes[index]
+                if (node.writes.any { it in rewritten }) nodes[index] = node.copy(writes = node.writes - rewritten)
+            }
+            owned.removeAll(rewritten)
             val writes = claim(forms + objects + "rig:$id")
             nodes += GeneratorNode(id, setOf(preceding, "document:$id"), writes)
             preceding = "rig:$id"

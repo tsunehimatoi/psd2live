@@ -97,7 +97,7 @@ internal object PluginDevContracts {
         val (gradleCmd, gradleSource) = resolveGradleCommand(projectDir)
         val gradleOk = gradleCmd.isNotEmpty()
 
-        if (stageSdkIfMissing && !isSdkDirPopulated(sdkDir)) {
+        if (stageSdkIfMissing && (sdkDir.toAbsolutePath().normalize() == defaultSdkDir().toAbsolutePath().normalize() || !isSdkDirPopulated(sdkDir))) {
             runCatching { stageSdkDirectory(sdkDir) }
         }
         val sdkJars = if (Files.isDirectory(sdkDir)) {
@@ -182,13 +182,12 @@ internal object PluginDevContracts {
         val anchors = linkedMapOf<String, Class<*>>(
             "algorithm-api" to ModifierAlgorithmPlugin::class.java,
             "format-model" to RigIR::class.java,
+            "format-compile" to io.github.psd2live.format.compile.RigIrBinary::class.java,
             "algorithm-worker" to AlgorithmWorker::class.java,
             "kotlinx-serialization-json" to Json::class.java,
             "kotlinx-serialization-core" to kotlinx.serialization.Serializable::class.java,
             "kotlin-stdlib" to Unit::class.java,
         )
-        runCatching { Class.forName("io.github.psd2live.format.compile.FormatCompile") }
-            .getOrNull()?.let { anchors["format-compile"] = it }
 
         for ((name, cls) in anchors) {
             val location = cls.protectionDomain?.codeSource?.location ?: continue
@@ -200,7 +199,7 @@ internal object PluginDevContracts {
                     "$name.jar"
                 }
                 val dest = targetDir.resolve(destName)
-                if (!Files.exists(dest) || Files.size(dest) != Files.size(sourcePath)) {
+                if (!Files.exists(dest) || Files.mismatch(dest, sourcePath) != -1L) {
                     Files.copy(sourcePath, dest, StandardCopyOption.REPLACE_EXISTING)
                 }
             } else if (Files.isDirectory(sourcePath)) {
