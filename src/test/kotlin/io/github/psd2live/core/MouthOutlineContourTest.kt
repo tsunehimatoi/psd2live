@@ -53,6 +53,10 @@ class MouthOutlineContourTest {
         reopen()
         Oracles.sameRig("reopen", "mouth outlines", before, puppet)
         exportMatchesEditor(this)
+        val cmo3 = export("cmo3").single { it.toString().endsWith(".cmo3") }
+        val source = org.umamo.format.cmo3.Cmo3.read(java.nio.file.Files.readAllBytes(cmo3)).root
+            as org.umamo.format.cmo3.model.custom.CModelSource
+        exportMatchesEditor(this, org.umamo.interop.cmo3.Cmo3Import.fromModelSource(source), "cmo3")
     }
 
     private fun rig(curve: MouthCurve = MouthCurve.preset("smile")): MouthRig {

@@ -46,7 +46,8 @@ internal object MouthLipLayers {
         if (!config.mouthOutlineEnabled || config.meshOnly || config.deferRig) return input.copy(layers = originals)
         // Generated outlines are only for single-layer cavity mouths without drawn lips,
         // closed-seam/swap drawings, or multiple overlapping mouth expression swaps.
-        if (!needsOutline(originals))
+        val owners = outlineOwners(originals).mapTo(hashSetOf()) { it.source.id.raw }
+        if (owners.isEmpty())
             return input.copy(layers = originals)
         // Version 2 records: superseded layers never feed the face rig, and parts own no ribbons (their meshes are pinned).
         val resolution = PrimitiveResolution.of(config.rigEdits)
@@ -55,7 +56,8 @@ internal object MouthLipLayers {
         val depthFronts = DepthSplit.frontLayerIds(config)
         val unitScale = MeshResolution.unitScale(config, input.source)
         val layers = originals.flatMap { owner ->
-            if (owner.source.id.raw in config.rigPendingLayerIds || owner.source.id.raw in depthFronts || resolution.isPartLayer(owner.source.id.raw) || owner.semantic.tag !in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) || owner.opaquePixels == 0) listOf(owner)
+            if (owner.source.id.raw !in owners || owner.source.id.raw in config.rigPendingLayerIds ||
+                owner.source.id.raw in depthFronts || resolution.isPartLayer(owner.source.id.raw)) listOf(owner)
             else {
                 val rgb = config.mouthColor ?: perimeterColor(owner.source.raster, config.alphaThreshold)
                 val columns = trace(owner, config, unitScale, headSpace)
@@ -69,23 +71,26 @@ internal object MouthLipLayers {
         return input.copy(layers = layers)
     }
 
-    internal fun needsOutline(layers: List<ClassifiedLayer>): Boolean {
+    internal fun needsOutline(layers: List<ClassifiedLayer>): Boolean = outlineOwners(layers).isNotEmpty()
+
+    /** Authored lips and expression swaps own their edges; only unadorned cavities own generated strokes. */
+    internal fun outlineOwners(layers: List<ClassifiedLayer>): List<ClassifiedLayer> {
         val mouthTags = setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)
         val lipRoles = io.github.psd2live.core.fit.FittedMouth.LIPS + PartRole.CLOSED_LINE
-        if (layers.any { it.semantic.tag == SemanticTag.MOUTH_CLOSE && it.opaquePixels > 0 }) return false
-        if (layers.any { it.semantic.tag in mouthTags && it.semantic.role in lipRoles && it.opaquePixels > 0 }) return false
+        if (layers.any { it.semantic.tag == SemanticTag.MOUTH_CLOSE && it.opaquePixels > 0 }) return emptyList()
+        if (layers.any { it.semantic.tag in mouthTags && it.semantic.role in lipRoles && it.opaquePixels > 0 }) return emptyList()
         val bases = layers.filter {
             it.opaquePixels > 0 && !it.source.clipped && it.semantic.role == null && it.semantic.tag in mouthTags
         }
-        if (bases.isEmpty()) return false
+        if (bases.isEmpty()) return emptyList()
         // Multiple overlapping mouth drawings indicate an expression-swap sheet rather than a single cavity.
         for (i in bases.indices) for (j in i + 1 until bases.size) {
             val a = bases[i].bounds; val b = bases[j].bounds
             if (minOf(a.right, b.right) > maxOf(a.left, b.left) && minOf(a.bottom, b.bottom) > maxOf(a.top, b.top)) {
-                return false
+                return emptyList()
             }
         }
-        return true
+        return bases
     }
 
     internal fun rasterAlignment(input: PipelineAnalysis, config: PipelineConfig, resolution: PrimitiveResolution): HeadCoordinateSpace {

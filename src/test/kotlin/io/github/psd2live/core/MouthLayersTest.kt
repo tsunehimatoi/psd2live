@@ -423,4 +423,22 @@ class MouthLayersTest {
 		assertTrue(!MouthLipLayers.needsOutline(listOf(singleCavity, secondSwap)))
 	}
 
+	@Test fun authoredLipMaterialsPreventOutlinesEvenWithoutAnIndependentLine() {
+		val cavity = drawn("cavity", 12, 18, 52, 42)
+		for (role in FittedMouth.LIPS + PartRole.CLOSED_LINE) {
+			val lip = drawn("lip", 10, 16, 54, 45, role = role)
+			assertTrue(MouthLipLayers.outlineOwners(listOf(cavity, lip)).isEmpty(), role.name)
+			val hidden = lip.copy(source = (lip.source as WorkspaceSourceLayer).copy(visible = false))
+			assertTrue(MouthLipLayers.outlineOwners(listOf(cavity, hidden)).isEmpty(), "hidden $role")
+		}
+	}
+
+	@Test fun clippedInteriorsAndMouthAccentsNeverBecomeOutlineOwners() {
+		val cavity = drawn("cavity", 12, 18, 52, 42)
+		val base = drawn("base", 6, 10, 58, 50, clipped = true)
+		val highlight = drawn("highlight", 20, 37, 44, 39, role = PartRole.HIGHLIGHT)
+		val shadow = drawn("shadow", 20, 42, 44, 44, role = PartRole.SHADOW)
+		assertEquals(listOf(cavity), MouthLipLayers.outlineOwners(listOf(cavity, base, highlight, shadow)))
+	}
+
 }

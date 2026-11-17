@@ -28,65 +28,29 @@ class MouthOutlineStroke(columns: List<MouthColumn>, val side: Int, thickness: F
         transformPoint: (Float, Float) -> Pair<Float, Float>,
     ): FloatArray {
         val posedPath = path.map { (x, y) -> transformPoint(x, y) }
-        val posed = inParent(MouthStrokeMesh.positions(posedPath, radius, joins), frame)
-        require(restPositions.size == posed.size)
-        return FloatArray(posed.size) { posed[it] - restPositions[it] }
+        return centerlineDelta(frame, restPositions, posedPath)
     }
 
-    /** Deforms the ribbon by moving its centerline (with opposite-lip overlap tips) and rotating rest offsets smoothly. */
+    /** Both the main stroke and its opposite-lip tips use the same posed centerline and stroke construction. */
     fun ribbonDelta(
         frame: ModifierSourceBounds,
         restPositions: FloatArray,
         transformCenter: (upper: Boolean, x: Float, y: Float) -> Pair<Float, Float>,
     ): FloatArray {
-        val raw = positions()
-        require(raw.size == restPositions.size)
         val posedCenters = path.mapIndexed { i, (x, y) ->
             val onMain = i in start..end
             val upper = if (onMain) side == 0 else side != 0
             transformCenter(upper, x, y)
         }
-        fun unitTangent(points: List<Pair<Float, Float>>, i: Int): Pair<Float, Float>? {
-            val a = points[(i - 1).coerceAtLeast(0)]
-            val b = points[(i + 1).coerceAtMost(points.lastIndex)]
-            val dx = b.first - a.first; val dy = b.second - a.second
-            val len = kotlin.math.hypot(dx, dy)
-            return if (len > 1e-4f) (dx / len to dy / len) else null
-        }
-        val rotations = path.indices.map { i ->
-            val t0 = unitTangent(path, i) ?: (1f to 0f)
-            val t1 = unitTangent(posedCenters, i) ?: t0
-            // cos = t0 . t1, sin = t0 x t1
-            (t0.first * t1.first + t0.second * t1.second) to (t0.first * t1.second - t0.second * t1.first)
-        }
-        val posed = FloatArray(raw.size)
-        fun writeVertex(vertexIndex: Int, pathIndex: Int) {
-            val rx = raw[vertexIndex * 2]; val ry = raw[vertexIndex * 2 + 1]
-            val p = path[pathIndex]; val q = posedCenters[pathIndex]
-            val ox = rx - p.first; val oy = ry - p.second
-            val (c, s) = rotations[pathIndex]
-            val wx = q.first + ox * c - oy * s
-            val wy = q.second + ox * s + oy * c
-            posed[vertexIndex * 2] = normalize(wx, frame.left, frame.right) - restPositions[vertexIndex * 2]
-            posed[vertexIndex * 2 + 1] = normalize(wy, frame.top, frame.bottom) - restPositions[vertexIndex * 2 + 1]
-        }
-        var v = 0
-        for (i in path.indices) {
-            writeVertex(v++, i)
-            writeVertex(v++, i)
-        }
-        val capCount = MouthStrokeMesh.CAP_SEGMENTS + 2
-        repeat(capCount) { writeVertex(v++, 0) }
-        repeat(capCount) { writeVertex(v++, path.lastIndex) }
-        val joinCount = raw.size / 2 - v
-        if (joinCount > 0) {
-            val perJoin = joinCount / joins.size
-            for ((j, pathIndex) in joins.withIndex()) {
-                val count = if (j == joins.lastIndex) raw.size / 2 - v else perJoin
-                repeat(count) { writeVertex(v++, pathIndex) }
-            }
-        }
-        return posed
+        return centerlineDelta(frame, restPositions, posedCenters)
+    }
+
+    private fun centerlineDelta(
+        frame: ModifierSourceBounds, restPositions: FloatArray, centers: List<Pair<Float, Float>>,
+    ): FloatArray {
+        val posed = inParent(MouthStrokeMesh.positions(centers, radius, joins), frame)
+        require(restPositions.size == posed.size)
+        return FloatArray(posed.size) { posed[it] - restPositions[it] }
     }
 
     /** The atlas packer later rebinds these local pixel coordinates to the generated tile. */

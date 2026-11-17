@@ -42,7 +42,7 @@ class MouthLayeredCoordinatesTest {
         for (open in listOf(0f, .25f, .5f, .8f)) for (form in listOf(-1f, 0f, 1f)) {
             val pose = rig.pose(form, open)
             for ((curve, role) in listOf(curves.first to MouthRig.Follow.UPPER_LINE, curves.second to MouthRig.Follow.LOWER_LINE)) {
-                for (i in listOf(10, 20, 32, 44, 54)) {
+                for (i in 0 until curve.size / 2) {
                     val (u, v) = rig.fit.toMouth(curve[i * 2], curve[i * 2 + 1])
                     val stroke = rig.moveAs(role, u, v, pose)
                     val inside = rig.moveAs(MouthRig.Follow.OPENING, u, v, pose)
@@ -50,6 +50,25 @@ class MouthLayeredCoordinatesTest {
                     assertEquals(stroke.second, inside.second, 1e-4f, "$role y at $i open=$open form=$form")
                 }
             }
+        }
+    }
+
+    @Test fun authoredLineCentersCloseAcrossAllFormsWithoutRetainingTheOpenArc() {
+        val (rig, curves) = mouth()
+        fun point(curve: FloatArray, x: Float): Pair<Float, Float> {
+            val n = curve.size / 2
+            val i = (0 until n - 1).firstOrNull { x <= curve[(it + 1) * 2] } ?: n - 2
+            val t = ((x - curve[i * 2]) / (curve[(i + 1) * 2] - curve[i * 2])).coerceIn(0f, 1f)
+            return x to (curve[i * 2 + 1] * (1f - t) + curve[(i + 1) * 2 + 1] * t)
+        }
+        for (form in listOf(-1f, -.5f, 0f, .5f, 1f)) for (i in 0..100) {
+            val x = i - 50f
+            val u = point(curves.first, x); val l = point(curves.second, x)
+            val pose = rig.pose(form, 0f)
+            val a = rig.strokePoint(true, u.first, u.second, pose)
+            val b = rig.strokePoint(false, l.first, l.second, pose)
+            assertEquals(a.first, b.first, 2e-4f, "closed x at form=$form x=$x")
+            assertEquals(a.second, b.second, 2e-4f, "closed y at form=$form x=$x")
         }
     }
 

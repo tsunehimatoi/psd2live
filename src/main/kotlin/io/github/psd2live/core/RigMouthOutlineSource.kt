@@ -28,7 +28,7 @@ internal object RigMouthOutlineSource {
     ): MouthOutlineInputs {
         val original = analysis.layers.filter { it.source !is MouthLipLayer && it.source.id.raw !in config.deletedLayerIds }
         val byLayer = original.associateBy { it.source.id.raw }
-        val needsOutline = MouthLipLayers.needsOutline(original)
+        val eligible = MouthLipLayers.outlineOwners(original).mapTo(hashSetOf()) { it.source.id.raw }
         val excluded = config.rigPendingLayerIds + DepthSplit.frontLayerIds(config)
         val split = PrimitiveResolution.of(config.rigEdits)
         val rasterAlignment by lazy { MouthLipLayers.rasterAlignment(analysis, config, split) }
@@ -44,11 +44,10 @@ internal object RigMouthOutlineSource {
         val topologies = linkedMapOf<String, ModifierAlgorithmResource>()
         val topologyByLayer = hashMapOf<String, String>()
         val traces = hashMapOf<String, List<MouthColumn>>()
-        if (needsOutline && !config.meshOnly && !config.deferRig) for ((id, owner) in owners) {
+        if (eligible.isNotEmpty() && !config.meshOnly && !config.deferRig) for ((id, owner) in owners) {
             checkpoint()
             val layer = byLayer[owner.layer] ?: continue
-            if (owner.layer in excluded || split.isPartLayer(owner.layer) || layer.semantic.tag !in tags ||
-                layer.semantic.role != null || layer.opaquePixels == 0) continue
+            if (owner.layer !in eligible || owner.layer in excluded || split.isPartLayer(owner.layer)) continue
             val source = layer.source
             val sides = (0..1).filterTo(linkedSetOf()) { MouthLipLayer.idFor(owner.layer, it) !in config.deletedLayerIds }
             if (sides.isEmpty()) continue
@@ -94,5 +93,4 @@ internal object RigMouthOutlineSource {
 
     private fun Bounds.observation() = ModifierSourceBounds(left, top, right, bottom)
     private fun HeadCoordinateSpace.observation() = MouthOutlineInputs.Alignment(angleDegrees, pivotX, pivotY)
-    private val tags = setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)
 }

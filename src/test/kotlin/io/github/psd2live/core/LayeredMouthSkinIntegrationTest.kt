@@ -50,11 +50,20 @@ class LayeredMouthSkinIntegrationTest {
         reopen()
         Oracles.sameRig("reopen", "layered capture", captured, puppet)
         exportMatchesEditor(this)
+        val cmo3 = export("cmo3").single { it.toString().endsWith(".cmo3") }
+        val source = org.umamo.format.cmo3.Cmo3.read(java.nio.file.Files.readAllBytes(cmo3)).root
+            as org.umamo.format.cmo3.model.custom.CModelSource
+        exportMatchesEditor(this, org.umamo.interop.cmo3.Cmo3Import.fromModelSource(source), "cmo3")
     }
 
     @Test fun theDrawnPoseSurvivesRebuildingAndAllMouthPartsFollowCapture() {
         val model = PSD2LivePipeline().buildPreview(source(), PipelineConfig(atlasSize = 256,
-            generatePhysics = false, exportMoc3 = false, meshSpacing = 8))
+            generatePhysics = false, exportMoc3 = false, meshSpacing = 8, mouthOutlineEnabled = true))
+        assertTrue(model.analysis.layers.none { it.source is MouthLipLayer }, "authored lips must not acquire generated strokes")
+        val openingId = model.rig.layerIdByDrawableId.entries.single { it.value == "opening" }.key
+        val outline = RigMouthOutlineSource.capture(model.analysis, model.config,
+            mapOf(openingId to RigMouthOutlineSource.Owner("opening", openingId)))
+        assertTrue(outline.targets.isEmpty(), "the outline plugin must also preserve authored lips")
         val evaluator = CpuDeformationEvaluator()
         fun pose(open: Float, x: Float) = evaluator.evaluate(model.rig.puppet,
             mapOf(ParameterId("ParamMouthOpenY") to open, ParameterId("ParamMouthX") to x)).worldPositions

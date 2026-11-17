@@ -63,4 +63,22 @@ class MouthOutlineStrokeTest {
         assertEquals(9, handles.size)
         assertEquals(listOf(0, 8), handles.indices.filter { handles[it].corner })
     }
+
+    @Test
+    fun `fitted and supplied centerline poses use identical stroke geometry on closure`() {
+        val columns = List(25) { i ->
+            val x = i.toFloat()
+            val height = kotlin.math.sqrt(x * (24f - x))
+            MouthColumn(x to -height, x to height * 1.3f)
+        }
+        val frame = ModifierSourceBounds(-2f, -20f, 27f, 20f)
+        val closed = (0..1).map { side ->
+            val stroke = MouthOutlineStroke(columns, side, 1.5f)
+            val rest = stroke.parentPositions(frame)
+            val posed = stroke.ribbonDelta(frame, rest) { _, x, _ -> x to 0f }
+            assertContentEquals(stroke.delta(frame, rest) { x, _ -> x to 0f }, posed)
+            FloatArray(rest.size) { rest[it] + posed[it] }
+        }
+        for (i in closed[0].indices) assertEquals(closed[0][i], closed[1][i], 1e-6f)
+    }
 }
