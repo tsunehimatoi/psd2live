@@ -46,8 +46,8 @@ internal object RecentFileDetailsCache {
 				// A project saved before thumbnails were kept shows its source PSD instead.
 				RecentFileKind.PROJECT -> ProjectThumbnail.read(path)
 					?.let { javax.imageio.ImageIO.read(it.inputStream()) }?.toImageBitmapFast()
-					?: ProjectThumbnail.readSourcePsd(path) { PsdThumbnail.read(it) }?.let { rgbaImageBitmap(it.width, it.height, it.rgba) }
-				RecentFileKind.PSD -> Files.newInputStream(path).buffered(1 shl 16).use { PsdThumbnail.read(it) }
+					?: ProjectThumbnail.readSourcePsd(path) { PsdThumbnail.read(it, preserveAlpha = true) }?.let { rgbaImageBitmap(it.width, it.height, it.rgba) }
+				RecentFileKind.PSD -> Files.newInputStream(path).buffered(1 shl 16).use { PsdThumbnail.read(it, preserveAlpha = true) }
 					?.let { rgbaImageBitmap(it.width, it.height, it.rgba) }
 			}
 		}.getOrNull()

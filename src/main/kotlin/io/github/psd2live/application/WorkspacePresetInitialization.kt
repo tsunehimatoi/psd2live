@@ -13,7 +13,7 @@ import java.util.concurrent.FutureTask
 internal object WorkspacePresetInitialization {
     fun create(document: WorkspaceDocument, work: WorkspaceRasterWork,
                choices: WorkspaceInitialPreset = WorkspaceInitialPreset(),
-               richness: String = "standard"): WorkspaceDocument =
+               richness: String? = null): WorkspaceDocument =
         prepare(document, work, choices, richness = richness).first
 
     fun prepare(document: WorkspaceDocument, work: WorkspaceRasterWork,
@@ -22,7 +22,7 @@ internal object WorkspacePresetInitialization {
                 cliBindings: CliPresetBindings? = null,
                 restoreSourceRotations: Boolean = false,
                 pluginOverrides: Map<String, Pair<String, ModifierPluginReference>> = emptyMap(),
-                richness: String = "standard"): Pair<WorkspaceDocument, RigPreviewModel> {
+                richness: String? = null): Pair<WorkspaceDocument, RigPreviewModel> {
         val rawConfig = cliBindings?.config?.takeIf { restoreSourceRotations }
         fun configOf(candidate: WorkspaceDocument) = rawConfig?.copy(rigEdits = candidate.rigEdits) ?: candidate.config()
         val config = configOf(document)
@@ -77,7 +77,9 @@ internal object WorkspacePresetInitialization {
             if (rawConfig == null) model.runtimeBundle.materialize()
             return document to model
         }
+        // Import and CLI callers preserve their configured recipe unless a template tier is explicitly selected.
         val tiers = when (richness) {
+            null -> ModuleTier.entries.toSet()
             "base" -> emptySet()
             "minimal" -> setOf(ModuleTier.CORE)
             "standard" -> setOf(ModuleTier.CORE, ModuleTier.MAJOR)
@@ -103,7 +105,7 @@ internal object WorkspacePresetInitialization {
         }
         val group = if (config.recipe.modern) "modern" else "legacy"
         stack = WorkspaceModifierPlan.plan(model, stack, buildJsonObject {
-            put("group", "$group-$richness")
+            put("group", "$group-${richness ?: "standard"}")
             put("targets", JsonArray(targets.map { buildJsonObject { put("kind", it.kind); put("id", it.id) } }))
         }, types).first
         stack = stack.copy(instances = stack.instances.map { entry ->

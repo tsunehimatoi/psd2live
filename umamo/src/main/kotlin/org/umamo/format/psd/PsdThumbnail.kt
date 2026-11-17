@@ -22,9 +22,10 @@ public object PsdThumbnail {
 	 *
 	 * @param InputStream input The file, from its start; read only as far as the picture needs.
 	 * @param Int maxSize The longer side of the result, at least 1.
-	 * @return RasterImage? The picture, opaque, top row first; null when the file has none this reads.
+	 * @param Boolean preserveAlpha When true and the composite carries an alpha channel, skip the opaque JPEG thumbnail and decode alpha.
+	 * @return RasterImage? The picture, top row first; null when the file has none this reads.
 	 */
-	public fun read(input: InputStream, maxSize: Int = 256): RasterImage? = runCatching {
+	public fun read(input: InputStream, maxSize: Int = 256, preserveAlpha: Boolean = false): RasterImage? = runCatching {
 		require(maxSize > 0) { "a thumbnail needs a positive size, not $maxSize" }
 		val data = DataInputStream(input)
 		val header = ByteArray(26).also(data::readFully)
@@ -36,9 +37,15 @@ public object PsdThumbnail {
 		val width = u32(header, 18).toInt()
 		val depth = u16(header, 22)
 		val mode = u16(header, 24)
+		val colors = when (mode) {
+			MODE_GRAYSCALE -> 1
+			MODE_RGB -> 3
+			else -> null
+		}
+		val hasCompositeAlpha = preserveAlpha && depth == 8 && colors != null && channels > colors
 		skipFully(data, data.readInt().toLong() and 0xFFFFFFFFL)
 		val resourcesLength = data.readInt().toLong() and 0xFFFFFFFFL
-		if (resourcesLength > MAX_RESOURCES) {
+		if (hasCompositeAlpha || resourcesLength > MAX_RESOURCES) {
 			skipFully(data, resourcesLength)
 		} else {
 			val resources = ByteArray(resourcesLength.toInt()).also(data::readFully)
@@ -46,14 +53,9 @@ public object PsdThumbnail {
 		}
 		val layersLength = if (version == 2) data.readLong() else data.readInt().toLong() and 0xFFFFFFFFL
 		skipFully(data, layersLength)
-		if (depth != 8 || width <= 0 || height <= 0) return null
-		val colors = when (mode) {
-			MODE_GRAYSCALE -> 1
-			MODE_RGB -> 3
-			else -> return null
-		}
+		if (depth != 8 || width <= 0 || height <= 0 || colors == null) return null
 		if (channels < colors) return null
-		composite(data, width, height, channels, colors, version == 2, maxSize)
+		composite(data, width, height, channels, colors, version == 2, maxSize, preserveAlpha)
 	}.getOrNull()
 
 	private const val MODE_GRAYSCALE = 1
@@ -88,7 +90,7 @@ public object PsdThumbnail {
 	 * takes the source pixel at its centre, so only one row per target row is kept from each channel.
 	 */
 	private fun composite(
-		data: DataInputStream, width: Int, height: Int, channels: Int, colors: Int, large: Boolean, maxSize: Int,
+		data: DataInputStream, width: Int, height: Int, channels: Int, colors: Int, large: Boolean, maxSize: Int, preserveAlpha: Boolean,
 	): RasterImage? {
 		val scale = minOf(1.0, maxSize.toDouble() / maxOf(width, height))
 		val outWidth = (width * scale).toInt().coerceAtLeast(1)
@@ -106,7 +108,9 @@ public object PsdThumbnail {
 			IntArray(rows.toInt()) { if (large) data.readInt() else data.readUnsignedShort() }
 		} else null
 		val row = ByteArray(width)
-		for (channel in 0 until colors) {
+		val decodeAlpha = preserveAlpha && channels > colors
+		val readChannels = if (decodeAlpha) colors + 1 else colors
+		for (channel in 0 until readChannels) {
 			for (y in 0 until height) {
 				val stored = rowBytes?.get(channel * height + y) ?: width
 				val packed = ByteArray(stored).also(data::readFully)
@@ -116,9 +120,27 @@ public object PsdThumbnail {
 				val base = target * outWidth * 4
 				for (x in 0 until outWidth) {
 					val value = row[sourceX[x]]
-					if (colors == 1) {
-						rgba[base + x * 4] = value; rgba[base + x * 4 + 1] = value; rgba[base + x * 4 + 2] = value
-					} else rgba[base + x * 4 + channel] = value
+					when {
+						channel == colors -> rgba[base + x * 4 + 3] = value
+						colors == 1 -> {
+							rgba[base + x * 4] = value; rgba[base + x * 4 + 1] = value; rgba[base + x * 4 + 2] = value
+						}
+						else -> rgba[base + x * 4 + channel] = value
+					}
+				}
+			}
+		}
+		if (decodeAlpha) {
+			for (index in rgba.indices step 4) {
+				val a = rgba[index + 3].toInt() and 0xFF
+				if (a == 0) {
+					rgba[index] = 0; rgba[index + 1] = 0; rgba[index + 2] = 0
+				} else if (a < 255) {
+					// Photoshop composites transparent pixels against white; un-matte to avoid bright halos.
+					for (c in 0..2) {
+						val matted = rgba[index + c].toInt() and 0xFF
+						rgba[index + c] = (((matted * 255 - 255 * (255 - a)) / a).coerceIn(0, 255)).toByte()
+					}
 				}
 			}
 		}

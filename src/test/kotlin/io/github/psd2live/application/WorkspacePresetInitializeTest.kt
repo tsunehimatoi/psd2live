@@ -22,6 +22,23 @@ class WorkspacePresetInitializeTest {
             WorkspaceSettingsCodec.encode(config))
     }
 
+    @Test fun explicitTemplateTierFiltersModulesWithoutChangingImportDefaults() {
+        val artwork = Characters.head(physics = false)
+        val source = artwork.copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val choices = WorkspaceInitialPreset(clothing = false, motionBasic = false, motionSkeleton = false,
+            frontHair = WorkspaceInitialHair.OFF, backHair = WorkspaceInitialHair.OFF)
+        val standard = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices, richness = "standard")
+        val configured = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices)
+        val full = WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, choices, richness = "full")
+        fun hasGloom(result: Pair<WorkspaceDocument, RigPreviewModel>) =
+            result.second.rig.puppet.parameters.any { it.id.raw == "ParamGloom" }
+        assertFalse(hasGloom(standard))
+        assertTrue(hasGloom(configured))
+        assertTrue(hasGloom(full))
+        assertEquals(RigIrCompiler.compile(configured.second), RigIrCompiler.compile(full.second))
+        assertEquals(source.settings, standard.first.settings)
+    }
+
     @Test fun preparingBindingsPreservesSplitArtworkAndAuthoredOverrides() {
         val original = document()
         val custom = WorkspaceInitialPreset(headStrength = .7f, bodyStrength = .6f,

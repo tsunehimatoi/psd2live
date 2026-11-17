@@ -38,6 +38,19 @@ class PsdThumbnailTest {
 		assertTrue(g > 150 && r < 60, "expected the green JPEG, got r=$r g=$g")
 	}
 
+	@Test fun preserveAlphaSkipsOpaqueJpegAndDecodesAlpha() {
+		val jpeg = BufferedImage(8, 8, BufferedImage.TYPE_INT_RGB).apply {
+			createGraphics().run { color = Color(255, 255, 255); fillRect(0, 0, 8, 8); dispose() }
+		}.let { ByteArrayOutputStream().also { out -> ImageIO.write(it, "jpg", out) }.toByteArray() }
+		val bytes = psd(4, 2, rle = false, thumbnail = jpeg, channels = 4) { x, _ ->
+			if (x < 2) Color(255, 0, 0, 255) else Color(255, 255, 255, 0)
+		}
+		val image = assertNotNull(PsdThumbnail.read(bytes.inputStream(), preserveAlpha = true))
+		assertEquals(4 to 2, image.width to image.height)
+		assertEquals(255, image.rgba[(0 * 4 + 0) * 4 + 3].toInt() and 255)
+		assertEquals(0, image.rgba[(0 * 4 + 3) * 4 + 3].toInt() and 255)
+	}
+
 	@Test fun otherFilesHaveNoThumbnail() {
 		assertNull(PsdThumbnail.read(byteArrayOf(1, 2, 3, 4).inputStream()))
 		assertNull(PsdThumbnail.read(psd(4, 2, rle = true) { _, _ -> Color.RED }.copyOf(40).inputStream()))
@@ -48,11 +61,11 @@ class PsdThumbnailTest {
 		return Triple(rgba[at].toInt() and 255, rgba[at + 1].toInt() and 255, rgba[at + 2].toInt() and 255)
 	}
 
-	/** An RGB PSD with no layers: [thumbnail] as resource 1036 when given, then the composite, raw or PackBits. */
-	private fun psd(width: Int, height: Int, rle: Boolean, thumbnail: ByteArray? = null, pixel: (Int, Int) -> Color): ByteArray {
+	/** An RGB(A) PSD with no layers: [thumbnail] as resource 1036 when given, then the composite, raw or PackBits. */
+	private fun psd(width: Int, height: Int, rle: Boolean, thumbnail: ByteArray? = null, channels: Int = 3, pixel: (Int, Int) -> Color): ByteArray {
 		val out = ByteArrayOutputStream()
 		DataOutputStream(out).run {
-			writeBytes("8BPS"); writeShort(1); write(ByteArray(6)); writeShort(3); writeInt(height); writeInt(width); writeShort(8); writeShort(3)
+			writeBytes("8BPS"); writeShort(1); write(ByteArray(6)); writeShort(channels); writeInt(height); writeInt(width); writeShort(8); writeShort(3)
 			writeInt(0)
 			val resources = ByteArrayOutputStream().also { stream ->
 				if (thumbnail != null) DataOutputStream(stream).run {
@@ -65,9 +78,9 @@ class PsdThumbnailTest {
 			writeInt(resources.size); write(resources)
 			writeInt(0)
 			writeShort(if (rle) 1 else 0)
-			val planes = (0 until 3).map { channel ->
+			val planes = (0 until channels).map { channel ->
 				(0 until height).map { y ->
-					ByteArray(width) { x -> pixel(x, y).let { listOf(it.red, it.green, it.blue)[channel] }.toByte() }
+					ByteArray(width) { x -> pixel(x, y).let { listOf(it.red, it.green, it.blue, it.alpha)[channel] }.toByte() }
 				}
 			}
 			if (rle) {
