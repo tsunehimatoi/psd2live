@@ -1,3 +1,11 @@
+## v3.8.2 · 2026-11-18
+
+### Improvements and fixes
+
+- **Automatic mouth rigging**: improve hidden mouth artwork and cavity mask selection, refine independent upper and lower lip deformation, and reduce gaps and corner jitter when closing the mouth.
+- **Modifiers and presets**: preserve manual edits when applying modifiers and update them in dependency order. Save preset selections and edits correctly, and retain working outputs when one modifier fails.
+- **Start page and import**: reorganize the start page for creating, opening, and resuming projects, preserve import presets, and fix transparency in PSD thumbnails.
+
 ## v3.8.1 · 2026-11-17
 
 ### Improvements and fixes

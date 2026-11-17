@@ -1,24 +1,20 @@
-## v3.8.1 · 2026-11-17
+## v3.8.2 · 2026-11-18
 
 ### 改进与修复
 
-- **PSD 导入与插件隔离**：增强不规则 PSD 输入的容错；单个修改器失败时保留其错误信息并隔离依赖，其他可用功能继续运行。
-- **眉毛与变形精度**：修复眉毛形状、眨眼与弹性绑定组合时的兼容问题，提高大画布下的变形求逆精度。
-- **眼睛透视遮罩**：刘海已有裁剪时保留原遮罩并正确叠加眼部透视；不支持组合遮罩的导出目标会报告功能损失。
-- **自定义插件开发**：支持插件模板、构建、参数配置与可撤销的代码更新，修复依赖锁定及旧构建产物的重载兼容性。
-- **桌面兼容性**：改善 Linux 窗口移动与文件选择器兼容性，修复透明背景会话失败后的恢复。
+- **嘴部自动绑定**：改善隐藏口型和口腔遮罩的选择，细化上下唇的独立变形，减少闭嘴时的唇线缝隙和嘴角抖动。
+- **修改器与预设**：应用修改器时保留已编辑的内容，按依赖顺序更新；修复预设选择和编辑的保存，并在单个修改器失败时保留其他可用结果。
+- **开始页与导入**：重新组织开始页的创建、打开和最近工程入口，保留导入预设，并修复 PSD 缩略图的透明显示。
 
 <details>
 <summary>English</summary>
 
-## v3.8.1 · 2026-11-17
+## v3.8.2 · 2026-11-18
 
 ### Improvements and fixes
 
-- **PSD import and plugin isolation**: handle irregular PSD input more robustly; failed modifiers retain error details and isolate dependent features while other features continue working.
-- **Brows and deformation precision**: fix composition of brow shape, blink and spring bindings, and improve inverse deformation precision on large canvases.
-- **Eye see-through masks**: preserve existing hair clipping while adding eye windows; export targets without composite masks report the feature loss.
-- **Custom plugin development**: add plugin scaffolding, builds, parameter controls and undoable code updates; fix dependency locks and reloading older build artifacts.
-- **Desktop compatibility**: improve Linux window movement and file selection, and recover from failed transparent-background sessions.
+- **Automatic mouth rigging**: improve hidden mouth artwork and cavity mask selection, refine independent upper and lower lip deformation, and reduce gaps and corner jitter when closing the mouth.
+- **Modifiers and presets**: preserve manual edits when applying modifiers and update them in dependency order. Save preset selections and edits correctly, and retain working outputs when one modifier fails.
+- **Start page and import**: reorganize the start page for creating, opening, and resuming projects, preserve import presets, and fix transparency in PSD thumbnails.
 
 </details>
