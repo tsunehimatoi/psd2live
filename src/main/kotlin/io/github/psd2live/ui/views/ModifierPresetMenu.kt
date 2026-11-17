@@ -54,12 +54,14 @@ import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.math.roundToInt
 
+@kotlinx.serialization.Serializable
 internal enum class ModifierPresetCategory {
     MODERN,
     LEGACY,
     CUSTOM,
 }
 
+@kotlinx.serialization.Serializable
 internal enum class ModifierSimulationMode(val labelKey: String, val modernId: String, val legacyId: String) {
     NONE("modifier.preset.sim.none", "modern-light", "legacy-light"),
     CLASSIC_PHYSICS("modifier.preset.sim.classic", "modern-hair", "legacy-hair"),
@@ -72,6 +74,7 @@ internal enum class ModifierSimulationMode(val labelKey: String, val modernId: S
     }
 }
 
+@kotlinx.serialization.Serializable
 internal enum class ModifierCountTier(val id: String, val labelKey: String) {
     EMPTY("empty", "modifier.preset.count.empty"),
     BASE("base", "modifier.preset.count.base"),
@@ -85,6 +88,7 @@ internal data class ModifierPresetParameterEstimate(
     val physics: Int,
 )
 
+@kotlinx.serialization.Serializable
 internal data class ModifierPresetSelection(
     val category: ModifierPresetCategory,
     val simulation: ModifierSimulationMode,
@@ -92,17 +96,36 @@ internal data class ModifierPresetSelection(
     val customId: String?,
 )
 
+/** Kept outside the popup so dismissing it or restarting the app retains every control. */
+internal class ModifierPresetSelectionStore(private val node: java.util.prefs.Preferences) {
+    private val json = kotlinx.serialization.json.Json { encodeDefaults = true }
+    fun load(): ModifierPresetSelection? = node.get("selection", null)?.let {
+        runCatching { json.decodeFromString(ModifierPresetSelection.serializer(), it) }.getOrNull()
+    }
+    fun save(selection: ModifierPresetSelection) {
+        node.put("selection", json.encodeToString(ModifierPresetSelection.serializer(), selection))
+        node.flush()
+    }
+    companion object {
+        val shared by lazy { ModifierPresetSelectionStore(java.util.prefs.Preferences.userRoot()
+            .node("io.github.psd2live.settings/modifier-preset-menu")) }
+    }
+}
+
 internal object ModifierPresetMenuModel {
     private const val BASE_ORDINARY_PARAMETER_COUNT = 15
+    fun isCustom(entry: WorkspaceModelPresetEntry): Boolean = entry.stack != null || (entry.nameKey == null && entry.id !in setOf(
+        "empty", "modern", "modern-light", "modern-hair", "modern-dynamic", "modern-motion",
+        "legacy", "legacy-light", "legacy-hair", "legacy-dynamic", "legacy-motion"))
 
     fun availableCategories(entries: List<WorkspaceModelPresetEntry>): List<ModifierPresetCategory> {
         val categories = mutableListOf(ModifierPresetCategory.MODERN, ModifierPresetCategory.LEGACY)
-        if (entries.any { it.stack != null }) categories += ModifierPresetCategory.CUSTOM
+        if (entries.any { ModifierPresetMenuModel.isCustom(it) }) categories += ModifierPresetCategory.CUSTOM
         return categories
     }
 
     fun initialSelection(stack: RigModifierStack?, entries: List<WorkspaceModelPresetEntry>): ModifierPresetSelection {
-        val customDefault = entries.firstOrNull { it.stack != null }?.id
+        val customDefault = entries.firstOrNull { ModifierPresetMenuModel.isCustom(it) }?.id
         if (stack != null) {
             if (stack.instances.isEmpty() && entries.any { it.id == "empty" }) {
                 return ModifierPresetSelection(ModifierPresetCategory.MODERN, ModifierSimulationMode.CLOTHING_SIM, ModifierCountTier.EMPTY, customDefault)
@@ -110,7 +133,7 @@ internal object ModifierPresetMenuModel {
             val activeGroup = stack.instances.mapNotNull { it.presetGroup }.distinct().singleOrNull()
             val matched = activeGroup?.let { id -> entries.firstOrNull { it.id == id } }
             if (matched != null) {
-                if (matched.stack != null) {
+                if (isCustom(matched)) {
                     return ModifierPresetSelection(ModifierPresetCategory.CUSTOM, ModifierSimulationMode.CLOTHING_SIM, ModifierCountTier.STANDARD, matched.id)
                 }
                 val category = if (matched.baseline == "legacy") ModifierPresetCategory.LEGACY else ModifierPresetCategory.MODERN
@@ -136,8 +159,8 @@ internal object ModifierPresetMenuModel {
         entries: List<WorkspaceModelPresetEntry>,
     ): WorkspaceModelPresetEntry? {
         if (category == ModifierPresetCategory.CUSTOM) {
-            return entries.firstOrNull { it.stack != null && it.id == customId }
-                ?: entries.firstOrNull { it.stack != null }
+            return entries.firstOrNull { ModifierPresetMenuModel.isCustom(it) && it.id == customId }
+                ?: entries.firstOrNull { ModifierPresetMenuModel.isCustom(it) }
         }
         if (countTier == ModifierCountTier.EMPTY) {
             return entries.firstOrNull { it.id == "empty" }
@@ -153,7 +176,7 @@ internal object ModifierPresetMenuModel {
         model: RigPreviewModel?,
         baseConfig: PipelineConfig = PipelineConfig(),
     ): ModifierPresetParameterEstimate {
-        if (entry == null || entry.baseline == "empty" || countTier == ModifierCountTier.EMPTY) {
+        if (entry == null || entry.baseline == "empty" || (countTier == ModifierCountTier.EMPTY && !isCustom(entry))) {
             return ModifierPresetParameterEstimate(ordinary = 0, physics = 0)
         }
         if (entry.stack != null) {
@@ -183,14 +206,14 @@ internal object ModifierPresetMenuModel {
             )
         }
 
-        val tiers = when (countTier) {
+        val tiers = when (if (isCustom(entry)) ModifierCountTier.entries.first { it.id == entry.richness } else countTier) {
             ModifierCountTier.EMPTY, ModifierCountTier.BASE -> emptySet()
             ModifierCountTier.MINIMAL -> setOf(ModuleTier.CORE)
             ModifierCountTier.STANDARD -> setOf(ModuleTier.CORE, ModuleTier.MAJOR)
             ModifierCountTier.FULL -> ModuleTier.entries.toSet()
         }
         val choices = entry.choices
-        val config = WorkspacePresetBaseline.configure(baseConfig, entry.id)
+        val config = WorkspacePresetBaseline.configure(baseConfig, entry)
         val subject = RecipeSubject.of(model?.analysis)
         val excludedModules = buildSet {
             addAll(WorkspaceModifierPlan.PRESET_EXCLUDED_MODULES)
@@ -239,14 +262,26 @@ internal fun ModifierPresetMenu(
     val typography = LocalToolTypography.current
     val library = WorkspaceModelPresetLibrary.shared
     val entries by library.state.collectAsState()
-    val initial = remember(entries) { ModifierPresetMenuModel.initialSelection(stack, entries) }
-    var category by remember(entries) { mutableStateOf(initial.category) }
-    var simulation by remember(entries) { mutableStateOf(initial.simulation) }
-    var countTier by remember(entries) { mutableStateOf(initial.countTier) }
-    var customId by remember(entries) { mutableStateOf(initial.customId) }
+    val initial = remember { ModifierPresetSelectionStore.shared.load() ?: ModifierPresetMenuModel.initialSelection(stack, entries) }
+    var category by remember { mutableStateOf(initial.category) }
+    var simulation by remember { mutableStateOf(initial.simulation) }
+    var countTier by remember { mutableStateOf(initial.countTier) }
+    var customId by remember { mutableStateOf(initial.customId) }
+
+    LaunchedEffect(category, simulation, countTier, customId) {
+        ModifierPresetSelectionStore.shared.save(ModifierPresetSelection(category, simulation, countTier, customId))
+    }
+    LaunchedEffect(entries) {
+        if (category == ModifierPresetCategory.CUSTOM && entries.none { ModifierPresetMenuModel.isCustom(it) }) {
+            category = ModifierPresetCategory.MODERN
+        }
+        if (entries.none { ModifierPresetMenuModel.isCustom(it) && it.id == customId }) {
+            customId = entries.firstOrNull { ModifierPresetMenuModel.isCustom(it) }?.id
+        }
+    }
 
     val categories = remember(entries) { ModifierPresetMenuModel.availableCategories(entries) }
-    val customEntries = remember(entries) { entries.filter { it.stack != null } }
+    val customEntries = remember(entries) { entries.filter { ModifierPresetMenuModel.isCustom(it) } }
     val activeEntry = remember(category, simulation, countTier, customId, entries) {
         ModifierPresetMenuModel.resolvePresetEntry(category, simulation, countTier, customId, entries)
     }
@@ -462,7 +497,7 @@ internal fun ModifierPresetMenu(
             val applyRichness = if (countTier == ModifierCountTier.EMPTY) "standard" else countTier.id
             CompactButton(
                 text = if (dialog.committing) tr("modifier.adding") else tr("modifier.preset.apply"),
-                onClick = { activeEntry?.let { vm.switchModifierPreset(it.id, applyRichness) } },
+                onClick = { activeEntry?.let { vm.switchModifierPreset(it.id, if (category == ModifierPresetCategory.CUSTOM) it.richness else applyRichness) } },
                 enabled = controlsEnabled && activeEntry != null,
                 isPrimary = true,
                 height = 22.dp,
@@ -532,7 +567,7 @@ internal fun ModifierPresetMenu(
                 onClick = {
                     val id = activeEntry?.id ?: return@FloatingMenuRow
                     runLibraryTask {
-                        val raw = library.exportJson(id)
+                        val raw = library.exportJson(id, if (category == ModifierPresetCategory.CUSTOM) null else if (countTier == ModifierCountTier.EMPTY) "standard" else countTier.id)
                         val path = withContext(Dispatchers.IO) {
                             NativeFilePicker.chooseSaveJsonFile(
                                 title = tr("modifier.library.export"),

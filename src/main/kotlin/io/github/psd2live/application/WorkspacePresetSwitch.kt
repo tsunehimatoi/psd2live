@@ -7,7 +7,7 @@ import kotlinx.serialization.json.*
 
 /** Whole replacement is prepared inside the existing document candidate/CAS transaction. */
 internal object WorkspacePresetSwitch {
-    fun apply(document: WorkspaceDocument, id: String, work: WorkspaceRasterWork, model: RigPreviewModel? = null, richness: String = "standard"): WorkspaceDocument {
+    fun apply(document: WorkspaceDocument, id: String, work: WorkspaceRasterWork, model: RigPreviewModel? = null, richness: String? = null): WorkspaceDocument {
         val preset = WorkspaceModelPresetLibrary.shared.get(id)
         val previous = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack))
         require(previous.appliedNodes.isEmpty()) { "Applied content remains at its authored position; apply its prefix before switching presets" }
@@ -22,10 +22,10 @@ internal object WorkspacePresetSwitch {
             val candidate = document.copy(rigEdits = document.rigEdits.copy(modifierStack = next.toJson()))
             return WorkspaceModifierSimulation.prepare(candidate, work)
         }
-        val config = WorkspacePresetBaseline.configure(document.config(), id)
+        val config = WorkspacePresetBaseline.configure(document.config(), preset)
         val candidate = document.copy(settings = WorkspaceSettingsCodec.encode(config),
             rigEdits = document.rigEdits.copy(modifierStack = cleared.toJson()))
-        val initialized = WorkspacePresetInitialization.create(candidate, work, preset.choices, richness)
+        val initialized = WorkspacePresetInitialization.create(candidate, work, preset.choices, richness ?: preset.richness)
         val stack = RigModifierStack.fromJson(requireNotNull(initialized.rigEdits.modifierStack))
         return initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = stack.copy(
             instances = stack.instances.map { it.copy(presetGroup = id) }).toJson()))
@@ -46,12 +46,20 @@ internal object WorkspacePresetSwitch {
             reserved = reserved.add(entry.type, entry.version, entry.targets, entry.config, preset.id)
             ids[entry.id] = reserved.instances.last().id
         }
+        for (retired in template.retiredIds) {
+            var sequence = reserved.nextId
+            while ("m$sequence" in reserved.retiredIds || reserved.instances.any { it.id == "m$sequence" }) sequence = Math.addExact(sequence, 1)
+            val id = "m$sequence"
+            ids[retired] = id
+            reserved = reserved.copy(retiredIds = reserved.retiredIds + id, nextId = Math.addExact(sequence, 1))
+        }
         val aliases = template.instances.flatMap { entry -> entry.outputAliases.map { (local, old) ->
             old to entry.copy(id = ids.getValue(entry.id), outputAliases = emptyMap()).outputId(local)
         } }.toMap()
         val generatedOwner = Regex("modifier:(" + ids.keys.joinToString("|") { Regex.escape(it) } + "):")
         fun generated(value: String): String {
             aliases[value]?.let { return it }
+            if (value.startsWith("modifier:")) ids[value.removePrefix("modifier:")]?.let { return "modifier:$it" }
             return generatedOwner.replace(value) { match -> "modifier:${ids.getValue(match.groupValues[1])}:" }
         }
         for (entry in template.instances) for (target in entry.targets) {
@@ -71,7 +79,15 @@ internal object WorkspacePresetSwitch {
                 targetIds[target.id] = matches.single()
             }
         }
-        fun remap(value: String) = targetIds[value] ?: generated(value)
+        fun remap(value: String): String {
+            targetIds[value]?.let { return it }
+            val kind = value.substringBefore(':')
+            if (kind in setOf("mesh", "warp", "rotation", "parameter", "part", "deformer", "layer") && ':' in value) {
+                val id = value.substringAfter(':')
+                return "$kind:${targetIds[id] ?: generated(id)}"
+            }
+            return generated(value)
+        }
         fun json(value: JsonElement): JsonElement = when (value) {
             is JsonObject -> JsonObject(value.map { (key, child) -> remap(key) to json(child) }.toMap())
             is JsonArray -> JsonArray(value.map(::json))
@@ -97,7 +113,18 @@ internal object WorkspacePresetSwitch {
             )
         }
         val tree = template.organization?.map { node -> node.copy(id = ids[node.id] ?: node.id) }
-        return reserved.copy(instances = instances, organization = tree).also { stack ->
+        return reserved.copy(instances = instances, organization = tree,
+            overrides = reserved.overrides + template.overrides.map { (id, commands) ->
+                provider(id) to commands.map { command ->
+                    val remapped = json(command).jsonObject.toMutableMap()
+                    command["providers"]?.jsonArray?.let { providers ->
+                        remapped["providers"] = JsonArray(providers.map { JsonPrimitive(provider(it.jsonPrimitive.content)) })
+                    }
+                    JsonObject(remapped)
+                }
+            },
+            initializationFailures = template.initializationFailures.mapKeys { provider(it.key) },
+            retryRevisions = template.retryRevisions.mapKeys { provider(it.key) }).also { stack ->
             RigModifierAlgorithms.evaluator().validateOrder(stack)
             RigModifierOrganization.validate(stack, RigModifierOrganization.nodes(stack))
         }

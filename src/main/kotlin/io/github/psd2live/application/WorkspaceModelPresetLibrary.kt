@@ -18,6 +18,7 @@ internal data class WorkspaceModelPresetEntry(
     val choices: WorkspaceInitialPreset = WorkspaceInitialPreset(),
     val stack: JsonObject? = null,
     val targetNames: Map<String, String> = emptyMap(),
+    val richness: String = "standard",
 )
 
 /** Reusable model settings are JSON in preferences, including the bundled defaults. */
@@ -34,7 +35,7 @@ internal class WorkspaceModelPresetLibrary(private val node: Preferences) {
 
     @Synchronized fun save(name: String, raw: JsonObject, model: RigPreviewModel): WorkspaceModelPresetEntry {
         val stack = RigModifierStack.fromJson(raw)
-        require(stack.appliedCapabilities.isEmpty()) { "Save a preset before applying its modifiers; applied content belongs to the model" }
+        require(stack.appliedCapabilities.isEmpty() && stack.appliedNodes.isEmpty()) { "Save a preset before applying its modifiers; applied content belongs to the model" }
         val names = model.rig.puppet.drawables.associate { it.id.raw to it.name } +
             model.rig.puppet.deformers.associate { it.id.raw to it.name } +
             model.rig.puppet.parts.associate { it.id.raw to it.name } +
@@ -42,7 +43,7 @@ internal class WorkspaceModelPresetLibrary(private val node: Preferences) {
         val clean = stack.copy(organization = RigModifierOrganization.nodes(stack), instances = stack.instances.map { entry ->
             entry.copy(inputFingerprint = null, config = if (entry.type == "simulation")
                 JsonObject(entry.config.filterKeys { it != "bake" } + ("auto_bake" to JsonPrimitive(true))) else entry.config)
-        }, overrides = emptyMap(), retiredIds = emptySet(), appliedCapabilities = emptyList())
+        }, appliedCapabilities = emptyList())
         val existing = snapshot().firstOrNull { it.nameKey == null && it.name == name.trim() }
         return store(WorkspaceModelPresetEntry(existing?.id ?: UUID.randomUUID().toString(), name.trim(),
             stack = clean.toJson(), targetNames = names.filterKeys { id -> stack.instances.any { item -> item.targets.any { it.id == id } } }))
@@ -53,7 +54,11 @@ internal class WorkspaceModelPresetLibrary(private val node: Preferences) {
         val source = json.decodeFromString<WorkspaceModelPresetEntry>(raw)
         return store(source.copy(id = UUID.randomUUID().toString(), nameKey = null))
     }
-    @Synchronized fun exportJson(id: String): String = json.encodeToString(WorkspaceModelPresetEntry.serializer(), get(id))
+    @Synchronized fun exportJson(id: String, richness: String? = null): String {
+        val entry = get(id).let { if (richness == null) it else it.copy(richness = richness) }
+        validate(entry)
+        return json.encodeToString(WorkspaceModelPresetEntry.serializer(), entry)
+    }
     @Synchronized fun delete(id: String) {
         node.node(id).removeNode(); node.flush()
         // Defaults are restored through their JSON resource, then read by the same path as user presets.
@@ -63,10 +68,11 @@ internal class WorkspaceModelPresetLibrary(private val node: Preferences) {
     private fun validate(entry: WorkspaceModelPresetEntry) {
         require(entry.id.matches(Regex("[A-Za-z0-9_.:-]+")) && entry.name.isNotBlank() && entry.name.length <= 160) { "Invalid preset name or identity" }
         require((entry.baseline != null) != (entry.stack != null)) { "A preset must contain either a baseline or a modifier stack" }
+        require(entry.richness in setOf("base", "minimal", "standard", "full")) { "Unknown preset richness" }
         require(entry.baseline == null || entry.baseline in setOf("legacy", "modern", "empty")) { "Unknown preset baseline" }
         entry.stack?.let { raw ->
             val stack = RigModifierStack.fromJson(raw)
-            require(stack.instances.size <= 128 && stack.overrides.isEmpty() && stack.appliedCapabilities.isEmpty()) { "Presets contain at most 128 modifiers and no applied content" }
+            require(stack.instances.size <= 128 && stack.appliedCapabilities.isEmpty() && stack.appliedNodes.isEmpty()) { "Presets contain at most 128 modifiers and no applied content" }
             stack.instances.forEach { RigModifierAlgorithms.registry.definition(it) }
             RigModifierAlgorithms.evaluator().validateOrder(stack)
             RigModifierOrganization.validate(stack, RigModifierOrganization.nodes(stack))

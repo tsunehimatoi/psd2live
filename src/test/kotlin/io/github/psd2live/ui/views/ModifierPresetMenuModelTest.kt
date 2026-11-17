@@ -17,6 +17,26 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class ModifierPresetMenuModelTest {
+    @Test fun `menu controls survive reopening and restart`() {
+        val node = java.util.prefs.Preferences.userRoot().node("io.github.psd2live.tests/menu-${java.util.UUID.randomUUID()}")
+        try {
+            val selection = ModifierPresetSelection(ModifierPresetCategory.LEGACY,
+                ModifierSimulationMode.FULL_SIM, ModifierCountTier.MINIMAL, "saved")
+            ModifierPresetSelectionStore(node).save(selection)
+            assertEquals(selection, ModifierPresetSelectionStore(node).load())
+            node.put("selection", "invalid")
+            assertEquals(null, ModifierPresetSelectionStore(node).load())
+        } finally { node.removeNode(); java.util.prefs.Preferences.userRoot().flush() }
+    }
+
+    @Test fun `imported baseline remains selectable as custom`() {
+        val imported = WorkspaceModelPresetEntry("imported", "Imported", baseline = "legacy", richness = "minimal")
+        val entries = bundled + imported
+        assertTrue(ModifierPresetCategory.CUSTOM in ModifierPresetMenuModel.availableCategories(entries))
+        assertEquals(imported, ModifierPresetMenuModel.resolvePresetEntry(ModifierPresetCategory.CUSTOM,
+            ModifierSimulationMode.NONE, ModifierCountTier.FULL, imported.id, entries))
+    }
+
     private val bundled = listOf(
         WorkspaceModelPresetEntry(id = "modern", name = "Stylized", baseline = "modern"),
         WorkspaceModelPresetEntry(

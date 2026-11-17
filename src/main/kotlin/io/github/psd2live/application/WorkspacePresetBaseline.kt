@@ -10,7 +10,11 @@ internal object WorkspacePresetBaseline {
 
     fun configure(config: PipelineConfig, id: String): PipelineConfig {
         val entry = WorkspaceModelPresetLibrary.shared.get(id)
-        require(entry.baseline == "legacy" || entry.baseline == "modern") { "Preset has no binding baseline: $id" }
+        return configure(config, entry)
+    }
+
+    fun configure(config: PipelineConfig, entry: WorkspaceModelPresetEntry): PipelineConfig {
+        require(entry.baseline == "legacy" || entry.baseline == "modern") { "Preset has no binding baseline: ${entry.id}" }
         return entry.choices.configure(config).copy(
             recipe = if (entry.baseline == "legacy") RigRecipe.Legacy else RigRecipe.Modern,
             rigTuning = RigTuning(), meshOnly = false, generateDeformers = true,

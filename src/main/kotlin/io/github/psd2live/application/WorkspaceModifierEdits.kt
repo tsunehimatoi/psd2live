@@ -33,7 +33,7 @@ internal object WorkspaceModifierEdits {
             operation.request.getValue("group").jsonPrimitive.content,
             work,
             model,
-            operation.request["richness"]?.jsonPrimitive?.contentOrNull ?: "standard",
+            operation.request["richness"]?.jsonPrimitive?.contentOrNull,
         )
         val stack = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack) {
             "Convert legacy presets before editing a modifier stack"

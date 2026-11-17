@@ -26,8 +26,25 @@ class RigModifierPersistenceTest {
             outputAliases = mapOf("physics" to "existing-physics"))
         .update("m2") { it.copy(enabled = false) }
         .add("motion", 1, listOf(ModifierTarget("mesh", "mesh")))
-        .update("m3") { it.copy(enabled = false, inputFingerprint = "a".repeat(64)) }
+        .update("m3") { it.copy(enabled = false, inputFingerprint = "a".repeat(64),
+            parameterProviders = mapOf("ParamX" to "m2"),
+            config = buildJsonObject {
+                put("number", 0.125); put("enabled", false); put("text", "custom")
+                put("optional", JsonNull)
+                putJsonArray("nested") { add(buildJsonObject { put("value", 7) }) }
+            }) }
         .move("m3", 0)
+        .let { it.copy(organization = RigModifierOrganization.nodes(it),
+            initializationFailures = mapOf("m3" to "Preparation failed"), retryRevisions = mapOf("m3" to 4L)) }
+
+    @Test fun pluginIdentityAndDependencyLocksSurviveJsonRoundTrip() {
+        val original = stack().let { stack -> stack.copy(instances = stack.instances.map { instance ->
+            instance.copy(plugin = ModifierPluginReference("example.plugin", "1.2.3", "a".repeat(64),
+                mapOf("example.dependency" to "b".repeat(64))))
+        }) }
+        val serialized = Json.parseToJsonElement(original.toJson().toString()).jsonObject
+        assertEquals(original, RigModifierStack.fromJson(serialized))
+    }
 
     @Test fun modifierStateChangesRevisionAndSurvivesWorkingStoreAndProjectReopen() = runBlocking<Unit> {
         val project = SyntheticProject(temp.resolve("project"), 1, 8, 1)
