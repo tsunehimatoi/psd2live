@@ -249,18 +249,31 @@ class MouthClosedDrawingModulesTest {
             ModifierUpstreamCapability("mouth.capture", "mouth.capture", 2, targets, "capture", config),
             ModifierUpstreamCapability("mouth.jaw", "mouth.jaw", 2, targets, "jaw", config))
         val follows = mapOf("mouth" to MouthRig.Follow.WHOLE_TIGHT)
-        assertEquals(input, MouthVowelAlgorithm().changes(ModifierEvaluationInput(input,
+        val vowelResult = MouthVowelAlgorithm().changes(ModifierEvaluationInput(input,
             MouthVowelAlgorithm.context(fallback.encode(), follows,
                 MouthRig.VOWELS.associate { it.second.raw to it.first.toString() }, "Mouth").withUpstream(providers)),
-            RigModifierInstance("vowels", "mouth.vowel", 2, targets, config = config)) {}.apply(input))
-        assertEquals(input, MouthCaptureAlgorithm().changes(ModifierEvaluationInput(input,
+            RigModifierInstance("vowels", "mouth.vowel", 2, targets, config = config)) {}.apply(input)
+        assertEquals(input.meshes, vowelResult.meshes)
+        assertTrue(vowelResult.parameters.any { it.id == "ParamA" })
+
+        val captureNames = listOf(MouthRig.MOUTH_X, MouthRig.PUCKER_WIDEN, MouthRig.SHRUG,
+            MouthRig.PRESS_OPEN, MouthRig.FUNNEL, MouthRig.CORNER_L, MouthRig.CORNER_R,
+            MouthRig.PUCKER_WIDEN_L, MouthRig.PUCKER_WIDEN_R, MouthRig.CHEEK_PUFF, MouthRig.JAW_OPEN)
+            .associate { it.raw to it.raw }
+        val captureResult = MouthCaptureAlgorithm().changes(ModifierEvaluationInput(input,
             MouthCaptureAlgorithm.context(fallback.encode(), follows, emptySet(),
-                mapOf(MouthRig.MOUTH_X.raw to MouthRig.MOUTH_X.raw), "Mouth").withUpstream(providers)),
-            RigModifierInstance("capture", "mouth.capture", 2, targets, config = config)) {}.apply(input))
-        assertEquals(input, MouthTongueAlgorithm().changes(ModifierEvaluationInput(input,
+                captureNames, "Mouth").withUpstream(providers)),
+            RigModifierInstance("capture", "mouth.capture", 2, targets, config = config)) {}.apply(input)
+        assertEquals(input.meshes, captureResult.meshes)
+        assertTrue(captureResult.parameters.any { it.id == "ParamMouthX" })
+
+        val tongueResult = MouthTongueAlgorithm().changes(ModifierEvaluationInput(input,
             MouthTongueAlgorithm.context(fallback.encode(), follows, "Tongue", "Mouth").withUpstream(providers)),
             RigModifierInstance("tongue", "mouth.tongue", 2, targets,
-                config = JsonObject(config + ("dependencies" to buildJsonObject { put("mouth.capture", "capture") })))) {}.apply(input))
+                config = JsonObject(config + ("dependencies" to buildJsonObject { put("mouth.capture", "capture") })))) {}.apply(input)
+        assertEquals(input.meshes, tongueResult.meshes)
+        assertTrue(tongueResult.parameters.any { it.id == "ParamTongueOut" })
+
         val encodedFallback = fallback.encode()
         assertEquals(input, MouthDepthAlgorithm().changes(ModifierEvaluationInput(input,
             ModifierAlgorithmContext(buildJsonObject {
@@ -275,9 +288,12 @@ class MouthClosedDrawingModulesTest {
             }, encodedFallback.resources).withUpstream(providers)),
             RigModifierInstance("depth", "mouth.interior-depth", 2, targets,
                 config = JsonObject(config + ("dependencies" to buildJsonObject { put("face/legacy", "face") })))) {}.apply(input))
-        assertEquals(input, MouthSpringAlgorithm().changes(ModifierEvaluationInput(input,
+
+        val springResult = MouthSpringAlgorithm().changes(ModifierEvaluationInput(input,
             MouthSpringAlgorithm.context(fallback.encode(), emptySet(), "Spring", "Physics", "Mouth physics").withUpstream(providers)),
             RigModifierInstance("spring", "mouth.spring", 2, targets,
-                config = JsonObject(config + ("dependencies" to buildJsonObject { put("mouth.jaw", "jaw") })))) {}.apply(input))
+                config = JsonObject(config + ("dependencies" to buildJsonObject { put("mouth.jaw", "jaw") })))) {}.apply(input)
+        assertEquals(input.meshes, springResult.meshes)
+        assertTrue(springResult.parameters.any { it.id == "ParamMouthSpring" })
     }
 }
