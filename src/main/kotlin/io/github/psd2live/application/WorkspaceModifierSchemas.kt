@@ -141,7 +141,10 @@ internal object WorkspaceModifierSchemas {
             "modifier_initialize" -> s.obj(mapOf(
                 "modifiers" to s.choices(*WorkspaceInitialModifiers.entries.map { it.name.lowercase() }.toTypedArray()),
                 "preset" to initialPreset), setOf("modifiers"))
-            "modifier_switch" -> s.obj(mapOf("group" to s.handle()))
+            "modifier_switch" -> s.obj(mapOf(
+                "group" to s.handle(),
+                "richness" to s.choices("base", "minimal", "standard", "full"),
+            ), setOf("group"))
             "modifier_remove", "modifier_apply" -> s.obj(mapOf("id" to s.handle()))
             else -> error("Unknown modifier operation $id")
         }

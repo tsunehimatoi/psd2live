@@ -12,15 +12,17 @@ import java.util.concurrent.FutureTask
 /** A preset is a recipe for explicit instances, never a second model-generation pipeline. */
 internal object WorkspacePresetInitialization {
     fun create(document: WorkspaceDocument, work: WorkspaceRasterWork,
-               choices: WorkspaceInitialPreset = WorkspaceInitialPreset()): WorkspaceDocument =
-        prepare(document, work, choices).first
+               choices: WorkspaceInitialPreset = WorkspaceInitialPreset(),
+               richness: String = "standard"): WorkspaceDocument =
+        prepare(document, work, choices, richness = richness).first
 
     fun prepare(document: WorkspaceDocument, work: WorkspaceRasterWork,
                 choices: WorkspaceInitialPreset = WorkspaceInitialPreset(),
                 requestedVersions: Map<String, Int> = emptyMap(),
                 cliBindings: CliPresetBindings? = null,
                 restoreSourceRotations: Boolean = false,
-                pluginOverrides: Map<String, Pair<String, ModifierPluginReference>> = emptyMap()): Pair<WorkspaceDocument, RigPreviewModel> {
+                pluginOverrides: Map<String, Pair<String, ModifierPluginReference>> = emptyMap(),
+                richness: String = "standard"): Pair<WorkspaceDocument, RigPreviewModel> {
         val rawConfig = cliBindings?.config?.takeIf { restoreSourceRotations }
         fun configOf(candidate: WorkspaceDocument) = rawConfig?.copy(rigEdits = candidate.rigEdits) ?: candidate.config()
         val config = configOf(document)
@@ -75,6 +77,17 @@ internal object WorkspacePresetInitialization {
             if (rawConfig == null) model.runtimeBundle.materialize()
             return document to model
         }
+        val tiers = when (richness) {
+            "base" -> emptySet()
+            "minimal" -> setOf(ModuleTier.CORE)
+            "standard" -> setOf(ModuleTier.CORE, ModuleTier.MAJOR)
+            "full" -> ModuleTier.entries.toSet()
+            else -> throw IllegalArgumentException("Unknown preset richness: $richness")
+        }
+        val excludedModules = buildSet {
+            addAll(WorkspaceModifierPlan.PRESET_EXCLUDED_MODULES)
+            if (choices.clothing) add("outfit.ribbons")
+        }
         val subject = RecipeSubject.of(model.analysis)
         val fittedFace = RigModules.builds(RigModules.FACE_DEPTH_TURN, config, subject)
         val types = buildList {
@@ -82,12 +95,15 @@ internal object WorkspacePresetInitialization {
             // Finish base frame changes before mouth source topology is consumed by add-ons.
             for (area in listOf("eye", "brow", "face", "body", "hair", "mouth"))
                 add(if (area == "face" && fittedFace) RigLegacyBindings.FITTED_FACE else config.recipe.base(area).id)
-            addAll(RigModules.modules.filter { RigModules.builds(it, config, subject) && it.id !in WorkspaceModifierPlan.PRESET_EXCLUDED_MODULES }
-                .map { it.id }.filter { RigLegacyBindings.find(it) != null })
+            addAll(RigModules.modules.filter {
+                RigModules.builds(it, config, subject) &&
+                    it.id !in excludedModules &&
+                    it.tier in tiers
+            }.map { it.id }.filter { RigLegacyBindings.find(it) != null })
         }
         val group = if (config.recipe.modern) "modern" else "legacy"
         stack = WorkspaceModifierPlan.plan(model, stack, buildJsonObject {
-            put("group", "$group-standard")
+            put("group", "$group-$richness")
             put("targets", JsonArray(targets.map { buildJsonObject { put("kind", it.kind); put("id", it.id) } }))
         }, types).first
         stack = stack.copy(instances = stack.instances.map { entry ->

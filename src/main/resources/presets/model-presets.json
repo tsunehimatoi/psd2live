@@ -16,6 +16,27 @@
     }
   },
   {
+    "id": "modern-hair",
+    "name": "Stylized Rig · Classic Physics",
+    "nameKey": "modifier.preset.modernHair",
+    "baseline": "modern",
+    "choices": {
+      "clothing": false
+    }
+  },
+  {
+    "id": "modern-motion",
+    "name": "Stylized Rig · Basic Motions",
+    "nameKey": "modifier.preset.modernMotion",
+    "baseline": "modern",
+    "choices": {
+      "frontHair": "OFF",
+      "backHair": "OFF",
+      "clothing": false,
+      "eyeJelly": false
+    }
+  },
+  {
     "id": "modern-light",
     "name": "Stylized Rig · No Simulation",
     "nameKey": "modifier.preset.modernLight",
@@ -35,6 +56,37 @@
     "name": "Classic Amplitude Rig · Clothing Simulation",
     "nameKey": "modifier.baseline.legacy",
     "baseline": "legacy"
+  },
+  {
+    "id": "legacy-dynamic",
+    "name": "Classic Amplitude Rig · Full Simulation",
+    "nameKey": "modifier.preset.legacyDynamic",
+    "baseline": "legacy",
+    "choices": {
+      "frontHair": "SIMULATION",
+      "backHair": "SIMULATION"
+    }
+  },
+  {
+    "id": "legacy-hair",
+    "name": "Classic Amplitude Rig · Classic Physics",
+    "nameKey": "modifier.preset.legacyHair",
+    "baseline": "legacy",
+    "choices": {
+      "clothing": false
+    }
+  },
+  {
+    "id": "legacy-motion",
+    "name": "Classic Amplitude Rig · Basic Motions",
+    "nameKey": "modifier.preset.legacyMotion",
+    "baseline": "legacy",
+    "choices": {
+      "frontHair": "OFF",
+      "backHair": "OFF",
+      "clothing": false,
+      "eyeJelly": false
+    }
   },
   {
     "id": "legacy-light",
