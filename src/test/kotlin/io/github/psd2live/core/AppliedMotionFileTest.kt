@@ -58,7 +58,7 @@ class AppliedMotionFileTest {
         val overlay = RigEditOverlay.Empty.copy(motionClips = listOf(clip))
         val oldClip = (clip.toString().removeSuffix(", capturedRanges={})") + ")").removeSuffix(", fileStem=null)") + ")"
         val oldOverlay = overlay.toString().replace("[${clip}]", "[$oldClip]")
-            .replace(", hitAreas=[]", "").replace(", interiorEffects=[]", "")
+            .replace(", motionSources={}", "").replace(", hitAreas=[]", "").replace(", interiorEffects=[]", "")
             .replace(", pose=null", "").replace(", modifierStack=null", "").replace(", expressions=null", "")
         val expected = "revision-" + WorkspaceRevisions.sha256(("|settings:{}|rig:$oldOverlay|canvas:1x1").encodeToByteArray())
         val document = WorkspaceDocument(WorkspaceSourceArt(1, 1, emptyList(), emptyList()),

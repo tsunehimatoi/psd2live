@@ -26,7 +26,7 @@ internal object WorkspaceModifierSimulation {
     }
 
     fun prepare(document: WorkspaceDocument, stack: RigModifierStack, work: WorkspaceRasterWork,
-                allowRebake: Boolean = true, validatedPrefix: Int = 0,
+                allowRebake: Boolean = true, validatedPrefix: Int = 0, isolateFailures: Boolean = false,
                 pipeline: PSD2LivePipeline = PSD2LivePipeline().apply { deferRuntimeBundles = true }, evaluated: RigPreviewModel? = null): RigModifierStack {
         require(validatedPrefix in 0..stack.instances.size)
         pipeline.reuseModifierInputs(evaluated)
@@ -34,7 +34,7 @@ internal object WorkspaceModifierSimulation {
         for (index in stack.instances.indices) {
             work.checkpoint()
             val instance = next.instances[index]
-            if (!instance.enabled || instance.type != "simulation") continue
+            if (!instance.enabled || instance.type != "simulation" || instance.id in next.appliedNodes) continue
             try {
             val source = RigSimEdit.fromJson(instance.config)
             require(source.enabled && source.targets == instance.targets.map { it.id } && instance.targets.all { it.kind == "mesh" }) {
@@ -80,7 +80,7 @@ internal object WorkspaceModifierSimulation {
             } catch (failure: Exception) {
                 if (failure is java.util.concurrent.CancellationException || failure is InterruptedException ||
                     Thread.currentThread().isInterrupted) throw failure
-                if (!allowRebake) throw failure
+                if (!allowRebake || !isolateFailures) throw failure
                 next = next.update(instance.id) { it.copy(enabled = false) }.copy(
                     initializationFailures = next.initializationFailures + (instance.id to
                         (failure.message ?: failure.javaClass.simpleName)))
@@ -93,6 +93,7 @@ internal object WorkspaceModifierSimulation {
         if (before.appliedCapabilities != after.appliedCapabilities) return 0
         return before.instances.zip(after.instances).takeWhile { (a, b) ->
             a == b && before.overrides[a.id].orEmpty() == after.overrides[b.id].orEmpty() &&
+                before.appliedNodes[a.id] == after.appliedNodes[b.id] &&
                 before.retryRevisions[a.id] == after.retryRevisions[b.id]
         }.size
     }

@@ -9,7 +9,9 @@ import org.umamo.runtime.model.PuppetModel
 internal object WorkspaceCanvasDeformEdits {
     val supported = setOf("canvas_deform_stroke")
     fun apply(operation: WorkspaceDocumentOperation, document: WorkspaceDocument, model: RigPreviewModel): WorkspaceDocument {
-        val edits = commands(model.rig.puppet, operation)
+        val stage = operation.request[GeometryEditStages.FIELD]?.jsonPrimitive?.content ?: "auto"
+        val source = GeometryEditStages.resolve(model, stage).puppet
+        val edits = JsonArray(commands(source, operation).map { GeometryEditStages.withStage(it.jsonObject, stage) })
         return if (edits.isEmpty()) document else WorkspaceDocumentEdits.journal(document, model, edits)
     }
 
@@ -19,7 +21,7 @@ internal object WorkspaceCanvasDeformEdits {
         val (request, samples) = decode(operation.request.getValue("stroke").jsonObject)
         val session = CanvasDeformStroke.begin(model, request, samples.first())
         for (sample in samples.drop(1)) session.step(sample)
-        return session.commands
+        return JsonArray(session.commands.map { GeometryEditIntent.withMode(it.jsonObject, GeometryEditIntent.mode(operation.request)) })
     }
 
     private fun decode(value: JsonObject): Pair<CanvasDeformStroke.Request, List<CanvasDeformStroke.Sample>> {
@@ -47,7 +49,8 @@ internal object WorkspaceCanvasDeformEdits {
     }
 
     /** Encode the captured gesture, never its transient geometry or a caller-provided journal record. */
-    fun operation(session: CanvasDeformStroke.Session): WorkspaceDocumentOperation = operation(session.request, session.capturedSamples())
+    fun operation(session: CanvasDeformStroke.Session, correctionMode: String = "delta", editStage: String = "auto"): WorkspaceDocumentOperation =
+        operation(session.request, session.capturedSamples()).let { it.copy(request = JsonObject(it.request + (GeometryEditIntent.FIELD to JsonPrimitive(correctionMode)) + (GeometryEditStages.FIELD to JsonPrimitive(editStage)))) }
     fun operation(request: CanvasDeformStroke.Request, samples: List<CanvasDeformStroke.Sample>) =
         WorkspaceDocumentOperation("canvas_deform_stroke", buildJsonObject { put("stroke", buildJsonObject {
             put("action", request.action.name.lowercase()); put("mode", request.mode.name.lowercase())

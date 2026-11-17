@@ -8,6 +8,31 @@ import kotlinx.serialization.json.*
 
 /** Pure candidates shared by GUI commands, MCP jobs and atomic document batches. */
 internal object WorkspaceModifierEdits {
+    fun validateAppliedContent(before: RigPreviewModel, after: RigPreviewModel) {
+        val stack = after.config.rigEdits.modifierStack?.let(RigModifierStack::fromJson) ?: return
+        val previous = before.modifierEvaluation?.entries.orEmpty().associateBy { it.instance.id }
+        val invalid = after.modifierEvaluation?.entries.orEmpty().firstOrNull { entry ->
+            entry.instance.id in stack.appliedNodes && entry.status != ModifierStatus.ACTIVE &&
+                previous[entry.instance.id]?.let { it.status == entry.status && it.instance == entry.instance &&
+                    it.error == entry.error && it.missingDependencies == entry.missingDependencies } != true
+        }
+        require(invalid == null) { "Applied content ${invalid?.instance?.id} cannot preserve this upstream edit: ${invalid?.error ?: invalid?.missingDependencies}" }
+    }
+
+    fun validateRegeneration(before: RigPreviewModel, after: RigPreviewModel, initializing: Boolean = false) {
+        validateAppliedContent(before, after)
+        val previous = before.modifierEvaluation?.entries.orEmpty().associateBy { it.instance.id }
+        val isolated = if (initializing) after.config.rigEdits.modifierStack
+            ?.let(RigModifierStack::fromJson)?.initializationFailures.orEmpty().keys else emptySet()
+        val failed = after.modifierEvaluation?.entries.orEmpty().firstOrNull { entry ->
+            entry.status == ModifierStatus.FAILED && entry.instance.id !in isolated &&
+                previous[entry.instance.id]?.let {
+                    it.status == entry.status && it.instance == entry.instance && it.error == entry.error
+                } != true
+        }
+        require(failed == null) { "${failed?.instance?.id}: ${failed?.error}" }
+    }
+
     val supported = setOf("modifier_add", "modifier_add_group", "modifier_update", "modifier_enable",
         "modifier_remove", "modifier_move", "modifier_organize", "modifier_apply", "modifier_convert", "modifier_switch", "modifier_initialize")
 
@@ -68,7 +93,9 @@ internal object WorkspaceModifierEdits {
             }
             "modifier_remove" -> stack.remove(requireNotNull(id))
             "modifier_move" -> stack.move(requireNotNull(id), request.getValue("index").jsonPrimitive.int)
-            "modifier_apply" -> return applyPrefix(document, model, stack, requireNotNull(id), work)
+            "modifier_apply" -> return if (request["scope"]?.jsonPrimitive?.contentOrNull == "selected")
+                applySelected(document, model, stack, requireNotNull(id), work)
+                else applyPrefix(document, model, stack, requireNotNull(id), work)
             else -> error("Unsupported modifier edit: ${operation.operation}")
         }
         // Rebuilding every candidate also validates batches. Order checks are cheap enough to fail before rebuilding.
@@ -186,6 +213,22 @@ internal object WorkspaceModifierEdits {
         return instance.copy(parameterProviders = providers)
     }
 
+    private fun applySelected(document: WorkspaceDocument, model: RigPreviewModel, stack: RigModifierStack,
+                              id: String, work: WorkspaceRasterWork): WorkspaceDocument {
+        work.progress(.1f, "Materializing selected modifier")
+        val next = ModifierPluginWorkers.openSession().use { session ->
+            RigModifierAlgorithms.evaluator(RigModifierSource.of(model), stack, workerSession = session)
+                .applySelected(RigModifierPipeline.input(model), stack, id, work::checkpoint)
+        }
+        val candidate = document.copy(rigEdits = document.rigEdits.copy(modifierStack = next.toJson()))
+        work.progress(.7f, "Verifying applied content and downstream dependencies")
+        val verified = PSD2LivePipeline().buildPreview(candidate.source, candidate.config(),
+            ProgressListener { _, _ -> work.checkpoint() })
+        require(RigIrCompiler.compile(verified) == RigIrCompiler.compile(model)) { "Applying selected content would change the complete model" }
+        work.checkpoint()
+        return candidate
+    }
+
     private fun applyPrefix(document: WorkspaceDocument, model: RigPreviewModel, stack: RigModifierStack,
                             id: String, work: WorkspaceRasterWork): WorkspaceDocument {
         work.progress(.1f, "Evaluating modifier prefix")
@@ -195,6 +238,11 @@ internal object WorkspaceModifierEdits {
                 .applyThrough(input, stack, id, work::checkpoint)
         }
         val consumed = stack.instances.take(stack.index(id) + 1)
+        val materializedNodes = consumed.mapNotNull { stack.appliedNodes[it.id] }
+        val dormantPhysics = materializedNodes.flatMap { node -> node.authoredPhysics.map(RigPhysicsEdit::fromJson)
+            .filter { it.id in node.disabledPhysics } }.associateBy { it.id }
+        val dormantMotions = materializedNodes.flatMap { it.authoredMotions.orEmpty().map(MotionClips::fromJson) }
+            .filterNot { it.enabled }
         val existingPhysics = document.rigEdits.physicsEdits
         val inputPhysics = input.physics.groups.associateBy { it.id }
         val changedPhysics = applied.authored.physics.groups.filter { inputPhysics[it.id] != it }
@@ -203,19 +251,30 @@ internal object WorkspaceModifierEdits {
         require(addedPhysics.none { new -> existingPhysics.any { it.id == new.id } }) {
             "An applied physics group collides with ordinary content"
         }
-        val physics = existingPhysics.map { changedPhysics[it.id] ?: it } + addedPhysics
+        val removedPhysics = inputPhysics.keys - applied.authored.physics.groups.mapTo(HashSet()) { it.id }
+        val physics = (existingPhysics.filterNot { it.id in removedPhysics }.map { changedPhysics[it.id] ?: it } + addedPhysics)
+            .associateBy { it.id }.plus(dormantPhysics).values.toList()
         val previousClips = document.rigEdits.motionClips.associateBy { it.id }
-        val clips = applied.authored.clips.filter { it.id !in previousClips }.map { generated ->
+        val records = materializedNodes.flatMap { it.authoredMotions.orEmpty().map(MotionClips::fromJson) }.associateBy { it.id }
+        val clips = applied.authored.clips.map { generated ->
             val owner = consumed.singleOrNull { it.type == "motion" && it.outputId("motion") == generated.id }
-                ?: error("No materializer for generated motion ${generated.id}")
-            val clip = MotionClips.fromJson(owner.config).copy(id = generated.id, builtin = null, enabled = true, fileStem = generated.file)
-            require(clip.curves.map(MotionGenerator::curve) == generated.curves &&
-                clip.events.map { io.github.psd2live.format.model.ClipEvent(it.time, it.value) } == generated.events) {
-                "Applying motion ${generated.id} would change its curves or events"
-            }
-            clip.copy(capturedRanges = applied.authored.parameters.filter { parameter -> clip.curves.any { it.parameterId == parameter.id } }
-                .associate { it.id to MotionParameterRange(it.min, it.max, it.repeat) })
+            val source = records[generated.id] ?: owner?.let { MotionClips.fromJson(it.config) } ?: previousClips[generated.id]
+            val record = source?.takeIf { it.curves.map(MotionGenerator::curve) == generated.curves &&
+                it.events.map { event -> io.github.psd2live.format.model.ClipEvent(event.time, event.value) } == generated.events }
+                ?: AppliedMotionRecords.record(generated, applied.authored.parameters)
+            record.copy(id = generated.id, name = generated.name, builtin = null, enabled = true,
+                fileStem = generated.file, exportGroup = generated.group, duration = generated.duration,
+                fps = generated.fps, loop = generated.loop, fadeIn = generated.fadeIn ?: 1f, fadeOut = generated.fadeOut ?: 1f,
+                runtimeDefaultFades = generated.fadeIn == null && generated.fadeOut == null,
+                capturedRanges = applied.authored.parameters.filter { parameter -> record.curves.any { it.parameterId == parameter.id } }
+                    .associate { it.id to MotionParameterRange(it.min, it.max, it.repeat) })
         }
+        val consumedMotionIds = input.clips.mapTo(HashSet()) { it.id } + clips.map { it.id } + dormantMotions.map { it.id }
+        val retainedDormant = document.rigEdits.motionClips.filter { it.id !in consumedMotionIds }
+        val nextClips = (clips + retainedDormant + dormantMotions).distinctBy { it.id }
+        val rawMotions = (materializedNodes.flatMap { it.materializedMotions() } + applied.authored.clips).associateBy { it.id }
+        val motionSources = document.rigEdits.motionSources.filterKeys { id -> nextClips.any { it.id == id } }.toMutableMap()
+        for (clip in nextClips) rawMotions[clip.id]?.let { motionSources[clip.id] = AppliedMotionRecords.source(clip, it) }
         val authored = model.authored.copy(rig = model.authored.rig.withModifierMeshes(
             PuppetIr.toPuppet(applied.authored), applied.authored.textures.tileArt).copy(
             modifierOutput = null, modifierReport = null, authoredRestPose = applied.authored.restPose,
@@ -225,9 +284,10 @@ internal object WorkspaceModifierEdits {
         val checkpoint = RigCheckpoint.encode(authored, binding)
         val overlay = document.rigEdits.copy(authoringJournal = document.rigEdits.authoringJournal + checkpoint,
             modifierStack = applied.stack.toJson(), physicsEdits = physics,
+            disabledPhysicsIds = (document.rigEdits.disabledPhysicsIds - removedPhysics) + dormantPhysics.keys,
             // The applied groups can already be interleaved with groups from the remaining stack.
             physicsOrder = (document.rigEdits.physicsOrder + applied.result.rig.physics.groups.map { it.id }).distinct(),
-            motionClips = document.rigEdits.motionClips + clips)
+            motionClips = nextClips, motionSources = motionSources)
         val candidate = document.copy(rigEdits = overlay)
         work.checkpoint()
         work.progress(.7f, "Verifying applied modifier content")

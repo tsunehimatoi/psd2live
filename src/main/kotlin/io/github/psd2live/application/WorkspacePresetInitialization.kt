@@ -192,7 +192,7 @@ internal object WorkspacePresetInitialization {
         })
         RigModifierAlgorithms.evaluator().validateOrder(stack)
         stack = RigBuildProfile.stage("source preset: simulation preparation") {
-            WorkspaceModifierSimulation.prepare(current(), stack, work, pipeline = pipeline)
+            WorkspaceModifierSimulation.prepare(current(), stack, work, pipeline = pipeline, isolateFailures = true)
         }
         val finalModel = build("final preview").also {
             work.checkpoint()

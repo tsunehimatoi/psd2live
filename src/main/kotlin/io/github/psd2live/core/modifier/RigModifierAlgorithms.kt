@@ -32,8 +32,10 @@ internal object RigModifierAlgorithms {
                     fun include(type: String, version: Int, plugin: ModifierPluginReference?) {
                         if (plugin != null && plugin != BuiltinModifierPlugins.reference(type, version)) add(plugin)
                     }
-                    it.instances.forEach { entry -> include(entry.type, entry.version, entry.plugin) }
-                    it.appliedCapabilities.forEach { provider -> include(provider.type, provider.version, provider.plugin) }
+                    it.instances.filterNot { entry -> entry.id in it.appliedNodes }
+                        .forEach { entry -> include(entry.type, entry.version, entry.plugin) }
+                    it.appliedCapabilities.filter { provider -> provider.provides == null }
+                        .forEach { provider -> include(provider.type, provider.version, provider.plugin) }
                 }
             }
             val workers = if (references?.isEmpty() == true && overlayPackages.isEmpty()) emptyList() else ModifierPluginCatalog.definitions(

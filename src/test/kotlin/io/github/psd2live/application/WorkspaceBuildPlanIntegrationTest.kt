@@ -138,6 +138,10 @@ class WorkspaceBuildPlanIntegrationTest {
             val entry = isolated.modifierEvaluation!!.entries.single { it.instance.id == badSplit.id }
             assertEquals(io.github.psd2live.core.modifier.ModifierStatus.FAILED, entry.status)
             assertEquals(RigIrCompiler.compile(f.model).meshes, RigIrCompiler.compile(isolated).meshes)
+            assertFailsWith<IllegalArgumentException> {
+                WorkspaceDocumentCommands(runtime).executeCandidate(captured.projectId, captured.state, "Invalid split",
+                    io.github.psd2live.project.MutationAuthor.USER, mutation = { _, _ -> bad })
+            }
             assertEquals(captured, runtime.capture())
             assertSame(snapshot, f.model.modifierEvaluation)
             assertFalse(f.model.modifierBuildOwner!!.isClosed)

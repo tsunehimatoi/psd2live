@@ -378,6 +378,12 @@ class NativeCoreBatchAndPresetE2ETest {
             assertTrue(actualOverrides.all { it.plugin == installed.reference }, "Every override must use the installed native package")
             assertTrue(baselineStack.instances.size <= nativeStack.instances.size)
 
+            val nativeEntries = nativePair.second.modifierEvaluation!!.entries.associateBy { it.instance.id }
+            for (instance in actualOverrides) {
+                val entry = nativeEntries.getValue(instance.id)
+                assertEquals(ModifierStatus.ACTIVE, entry.status, "${instance.type}: ${entry.error} ${entry.errorDetails}")
+            }
+
             val baseIr = RigIrCompiler.compile(baselinePair.second)
             val natIr = RigIrCompiler.compile(nativePair.second)
             assertEquals(baseIr.parameters, natIr.parameters)

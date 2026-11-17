@@ -344,7 +344,7 @@ fun CanvasViewportComposable(
         }
     }
     val sourcePreviewModel = canvasState.previewModel
-    val editPuppet = if (mode == CanvasMode.EDIT) editor.preview else null
+    val editPuppet = if (mode == CanvasMode.EDIT) editor.displayPuppet else null
     val referenceOpacityDraft by viewModel.referenceOpacityDraft.collectAsState()
     val previewModel = remember(sourcePreviewModel, editPuppet, referenceOpacityDraft) {
         sourcePreviewModel?.let { source ->

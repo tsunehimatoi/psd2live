@@ -311,6 +311,28 @@ class RigModifierStackTest {
         ), result.entries.single().ownedKeyforms)
     }
 
+    @Test fun existingCellEditsBelongToTheLastWriterRatherThanItsCreator() {
+        val axes = listOf(KeyAxis("x", Floats.values(0f, 1f)))
+        val mesh = Mesh("mesh", "Mesh", null, geometry = null, offsets = KeyGrid(axes, listOf(
+            KeyCell(Ints.values(0), MeshOffsets(Floats.values(0f, 0f))),
+            KeyCell(Ints.values(1), MeshOffsets(Floats.values(1f, 0f))))))
+        fun writer(type: String, value: Float) = RigModifierDefinition(type, 1, composableKinds = setOf("mesh"),
+            plugin = ModifierAlgorithmPlugin { rig, _, _ -> rig.copy(meshes = rig.meshes.map { m ->
+                m.copy(offsets = m.offsets!!.copy(cells = m.offsets!!.cells.map { cell ->
+                    if (cell.coordinate[0] == 1) cell.copy(form = MeshOffsets(Floats.values(value, 0f))) else cell
+                }))
+            }) })
+        val engine = RigModifierEvaluator(RigModifierRegistry(listOf(writer("first", 2f), writer("last", 3f))))
+        val base = authored.copy(meshes = listOf(mesh), parameters = listOf(Parameter("x", "X", 0f, 1f, 0f)))
+        val stack = RigModifierStack(listOf("first", "last").map { entry(it, it, targets = listOf(ModifierTarget("mesh", "mesh"))) })
+        val result = engine.evaluate(base, stack)
+        val cell = ModifierKeyform("mesh", "mesh", "x", key = mapOf("x" to 1f))
+        assertTrue(result.entries.all { it.ownedKeyforms == listOf(cell) })
+        val graph = DocumentGenerators.graph(RigEditOverlay(), modifierReport = result.report())
+        assertEquals("modifier:last", DocumentGenerators.owner(graph, DocumentGenerators.keyformCell("mesh", "mesh", mapOf("x" to 1f)))?.id)
+        assertNull(DocumentGenerators.owner(graph, DocumentGenerators.keyformCell("mesh", "mesh", mapOf("x" to 0f))))
+    }
+
     @Test fun registryRejectsCyclesUnknownDependenciesAndDuplicateVersions() {
         assertFailsWith<IllegalArgumentException> { RigModifierRegistry(listOf(add, add)) }
         assertFailsWith<IllegalArgumentException> { RigModifierRegistry(listOf(transform("a", { it }, setOf("unknown")))) }

@@ -10,6 +10,7 @@ internal object WorkspacePresetSwitch {
     fun apply(document: WorkspaceDocument, id: String, work: WorkspaceRasterWork, model: RigPreviewModel? = null): WorkspaceDocument {
         val preset = WorkspaceModelPresetLibrary.shared.get(id)
         val previous = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack))
+        require(previous.appliedNodes.isEmpty()) { "Applied content remains at its authored position; apply its prefix before switching presets" }
         require(previous.overrides.values.all { it.isEmpty() }) {
             "Preset content has authored overrides. Apply the affected presets before switching the complete preset."
         }

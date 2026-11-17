@@ -1337,6 +1337,7 @@ internal class WorkspaceHost<V>(
     override fun rigModules() = captureQueries().rigModules()
     override fun modifierStack() = captureQueries().modifierStack()
     override fun modifierPlan(request: JsonObject) = captureQueries().modifierPlan(request)
+    override fun modifierApplyPlan(id: String, scope: String) = captureQueries().modifierApplyPlan(id, scope)
 
     override fun generatedOverrideIssues() = captureQueries().generatedOverrideIssues()
     override fun supersededEntryNotes() = captureQueries().supersededEntryNotes()

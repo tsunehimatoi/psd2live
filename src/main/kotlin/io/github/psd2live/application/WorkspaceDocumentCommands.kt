@@ -158,6 +158,13 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
         }
         runInterruptible(Dispatchers.Default) {
             WorkspaceAssetLayerEdits.validate(prepared.before.document, prepared.draft.document, prepared.model)
+            try {
+                WorkspaceModifierEdits.validateRegeneration(prepared.before.model, prepared.model,
+                    initializing = edits.any { it.operation == "modifier_initialize" })
+            } catch (failure: IllegalArgumentException) {
+                val index = edits.lastIndex
+                throw WorkspaceBatchEditException(index, edits[index].operation, failure)
+            }
             // Tile moves and densities land on their spots or not at all, as the same single commands do; a batch that
             // also lays the atlas out anew (budget, packing, new pixels) places tiles by its own rule.
             val operations = edits.mapTo(HashSet()) { it.operation }
@@ -201,6 +208,7 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
             draft.copy(document = normalizeCandidate(candidate, model))
         }))
         // The candidate's own build, checked before anything is published.
+        WorkspaceModifierEdits.validateRegeneration(prepared.before.model, prepared.model)
         runInterruptible(Dispatchers.Default) { validate(prepared.before.document, prepared.before.model, prepared.draft.document, prepared.model) }
         val geometry = checkGeometry(prepared)
         if (!geometry.safe) throw GeometrySafetyRejectedException(geometry)
@@ -218,6 +226,7 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
             val next = runInterruptible(Dispatchers.Default) { WorkspaceSettingsIntent.parse(draft.document, model, changes).apply(draft, model) }
             next.copy(document = normalizeCandidate(next.document, model))
         })) { captured, draft, model ->
+            WorkspaceModifierEdits.validateRegeneration(captured.model, model)
             beforeCommit(captured, draft.document, model)
             changedPoses(captured, draft, model).takeIf { it.isNotEmpty() }?.let(poses)
         }

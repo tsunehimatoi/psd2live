@@ -400,6 +400,7 @@ class PSD2LiveViewModel : AutoCloseable {
 		current: PSD2LiveState,
 		live: Map<ParameterId, Float> = livePose.value,
 	): Map<ParameterId, Float> {
+		canvasEditors[current.activeWorkspace.id to current.activeCanvas.id]?.capturedEditPose?.let { return it }
 		val trial = interior.poseFor(current)
 		val pose = shownPose(current, live) + swingPreviewValues + trial
 		val parameters =
@@ -6933,6 +6934,7 @@ class PSD2LiveViewModel : AutoCloseable {
 	fun setParameterValues(values: Map<ParameterId, Float>) = setParameterValues(values, currentAutoKey())
 
 	private fun setParameterValues(values: Map<ParameterId, Float>, autoKey: kotlinx.serialization.json.JsonObject?) {
+		if (canvasEditors[_state.value.activeWorkspace.id to _state.value.activeCanvas.id]?.capturedEditPose != null) return
 		if (values.isEmpty()) return
 		val current = _state.value
 		val model = current.previewModel
@@ -7063,10 +7065,20 @@ class PSD2LiveViewModel : AutoCloseable {
 
 	fun snapAxesToNearestKeys(axes: List<org.umamo.runtime.model.KeyformAxis>, onReady: () -> Unit): Boolean {
 		val puppet = _state.value.previewModel?.rig?.puppet ?: return false
+        return snapAxesToNearestKeysOnModel(axes, puppet, onReady)
+    }
+
+    internal fun snapAxesToNearestKeysOnModel(axes: List<org.umamo.runtime.model.KeyformAxis>, puppet: org.umamo.runtime.model.PuppetModel,
+                                            onReady: () -> Unit): Boolean {
 		if (axes.isEmpty()) return false
 		val pose = _state.value.parameterValues
 		val defaults = puppet.parameters.associate { it.id to it.default }
-		val targets = io.github.psd2live.core.nearestKeyPose(axes, pose, defaults)
+		val targets = try { io.github.psd2live.core.nearestKeyPose(axes, pose, defaults) }
+		catch (failure: io.github.psd2live.core.NoCommonKeyform) {
+			val name = puppet.parameters.firstOrNull { it.id == failure.parameter }?.name ?: failure.parameter.raw
+			updateState { it.copy(statusText = tr("editor.keyform.noCommon", name)) }
+			return true // Consume the gesture; never start an edit at an incompatible pose.
+		}
 		if (targets.isEmpty()) return false
 		val expectedState = currentWorkspaceState() ?: return false
 		parameterSnapJob?.cancel()

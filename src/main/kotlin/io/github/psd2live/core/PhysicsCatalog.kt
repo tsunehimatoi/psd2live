@@ -15,9 +15,17 @@ object PhysicsCatalog {
             setting.id to PhysicsGroup(setting, PhysicsOrigin.CUSTOM, null, setting.id !in config.rigEdits.disabledPhysicsIds,
                 issueOf(setting, available))
         }
-        return output.map { group -> ordinary[group.id] ?: Physics3Json.setting(group).let {
+        val stack = io.github.psd2live.core.modifier.RigModifierStack.fromJson(requireNotNull(config.rigEdits.modifierStack))
+        val applied = stack.instances.flatMap { instance ->
+            val node = stack.appliedNodes[instance.id]
+            node?.authoredPhysics.orEmpty().map { raw -> RigPhysicsEdit.fromJson(raw).let { setting ->
+                PhysicsGroup(setting, PhysicsOrigin.CUSTOM, null, setting.id !in node!!.disabledPhysics,
+                    issueOf(setting, model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }))
+            } }
+        }.associateBy { it.id }
+        return output.map { group -> applied[group.id] ?: ordinary[group.id] ?: Physics3Json.setting(group).let {
             PhysicsGroup(it, PhysicsOrigin.MODIFIER, it, true)
-        } } + ordinary.values.filter { row -> output.none { it.id == row.id } }
+        } } + (ordinary + applied).values.filter { row -> output.none { it.id == row.id } }
     }
 
     fun active(model: RigPreviewModel): List<RigPhysicsEdit> = if (model.config.rigEdits.modifierStack != null)

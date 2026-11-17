@@ -25,8 +25,9 @@ public object RigIrObjects {
 	/** A rig's objects: [frame] holds everything but [deformers] and [meshes], each in the rig's order. */
 	public class Objects(public val frame: ByteArray, public val deformers: List<ByteArray>, public val meshes: List<ByteArray>)
 
+	// Keep representable inputs usable by existing workers; new motion channels must never be dropped to downgrade.
 	public fun split(ir: RigIR): Objects = Objects(
-		encode(Kind.FRAME) { it.rig(ir.copy(deformers = emptyList(), meshes = emptyList())) },
+		encode(Kind.FRAME, RigIrBinary.encodingVersion(ir)) { it.rig(ir.copy(deformers = emptyList(), meshes = emptyList())) },
 		ir.deformers.map { deformer -> encode(Kind.DEFORMER) { it.deformer(deformer) } },
 		ir.meshes.map { mesh -> encode(Kind.MESH) { it.mesh(mesh) } },
 	)
@@ -36,11 +37,11 @@ public object RigIrObjects {
 		meshes = objects.meshes.map { bytes -> decode(bytes, Kind.MESH) { it.mesh() } },
 	)
 
-	private fun encode(kind: Kind, write: (RigIrBinary.Writer) -> Unit): ByteArray {
+	private fun encode(kind: Kind, version: Int = 6, write: (RigIrBinary.Writer) -> Unit): ByteArray {
 		val bytes = ByteArrayOutputStream(1 shl 12)
 		DataOutputStream(bytes).use { out ->
-			out.writeInt(MAGIC); out.writeInt(RigIrBinary.VERSION); out.writeInt(kind.ordinal)
-			write(RigIrBinary.Writer(out))
+			out.writeInt(MAGIC); out.writeInt(version); out.writeInt(kind.ordinal)
+			write(RigIrBinary.Writer(out, version))
 		}
 		return bytes.toByteArray()
 	}

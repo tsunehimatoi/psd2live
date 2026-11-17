@@ -130,7 +130,7 @@ internal object ModifierPluginCatalog {
     }
 
     fun requireAvailable(stack: RigModifierStack) {
-        val missing = stack.instances.filter { it.enabled && !available(it) }
+        val missing = stack.instances.filter { it.enabled && it.id !in stack.appliedNodes && !available(it) }
         require(missing.isEmpty()) { "Missing or disabled algorithm plugins: ${missing.joinToString { "${it.id} (${it.type}@${it.version})" }}" }
     }
 }

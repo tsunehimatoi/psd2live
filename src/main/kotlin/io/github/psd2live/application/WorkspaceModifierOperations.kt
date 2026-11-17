@@ -10,7 +10,7 @@ internal fun registerModifierOperations(registry: WorkspaceOperationRegistry, wo
         "Edit explicit modifier content in one atomic history transaction. Add captures stable targets; optional IDs may be fixed before a batch. " +
             "Groups add independent instances with a common origin. Optional index inserts an item explicitly; omission appends. Omitted version selects the highest registered version. Moving changes evaluation order and invalid dependencies fail. " +
             "modifier_organize changes presentation folders and sibling order only; evaluation order is unchanged. " +
-            "Apply materializes the complete prefix, preserves the suffix and verifies the final result before committing. " +
+            "Apply materializes either the selected modifier at its original evaluation position (scope=selected) or the complete prefix (scope=prefix, default), and verifies the final result before committing. " +
             "Convert explicitly migrates a legacy project and commits only if the complete result matches. Other operations require an explicit stack. " +
             "modifier_initialize finishes source import after splitting/naming artwork. Requires a pristine empty modifier stack; modifiers selects the original import mode and preset supplies custom choices only. Existing/applied stacks are rejected. " +
             "modifier_switch replaces the entire preset using an ID from the preference preset library while preserving ordinary authored content; incompatible authored overrides block replacement. " +
@@ -43,6 +43,12 @@ internal fun registerModifierOperations(registry: WorkspaceOperationRegistry, wo
         WorkspaceModifierSchemas.planRequest, WorkspaceOperationKind.QUERY, workspaceBound = true, resultSchema = WorkspaceModifierSchemas.plan)) { request, _ ->
         WorkspaceOperationOutput(workspace.captureQueries().modifierPlan(request))
     }
+    registry.register(WorkspaceOperationDefinition("modifier_apply_plan", "Preview the selected or prefix scope to materialize, disabled entries, retained cross-boundary dependencies, fixed-override warnings and unmatched authored edits. Does not mutate or evaluate a candidate; final application still validates the complete result. Use the returned state with modifier_apply.",
+        WorkspaceResultSchema.obj(mapOf("id" to WorkspaceResultSchema.handle(), "scope" to WorkspaceResultSchema.choices("prefix", "selected")), setOf("id")), WorkspaceOperationKind.QUERY,
+        workspaceBound = true, resultSchema = WorkspaceModifierSchemas.applyPlan)) { request, _ ->
+        WorkspaceOperationOutput(workspace.captureQueries().modifierApplyPlan(request.getValue("id").jsonPrimitive.content,
+            request["scope"]?.jsonPrimitive?.contentOrNull ?: "prefix"))
+    }
     registry.register(WorkspaceOperationDefinition("modifier_stack", "Read the captured stack, editable configurations and actual contributions. " +
         "Simulation bakes are summarized; geometry arrays are not returned. The state token identifies the snapshot to edit.",
         WorkspaceResultSchema.obj(emptyMap()), WorkspaceOperationKind.QUERY, workspaceBound = true, resultSchema = WorkspaceModifierSchemas.stack)) { _, _ ->
@@ -70,6 +76,7 @@ internal object WorkspaceModifierQueries {
                     instance.presetGroup?.let { put("group", it) }
                     instance.plugin?.let { put("plugin", Json.encodeToJsonElement(ModifierPluginReference.serializer(), it)) }
                     put("config", if (instance.type == "simulation") JsonObject(instance.config - "bake") else instance.config)
+                    put("applied", instance.id in stack!!.appliedNodes)
                     if (instance.type == "simulation") RigSimEdit.fromJson(instance.config).bake?.let { put("bake", it.summary()) }
                 })
             }

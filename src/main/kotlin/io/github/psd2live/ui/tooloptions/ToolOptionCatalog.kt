@@ -45,6 +45,14 @@ internal val BRUSH_FALLOFF = ChoiceOption("brush.falloff", "editor.falloff", { B
     { it.brushFalloff }, { e, f -> e.brushFalloff = f }, inline = false)
 
 internal val BRUSH_CONNECTED = ToggleOption("brush.connected", "editor.connectedOnly", { it.connectedOnly }, { e, on -> e.connectedOnly = on })
+internal val GEOMETRY_EDIT_STAGE = ChoiceOption("deformation.stage", "editor.deformation.stage", { it.geometryEditStages() },
+    { editor, stage -> editor.geometryEditStageLabel(stage) }, { it.geometryEditStage }, { editor, stage -> editor.changeGeometryEditStage(stage) })
+internal val GEOMETRY_CORRECTION_MODE = ChoiceOption("deformation.correctionMode", "editor.deformation.correctionMode", { listOf("delta", "absolute") },
+    { _, mode -> tr("editor.deformation.correctionMode.$mode") },
+    { it.geometryCorrectionMode }, { e, mode -> e.geometryCorrectionMode = mode })
+internal val DEFORMATION_KEY_POLICY = ChoiceOption("deformation.keyPolicy", "editor.deformation.keyPolicy", { listOf(false, true) },
+    { _, snap -> tr(if (snap) "editor.deformation.keyPolicy.nearest" else "editor.deformation.keyPolicy.current") },
+    { it.snapDeformationToKeys }, { e, snap -> e.snapDeformationToKeys = snap })
 
 internal val TEMPORARY_WARP_DIVISIONS = ChoiceOption("tempWarp.divisions", "editor.tempWarp.divisions", { (1..4).toList() },
     { _, n -> "$n×$n" }, { it.temporaryWarpDivisions }, { e, n -> e.changeTemporaryWarpDivisions(n) })
@@ -457,6 +465,7 @@ private fun MutableList<ToolOption>.addSelectionActions(objectMode: Boolean, mes
 /** Deform and Edit: the pose a deformation keys, the brush or edit tool in hand, then topology and the selection. */
 private fun MutableList<ToolOption>.addPointModes(editor: CanvasEditor) {
     val editing = editor.hierarchyMode == EditHierarchyMode.EDIT
+    if (!editing) { add(GEOMETRY_EDIT_STAGE); add(DEFORMATION_KEY_POLICY); add(GEOMETRY_CORRECTION_MODE) }
     val target = editor.selectionTarget()
     val mesh = target?.kind == "mesh"
     if (mesh && (editor.tool in SELECTION_TOOLS || editor.tool == CanvasTool.TRANSFORM)) add(ELEMENT_MODE)

@@ -579,13 +579,73 @@ internal object CanvasEdits {
         }
     }
 
-    private fun preserveWarpChildren(
+    internal fun preserveWarpChildren(
         model: PuppetModel,
         oldWarp: Deformer.Warp,
         cpOld: FloatArray,
         cpNew: FloatArray,
         key: Map<String, Float>,
     ): PuppetModel {
+        if (key.isNotEmpty()) {
+            val children = model.drawables.filter { it.parentDeformerId == oldWarp.id && it.mesh != null }.map { "mesh" to it.id.raw } +
+                model.deformers.filter { it.parent == oldWarp.id }.map { (if (it is Deformer.Warp) "warp" else "rotation") to it.id.raw }
+            var result = model
+            for ((kind, id) in children) {
+                val axes = RigGeometryTools.geometry(model, kind, id, key).axes
+                    .filter { it.parameterId.raw !in key }
+                val values = axes.associate { it.parameterId.raw to it.keys.toList() }.toMutableMap()
+                val written = HashSet<Map<String, Float>>()
+                fun coordinates(sample: Boolean): List<Map<String, Float>> = values.entries.fold(listOf(key)) { poses, (parameter, keys) ->
+                    val samples = if (sample) (keys + keys.zipWithNext { a, b -> (a + b) * .5f }).sorted() else keys
+                    require(poses.size.toLong() * samples.size <= 16384) { "Keeping child appearance requires too many keyforms; simplify the child parameter grid first" }
+                    poses.flatMap { coordinate -> samples.map { coordinate + (parameter to it) } }
+                }
+                val toleranceSquared = warpInverseToleranceSquared(cpNew) * 4f
+                val scratch = FloatArray(2)
+                var fitted = false
+                for (iteration in 0..8) {
+                    for (coordinate in coordinates(false)) {
+                        if (!written.add(coordinate)) continue
+                        val geometry = RigGeometryTools.geometry(model, kind, id, coordinate)
+                        val points = warpRemapPoints(cpOld, cpNew, oldWarp.columns, oldWarp.rows, oldWarp.isQuadTransform,
+                            geometry.points, scratch, warpInverseToleranceSquared(cpNew))
+                        result = apply(result, buildJsonObject {
+                            put("op", "canvas_geometry"); put("kind", kind); put("id", id)
+                            put("key", JsonObject(coordinate.mapValues { JsonPrimitive(it.value) }))
+                            put("points", JsonArray(points.map(::JsonPrimitive)))
+                        })
+                    }
+                    val additions = values.keys.associateWith { sortedSetOf<Float>() }
+                    var mismatch = false
+                    for (coordinate in coordinates(true)) {
+                        val original = RigGeometryTools.geometry(model, kind, id, coordinate).points
+                        val adjusted = RigGeometryTools.geometry(result, kind, id, coordinate).points
+                        val differs = original.indices.step(2).any { i ->
+                            warpApply(cpOld, oldWarp.columns, oldWarp.rows, oldWarp.isQuadTransform, original[i], original[i + 1], scratch, 0)
+                            val x = scratch[0]; val y = scratch[1]
+                            warpApply(cpNew, oldWarp.columns, oldWarp.rows, oldWarp.isQuadTransform, adjusted[i], adjusted[i + 1], scratch, 0)
+                            val dx = x - scratch[0]; val dy = y - scratch[1]
+                            dx * dx + dy * dy > toleranceSquared
+                        }
+                        if (differs) {
+                            mismatch = true
+                            for ((parameter, keys) in values) {
+                                val value = coordinate.getValue(parameter)
+                                if (value !in keys) additions.getValue(parameter).add(value)
+                            }
+                        }
+                    }
+                    if (!mismatch) { fitted = true; break }
+                    require(additions.values.any { it.isNotEmpty() }) { "Cannot preserve child appearance under this warp edit" }
+                    additions.forEach { (parameter, added) -> values[parameter] = (values.getValue(parameter) + added).sorted() }
+                }
+                require(fitted) { "Keeping child appearance did not converge; reduce the parent deformation" }
+
+            }
+            val before = model.copy(deformers = model.deformers.map { if (it.id == oldWarp.id) oldWarp else it })
+            WarpChildPreservation.verify(before, result, oldWarp.id, key, warpInverseToleranceSquared(cpNew) * 4f)
+            return result
+        }
         val cols = oldWarp.columns
         val rows = oldWarp.rows
         val bilinear = oldWarp.isQuadTransform

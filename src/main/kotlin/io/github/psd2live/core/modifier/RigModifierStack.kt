@@ -40,6 +40,8 @@ internal data class RigModifierStack(
     val initializationFailures: Map<String, String> = emptyMap(),
     /** Explicit retries invalidate a suspended runtime result without changing plugin configuration. */
     val retryRevisions: Map<String, Long> = emptyMap(),
+    /** Materialized ordinary stages stay at their original evaluation positions. */
+    val appliedNodes: Map<String, AppliedModifierNode> = emptyMap(),
 ) {
     init {
         require(nextId > 0) { "Invalid modifier ID sequence" }
@@ -51,7 +53,7 @@ internal data class RigModifierStack(
     fun add(type: String, version: Int, targets: List<ModifierTarget>, config: JsonObject = JsonObject(emptyMap()),
             presetGroup: String? = null, id: String? = null, outputAliases: Map<String, String> = emptyMap(), plugin: ModifierPluginReference? = null): RigModifierStack {
         var sequence = nextId
-        val reserved = instances.mapTo(HashSet()) { it.id } + retiredIds
+        val reserved = instances.mapTo(HashSet()) { it.id } + retiredIds + appliedNodes.keys
         while ("m$sequence" in reserved) sequence = Math.addExact(sequence, 1)
         val chosen = id ?: "m$sequence"
         require(chosen !in reserved) { "Modifier ID is already used or retired: $chosen" }
@@ -61,6 +63,7 @@ internal data class RigModifierStack(
     }
 
     fun update(id: String, change: (RigModifierInstance) -> RigModifierInstance): RigModifierStack {
+        require(id !in appliedNodes) { "Applied content is edited on the canvas, not by changing its generator" }
         val index = index(id)
         val updated = change(instances[index])
         require(updated.id == id && updated.type == instances[index].type && updated.version == instances[index].version &&
@@ -73,18 +76,21 @@ internal data class RigModifierStack(
 
     /** Rebind an existing modifier instance to a compatible package revision while preserving identity, config, targets, order, and overrides. */
     fun rebind(id: String, plugin: ModifierPluginReference, version: Int = instances[index(id)].version): RigModifierStack {
+        require(id !in appliedNodes) { "Applied content has no running algorithm to replace" }
         val idx = index(id)
         val updated = instances[idx].copy(plugin = plugin, version = version)
         return copy(instances = instances.toMutableList().apply { set(idx, updated) })
     }
 
     fun remove(id: String): RigModifierStack {
+        require(id !in appliedNodes) { "Applied content is ordinary authored content; delete its objects or undo application" }
         index(id)
         return copy(instances = instances.filterNot { it.id == id }, retiredIds = retiredIds + id)
     }
 
     /** The index in the resulting list. Validation against providers happens before a candidate is published. */
     fun move(id: String, destination: Int): RigModifierStack {
+        require(id !in appliedNodes) { "Applied content retains its original evaluation position" }
         require(destination in instances.indices) { "Invalid modifier destination" }
         val entries = instances.toMutableList()
         val entry = entries.removeAt(index(id))
@@ -102,6 +108,11 @@ internal data class RigModifierStack(
     fun toJson(): JsonObject = codec.encodeToJsonElement(serializer(), this) as JsonObject
 
     fun pluginReferences(): List<ModifierPluginReference> = instances.mapNotNull { it.plugin } + appliedCapabilities.mapNotNull { it.plugin }
+
+    /** Frozen output carries its contract; only old capabilities without that contract need a package lookup. */
+    fun runtimePluginReferences(): List<ModifierPluginReference> =
+        instances.filterNot { it.id in appliedNodes }.mapNotNull { it.plugin } +
+            appliedCapabilities.filter { it.provides == null }.mapNotNull { it.plugin }
 
     companion object {
         // Reject unknown state rather than silently discard ownership or a newer algorithm's configuration.

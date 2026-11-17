@@ -10,6 +10,12 @@ import kotlinx.serialization.json.*
 /** Native generator configurations, shared by insertion, update and captured-stack observations. */
 internal object WorkspaceModifierSchemas {
     private val s = WorkspaceResultSchema
+    val applyPlan = s.obj(s.identity + mapOf("revision" to s.handle(), "through" to s.handle(), "mode" to s.choices("prefix", "selected"),
+        "consumed" to s.array(s.handle()), "materialized" to s.array(s.handle()), "disabled" to s.array(s.handle()),
+        "retained" to s.array(s.handle()), "baked_overrides" to s.integer(0), "dormant_overrides" to s.integer(0),
+        "dependencies" to s.array(s.obj(mapOf("provider" to s.handle(), "consumer" to s.handle(), "reason" to s.handle()))),
+        "blockers" to s.array(s.obj(mapOf("id" to s.handle(), "reason" to s.handle()))),
+        "fixed_conflicts" to s.integer(0), "can_apply" to s.boolean(), "requires_result_validation" to s.constant(true)))
     val target = s.obj(mapOf("kind" to s.choices("mesh", "deformer", "part", "layer"), "id" to s.handle()))
     private val range = s.obj(listOf("min", "default", "max").associateWith { s.number() })
     private val input = s.obj(mapOf("parameter" to s.handle(), "weight" to s.number(0, 100),
@@ -142,7 +148,8 @@ internal object WorkspaceModifierSchemas {
                 "modifiers" to s.choices(*WorkspaceInitialModifiers.entries.map { it.name.lowercase() }.toTypedArray()),
                 "preset" to initialPreset), setOf("modifiers"))
             "modifier_switch" -> s.obj(mapOf("group" to s.handle()))
-            "modifier_remove", "modifier_apply" -> s.obj(mapOf("id" to s.handle()))
+            "modifier_remove" -> s.obj(mapOf("id" to s.handle()))
+            "modifier_apply" -> s.obj(mapOf("id" to s.handle(), "scope" to s.choices("prefix", "selected")), setOf("id"))
             else -> error("Unknown modifier operation $id")
         }
         fun contextual(schema: JsonObject): JsonObject {
@@ -157,7 +164,7 @@ internal object WorkspaceModifierSchemas {
     private val contribution = s.obj(mapOf("kind" to s.handle(), "id" to s.handle(), "change" to s.choices("added", "modified", "removed", "reused"), "name" to s.string(), "physics_slot" to s.handle(),
         "mask" to s.obj(mapOf("target" to s.handle(), "before" to s.array(s.handle()), "after" to s.array(s.handle()),
             "before_inverted" to s.boolean(), "after_inverted" to s.boolean()))), setOf("kind", "id", "change"))
-    private val ownedKeyform = s.obj(mapOf("kind" to s.choices("warp", "mesh"), "id" to s.handle(), "parameter" to s.handle(),
+    private val ownedKeyform = s.obj(mapOf("kind" to s.choices("warp", "mesh", "rotation"), "id" to s.handle(), "parameter" to s.string(),
         "channel" to s.handle(), "key" to s.dictionary(s.number()), "object_name" to s.string(), "parameter_name" to s.string()), setOf("kind", "id", "parameter"))
     private val overrideIssue = s.obj(mapOf("kind" to s.choices("orphaned", "conflict"), "target" to s.handle(),
         "key" to s.dictionary(s.number()), "points" to s.integer(0), "total" to s.integer(0),
@@ -171,9 +178,9 @@ internal object WorkspaceModifierSchemas {
     val reportEntries: JsonObject get() = s.array(s.obj(observedFields - "group" + ("type" to s.handle()), observedFields.keys - "group" - "error" + "type"))
     val stack: JsonObject get() = s.obj(s.identity + mapOf("revision" to s.handle(), "legacy" to s.boolean(),
         "entries" to s.array(s.union(types.map { type ->
-            val fields = fields(type, summary = true) + observedFields + if (type == "simulation") mapOf("bake" to WorkspaceSimulationResultSchemas.bakeSummary) else emptyMap()
+            val fields = fields(type, summary = true) + observedFields + mapOf("applied" to s.boolean()) + if (type == "simulation") mapOf("bake" to WorkspaceSimulationResultSchemas.bakeSummary) else emptyMap()
             s.obj(fields, fields.keys - "group" - "bake" - "plugin" - "error")
-        } + s.obj(pluginFields + observedFields, (pluginFields.keys + observedFields.keys) - "group" - "plugin" - "error"))), "retired_ids" to s.array(s.handle()), "next_id" to s.integer(1), "organization" to organization))
+        } + s.obj(pluginFields + observedFields + mapOf("applied" to s.boolean()), (pluginFields.keys + observedFields.keys + "applied") - "group" - "plugin" - "error"))), "retired_ids" to s.array(s.handle()), "next_id" to s.integer(1), "organization" to organization))
     val planRequest: JsonObject get() = s.union(listOf(
         s.obj(mapOf("type" to s.choices(*WorkspaceModifierPlan.sourceTypes.toTypedArray()), "targets" to s.array(target, 1, 4096))),
         s.obj(mapOf("group" to s.choices(*WorkspaceModifierPlan.groups.keys.toTypedArray()), "targets" to s.array(target, 1, 4096)))) +

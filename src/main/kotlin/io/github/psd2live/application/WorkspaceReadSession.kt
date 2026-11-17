@@ -190,6 +190,16 @@ internal class WorkspaceReadSession(
     override fun modifierStack(): JsonObject = WorkspaceModifierQueries.describe(capture())
     internal fun captureSnapshot(): WorkspaceCapture<RigPreviewModel> = capture()
     override fun modifierPlan(request: JsonObject): JsonObject = WorkspaceModifierPlan.prepare(capture(), request)
+    override fun modifierApplyPlan(id: String, scope: String): JsonObject {
+        val snapshot = capture()
+        val stack = io.github.psd2live.core.modifier.RigModifierStack.fromJson(requireNotNull(snapshot.document.rigEdits.modifierStack))
+        val reports = snapshot.model.rig.modifierReport?.get("entries")?.jsonArray.orEmpty()
+            .associate { it.jsonObject.getValue("id").jsonPrimitive.content to it.jsonObject }
+        return JsonObject(io.github.psd2live.core.modifier.ModifierApplyPlan.prepare(stack, id, reports, scope = scope) + buildJsonObject {
+            put("state", snapshot.state); put("project_id", snapshot.projectId)
+            put("history_node_id", snapshot.historyHead); put("revision", snapshot.revision)
+        })
+    }
     override fun generatedOverrideIssues(): List<GeneratedOverrideIssue> = read.runtime.capture?.model?.rig?.overrideIssues.orEmpty()
     override fun supersededEntryNotes(): List<SupersededEntryNote> = read.runtime.capture?.model?.rig?.supersededEntryNotes.orEmpty()
     override fun seeThroughNotes(): List<Pair<String, String>> =

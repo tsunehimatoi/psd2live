@@ -398,7 +398,7 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
         buildJsonObject { put("state", string()); put("changes", arraySchema(oneOf(listOf(
             variant("op", "seed", formBase, listOf("target", "key")),
             variant("op", "copy", JsonObject(formBase + buildJsonObject { put("from", key); put("destination", string()); put("channels", arraySchema(string(), 1, 8)) }), listOf("target", "from", "key")),
-            variant("op", "set", JsonObject(formBase + buildJsonObject { put("channels", channels); put("geometry", objectSchema(buildJsonObject {
+            variant("op", "set", JsonObject(formBase + buildJsonObject { put("edit_stage", string()); put("correction_mode", choices("delta", "absolute")); put("channels", channels); put("geometry", objectSchema(buildJsonObject {
                 put("originX", number()); put("originY", number()); put("angle", number()); put("scale", number())
             })) }), listOf("target", "key")),
             variant("op", "delete", buildJsonObject { put("target", string()); put("parameter", string()); put("value", number()); put("channel", string()) }, listOf("target", "parameter")),

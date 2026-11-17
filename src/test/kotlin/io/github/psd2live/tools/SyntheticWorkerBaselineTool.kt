@@ -143,9 +143,17 @@ internal class SyntheticBaselineReport(name: String, scope: String,
         // Invalidate an earlier successful report even if this run exits before close().
         writeSummary()
         fun git(vararg args: String): String {
-            val process = ProcessBuilder(listOf("git") + args).redirectErrorStream(true).start()
-            check(process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) { "Git metadata timed out" }
-            return process.inputStream.bufferedReader().use { it.readText() }.trim()
+            // A dirty worktree can produce more than a pipe buffer before waitFor returns.
+            val output = java.io.File.createTempFile("git-metadata-", ".txt", directory)
+            try {
+                val process = ProcessBuilder(listOf("git") + args).redirectErrorStream(true).redirectOutput(output).start()
+                if (!process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                    process.destroyForcibly()
+                    error("Git metadata timed out")
+                }
+                check(process.exitValue() == 0) { "Git metadata failed: ${output.readText().trim()}" }
+                return output.readText().trim()
+            } finally { output.delete() }
         }
         metadata["source_revision"] = git("rev-parse", "HEAD")
         metadata["tracked_source_dirty"] = git("status", "--porcelain", "--untracked-files=no").isNotBlank().toString()

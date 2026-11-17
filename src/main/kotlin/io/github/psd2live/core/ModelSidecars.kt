@@ -330,6 +330,7 @@ object ModelSidecars {
 		if (from == to) return overlay
 		return when (kind) {
 			"parameter" -> overlay.copy(
+                motionSources = overlay.motionSources.mapValues { AppliedMotionRecords.renameReference(it.value, kind, from, to) },
 				motionClips = overlay.motionClips.map { clip ->
 					if (clip.curves.none { it.parameterId == from } && clip.parameterRoles.values.none { from in it } && from !in clip.capturedRanges) clip
 					else clip.copy(curves = clip.curves.filterNot { it.parameterId == to }.map { if (it.parameterId == from) it.copy(parameterId = to) else it },
@@ -341,7 +342,9 @@ object ModelSidecars {
 					else expression.copy(entries = expression.entries.filterNot { it.parameterId == to }.map { if (it.parameterId == from) it.copy(parameterId = to) else it })
 				},
 			)
-			"part" -> overlay.copy(pose = overlay.pose?.let { pose ->
+			"part" -> overlay.copy(
+                motionSources = overlay.motionSources.mapValues { AppliedMotionRecords.renameReference(it.value, kind, from, to) },
+                pose = overlay.pose?.let { pose ->
 				fun id(value: String) = if (value == from) to else value
 				pose.copy(groups = pose.groups.map { group -> PoseGroup(group.parts.map { PosePart(id(it.partId), it.links.map(::id)) }) })
 			})

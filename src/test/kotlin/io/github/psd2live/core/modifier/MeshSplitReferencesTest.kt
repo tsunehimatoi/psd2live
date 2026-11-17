@@ -35,6 +35,9 @@ class MeshSplitReferencesTest {
         assertEquals(input, isolated.rig, "A rejected plugin must not publish partial changes")
         assertEquals(ModifierStatus.FAILED, isolated.entries.single().status)
         assertTrue(isolated.entries.single().errorDetails.orEmpty().contains(failure.code))
+        val strict = assertFailsWith<ModifierEvaluationFailure> { split(input, instance) }
+        assertEquals(instance.id, strict.instanceId)
+        assertEquals(failure.code, assertIs<MeshSplitRejected>(strict.cause).code)
         return failure
     }
 

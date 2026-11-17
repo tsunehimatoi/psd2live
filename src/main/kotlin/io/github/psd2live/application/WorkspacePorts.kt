@@ -125,6 +125,7 @@ interface WorkspaceQueries : WorkspaceStatePort {
     fun rigModules(): kotlinx.serialization.json.JsonObject
     fun modifierStack(): kotlinx.serialization.json.JsonObject
     fun modifierPlan(request: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject
+    fun modifierApplyPlan(id: String, scope: String = "prefix"): kotlinx.serialization.json.JsonObject = error("Modifier apply planning is unavailable")
 }
 
 /** A captured document's Layout state ([io.github.psd2live.project.WorkspaceLayout]) and the layers it applies to. */

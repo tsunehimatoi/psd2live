@@ -9,8 +9,8 @@ import java.io.IOException
 /**
  * A compact, exact binary encoding of a whole [RigIR], for caches that must hand back the very value they
  * stored: floats keep their raw bits, collections keep their order, and every field is written. It is not an
- * interchange format - a reader accepts only its own [VERSION] and rejects anything else (and any truncated or
- * trailing bytes) with [IOException], so a stale or damaged cache is detected rather than misread.
+ * interchange format - readers accept versions 6 through [VERSION] and reject anything else (and any truncated or
+ * trailing bytes) with [IOException]. Inputs representable in version 6 remain usable by existing resource readers.
  *
  * A field added to the IR must be added here in the same change, with [VERSION] raised. [RigIrObjects] stores rigs
  * in this encoding for good, so the reader must keep reading every version from [RigIrObjects.MIN_VERSION] on: a
@@ -20,16 +20,20 @@ import java.io.IOException
  * and so on - which DEFLATE compresses far better than interleaved floats; values and order are unchanged.
  */
 public object RigIrBinary {
-	public const val VERSION: Int = 6
+	public const val VERSION: Int = 7
 	/** The first version writing float arrays as byte planes. */
 	internal const val PLANAR_FLOATS: Int = 5
 	/** The first version with the rig's own hit areas ([RigIR.hitAreas]). */
 	internal const val HIT_AREAS: Int = 6
 	private const val MAGIC = 0x50524952 // "PRIR"
 
+	internal fun encodingVersion(ir: RigIR): Int = if (ir.clips.any { clip ->
+        clip.events.isNotEmpty() || clip.targetCurves.isNotEmpty() || clip.curves.any { it.fadeIn != null || it.fadeOut != null }
+    }) VERSION else 6
+
 	public fun encode(ir: RigIR): ByteArray {
 		val bytes = ByteArrayOutputStream(1 shl 16)
-		DataOutputStream(bytes).use { out -> out.writeInt(MAGIC); out.writeInt(VERSION); Writer(out).rig(ir) }
+		DataOutputStream(bytes).use { out -> out.writeInt(MAGIC); out.writeInt(encodingVersion(ir)); Writer(out, encodingVersion(ir)).rig(ir) }
 		return bytes.toByteArray()
 	}
 
@@ -38,8 +42,8 @@ public object RigIrBinary {
 		try {
 			if (input.readInt() != MAGIC) throw IOException("Not an encoded rig")
 			val version = input.readInt()
-			if (version != VERSION) throw IOException("Unsupported encoded rig version $version")
-			val ir = Reader(input).rig()
+			if (version !in 6..VERSION) throw IOException("Unsupported encoded rig version $version")
+			val ir = Reader(input, version).rig()
 			if (input.read() != -1) throw IOException("Trailing bytes after encoded rig")
 			return ir
 		} catch (failure: java.io.EOFException) {
@@ -51,7 +55,7 @@ public object RigIrBinary {
 		}
 	}
 
-	internal class Writer(private val out: DataOutputStream) {
+	internal class Writer(private val out: DataOutputStream, private val version: Int = VERSION) {
 		fun int(value: Int) = out.writeInt(value)
 		fun float(value: Float) = out.writeInt(java.lang.Float.floatToRawIntBits(value))
 		fun bool(value: Boolean) = out.writeBoolean(value)
@@ -256,20 +260,37 @@ public object RigIrBinary {
 			nullable(p.fps, ::float)
 		}
 
+		private fun segments(values: List<CurveSegment>) = list(values) { s ->
+			when (s) {
+				is CurveSegment.Linear -> int(0)
+				is CurveSegment.Bezier -> { int(1); float(s.c1Time); float(s.c1Value); float(s.c2Time); float(s.c2Value) }
+				is CurveSegment.Stepped -> int(2)
+				is CurveSegment.InverseStepped -> int(3)
+			}
+			float(s.time); float(s.value)
+		}
+
 		fun clip(c: Clip) {
+            require(version >= 7 || c.events.isEmpty() && c.targetCurves.isEmpty() && c.curves.all { it.fadeIn == null && it.fadeOut == null }) {
+                "Motion channels require rig object version 7"
+            }
 			string(c.id); string(c.name); string(c.group); string(c.file); float(c.duration); float(c.fps); bool(c.loop)
 			nullable(c.fadeIn, ::float); nullable(c.fadeOut, ::float)
 			list(c.curves) { curve ->
-				string(curve.parameter); float(curve.startTime); float(curve.startValue)
-				list(curve.segments) { s ->
-					when (s) {
-						is CurveSegment.Linear -> int(0)
-						is CurveSegment.Bezier -> { int(1); float(s.c1Time); float(s.c1Value); float(s.c2Time); float(s.c2Value) }
-						is CurveSegment.Stepped -> int(2)
-						is CurveSegment.InverseStepped -> int(3)
-					}
-					float(s.time); float(s.value)
+				string(curve.parameter); float(curve.startTime); float(curve.startValue); segments(curve.segments)
+                if (version >= 7) { nullable(curve.fadeIn, ::float); nullable(curve.fadeOut, ::float) }
+			}
+            if (version < 7) return
+			list(c.events) { float(it.time); string(it.value) }
+			list(c.targetCurves) { curve ->
+				when (val target = curve.target) {
+					is CurveTarget.PartOpacity -> { int(0); string(target.part) }
+					CurveTarget.ModelOpacity -> int(1)
+					CurveTarget.EyeBlink -> int(2)
+					CurveTarget.LipSync -> int(3)
 				}
+				float(curve.startTime); float(curve.startValue); segments(curve.segments)
+				nullable(curve.fadeIn, ::float); nullable(curve.fadeOut, ::float)
 			}
 		}
 
@@ -461,16 +482,28 @@ public object RigIrBinary {
 				PhysicsNormalization(float(), float(), float(), float(), float(), float()))
 		}, nullable(::float))
 
+		private fun segments(): List<CurveSegment> = list {
+			when (tag(3)) {
+				0 -> CurveSegment.Linear(float(), float())
+				1 -> { val c1t = float(); val c1v = float(); val c2t = float(); val c2v = float(); CurveSegment.Bezier(c1t, c1v, c2t, c2v, float(), float()) }
+				2 -> CurveSegment.Stepped(float(), float())
+				else -> CurveSegment.InverseStepped(float(), float())
+			}
+		}
+
 		fun clip() = Clip(string(), string(), string(), string(), float(), float(), bool(), nullable(::float), nullable(::float), list {
-			Curve(string(), float(), float(), list {
-				when (tag(3)) {
-					0 -> CurveSegment.Linear(float(), float())
-					1 -> { val c1t = float(); val c1v = float(); val c2t = float(); val c2v = float(); CurveSegment.Bezier(c1t, c1v, c2t, c2v, float(), float()) }
-					2 -> CurveSegment.Stepped(float(), float())
-					else -> CurveSegment.InverseStepped(float(), float())
+			Curve(string(), float(), float(), segments(),
+				if (version >= 7) nullable(::float) else null, if (version >= 7) nullable(::float) else null)
+		}, if (version >= 7) list { ClipEvent(float(), string()) } else emptyList(),
+			if (version >= 7) list {
+				val target = when (tag(3)) {
+					0 -> CurveTarget.PartOpacity(string())
+					1 -> CurveTarget.ModelOpacity
+					2 -> CurveTarget.EyeBlink
+					else -> CurveTarget.LipSync
 				}
-			})
-		})
+				TargetCurve(target, float(), float(), segments(), nullable(::float), nullable(::float))
+			} else emptyList())
 
 		fun authoring() = Authoring(string(), bool(),
 			list {
