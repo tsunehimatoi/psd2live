@@ -36,6 +36,8 @@ class LayerClassifierSideTest {
 		assertEquals(PartRole.SHADOW, PartRoles.fromName("下唇阴影", "", SemanticTag.MOUTH))
 		assertEquals(PartRole.CLOSED_LINE, PartRoles.fromName("嘴唇中线", "", SemanticTag.MOUTH))
 		assertEquals(PartRole.CLOSED_LINE, PartRoles.fromName("微笑嘴线", "", SemanticTag.MOUTH))
+		assertEquals(SemanticTag.FACE_DETAIL, LayerClassifier.classify("嘟嘴嘴角腮红_L").tag)
+		assertEquals(SemanticTag.UNKNOWN, LayerClassifier.classify("嘟嘴嘴角线_R").tag)
 	}
 	@Test fun specificFoldersSupplyMissingArtworkNamesWithoutOverridingNamedParts() {
 		assertEquals(null, LayerClassifier.classifyArtwork("Layer 9", "mouth").variant)

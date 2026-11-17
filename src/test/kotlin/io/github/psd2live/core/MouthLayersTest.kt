@@ -398,4 +398,15 @@ class MouthLayersTest {
 		assertEquals("the mouth is drawn closed", result.reason)
 	}
 
+	@Test fun closedLineSwapsOutWhenAnOpenMouthIsFitted() {
+		val cavity = (drawn("cavity", 12, 18, 52, 42).source as WorkspaceSourceLayer).copy(name = "口腔", order = 0)
+		val seam = (drawn("seam", 14, 29, 50, 31).source as WorkspaceSourceLayer).copy(name = "嘴唇中线", order = 1)
+		val source = io.github.psd2live.project.WorkspaceSourceArt(64, 64, listOf(cavity, seam), emptyList())
+		val preview = PSD2LivePipeline().buildPreview(source, PipelineConfig(atlasSize = 256, generatePhysics = false, exportMoc3 = false))
+		val seamDrawable = preview.rig.puppet.drawables.single { preview.rig.layerIdByDrawableId[it.id.raw] == "seam" }
+		val evaluator = org.umamo.render.eval.CpuDeformationEvaluator()
+		assertEquals(1f, evaluator.evaluate(preview.rig.puppet, emptyMap()).opacity.getValue(seamDrawable.id))
+		assertEquals(0f, evaluator.evaluate(preview.rig.puppet, mapOf(StandardParameters.MOUTH_OPEN to 0.5f)).opacity.getValue(seamDrawable.id))
+	}
+
 }

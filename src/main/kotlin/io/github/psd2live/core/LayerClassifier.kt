@@ -56,7 +56,8 @@ object LayerClassifier {
 	private val copySuffix = Regex("\\s*(?:copy|のコピー|的副本|副本|복사)\\s*\\d*$", RegexOption.IGNORE_CASE)
 	private val closedDescriptor = Regex("闭合|閉合|合拢|合攏|(?<![a-z])closed(?![a-z])")
 	private val lipSkinDescriptor = Regex("唇底色|嘴皮|唇皮|上唇|下唇|upper\\s*lip(?!\\s*line)|lower\\s*lip(?!\\s*line)")
-	private val nonMouthPartHint = Regex("眼|眉|鼻|耳|发|髪|袖|裙|衣|裤|鞋|袜|手|脚|腿|尾|翼")
+	private val nonMouthPartHint = Regex("眼|眉|鼻|耳|发|髪|袖|裙|衣|裤|鞋|袜|手|脚|腿|尾|翼|腮红|紅暈|红晕|blush|嘴角")
+	private val blushKeyword = Regex("腮红|紅暈|红晕|blush")
 	private val mouthSuffixKeywords: List<Pair<String, SemanticTag>> = listOf(
 		"张嘴" to SemanticTag.MOUTH_OPEN, "張嘴" to SemanticTag.MOUTH_OPEN, "开口" to SemanticTag.MOUTH_OPEN,
 		"開口" to SemanticTag.MOUTH_OPEN, "开嘴" to SemanticTag.MOUTH_OPEN, "開嘴" to SemanticTag.MOUTH_OPEN,
@@ -120,8 +121,13 @@ object LayerClassifier {
 				aliases[it] ?: prefixMatch(it)
 			} }.firstOrNull { it in setOf(SemanticTag.TONGUE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B) }
 		else null
-		val poseFallback = if (component == null && closedTag == SemanticTag.UNKNOWN && !nonMouthPartHint.containsMatchIn(normalized)) {
-			mouthSuffixKeywords.firstOrNull { (key, _) -> key in normalized }?.second
+		val poseFallback = if (component == null && closedTag == SemanticTag.UNKNOWN) {
+			when {
+				blushKeyword.containsMatchIn(normalized) -> SemanticTag.FACE_DETAIL
+				!nonMouthPartHint.containsMatchIn(normalized) ->
+					mouthSuffixKeywords.firstOrNull { (key, _) -> key in normalized }?.second
+				else -> null
+			}
 		} else null
 		val resolved = component ?: poseFallback ?: closedTag
 		// Lip-skin covers named with a closed pose prefix remain mouth skin rather than a closed-drawing swap.

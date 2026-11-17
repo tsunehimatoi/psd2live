@@ -1286,8 +1286,9 @@ object RigBuilder {
         val override = config.layerOverrides[layer.source.id.raw]
         if (config.meshOnly && (override?.type ?: layer.semantic.type) == LayerType.PRESET) return ChannelGrids.Empty
         val layeredMouth = context.fittedMouth(config)?.let { it.rig?.fit?.layered != null && it.covers(layer) } == true
+        val closedLineSwap = layer.semantic.role == PartRole.CLOSED_LINE && context.fittedMouth(config)?.rig != null
         val channels = channelStage(layer, override, switchKeys, config.rigTuning, context.hasClosedMouth, stages,
-            eyeSwap(context, config, layer), mouthSwap(context, config, layer), eyeOpenMax(context, config), layeredMouth)
+            eyeSwap(context, config, layer), mouthSwap(context, config, layer), eyeOpenMax(context, config), layeredMouth, closedLineSwap)
         return withEyeOpacity(channels, context, config, layer)
             .let { withMoodChannels(it, context, config, layer) }.let { withMouthShading(it, context, config, layer) }
     }
@@ -1301,7 +1302,8 @@ object RigBuilder {
             classifiedByDrawable.getValue(drawable.id).let { layer -> layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) &&
                 layer.semantic.role == null && !layer.source.clipped }
         }
-        val mouthMasks = allMouthMasks.filter { classifiedByDrawable.getValue(it.id).source.opacity > 0f }.ifEmpty { allMouthMasks }
+        val visibleMouthMasks = allMouthMasks.filter { it.isVisible }.ifEmpty { allMouthMasks }
+        val mouthMasks = visibleMouthMasks.filter { classifiedByDrawable.getValue(it.id).source.opacity > 0f }.ifEmpty { visibleMouthMasks }
         // A highlight or shadow lying inside the opening is in the mouth too, and so is what is clipped onto it: the inside's base.
         fun inMouth(layer: ClassifiedLayer) = layer.semantic.tag in CharacterAnalyzer.MOUTH_COMPONENT_TAGS ||
             fittedMouth != null && layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && (layer.semantic.role != null || layer.source.clipped) && fittedMouth.covers(layer) &&
@@ -1343,7 +1345,12 @@ object RigBuilder {
                     val sameSide = mouthMasks.filter { classifiedByDrawable.getValue(it.id).semantic.side == semantic.side }
                     val fallback = mouthMasks.filter { classifiedByDrawable.getValue(it.id).semantic.side == Side.NONE }
                     val masks = exact.ifEmpty { sameSide.ifEmpty { fallback.ifEmpty { mouthMasks } } }
-                    val aperture = io.github.psd2live.algorithms.binding.MouthMaskAssociation.select(layer.bounds, masks) {
+                    val sameGroup = masks.filter { mask ->
+                        val mg = classifiedByDrawable.getValue(mask.id).source.groupPath
+                        val lg = layer.source.groupPath
+                        mg == lg || (mg.isNotEmpty() && lg.startsWith("$mg/")) || (lg.isNotEmpty() && mg.startsWith("$lg/"))
+                    }.ifEmpty { masks }
+                    val aperture = io.github.psd2live.algorithms.binding.MouthMaskAssociation.select(layer.bounds, sameGroup) {
                         classifiedByDrawable.getValue(it.id).bounds
                     }
                     drawable.copy(maskedBy = listOfNotNull(aperture?.id))
@@ -2105,12 +2112,12 @@ object RigBuilder {
 
 	/** [buildChannels] under a key of what it reads. */
 	private fun channelStage(layer: ClassifiedLayer, override: LayerClassificationOverride?, switchParamKeys: Map<String, FloatArray>,
-	                         tuning: RigTuning, closedMouth: Boolean, stages: RigStageCache?, eyeSwap: Boolean = false, mouthSwap: Boolean = false, eyeOpenMax: Float = 1f, layeredMouth: Boolean = false): ChannelGrids {
-		if (stages == null) return buildChannels(layer, override, switchParamKeys, tuning, closedMouth, eyeSwap, mouthSwap, eyeOpenMax, layeredMouth)
+	                         tuning: RigTuning, closedMouth: Boolean, stages: RigStageCache?, eyeSwap: Boolean = false, mouthSwap: Boolean = false, eyeOpenMax: Float = 1f, layeredMouth: Boolean = false, closedLineSwap: Boolean = false): ChannelGrids {
+		if (stages == null) return buildChannels(layer, override, switchParamKeys, tuning, closedMouth, eyeSwap, mouthSwap, eyeOpenMax, layeredMouth, closedLineSwap)
 		val parameter = (override?.parameter ?: layer.semantic.parameter).trim()
 		val key = listOf(override?.type ?: layer.semantic.type, parameter, override?.switchId ?: layer.semantic.switchId,
-			switchParamKeys[parameter]?.toList(), layer.semantic.tag, layer.semantic.side, tuning.teethFade, closedMouth, eyeSwap, mouthSwap, eyeOpenMax, layeredMouth)
-		return stages.get(RigStageCache.CHANNELS, 256, key) { buildChannels(layer, override, switchParamKeys, tuning, closedMouth, eyeSwap, mouthSwap, eyeOpenMax, layeredMouth) }
+			switchParamKeys[parameter]?.toList(), layer.semantic.tag, layer.semantic.side, layer.semantic.role, tuning.teethFade, closedMouth, eyeSwap, mouthSwap, eyeOpenMax, layeredMouth, closedLineSwap)
+		return stages.get(RigStageCache.CHANNELS, 256, key) { buildChannels(layer, override, switchParamKeys, tuning, closedMouth, eyeSwap, mouthSwap, eyeOpenMax, layeredMouth, closedLineSwap) }
 	}
 
 	/**
@@ -2606,7 +2613,7 @@ object RigBuilder {
 		val override = config.layerOverrides[layer.source.id.raw]
 		val classification = override?.type ?: layer.semantic.type
 		val channels = if (deferred || config.meshOnly && classification == LayerType.PRESET) ChannelGrids.Empty
-			else channelStage(layer, override, switchParamKeys, config.rigTuning, context.hasClosedMouth, stages, eyeSwap(context, config, layer), mouthSwap(context, config, layer), eyeOpenMax(context, config), context.fittedMouth(config)?.let { it.rig?.fit?.layered != null && it.covers(layer) } == true)
+			else channelStage(layer, override, switchParamKeys, config.rigTuning, context.hasClosedMouth, stages, eyeSwap(context, config, layer), mouthSwap(context, config, layer), eyeOpenMax(context, config), context.fittedMouth(config)?.let { it.rig?.fit?.layered != null && it.covers(layer) } == true, layer.semantic.role == PartRole.CLOSED_LINE && context.fittedMouth(config)?.rig != null)
 		val drawable = Drawable(
 			id = part.drawableId,
 			name = part.name,
@@ -4469,6 +4476,7 @@ object RigBuilder {
 		mouthSwap: Boolean = false,
 		eyeOpenMax: Float = 1f,
 		layeredMouth: Boolean = false,
+		closedLineSwap: Boolean = false,
 	): ChannelGrids {
 		val type = override?.type ?: layer.semantic.type
 		val baseOpacity = layer.source.opacity.coerceIn(0f, 1f)
@@ -4488,7 +4496,9 @@ object RigBuilder {
 						else if (mouthSwap) scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, io.github.psd2live.algorithms.binding.MouthRig.SWAP, 1f)) { open -> if (open == 0f) baseOpacity else 0f }
 						else scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, 1f)) { (1f - it) * baseOpacity }
 					// A fitted mouth beside a drawn closed one shuts into it: the open drawing hands over as the lips part.
-					SemanticTag.MOUTH -> if (!mouthSwap || baseOpacity <= 0f) null
+					SemanticTag.MOUTH -> if (baseOpacity <= 0f) null
+						else if (closedLineSwap) scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, io.github.psd2live.algorithms.binding.MouthRig.SWAP, 1f)) { open -> if (open == 0f) baseOpacity else 0f }
+						else if (!mouthSwap) null
 						else scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, io.github.psd2live.algorithms.binding.MouthRig.SWAP, 1f)) { open -> if (open == 0f) 0f else baseOpacity }
 					SemanticTag.TONGUE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B ->
 						if (baseOpacity <= 0f || (layeredMouth && !mouthSwap)) null else scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, fadeIn, 1f)) { open -> (open / fadeIn).coerceIn(0f, 1f) * baseOpacity }

@@ -16,6 +16,8 @@ object MouthMaskAssociation {
         val covering = candidates.filter { overlap(it) > 0f }
         if (covering.isEmpty()) return candidates.minByOrNull(::distance)
         return covering.maxWithOrNull(compareBy<T> { overlap(it) }
-            .thenBy { bounds(it).width * bounds(it).height }.thenBy { -distance(it) })
+            .thenBy { bounds(it).height > component.height * 1.5f }
+            .thenBy { -(bounds(it).width * bounds(it).height) }
+            .thenBy { -distance(it) })
     }
 }
