@@ -28,7 +28,7 @@ internal object RigMouthOutlineSource {
     ): MouthOutlineInputs {
         val original = analysis.layers.filter { it.source !is MouthLipLayer && it.source.id.raw !in config.deletedLayerIds }
         val byLayer = original.associateBy { it.source.id.raw }
-        val layered = original.any { it.semantic.tag in tags && it.semantic.role in io.github.psd2live.core.fit.FittedMouth.LIPS }
+        val needsOutline = MouthLipLayers.needsOutline(original)
         val excluded = config.rigPendingLayerIds + DepthSplit.frontLayerIds(config)
         val split = PrimitiveResolution.of(config.rigEdits)
         val rasterAlignment by lazy { MouthLipLayers.rasterAlignment(analysis, config, split) }
@@ -44,7 +44,7 @@ internal object RigMouthOutlineSource {
         val topologies = linkedMapOf<String, ModifierAlgorithmResource>()
         val topologyByLayer = hashMapOf<String, String>()
         val traces = hashMapOf<String, List<MouthColumn>>()
-        if (!layered && !config.meshOnly && !config.deferRig) for ((id, owner) in owners) {
+        if (needsOutline && !config.meshOnly && !config.deferRig) for ((id, owner) in owners) {
             checkpoint()
             val layer = byLayer[owner.layer] ?: continue
             if (owner.layer in excluded || split.isPartLayer(owner.layer) || layer.semantic.tag !in tags ||

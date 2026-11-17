@@ -409,4 +409,18 @@ class MouthLayersTest {
 		assertEquals(0f, evaluator.evaluate(preview.rig.puppet, mapOf(StandardParameters.MOUTH_OPEN to 0.5f)).opacity.getValue(seamDrawable.id))
 	}
 
+	@Test fun outlineOnlyAppliesToSingleLayerCavityMouthsWithoutLipsOrSwaps() {
+		val singleCavity = drawn("cavity", 12, 18, 52, 42)
+		assertTrue(MouthLipLayers.needsOutline(listOf(singleCavity)))
+
+		val withClosed = singleCavity.copy(semantic = singleCavity.semantic.copy(tag = SemanticTag.MOUTH_CLOSE))
+		assertTrue(!MouthLipLayers.needsOutline(listOf(singleCavity, withClosed)))
+
+		val withClosedRole = drawn("seam", 12, 29, 52, 31, role = PartRole.CLOSED_LINE)
+		assertTrue(!MouthLipLayers.needsOutline(listOf(singleCavity, withClosedRole)))
+
+		val secondSwap = drawn("swap", 14, 20, 50, 40)
+		assertTrue(!MouthLipLayers.needsOutline(listOf(singleCavity, secondSwap)))
+	}
+
 }
