@@ -4,6 +4,41 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class LayerClassifierSideTest {
+	@Test fun mouthPosePrefixesDoNotTurnNamedComponentsIntoApertures() {
+		for (name in listOf("open mouth tongue", "mouth_open_tongue", "开口舌头", "開嘴舌頭")) {
+			assertEquals(SemanticTag.TONGUE, LayerClassifier.classify(name).tag, name)
+		}
+		assertEquals(SemanticTag.TOOTH_T, LayerClassifier.classify("mouth open upper teeth").tag)
+		assertEquals(SemanticTag.MOUTH_OPEN, LayerClassifier.classify("mouth open").tag)
+	}
+	@Test fun closedDescriptorsIdentifyAlternateMouthDrawingsWithoutChangingOtherParts() {
+		for (name in listOf("mouth closed line", "closed mouth", "闭合嘴线", "嘴唇閉合", "嘴巴 合拢")) {
+			assertEquals(SemanticTag.MOUTH_CLOSE, LayerClassifier.classify(name).tag, name)
+		}
+		val sided = LayerClassifier.classify("mouth closed line_L_2")
+		assertEquals(SemanticTag.MOUTH_CLOSE, sided.tag)
+		assertEquals(Side.LEFT, sided.side)
+		assertEquals(2, sided.variant)
+		assertEquals(SemanticTag.MOUTH, LayerClassifier.classify("upper lip line").tag)
+		assertEquals(SemanticTag.MOUTH, LayerClassifier.classify("口腔").tag)
+		assertEquals(SemanticTag.HANDWEAR, LayerClassifier.classify("袖子闭合").tag)
+	}
+	@Test fun posePrefixedMouthNamesAndLipRolesClassifyWithoutCollapsing() {
+		for (name in listOf("微张嘴", "大张嘴", "小张嘴", "露齿")) {
+			assertEquals(SemanticTag.MOUTH_OPEN, LayerClassifier.classify(name).tag, name)
+		}
+		for (name in listOf("自然闭嘴", "抿嘴")) {
+			assertEquals(SemanticTag.MOUTH_CLOSE, LayerClassifier.classify(name).tag, name)
+		}
+		assertEquals(SemanticTag.TOOTH_T, LayerClassifier.classify("牙齿").tag)
+		assertEquals(SemanticTag.MOUTH, LayerClassifier.classify("闭嘴唇底色").tag)
+		assertEquals(PartRole.HIGHLIGHT, PartRoles.fromName("下唇角高光", "", SemanticTag.MOUTH))
+		assertEquals(PartRole.SHADOW, PartRoles.fromName("下唇阴影", "", SemanticTag.MOUTH))
+		assertEquals(PartRole.CLOSED_LINE, PartRoles.fromName("嘴唇中线", "", SemanticTag.MOUTH))
+		assertEquals(PartRole.CLOSED_LINE, PartRoles.fromName("微笑嘴线", "", SemanticTag.MOUTH))
+		assertEquals(SemanticTag.FACE_DETAIL, LayerClassifier.classify("嘟嘴嘴角腮红_L").tag)
+		assertEquals(SemanticTag.UNKNOWN, LayerClassifier.classify("嘟嘴嘴角线_R").tag)
+	}
 	@Test fun specificFoldersSupplyMissingArtworkNamesWithoutOverridingNamedParts() {
 		assertEquals(null, LayerClassifier.classifyArtwork("Layer 9", "mouth").variant)
 		assertEquals(2, LayerClassifier.classifyArtwork("Layer 9", "mouth2").variant)

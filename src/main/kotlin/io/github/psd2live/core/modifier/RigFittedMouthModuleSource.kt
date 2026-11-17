@@ -56,7 +56,7 @@ internal object RigFittedMouthModuleSource {
                     it.config["depthTurn"]?.jsonPrimitive?.booleanOrNull == true))
         }
         val inputs = RigFittedMouthSource.capture(context, native, parents, layers,
-            frames.mapValues { it.value.second }, emptyList(), headProvider?.id)
+            frames.mapValues { it.value.second }, layers.keys.toList(), headProvider?.id)
         // Outline emits separate ribbon rasters and never replaces its owner's mesh. Later
         // mouth modules must capture the same source topology as the fitted base.
         val meshConfig = native.copy(mouthOutlineEnabled = false)

@@ -210,6 +210,7 @@ internal object RigLegacyBindings {
             "mouth.tongue", "mouth.jaw", "mouth.cheek-lid", "mouth.interior-depth", "mouth.spring",
         ),
         changeWrites = when {
+            spec.type == "mouth.jaw" -> setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter")
             spec.type == "face/legacy" -> setOf("mesh", "deformer", "parameter", "hierarchy", "relations")
             spec.type == "hair/legacy" -> setOf("mesh", "deformer", "parameter", "hierarchy")
             spec.type == "hair/chains" -> io.github.psd2live.algorithms.binding.HairChainsAlgorithm.WRITES

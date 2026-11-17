@@ -116,8 +116,8 @@ class MouthFittedAlgorithm(
     ): PuppetModel {
         val mouth = inputs.source?.rig()
         val own = inputs.layers.values.filter { covers(it, inputs, mouth) && it.opaque }
-        val layered = own.any { it.role in lips }
-        val lipped = own.any { it.role in lipSkin }
+        val layered = mouth?.fit?.layered != null && own.any { it.role in lips }
+        val lipped = mouth?.fit?.layered != null && own.any { it.role in lipSkin }
         val closedLine = own.any { it.tag == "MOUTH_CLOSE" }
         val byId = source.drawables.associateBy { it.id.raw }
         require(targets.all { it in byId } && inputs.layers.keys.all { it in byId }) { "Unknown fitted mouth mesh" }
@@ -145,7 +145,10 @@ class MouthFittedAlgorithm(
             }?.let { rawMeshes.getValue(it.canonical) }
             val suppliedPositions = sourcePositions[original.id.raw]
             val matches = raw != null && matchesSource(raw, geometry, layer.frame, checkpoint)
-            val upgradeMesh = upgradeToSource && original.id.raw !in preservedMeshes && (covered || faceSkin || mouthFace) &&
+            // Only the opening and lip skin replace their geometry grid below. Surrounding
+            // face/nose meshes receive additive mouth shapes on their existing topology;
+            // changing their vertices here would strand the preceding face grid and shapes.
+            val upgradeMesh = upgradeToSource && original.id.raw !in preservedMeshes && (covered || faceSkin) &&
                 raw != null && suppliedPositions == null && !matches
             val nextMesh = if (!upgradeMesh) geometry else {
                 val frame = layer.frame
@@ -176,7 +179,7 @@ class MouthFittedAlgorithm(
             val channels = original.channelGrids.gridsByChannel.toMutableMap()
             if (layer.preset && layer.tag in tags) {
                 val opacity = opacity(layer.tag, closedLine && covered, inputs.closedMouth,
-                    mouth?.fit?.layered != null && covered, inputs.teethFade)
+                    mouth?.fit?.layered != null && covered, inputs.teethFade, original.opacity)
                 if (opacity != null) channels[FormChannel.OPACITY] = opacity
                 else if (channels[FormChannel.OPACITY]?.axes?.any { it.parameterId == mouthOpen } == true)
                     channels.remove(FormChannel.OPACITY)
@@ -295,11 +298,8 @@ class MouthFittedAlgorithm(
         val sameSide = candidates.filter { it.second.side == layer.side }
         val exact = sameSide.filter { it.second.variant == layer.variant }
         val neutral = candidates.filter { it.second.side == "NONE" }
-        return exact.ifEmpty { sameSide.ifEmpty { neutral.ifEmpty { candidates } } }.minByOrNull { (_, mask) ->
-            val dx = mask.bounds.centerX - layer.bounds.centerX
-            val dy = mask.bounds.centerY - layer.bounds.centerY
-            dx * dx + dy * dy
-        }?.first
+        return MouthMaskAssociation.select(layer.bounds,
+            exact.ifEmpty { sameSide.ifEmpty { neutral.ifEmpty { candidates } } }) { it.second.bounds }?.first
     }
 
     private fun positions(vertices: FloatArray, frame: Bounds): FloatArray = FloatArray(vertices.size) { i ->
@@ -369,14 +369,15 @@ class MouthFittedAlgorithm(
         }
     }
 
-    private fun opacity(tag: String, swap: Boolean, closed: Boolean, layered: Boolean, fadePercent: Float): KeyformGrid<ChannelValue>? {
+    private fun opacity(tag: String, swap: Boolean, closed: Boolean, layered: Boolean, fadePercent: Float, layerOpacity: Float): KeyformGrid<ChannelValue>? {
+        if (layerOpacity <= 0f) return null
         val fade = (fadePercent / 100f).coerceAtLeast(0.01f)
-        fun fadeIn() = channel(floatArrayOf(0f, fade, 1f)) { ChannelValue.Scalar((it / fade).coerceIn(0f, 1f)) }
+        fun fadeIn() = channel(floatArrayOf(0f, fade, 1f)) { ChannelValue.Scalar((it / fade).coerceIn(0f, 1f) * layerOpacity) }
         fun swapTrack(closedDrawing: Boolean) = channel(floatArrayOf(0f, MouthRig.SWAP, 1f)) {
-            ChannelValue.Scalar(if ((it == 0f) == closedDrawing) 1f else 0f)
+            ChannelValue.Scalar((if ((it == 0f) == closedDrawing) 1f else 0f) * layerOpacity)
         }
         return when (tag) {
-            "MOUTH_CLOSE" -> if (swap) swapTrack(true) else channel(floatArrayOf(0f, 1f)) { ChannelValue.Scalar(1f - it) }
+            "MOUTH_CLOSE" -> if (swap) swapTrack(true) else channel(floatArrayOf(0f, 1f)) { ChannelValue.Scalar((1f - it) * layerOpacity) }
             "MOUTH" -> if (swap) swapTrack(false) else null
             "MOUTH_OPEN" -> if (swap) swapTrack(false) else if (closed) fadeIn() else null
             else -> if (layered && !swap) null else fadeIn()

@@ -44,8 +44,15 @@ class MouthCheekLidAlgorithm : ReadingModifierAlgorithmPlugin {
             checkpoint()
             fit.moved(materials.moves[side.name].orEmpty())
         }
-        require(fits.isNotEmpty() && captured.art.layers.any { it.tag == "EYELASH" }) {
-            "Cheek and lid v2 requires readable fitted lid artwork"
+        // Eye whites already follow the fitted lid boundary; a separate eyelash layer is optional.
+        // Require an actual supported target on a fitted eye, not an unrelated named layer.
+        val fittedTargets = materials.targets.keys.filterTo(hashSetOf()) { id ->
+            val layer = captured.art.layerForTarget(id)
+            EyeModules.meshOf(layer.tag, layer.role) != null &&
+                (layer.side == Side.NONE.name && fits.isNotEmpty() || fits.keys.any { it.name == layer.side })
+        }
+        require(fittedTargets.isNotEmpty()) {
+            "Cheek and lid v2 requires a supported target with readable fitted eye artwork"
         }
         val artwork = EyeArtworkFitting.fit(captured.art, materials.artworkStamps, fits, materials.corrections, align)
         val lower = knob(eye.config, "lowerShare", 5f, 0f..50f)
@@ -65,7 +72,8 @@ class MouthCheekLidAlgorithm : ReadingModifierAlgorithmPlugin {
         val carriers = LinkedHashMap<String, Deformer>()
         val updates = instance.targets.mapNotNull { target ->
             checkpoint()
-            val material = materials.targets[target.id] ?: return@mapNotNull null
+            if (target.id !in fittedTargets) return@mapNotNull null
+            val material = materials.targets.getValue(target.id)
             val layer = captured.art.layerForTarget(target.id)
             val lid = EyeModules.meshOf(layer.tag, layer.role) ?: return@mapNotNull null
             val side = Side.valueOf(layer.side)
@@ -142,8 +150,24 @@ class MouthCheekLidAlgorithm : ReadingModifierAlgorithmPlugin {
             val newShapes = shapes.map { shape -> shape.copy(forms = shape.forms.map { form ->
                 form?.let { MeshForm(it.positionDeltas, order, opacity, multiply, screen) }
             }) }
+            // This is a local lowering pass. Ordinary axes may be keyed on meshes outside
+            // the lid's branch (for example shared gaze on the iris), so retain their kinds.
+            val used = ((drawable.blendShapes + newShapes).map { it.parameterId.raw } +
+                model.deformers.flatMap { deformer -> when (deformer) {
+                    is org.umamo.runtime.model.Deformer.Warp -> deformer.blendShapes.map { it.parameterId.raw }
+                    is org.umamo.runtime.model.Deformer.Rotation -> deformer.blendShapes.map { it.parameterId.raw }
+                } }).toSet()
+            val witnesses = parameters.filter { !it.blend && it.id in used }.map { parameter ->
+                val keys = listOf(parameter.min, parameter.default, parameter.max).distinct().sorted().toFloatArray()
+                drawable.copy(id = org.umamo.runtime.model.DrawableId("$nativeId:axis:${parameter.id}"),
+                    parentDeformerId = null, blendShapes = emptyList(), channelGrids = org.umamo.runtime.model.ChannelGrids.Empty,
+                    geometryGrid = org.umamo.runtime.model.KeyformGrid(
+                        listOf(org.umamo.runtime.model.KeyformAxis(ParameterId(parameter.id), keys)),
+                        keys.indices.map { org.umamo.runtime.model.KeyformCell(intArrayOf(it),
+                            org.umamo.runtime.model.MeshDeltaForm(FloatArray(geometry.positions.size))) }))
+            }
             val lowered = BlendShapeLowering({ _, _ -> name }, checkpoint).lawful(model.copy(
-                drawables = listOf(drawable.copy(blendShapes = drawable.blendShapes + newShapes)) + model.drawables.drop(1)))
+                drawables = listOf(drawable.copy(blendShapes = drawable.blendShapes + newShapes)) + model.drawables.drop(1) + witnesses))
             require(lowered.parameters == model.parameters && lowered.deformers.take(model.deformers.size) == model.deformers) {
                 "Cheek and lid v2 cannot change existing parameter kinds or parent deformers: " +
                     "parameters=${lowered.parameters.filter { it !in model.parameters }.map { it.id }}, " +

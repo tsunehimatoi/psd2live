@@ -40,7 +40,7 @@ class MouthOutlineAlgorithm : ReadingModifierAlgorithmPlugin {
                 checkpoint()
                 val mouth = target.fittedProvider?.let { provider ->
                     requireProvider(context, provider, "mouth/fitted", id)
-                    requireNotNull(fitted)
+                    requireNotNull(fitted).takeIf { fitsTarget(target, it) }
                 }
                 val turn = if (target.headOnMesh) {
                     val provider = requireNotNull(captured.head).provider
@@ -70,6 +70,21 @@ class MouthOutlineAlgorithm : ReadingModifierAlgorithmPlugin {
             }
         }
         return ModifierModelChanges(rasters = rasters)
+    }
+
+    private fun fitsTarget(target: MouthOutlineInputs.Target, mouth: MouthRig): Boolean {
+        val left = mouth.fit.toCanvas(0f, 0f)
+        val right = mouth.fit.toCanvas(1f, mouth.fit.cornerV)
+        val fitCenterX = 0.5f * (left.first + right.first)
+        val fitCenterY = 0.5f * (left.second + right.second)
+        val fitWidth = mouth.fit.width.coerceAtLeast(1f)
+        val ap = target.aperture
+        val apCenterX = 0.5f * (ap.left + ap.right)
+        val apCenterY = 0.5f * (ap.top + ap.bottom)
+        val apWidth = (ap.right - ap.left).coerceAtLeast(1f)
+        return kotlin.math.abs(apCenterX - fitCenterX) <= 0.6f * fitWidth &&
+            kotlin.math.abs(apCenterY - fitCenterY) <= 0.6f * fitWidth &&
+            apWidth in (0.4f * fitWidth)..(2.2f * fitWidth)
     }
 
     private fun requireProvider(context: ModifierAlgorithmContext, provider: String, type: String, id: String) {

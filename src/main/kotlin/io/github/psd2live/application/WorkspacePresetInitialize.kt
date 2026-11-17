@@ -15,7 +15,7 @@ internal object WorkspacePresetInitialize {
         return if (choices == null) candidate else WorkspacePresetInitialization.create(candidate, work, choices)
     }
 
-    /** Only binding settings change here: the imported artwork and all split/classification edits survive. */
+    /** Choose bindings and compatible artwork while retaining the imported source and explicit edits. */
     internal fun prepare(document: WorkspaceDocument, mode: WorkspaceInitialModifiers,
                          preset: WorkspaceInitialPreset? = null): Pair<WorkspaceDocument, WorkspaceInitialPreset?> {
         val stack = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack) {
@@ -29,6 +29,6 @@ internal object WorkspacePresetInitialize {
         val choices = WorkspaceInitialPreset.resolveChoices(mode, preset)
         if (choices == null) return document to null
         val config = WorkspaceInitialPreset.applyToConfig(mode, choices, document.config())
-        return document.copy(settings = WorkspaceSettingsCodec.encode(config)) to choices
+        return WorkspaceMouthArtwork.prepare(document.copy(settings = WorkspaceSettingsCodec.encode(config))) to choices
     }
 }

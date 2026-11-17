@@ -10,6 +10,24 @@ import kotlinx.serialization.json.*
 import kotlin.test.*
 
 class MouthSourceTopologyTest {
+    @Test fun smallMouthKeepsItsMeshWhenBlankCanvasIsAdded() {
+        val document = Characters.mouthed()
+        fun sourceMesh(canvas: Int): MeshData {
+            val art = io.github.psd2live.project.WorkspaceSourceArt(canvas, canvas, document.source.layers, document.source.groups)
+            val config = document.rawConfig().copy(meshUnits = MeshUnits.DOCUMENT, mouthOutlineEnabled = false)
+            val analysis = CharacterAnalyzer.analyze(art, config)
+            val cache = PreviewMeshCache()
+            val context = RigBuilder.rigContext(analysis, config, cache)
+            val mouth = analysis.layers.single { it.semantic.tag == SemanticTag.MOUTH }
+            return RigBuilder.fittedMouthSourceMesh(mouth, context, config, AtlasLayout.pack(analysis.layers, config), cache)
+        }
+        val compact = sourceMesh(420)
+        val large = sourceMesh(8192)
+        assertEquals(compact.mesh.positions.size, large.mesh.positions.size,
+            "Adding empty canvas must not remove local mouth detail")
+        assertContentEquals(compact.mesh.indices, large.mesh.indices)
+    }
+
     @Test fun fittedSourceUpgradesOrdinaryTopologyAndPreservesAuthoredVertices() {
         val document = Characters.mouthed()
         val config = RigModifierPipeline.ordinaryConfig(document.rawConfig())

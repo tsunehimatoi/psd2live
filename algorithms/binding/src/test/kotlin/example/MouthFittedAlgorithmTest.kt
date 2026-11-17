@@ -35,6 +35,54 @@ import kotlin.test.assertTrue
 
 class MouthFittedAlgorithmTest {
     @Test
+    fun surroundingFaceMotionKeepsItsTopologyWhenMouthSourceIsDenser() {
+        val frame = Bounds(0f, 0f, 1f, 1f)
+        val geometry = MeshGeometry(Floats.values(.1f, .5f, .9f, .5f, .5f, .9f),
+            Floats.values(0f, 0f, 1f, 0f, .5f, 1f), Ints.values(0, 1, 2))
+        val offsets = KeyGrid(listOf(KeyAxis("ParamAngleX", Floats.values(-30f, 0f, 30f))),
+            (0..2).map { key -> KeyCell(Ints.values(key), MeshOffsets(Floats.wrap(FloatArray(6) { i ->
+                if (i % 2 == 0) (key - 1) * .1f else 0f
+            }))) })
+        val authored = BlendBinding("Authored", Floats.values(0f, 1f), 0,
+            listOf(null, MeshShape(Floats.values(0f, .03f, 0f, .03f, 0f, .03f), 500f, 1f,
+                Rgb(1f, 1f, 1f), Rgb(0f, 0f, 0f))))
+        val mesh = Mesh("face", "Face", null, geometry = geometry, offsets = offsets, shapes = listOf(authored))
+        val input = RigIR(Canvas(1f, 1f), listOf(
+            Parameter("ParamMouthForm", "Form", -1f, 1f, 0f),
+            Parameter("ParamMouthOpenY", "Open", 0f, 1f, 0f),
+            Parameter("ParamAngleX", "Turn", -30f, 30f, 0f),
+            Parameter("ParamJawOpen", "Jaw", 0f, 1f, 0f, blend = true),
+            Parameter("Authored", "Authored", 0f, 1f, 0f, blend = true)), meshes = listOf(mesh))
+        val raw = ScaffoldMesh.RawMesh(floatArrayOf(.1f, .5f, .9f, .5f, .5f, .9f, .5f, .6f),
+            floatArrayOf(0f, 0f, 1f, 0f, .5f, 1f, .5f, .4f), intArrayOf(0, 1, 3, 1, 2, 3, 2, 0, 3))
+        val resource = ScaffoldMeshContext.capture(listOf(ScaffoldMeshContext.Material("dense", "art", raw,
+            ScaffoldMesh.Geometry.Zero))).resources.getValue("source_meshes")
+        val upper = List(MouthFit.SAMPLES) { i -> -.2f * MouthFit.u(i) * (1f - MouthFit.u(i)) }
+        val lower = upper.map { -it }
+        val source = MouthSourceContext(MouthFit(.2f, .3f, 1f, 0f, .6f, upper, lower),
+            MouthOptions(capture = true, jaw = true), null)
+        val instance = RigModifierInstance("mouth", "mouth/fitted", 1, listOf(ModifierTarget("mesh", mesh.id)))
+        for (tag in listOf("FACE", "NOSE", "FACE_DETAIL")) {
+            val context = MouthFittedInputs(source, .9f, null, false, false, 20f,
+                mapOf(mesh.id to MouthFittedInputs.Layer(tag, null, "NONE", null, frame, frame, .5f, .7f,
+                    opaque = true, clipped = false, preset = true)), emptyList(),
+                sourceVertices = MouthFittedInputs.SourceVertices(resource,
+                    mapOf(mesh.id to MouthFittedInputs.SourceVertexTarget("dense", null))))
+            val result = MouthFittedAlgorithm(upgradeToSource = true)
+                .candidateChanges(input, instance, context.encode(), {}, lowerShapes = false).apply(input)
+            val changed = result.meshes.single()
+            assertEquals(geometry, changed.geometry)
+            assertEquals(offsets, changed.offsets)
+            assertEquals(authored, changed.shapes.single { it.parameter == "Authored" })
+            val jaw = changed.shapes.single { it.parameter == "ParamJawOpen" }
+            assertTrue(jaw.shapes.filterNotNull().any { shape -> shape.deltas.shared().any { it != 0f } })
+            assertTrue(changed.shapes.flatMap { it.shapes.filterNotNull() }.all {
+                it.deltas.size == geometry.positions.size && it.deltas.shared().all(Float::isFinite)
+            })
+        }
+    }
+
+    @Test
     fun originalScaffoldVerticesAreUsedOnlyForAnUneditedMeshInTheCapturedFrame() {
         val frame = Bounds(-60f, 0f, 40f, 100f)
         val aperture = Bounds(-1f, 0f, 1f, 100f)
@@ -126,6 +174,13 @@ class MouthFittedAlgorithmTest {
             result.deformers.isNotEmpty() || open.offsets!!.axes.any { it.parameter == "ParamAngleX" })
         assertEquals(listOf(0f, MouthRig.SWAP, 1f), closed.channels.getValue(Channel.OPACITY).axes.single().keys.toArray().toList())
         assertEquals(meshes.last(), result.meshes.single { it.id == "untouched" })
+
+        val hiddenInput = input.copy(meshes = input.meshes.map {
+            if (it.id == "teeth") it.copy(opacity = 0f) else it
+        })
+        val hiddenResult = algorithm.evaluate(hiddenInput, instance, context.encode()) {}
+        val hiddenTeeth = hiddenResult.meshes.single { it.id == "teeth" }
+        assertTrue(Channel.OPACITY !in hiddenTeeth.channels, "Zero-opacity layers must not be resurrected by opacity channels")
     }
 
     private fun packagedChanges(packageDirectory: Path, input: RigIR, instance: RigModifierInstance,
