@@ -110,10 +110,10 @@ class MouthOutlineAlgorithm : ReadingModifierAlgorithmPlugin {
         }
         val geometry = if (mouth == null) legacy.ribbonGrid(stroke, target.frame, form, open, checkpoint)
         else {
-            val motion = MouthOutlineFittedMotion(columns, side, thickness, target.frame)
-            motion.geometry(mouth.keyed(form, open) { pose ->
-                MouthOutlineFittedMotion.PathPose(motion.sourcePath.map { (x, y) -> mouth.point(x, y, pose) })
-            }, checkpoint)
+            val grid = mouth.keyed(form, open) { pose ->
+                stroke.vertexDelta(target.frame, positions) { x, y -> mouth.strokePoint(side == 0, x, y, pose) }
+            }
+            KeyformGrid(grid.axes, grid.cells.map { cell -> KeyformCell(cell.coordinate, MeshDeltaForm(cell.form)) })
         }
         val name = if (side == 0) target.upperName else target.lowerName
         val id = instance.outputId("mouth-lip:${expected.id}:$side")
@@ -121,7 +121,7 @@ class MouthOutlineAlgorithm : ReadingModifierAlgorithmPlugin {
             geometryGrid = geometry, blendMode = BlendMode.Normal, texturePage = 0, atlasTileId = null,
             textureSourceId = null, drawOrder = (owner.drawOrder + 1f).coerceAtMost(1000f), blendShapes = emptyList())
         val mouthShapes = mouth?.shapes({ pose ->
-            stroke.delta(target.frame, positions) { x, y -> mouth.point(x, y, pose) }
+            stroke.vertexDelta(target.frame, positions) { x, y -> mouth.strokePoint(side == 0, x, y, pose) }
         }, visible = { if (it) 1f else Float.NaN }).orEmpty()
         val frame = target.frame
         val headShapes = turn?.shapes(stroke.positions(), Bounds(frame.left, frame.top, frame.right, frame.bottom),

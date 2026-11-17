@@ -1457,6 +1457,14 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		return (x + dx) to (y + dy)
 	}
 
+	/** Maps a point on the upper or lower lip ribbon through the fitted stroke and shared corner frame. */
+	fun strokePoint(upper: Boolean, x: Float, y: Float, pose: Pose): Pair<Float, Float> {
+		val (u, v) = fit.toMouth(x, y)
+		val (du, dv) = strokeMove(upper, u, v, pose)
+		val (dx, dy) = fit.canvasDelta(du, dv)
+		return (x + dx) to (y + dy)
+	}
+
 	/**
 	 * A drawn closed mouth's grid: it bends with the form - corners up into a smile, down into a pout - narrowing or
 	 * widening about its middle. It shows only while the mouth is shut.

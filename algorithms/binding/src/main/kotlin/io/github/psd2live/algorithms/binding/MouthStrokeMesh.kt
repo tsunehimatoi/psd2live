@@ -37,7 +37,7 @@ object MouthStrokeMesh {
             val normalY = if (length <= EPSILON) outgoing.first else ny / length
             // Round corner patches cover sharp turns and reversals without a projecting miter.
             val projection = if (i in roundJoins) 1f else
-                (normalX * -incoming.second + normalY * incoming.first).coerceAtLeast(if (roundJoins.isEmpty()) 0.25f else 0.9f)
+                (normalX * -incoming.second + normalY * incoming.first).coerceAtLeast(if (roundJoins.isEmpty()) 0.65f else 0.9f)
             val offsetX = normalX * radius / projection
             val offsetY = normalY * radius / projection
             result[i * 4] = p.first - offsetX

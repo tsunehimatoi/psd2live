@@ -288,7 +288,7 @@ internal fun mouthOutlineRibbonUpdates(
         val restPositions = stroke.parentPositions(frame)
         if (geometry.positions.size != restPositions.size) return@mapNotNull null
         val shapes = mouth.shapes({ pose ->
-            stroke.delta(frame, restPositions) { x, y -> mouth.point(x, y, pose) }
+            stroke.vertexDelta(frame, restPositions) { x, y -> mouth.strokePoint(side == 0, x, y, pose) }
         }, visible = { if (it) 1f else Float.NaN }).filter { it.parameterId in parameterIds }
         if (shapes.isEmpty()) return@mapNotNull null
         val model = PuppetIr.toPuppet(RigIR(input.canvas, live, meshes = listOf(mesh)))

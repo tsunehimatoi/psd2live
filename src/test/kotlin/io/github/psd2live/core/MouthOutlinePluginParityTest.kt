@@ -213,5 +213,15 @@ class MouthOutlinePluginParityTest {
                 a.indices.any { kotlin.math.abs(a[it] - b[it]) > .1f }
             }, "Outline ribbons must follow $parameter")
         }
+        val cavity = model.rig.puppet.drawables.single { it.id.raw == "ArtMeshMouth" }
+        val closed = evaluator.evaluate(model.rig.puppet, mapOf(org.umamo.runtime.model.ParameterId("ParamMouthOpenY") to 0f))
+        val cavityPos = closed.worldPositions.getValue(cavity.id)
+        val cavityYs = (1 until cavityPos.size step 2).map { cavityPos[it] }
+        val ribbonYs = ribbons.flatMap { r ->
+            val p = closed.worldPositions.getValue(r.id)
+            (1 until p.size step 2).map { p[it] }
+        }
+        assertTrue(cavityYs.min() >= ribbonYs.min() - .5f && cavityYs.max() <= ribbonYs.max() + .5f,
+            "Closed cavity must stay within the closed outline: cavity=${cavityYs.min()}..${cavityYs.max()}, outline=${ribbonYs.min()}..${ribbonYs.max()}")
     }
 }

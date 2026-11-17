@@ -33,6 +33,23 @@ class MouthOutlineStroke(columns: List<MouthColumn>, side: Int, thickness: Float
         return FloatArray(posed.size) { posed[it] - restPositions[it] }
     }
 
+    /** Deforms each rest ribbon vertex directly, preserving stroke thickness and shared corners. */
+    fun vertexDelta(
+        frame: ModifierSourceBounds,
+        restPositions: FloatArray,
+        transformVertex: (Float, Float) -> Pair<Float, Float>,
+    ): FloatArray {
+        val raw = positions()
+        require(raw.size == restPositions.size)
+        val posed = FloatArray(raw.size)
+        for (i in raw.indices step 2) {
+            val (x, y) = transformVertex(raw[i], raw[i + 1])
+            posed[i] = normalize(x, frame.left, frame.right) - restPositions[i]
+            posed[i + 1] = normalize(y, frame.top, frame.bottom) - restPositions[i + 1]
+        }
+        return posed
+    }
+
     /** The atlas packer later rebinds these local pixel coordinates to the generated tile. */
     fun texturePixels(art: MouthOutlineRaster.Result, toCanvas: ModifierSourceTransform): FloatArray =
         positions().also { points ->

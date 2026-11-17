@@ -4358,15 +4358,14 @@ object RigBuilder {
             uvs[i] = localX
             uvs[i + 1] = localY
         }
-        // A fitted mouth carries the ribbon's path with its lips; the stroke is laid along it again at every key.
+        // A fitted mouth carries the ribbon's vertices directly along the lip stroke and shared corner frame.
+        val bounds = io.github.psd2live.core.modifier.ModifierSourceBounds(frame.left, frame.top, frame.right, frame.bottom)
+        val stroke = io.github.psd2live.algorithms.binding.MouthOutlineStroke(columns, side, config.mouthThickness)
         val geometry = if (rig != null) {
-            val motion = io.github.psd2live.algorithms.binding.MouthOutlineFittedMotion(columns, side, config.mouthThickness,
-                io.github.psd2live.core.modifier.ModifierSourceBounds(frame.left, frame.top, frame.right, frame.bottom))
-            val samples = rig.keyed(StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN) { pose ->
-                io.github.psd2live.algorithms.binding.MouthOutlineFittedMotion.PathPose(
-                    motion.sourcePath.map { (x, y) -> rig.point(x, y, pose) })
+            val grid = rig.keyed(StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN) { pose ->
+                stroke.vertexDelta(bounds, positions) { x, y -> rig.strokePoint(side == 0, x, y, pose) }
             }
-            motion.geometry(samples)
+            KeyformGrid(grid.axes, grid.cells.map { cell -> KeyformCell(cell.coordinate, MeshDeltaForm(cell.form)) })
         } else {
             val curve = if (config.mouthShape == "custom") config.mouthCurve else MouthCurve.preset(config.mouthShape)
             val tuning = config.rigTuning
@@ -4375,9 +4374,7 @@ object RigBuilder {
                 curve.points.map { it.x to it.y },
                 io.github.psd2live.algorithms.binding.MouthOutlineMotion.Tuning(tuning.mouthClosedNarrow,
                     tuning.mouthFormWiden, tuning.mouthSeam, tuning.mouthSmileBase, tuning.mouthSmile),
-            ).ribbonGrid(io.github.psd2live.algorithms.binding.MouthOutlineStroke(columns, side, config.mouthThickness),
-                io.github.psd2live.core.modifier.ModifierSourceBounds(frame.left, frame.top, frame.right, frame.bottom),
-                StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN)
+            ).ribbonGrid(stroke, bounds, StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN)
         }
         val indices = MouthStrokeMesh.indices(path.size, joins)
         val ribbon = owner.copy(
@@ -4394,8 +4391,7 @@ object RigBuilder {
         )
         // The mouth's shapes, laid along the ribbon's own path; the owner's are for its own mesh.
         val mouthShapes = rig?.shapes({ pose ->
-            val target = normalized(MouthStrokeMesh.positions(path.map { p -> rig.point(p.first, p.second, pose) }, radius, joins))
-            FloatArray(positions.size) { target[it] - positions[it] }
+            stroke.vertexDelta(bounds, positions) { x, y -> rig.strokePoint(side == 0, x, y, pose) }
         }, visible = { opens -> if (opens) 1f else Float.NaN }).orEmpty()
         val lipDrawable = ribbon.copy(blendShapes = neutralized(mouthShapes + headTurnShapes(layer, rawPositions, frame,
             turn.takeIf { MouthOutlineOwner.headOnMesh(owner.parentDeformerId?.raw) }), ribbon))

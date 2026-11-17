@@ -35,7 +35,11 @@ internal object RigFittedMouthModuleSource {
             }
         }, moves = corrections.moves, eyeParts = corrections.eyeParts)
         return source.sourceConfig().copy(recipe = recipe, rigTuning = state.tuning,
-            mouthOutlineEnabled = state.byType.containsKey(RigModules.MOUTH_OUTLINE.id),
+            mouthOutlineEnabled = state.byType.containsKey(RigModules.MOUTH_OUTLINE.id) ||
+                (MouthLipLayers.needsOutline(source.analysis.layers) && source.stack.instances.any {
+                    it.enabled && (it.type == RigModules.MOUTH_OUTLINE.id ||
+                        (it.type == "mouth" && ModifierPartConfig.enabled(it.config, "outline")))
+                }),
             headTurnStrength = state.headStrength,
             bodyStrength = state.bodyStrength,
             featureDisplacementEnabled = scaffold.config["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
