@@ -26,7 +26,7 @@ internal object WorkspaceModifierSimulation {
     }
 
     fun prepare(document: WorkspaceDocument, stack: RigModifierStack, work: WorkspaceRasterWork,
-                allowRebake: Boolean = true, validatedPrefix: Int = 0, isolateFailures: Boolean = false,
+                allowRebake: Boolean = true, validatedPrefix: Int = 0, isolateFailures: Boolean = true,
                 pipeline: PSD2LivePipeline = PSD2LivePipeline().apply { deferRuntimeBundles = true }, evaluated: RigPreviewModel? = null): RigModifierStack {
         require(validatedPrefix in 0..stack.instances.size)
         pipeline.reuseModifierInputs(evaluated)

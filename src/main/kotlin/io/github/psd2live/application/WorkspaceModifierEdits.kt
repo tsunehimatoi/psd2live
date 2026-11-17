@@ -8,6 +8,8 @@ import kotlinx.serialization.json.*
 
 /** Pure candidates shared by GUI commands, MCP jobs and atomic document batches. */
 internal object WorkspaceModifierEdits {
+    // Live plugin failures remain stack diagnostics, not transaction failures. Only an edit that
+    // invalidates already-applied content must reject the candidate to preserve authored work.
     fun validateAppliedContent(before: RigPreviewModel, after: RigPreviewModel) {
         val stack = after.config.rigEdits.modifierStack?.let(RigModifierStack::fromJson) ?: return
         val previous = before.modifierEvaluation?.entries.orEmpty().associateBy { it.instance.id }
@@ -17,20 +19,6 @@ internal object WorkspaceModifierEdits {
                     it.error == entry.error && it.missingDependencies == entry.missingDependencies } != true
         }
         require(invalid == null) { "Applied content ${invalid?.instance?.id} cannot preserve this upstream edit: ${invalid?.error ?: invalid?.missingDependencies}" }
-    }
-
-    fun validateRegeneration(before: RigPreviewModel, after: RigPreviewModel, initializing: Boolean = false) {
-        validateAppliedContent(before, after)
-        val previous = before.modifierEvaluation?.entries.orEmpty().associateBy { it.instance.id }
-        val isolated = if (initializing) after.config.rigEdits.modifierStack
-            ?.let(RigModifierStack::fromJson)?.initializationFailures.orEmpty().keys else emptySet()
-        val failed = after.modifierEvaluation?.entries.orEmpty().firstOrNull { entry ->
-            entry.status == ModifierStatus.FAILED && entry.instance.id !in isolated &&
-                previous[entry.instance.id]?.let {
-                    it.status == entry.status && it.instance == entry.instance && it.error == entry.error
-                } != true
-        }
-        require(failed == null) { "${failed?.instance?.id}: ${failed?.error}" }
     }
 
     val supported = setOf("modifier_add", "modifier_add_group", "modifier_update", "modifier_enable",

@@ -177,23 +177,49 @@ class WorkspaceModifierCommandsTest {
         assertEquals(RigIrCompiler.compile(f.now.model), RigIrCompiler.compile(f.builder.build(f.now.document)))
     }
 
-    @Test fun ordinaryCandidateRejectsNewModifierFailureWithoutPublishingPartialResults(): Unit = runBlocking {
+    @Test fun ordinaryCandidateKeepsIndependentOutputsWhenOneModifierFails(): Unit = runBlocking {
         val f = fixture()
         f.edit("modifier_add", add(f, "motion", MotionClips.toJson(motion()), "motion-owner"))
+        f.edit("modifier_add", add(f, "physics", physics().toJson(), "physics-owner"))
         val before = f.now
         val broken = motion().copy(curves = listOf(MotionCurve("MissingParameter", listOf(MotionKey(0f, 0f)))))
-        val invalid = before.document.copy(rigEdits = before.document.rigEdits.copy(
+        val candidate = before.document.copy(rigEdits = before.document.rigEdits.copy(
             modifierStack = stack(f).update("motion-owner") { it.copy(config = MotionClips.toJson(broken)) }.toJson()))
-        // Preview building isolates algorithm failures for diagnostics; an authoring transaction must reject them.
-        val preview = f.builder.build(invalid)
-        assertEquals(ModifierStatus.FAILED, preview.modifierEvaluation!!.entries.single().status)
-        val failure = assertFailsWith<IllegalArgumentException> {
-            f.commands.executeCandidate(before.projectId, before.state, "Ordinary edit", MutationAuthor.USER,
-                mutation = { _, _ -> invalid })
-        }
-        assertTrue(failure.message.orEmpty().contains("Motion parameters are missing"))
-        assertEquals(before, f.now)
+        f.commands.executeCandidate(before.projectId, before.state, "Ordinary edit", MutationAuthor.USER,
+            mutation = { _, _ -> candidate })
+        val after = f.now
+        assertEquals(listOf(ModifierStatus.FAILED, ModifierStatus.ACTIVE), after.model.modifierEvaluation!!.entries.map { it.status })
+        assertTrue(after.model.modifierEvaluation!!.entries.first().error.orEmpty().contains("Motion parameters are missing"))
+        assertEquals(RigIrCompiler.compile(before.model).physics, RigIrCompiler.compile(after.model).physics)
+        assertNotEquals(before.historyHead, after.historyHead)
+        assertEquals(RigIrCompiler.compile(after.model), RigIrCompiler.compile(f.builder.build(after.document)))
+        f.runtime.checkout(after.projectId, after.state, before.historyHead)
         assertEquals(RigIrCompiler.compile(before.model), RigIrCompiler.compile(f.now.model))
+        f.runtime.checkout(after.projectId, f.now.state, after.historyHead)
+        val store = WorkspaceStore(temp.resolve("isolated-modifier"))
+        store.persistHistory("isolated", f.runtime.history())
+        val reopened = WorkspaceStore(store.root).loadHistory("isolated")!!.head().snapshot
+        assertEquals(RigIrCompiler.compile(after.model), RigIrCompiler.compile(f.builder.build(reopened)))
+        f.edit("modifier_update", buildJsonObject {
+            put("id", "motion-owner"); put("type", "motion"); put("config", MotionClips.toJson(motion()))
+        })
+        assertTrue(f.now.model.modifierEvaluation!!.entries.all { it.status == ModifierStatus.ACTIVE })
+    }
+
+    @Test fun batchKeepsFailedPluginAndIndependentPluginInOneHistoryStep(): Unit = runBlocking {
+        val f = fixture()
+        val before = f.now
+        val broken = motion().copy(curves = listOf(MotionCurve("MissingParameter", listOf(MotionKey(0f, 0f)))))
+        f.commands.execute(before.projectId, before.state, "Add independent plugins", listOf(
+            WorkspaceDocumentOperation("modifier_add", add(f, "motion", MotionClips.toJson(broken), "broken")),
+            WorkspaceDocumentOperation("modifier_add", add(f, "physics", physics().toJson(), "good")),
+        ), MutationAuthor.USER)
+        assertEquals(listOf(ModifierStatus.FAILED, ModifierStatus.ACTIVE), f.now.model.modifierEvaluation!!.entries.map { it.status })
+        assertEquals(1, RigIrCompiler.compile(f.now.model).physics.groups.size)
+        assertEquals(before.historyHead, f.runtime.history().selections.single { it.node.id == f.now.historyHead }.node.parentId)
+        f.edit("modifier_enable", buildJsonObject { put("id", "broken"); put("enabled", true) })
+        assertEquals(1L, stack(f).retryRevisions["broken"])
+        assertEquals(ModifierStatus.ACTIVE, f.now.model.modifierEvaluation!!.entries.last().status)
     }
 
     @Test fun physicsImportEditsAppliedOutputAndDisablesConflictingAppliedGroups(): Unit = runBlocking {
@@ -736,7 +762,7 @@ class WorkspaceModifierCommandsTest {
         assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
     }
 
-    @Test fun conflictingPluginOutputsAreRejectedInPreviewAndCommit(): Unit = runBlocking<Unit> {
+    @Test fun conflictingPluginOutputsStayIsolatedInPreviewAndCommit(): Unit = runBlocking<Unit> {
         val f = fixture()
         f.edit("modifier_add", add(f, "physics", physics().toJson(), "claimed"))
         val before = f.now
@@ -747,18 +773,16 @@ class WorkspaceModifierCommandsTest {
         val operation = WorkspaceDocumentOperation("modifier_add_group", buildJsonObject {
             put("group", plan.getValue("group")); put("entries", plan.getValue("entries"))
         })
-        val previewFailure = assertFailsWith<WorkspaceBatchEditException> {
-            f.commands.previewRegeneration(before.projectId, before.state, listOf(operation))
-        }
-        assertTrue(previewFailure.message.orEmpty().contains("Multiple physics groups"))
+        f.commands.previewRegeneration(before.projectId, before.state, listOf(operation))
         assertEquals(before, f.now)
-        assertFailsWith<WorkspaceBatchEditException> {
-            f.commands.execute(before.projectId, before.state, "Conflict", listOf(operation), MutationAuthor.USER)
-        }
-        assertEquals(before, f.now)
+        f.commands.execute(before.projectId, before.state, "Conflict", listOf(operation), MutationAuthor.USER)
+        assertEquals(listOf(ModifierStatus.ACTIVE, ModifierStatus.FAILED), f.now.model.modifierEvaluation!!.entries.map { it.status })
+        assertTrue(f.now.model.modifierEvaluation!!.entries.last().error.orEmpty().contains("Multiple physics groups"))
+        assertEquals(RigIrCompiler.compile(before.model), RigIrCompiler.compile(f.now.model))
+        val isolated = f.now
         val malformed = JsonObject(request + ("config" to buildJsonObject { put("id", "invalid") }))
         assertFails { validateOperationSchema(malformed, WorkspaceModifierSchemas.planRequest) }
-        assertEquals(before, f.now)
+        assertEquals(isolated, f.now)
     }
 
     @Test fun sourcePlansContainTheCompleteNativePrerequisites(): Unit = runBlocking<Unit> {
@@ -1708,8 +1732,11 @@ class WorkspaceModifierCommandsTest {
         f.edit("modifier_update", buildJsonObject { put("id", "cloth"); put("type", "simulation"); put("config", baked.copy(autoBake = false).toJson()) })
         val locked = f.now
         val upstream = JsonObject(add(f, "motion", MotionClips.toJson(motion()), "before") + ("index" to JsonPrimitive(0)))
-        assertFails { f.edit("modifier_add", upstream) }
-        assertEquals(locked, f.now, "an outdated disabled-auto-bake must reject the entire candidate")
+        f.edit("modifier_add", upstream)
+        assertEquals(listOf(ModifierStatus.ACTIVE, ModifierStatus.FAILED), f.now.model.modifierEvaluation!!.entries.map { it.status })
+        assertFalse(stack(f).instances.single { it.id == "cloth" }.enabled)
+        assertTrue(stack(f).initializationFailures.getValue("cloth").contains("valid bake"))
+        f.runtime.checkout(f.now.projectId, f.now.state, locked.historyHead)
         f.edit("modifier_update", buildJsonObject { put("id", "cloth"); put("type", "simulation"); put("config", baked.toJson()) })
         assertEquals(unchanged.document.rigEdits.modifierStack, f.now.document.rigEdits.modifierStack)
         val expected = RigIrCompiler.compile(f.now.model)
@@ -1790,10 +1817,10 @@ class WorkspaceModifierCommandsTest {
         val second = ModifierTarget("mesh", f.now.model.rig.puppet.drawables.last().id.raw)
         f.edit("modifier_add", add(f, RigSourceModifiers.SCAFFOLD, JsonObject(emptyMap()), "first_structure"))
         val first = f.now
-        assertFailsWith<WorkspaceBatchEditException> {
-            f.edit("modifier_add", add(f, RigSourceModifiers.SCAFFOLD, JsonObject(emptyMap()), "conflicting_structure"))
-        }
-        assertEquals(first.state, f.now.state)
+        f.edit("modifier_add", add(f, RigSourceModifiers.SCAFFOLD, JsonObject(emptyMap()), "conflicting_structure"))
+        assertEquals(ModifierStatus.FAILED, f.now.model.modifierEvaluation!!.entries.last().status)
+        assertEquals(RigIrCompiler.compile(first.model), RigIrCompiler.compile(f.now.model))
+        f.edit("modifier_remove", id("conflicting_structure"))
         f.edit("modifier_add", add(f, RigSourceModifiers.SCAFFOLD, JsonObject(emptyMap()), "second_structure", second))
         val swing = RigSwingEdit.single("template", "Swing", SwingKind.LATERAL, listOf(f.target.id), listOf("P"))
         f.edit("modifier_add", add(f, "swing", swing.toJson(), "sway"))
@@ -1871,10 +1898,13 @@ class WorkspaceModifierCommandsTest {
         validateOperationSchema(WorkspaceModifierQueries.describe(f.now), WorkspaceModifierSchemas.stack, "result")
         assertEquals(definitions.size, row.getValue("contributions").jsonArray.count { it.jsonObject["change"]?.jsonPrimitive?.content == "reused" })
         val before = f.now
-        assertFailsWith<WorkspaceBatchEditException> { f.edit("modifier_add", add(f, RigBodyModifier.TYPE, body("first_structure"), "conflict")) }
-        assertEquals(before.state, f.now.state)
+        f.edit("modifier_add", add(f, RigBodyModifier.TYPE, body("first_structure"), "conflict"))
+        assertEquals(ModifierStatus.FAILED, f.now.model.modifierEvaluation!!.entries.last().status)
+        assertEquals(RigIrCompiler.compile(before.model), RigIrCompiler.compile(f.now.model))
+        f.edit("modifier_remove", id("conflict"))
+        val repaired = f.now
         assertFailsWith<WorkspaceBatchEditException> { f.edit("modifier_move", buildJsonObject { put("id", "first_body"); put("index", 0) }) }
-        assertEquals(before.state, f.now.state)
+        assertEquals(repaired.state, f.now.state)
         f.edit("modifier_update", buildJsonObject { put("id", "first_body"); put("type", RigBodyModifier.TYPE); put("config", body("first_structure", 1f)) })
         assertNotEquals(RigIrCompiler.compile(before.model), RigIrCompiler.compile(f.now.model))
     }
