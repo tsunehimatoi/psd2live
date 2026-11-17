@@ -8,6 +8,21 @@ import kotlinx.serialization.json.*
 import kotlin.test.*
 
 class WorkspacePartInitializationTest {
+    @Test fun initializationAcceptsLocalizedCreatureAndOutfitContexts(): Unit = kotlinx.coroutines.runBlocking {
+        val artwork = Characters.withPlaceholders()
+        val empty = artwork.copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val builder = WorkspacePreviewBuilder()
+        val document = WorkspaceModifierEdits.apply(
+            WorkspaceDocumentOperation("modifier_initialize", buildJsonObject { put("modifiers", "recommended") }),
+            empty, builder.build(empty),
+        )
+        val model = builder.build(document)
+        val stack = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack))
+        val creature = stack.instances.single { it.type == "outfit.creature" }
+        assertTrue(model.rig.puppet.parameters.any { creature.localOutputName(it.id.raw)?.startsWith("chain-parameter:") == true })
+        assertEquals(RigIrCompiler.compile(model), RigIrCompiler.compile(builder.build(document)))
+    }
+
     @Test fun actualMouthPresetSupportsStrictQueriesAndConfigurationRoundTrips() {
         val artwork = Characters.mouthed()
         val empty = artwork.copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))

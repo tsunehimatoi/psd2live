@@ -38,7 +38,8 @@ data class RibbonsInputs(val measurements: Measurements, val raw: ModifierAlgori
         }
 
         fun decode(context: ModifierAlgorithmContext): Measurements {
-            require(context.values.keys == setOf("schema", "measurements") && context.values["schema"] == JsonPrimitive("ribbons/1") &&
+            ChainLabels.validate(context)
+            require(context.values.keys - "chain_labels" == setOf("schema", "measurements") && context.values["schema"] == JsonPrimitive("ribbons/1") &&
                 context.resources.keys.all { it == "source_meshes" }) { "Invalid ribbons input" }
             val data = Json.decodeFromJsonElement(Measurements.serializer(), context.values.getValue("measurements"))
             require(data.layers.size <= 20_000 && data.layers.map { it.id }.toSet().size == data.layers.size)

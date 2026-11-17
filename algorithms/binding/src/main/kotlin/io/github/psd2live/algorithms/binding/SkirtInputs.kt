@@ -36,7 +36,8 @@ data class SkirtInputs(val measurements: Measurements, val raw: ModifierAlgorith
         }
 
         fun decode(context: ModifierAlgorithmContext): Measurements {
-            require(context.values.keys == setOf("schema", "measurements") && context.values["schema"] == JsonPrimitive("skirt/1") &&
+            ChainLabels.validate(context)
+            require(context.values.keys - "chain_labels" == setOf("schema", "measurements") && context.values["schema"] == JsonPrimitive("skirt/1") &&
                 context.resources.keys.all { it == "source_meshes" }) { "Invalid skirt input" }
             val data = Json.decodeFromJsonElement(Measurements.serializer(), context.values.getValue("measurements"))
             bounds(data.body)
