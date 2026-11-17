@@ -54,6 +54,7 @@ object LayerClassifier {
 	)
 	private val variantSuffix = Regex("(?:[-_.\\s]+|(?<=[\\p{IsHan}\\p{IsHiragana}\\p{IsKatakana}\\p{IsHangul}a-zA-Z]))(\\d+)$")
 	private val copySuffix = Regex("\\s*(?:copy|のコピー|的副本|副本|복사)\\s*\\d*$", RegexOption.IGNORE_CASE)
+	private val closedDescriptor = Regex("闭合|閉合|合拢|合攏|(?<![a-z])closed(?![a-z])")
 
 	fun classify(name: String): LayerSemantic {
 		var normalized = Normalizer.normalize(name, Normalizer.Form.NFKC)
@@ -94,7 +95,19 @@ object LayerClassifier {
 			}
 			if (!changed) break
 		}
-		val tag = aliases[normalized] ?: prefixMatch(normalized) ?: SemanticTag.UNKNOWN
+		val named = aliases[normalized] ?: prefixMatch(normalized) ?: SemanticTag.UNKNOWN
+		val withoutClosed = normalized.replace(closedDescriptor, " ").trim()
+		val unqualified = aliases[withoutClosed] ?: prefixMatch(withoutClosed)
+		val closedTag = if (withoutClosed != normalized && unqualified in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN))
+			SemanticTag.MOUTH_CLOSE else named
+		// An opening-state prefix describes the pose, not the identity of a named tooth or tongue.
+		val component = if (closedTag in setOf(SemanticTag.MOUTH_OPEN, SemanticTag.MOUTH_CLOSE)) aliasesByLength
+			.asSequence().filter { it.value in setOf(SemanticTag.MOUTH_OPEN, SemanticTag.MOUTH_CLOSE) && normalized.startsWith(it.key) }
+			.mapNotNull { (alias, _) -> normalized.removePrefix(alias).trim(' ', '_', '-').let {
+				aliases[it] ?: prefixMatch(it)
+			} }.firstOrNull { it in setOf(SemanticTag.TONGUE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B) }
+		else null
+		val tag = component ?: closedTag
 		val confidence = when {
 			aliases.containsKey(normalized) -> 1f
 			tag != SemanticTag.UNKNOWN -> 0.85f

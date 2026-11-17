@@ -180,6 +180,50 @@ class MouthLayersTest {
 			bounds.centerX, bounds.centerY, (x1 - x0) * (y1 - y0))
 	}
 
+	@Test fun closedOverlayLinesUseTheOpenCavityWithoutLosingLayeredRoles() {
+		val opening = drawn("interior", 10, 20, 54, 40)
+		val upper = drawn("upper", 10, 29, 54, 31, PartRole.UPPER_LINE)
+		val lower = drawn("lower", 10, 29, 54, 31, PartRole.LOWER_LINE)
+		val layers = listOf(opening, upper, lower)
+		val result = MouthFitting.fit(layers, 1f to 0f) { x, y -> x to y }
+		val fit = assertNotNull(result.fit, result.reason)
+		val frame = assertNotNull(fit.layered)
+		assertTrue(!frame.hasLines, "Coincident overlay strokes cannot define the open aperture")
+		val mid = frame.upperLocal65.size / 4
+		assertTrue(frame.lowerLocal65[mid * 2 + 1] - frame.upperLocal65[mid * 2 + 1] > .2f)
+		assertEquals(layers.toSet(), result.layers.toSet())
+		val rig = MouthRig(fit, MouthOptions())
+		val mouth = FittedMouth(result, rig, layers = layers)
+		assertEquals(Follow.UPPER_LINE, mouth.follow(upper))
+		assertEquals(Follow.LOWER_LINE, mouth.follow(lower))
+		val open = rig.edges(rig.pose(0f, 1f), .5f)
+		val closed = rig.edges(rig.pose(0f, 0f), .5f)
+		assertTrue(open.second - open.first > .2f)
+		assertTrue(closed.second - closed.first < (open.second - open.first) * .25f)
+	}
+
+	@Test fun aClosedCavityIsStillReportedAsClosed() {
+		val layers = listOf(drawn("interior", 10, 29, 54, 31),
+			drawn("upper", 10, 29, 54, 31, PartRole.UPPER_LINE),
+			drawn("lower", 10, 29, 54, 31, PartRole.LOWER_LINE))
+		val result = MouthFitting.fit(layers, 1f to 0f) { x, y -> x to y }
+		assertEquals(null, result.fit)
+		assertEquals("the mouth is drawn closed", result.reason)
+	}
+
+	@Test fun aThinResolvedCavityDoesNotNeedAStandardOpeningRatio() {
+		val layer = drawn("interior", 10, 28, 54, 32)
+		for (scale in listOf(.5f, 1f, 3f)) {
+			val fit = assertNotNull(MouthFitting.fit(listOf(layer), 1f to 0f) { x, y -> x * scale to y * scale }.fit)
+			assertTrue(fit.opening < .12f)
+			val rig = MouthRig(fit, MouthOptions())
+			val closed = rig.edges(rig.pose(0f, 0f), .5f)
+			val opened = rig.edges(rig.pose(0f, 1f), .5f)
+			assertTrue(opened.second - opened.first > closed.second - closed.first)
+			assertTrue(listOf(closed.first, closed.second, opened.first, opened.second).all(Float::isFinite))
+		}
+	}
+
 	@Test fun aBaseClippedOntoTheOpeningIsNotItsShapeAndHardlyMoves() {
 		val opening = drawn("opening", 10, 20, 54, 40)
 		val upper = drawn("upper line", 10, 19, 54, 21, PartRole.UPPER_LINE); val lower = drawn("lower line", 10, 39, 54, 41, PartRole.LOWER_LINE)
@@ -234,6 +278,42 @@ class MouthLayersTest {
 			assertEquals(savedCopies, now.model.rig.copiedDrawableIds)
 			assertTrue(companionId in savedCopies)
 		}
+	}
+
+	@Test fun layeredTonguePluginEmitsAWorkingCompanion() = kotlinx.coroutines.runBlocking {
+		val layers = listOf(
+			(drawn("upper", 10, 29, 54, 31).source as WorkspaceSourceLayer).copy(name = "上嘴线", order = 0),
+			(drawn("lower", 10, 29, 54, 31).source as WorkspaceSourceLayer).copy(name = "下嘴线", order = 1),
+			(drawn("tongue", 18, 31, 46, 47).source as WorkspaceSourceLayer).copy(name = "舌", order = 2),
+			(drawn("opening", 10, 20, 54, 40).source as WorkspaceSourceLayer).copy(name = "interior", groupPath = "嘴", order = 3),
+		)
+		val rearTongue = (layers.single { it.id.raw == "tongue" } as WorkspaceSourceLayer).copy(
+			id = LayerId("tongue-rear"), order = 3)
+		val source = io.github.psd2live.project.WorkspaceSourceArt(64, 64,
+			layers.map { if (it.id.raw == "opening") (it as WorkspaceSourceLayer).copy(order = 4) else it } + rearTongue, emptyList())
+		val document = io.github.psd2live.project.WorkspaceDocument(source, emptyMap(), emptySet(), emptyMap(), emptyMap(),
+			RigEditOverlay(modifierStack = io.github.psd2live.core.modifier.RigModifierStack().toJson()),
+			settings = io.github.psd2live.project.WorkspaceSettingsCodec.encode(PipelineConfig(exportMoc3 = false,
+				recipe = io.github.psd2live.core.recipe.RigRecipe.Modern)))
+		val (_, preview) = io.github.psd2live.application.WorkspacePresetInitialization.prepare(document,
+			io.github.psd2live.application.WorkspaceRasterWork.Direct)
+		val entry = assertNotNull(preview.modifierEvaluation?.entries?.singleOrNull { it.instance.type in setOf("mouth.tongue", "mouth") })
+		assertEquals(io.github.psd2live.core.modifier.ModifierStatus.ACTIVE, entry.status)
+		val companion = preview.rig.puppet.drawables.single { it.textureSourceId != null && preview.rig.layerIdByDrawableId[it.id.raw] == "tongue" }
+		assertTrue(companion.maskedBy.isEmpty())
+		assertNotNull(companion.textureSourceId)
+		assertEquals(1, preview.rig.puppet.drawables.count { it.textureSourceId != null })
+		val interiorTongue = preview.rig.puppet.drawables.single { it.textureSourceId == null && preview.rig.layerIdByDrawableId[it.id.raw] == "tongue" }
+		val opening = preview.rig.puppet.drawables.single { preview.rig.layerIdByDrawableId[it.id.raw] == "opening" }
+		assertEquals(listOf(opening.id), interiorTongue.maskedBy, "The fitted plugin must retain the interior aperture")
+
+		assertTrue(companion.id.raw in preview.rig.copiedDrawableIds)
+		val evaluator = org.umamo.render.eval.CpuDeformationEvaluator()
+		val rest = evaluator.evaluate(preview.rig.puppet, emptyMap())
+		val extended = evaluator.evaluate(preview.rig.puppet, mapOf(MouthRig.TONGUE_OUT to 1f))
+		assertEquals(0f, rest.opacity.getValue(companion.id))
+		assertTrue(extended.opacity.getValue(companion.id) > 0f)
+		assertTrue(!rest.worldPositions.getValue(companion.id).contentEquals(extended.worldPositions.getValue(companion.id)))
 	}
 
 }

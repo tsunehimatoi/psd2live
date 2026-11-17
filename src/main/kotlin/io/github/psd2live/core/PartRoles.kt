@@ -24,6 +24,8 @@ enum class PartRole(val word: String, val tags: Set<SemanticTag>) {
 	UPPER_LIP("upperlip", setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)),
 	/** The lower lip with the skin about it. */
 	LOWER_LIP("lowerlip", setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)),
+	/** Separate neutral seam, excluded from the open cavity and drawing-swap binding. */
+	CLOSED_LINE("closedline", setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)),
 	/** The upper lip's edge line, drawn apart from the lip. */
 	UPPER_LINE("upperline", setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)),
 	/** The lower lip's edge line. */

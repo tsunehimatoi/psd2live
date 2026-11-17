@@ -29,7 +29,9 @@ internal object CliPresetPresentation {
         val face = CliFaceSourcePresentation.restoreSingleEyeForms(preview, brows, source.geometry, config)
         val hasLayeredTongue = preview.modifierEvaluation?.entries.orEmpty().any {
             it.status == ModifierStatus.ACTIVE && it.instance.type == "mouth.tongue" &&
-                BuiltinModifierPlugins.matches(it.instance)
+                BuiltinModifierPlugins.matches(it.instance) &&
+                it.contributions.none { contribution -> contribution.kind == "mesh" &&
+                    contribution.change == io.github.psd2live.core.modifier.ModifierChange.ADDED }
         }
         val tongues = if (hasLayeredTongue)
             face.copy(rig = RigBuilder.sourceTongueExport(face.rig, source.geometry, face.atlas, config))

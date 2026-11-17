@@ -55,7 +55,10 @@ object MouthFitting {
 	 * interior), in the head's [level] (in the rig's space; [toRig] carries canvas points there). A mouth drawn closed
 	 * - a line - has nothing to open from and is left to the legacy rig.
 	 */
-	fun fit(layers: List<ClassifiedLayer>, level: Pair<Float, Float>, toRig: (Float, Float) -> Pair<Float, Float>): Result {
+	fun fit(layers: List<ClassifiedLayer>, level: Pair<Float, Float>, toRig: (Float, Float) -> Pair<Float, Float>): Result =
+		fit(layers, level, toRig, preferLines = true)
+
+	private fun fit(layers: List<ClassifiedLayer>, level: Pair<Float, Float>, toRig: (Float, Float) -> Pair<Float, Float>, preferLines: Boolean): Result {
 		val lines = setOf(PartRole.UPPER_LINE, PartRole.LOWER_LINE)
 		val mouths = layers.filter { it.opaquePixels > 0 && !it.source.clipped && (it.semantic.role == null || it.semantic.role in lines) &&
 			it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && !io.github.psd2live.core.MouthLipLayer.isLipId(it.source.id.raw) }
@@ -63,7 +66,7 @@ object MouthFitting {
 			?: mouths.filter { it.semantic.role == null }.maxByOrNull { it.opaquePixels } ?: return Result(null, "no mouth", emptyList())
 		val own = mouths.filter { it === main || it.semantic.variant == main.semantic.variant && it.semantic.side == main.semantic.side &&
 			it.bounds.left < main.bounds.right && main.bounds.left < it.bounds.right && it.bounds.top < main.bounds.bottom && main.bounds.top < it.bounds.bottom }
-		val edges = own.filter { it.semantic.role in lines }.takeIf { drawn -> drawn.any { it.semantic.role == PartRole.UPPER_LINE } &&
+		val edges = own.filter { it.semantic.role in lines }.takeIf { drawn -> preferLines && drawn.any { it.semantic.role == PartRole.UPPER_LINE } &&
 			drawn.any { it.semantic.role == PartRole.LOWER_LINE } } ?: own
 		val points = ArrayList<Pair<Float, Float>>()
 		val upperLine = ArrayList<Pair<Float, Float>>(); val lowerLine = ArrayList<Pair<Float, Float>>()
@@ -130,9 +133,21 @@ object MouthFitting {
 			}
 		}
 		val baseFit = frame.copy(upper = line(tops), lower = line(bottoms))
-		if (baseFit.opening < 0.12f) return Result(null, "the mouth is drawn closed", own)
+		// Overlaid lip strokes can be closed even when a separate cavity is present.
+		if (edges !== own && baseFit.opening < .12f) return fit(layers, level, toRig, preferLines = false)
+		val art = main.source
+		val origin = toRig(art.bounds.left.toFloat(), art.bounds.top.toFloat())
+		val pixelX = toRig(art.bounds.left + art.bounds.width / art.raster.width.coerceAtLeast(1).toFloat(), art.bounds.top.toFloat())
+		val pixelY = toRig(art.bounds.left.toFloat(), art.bounds.top + art.bounds.height / art.raster.height.coerceAtLeast(1).toFloat())
+		val pixelSize = max(hypot(pixelX.first - origin.first, pixelX.second - origin.second),
+			hypot(pixelY.first - origin.first, pixelY.second - origin.second))
+		// A narrow but resolved cavity is still an opening. Judge the sampled gap in
+		// source pixels instead of requiring every mouth to open to 12% of its width.
+		if (baseFit.opening * baseFit.width <= 1.5f * pixelSize) {
+			return Result(null, "the mouth is drawn closed", own)
+		}
 		if (baseFit.opening > 1.6f) return Result(null, "the mouth is taller than it is wide", own)
-		val layeredFrame = buildLayeredFrame(main, layers, level, toRig)
+		val layeredFrame = buildLayeredFrame(main, layers, level, toRig, useLines = preferLines)
 		return Result(baseFit.copy(layered = layeredFrame), null, own)
 	}
 
@@ -141,6 +156,7 @@ object MouthFitting {
 		allLayers: List<ClassifiedLayer>,
 		level: Pair<Float, Float>,
 		toRig: (Float, Float) -> Pair<Float, Float>,
+		useLines: Boolean,
 	): LayeredMouthFrame? {
 		val related = allLayers.filter {
 			it.opaquePixels > 0 &&
@@ -154,9 +170,10 @@ object MouthFitting {
 		val upperLipLayers = related.filter { it.semantic.role == PartRole.UPPER_LIP }
 		val lowerLipLayers = related.filter { it.semantic.role == PartRole.LOWER_LIP }
 
-		val hasLines = upperLineLayer != null && lowerLineLayer != null
+		val hasLineLayers = upperLineLayer != null && lowerLineLayer != null
+		val hasLines = useLines && hasLineLayers
 		val hasLipSkin = upperLipLayers.isNotEmpty() && lowerLipLayers.isNotEmpty()
-		if (!hasLines && !hasLipSkin) return null
+		if (!hasLineLayers && !hasLipSkin) return null
 
 		val uDense = MouthThreeLayerModel.DEFAULT.uDense
 		val stations = uDense.size
@@ -183,23 +200,9 @@ object MouthFitting {
 		val bx = 0.5f * (upperWorld65[lastIdx] + lowerWorld65[lastIdx])
 		val by = 0.5f * (upperWorld65[lastIdx + 1] + lowerWorld65[lastIdx + 1])
 
-		val jointSpan = 4
-		for (i in 0..jointSpan) {
-			val t = i.toFloat() / jointSpan
-			val w = t * t * (3f - 2f * t)
-			val leftW = 1f - w
-			upperWorld65[i * 2] = leftW * ax + w * upperWorld65[i * 2]
-			upperWorld65[i * 2 + 1] = leftW * ay + w * upperWorld65[i * 2 + 1]
-			lowerWorld65[i * 2] = leftW * ax + w * lowerWorld65[i * 2]
-			lowerWorld65[i * 2 + 1] = leftW * ay + w * lowerWorld65[i * 2 + 1]
-
-			val ri = stations - 1 - i
-			val rLast = ri * 2
-			upperWorld65[rLast] = leftW * bx + w * upperWorld65[rLast]
-			upperWorld65[rLast + 1] = leftW * by + w * upperWorld65[rLast + 1]
-			lowerWorld65[rLast] = leftW * bx + w * lowerWorld65[rLast]
-			lowerWorld65[rLast + 1] = leftW * by + w * lowerWorld65[rLast + 1]
-		}
+		// Keep the measured source curves intact. Joining their endpoints here changes
+		// the deformation reference while the raster still contains the original tips.
+		// The transferred closed pose joins the lips; their drawn pose retains its overlap.
 
 		val frameWidth = hypot(bx - ax, by - ay).coerceAtLeast(1f)
 		val exX = (bx - ax) / frameWidth

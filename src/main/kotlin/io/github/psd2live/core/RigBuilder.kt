@@ -1342,13 +1342,10 @@ object RigBuilder {
                     val sameSide = mouthMasks.filter { classifiedByDrawable.getValue(it.id).semantic.side == semantic.side }
                     val fallback = mouthMasks.filter { classifiedByDrawable.getValue(it.id).semantic.side == Side.NONE }
                     val masks = exact.ifEmpty { sameSide.ifEmpty { fallback.ifEmpty { mouthMasks } } }
-                    val nearest = masks.minByOrNull { mask ->
-                        val bounds = classifiedByDrawable.getValue(mask.id).bounds
-                        val dx = bounds.centerX - layer.bounds.centerX
-                        val dy = bounds.centerY - layer.bounds.centerY
-                        dx * dx + dy * dy
+                    val aperture = io.github.psd2live.algorithms.binding.MouthMaskAssociation.select(layer.bounds, masks) {
+                        classifiedByDrawable.getValue(it.id).bounds
                     }
-                    drawable.copy(maskedBy = listOfNotNull(nearest?.id))
+                    drawable.copy(maskedBy = listOfNotNull(aperture?.id))
                 }
                 else -> drawable
             }
@@ -3470,7 +3467,11 @@ object RigBuilder {
 	                                  atlas: PackedAtlas, cache: PreviewMeshCache): MeshData {
 		val (parent, frame) = context.parentAndFrame(layer, config)
 		val space = context.headSpaceFor(layer, config)
-		val unitScale = MeshResolution.unitScale(config, context.analysis.source)
+		val documentUnit = MeshResolution.unitScale(config, context.analysis.source)
+		// Preserve local mouth detail on large canvases; the mesher floors spacing at six units.
+		val mouthWidth = context.fittedMouth(config)?.rig?.fit?.width
+		val unitScale = if (mouthWidth == null || layer.semantic.tag !in CharacterAnalyzer.MOUTH_TAGS || layer.source.id.raw in config.meshOverrides) documentUnit
+			else minOf(documentUnit, maxOf(1f, mouthWidth / (32f * 6f)))
 		val contour = config.mouthOutlineEnabled && layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) &&
 			context.fittedMouth(config)?.layered != true
 		val placement = atlas.placementByLayerId.getValue(layer.source.id.raw)
