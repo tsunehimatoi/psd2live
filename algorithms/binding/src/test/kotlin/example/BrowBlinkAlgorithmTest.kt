@@ -40,7 +40,16 @@ class BrowBlinkAlgorithmTest {
             Parameter("Expression", "Expression", 0f, 1f, 0f),
             Parameter("ParamEyeLOpen", "Open", 0f, 2f, 1f)), meshes = listOf(mesh))
         val instance = RigModifierInstance("blink", "brow.blink", 2, targets, config = config)
-        val result = BrowBlinkAlgorithm().changes(ModifierEvaluationInput(source, context), instance) {}.apply(source)
+        val shape = RigModifierInstance("shape", "brow.shape", 2, targets, config = config)
+        val shaped = BrowShapeAlgorithm().changes(ModifierEvaluationInput(source,
+            encoded.withUpstream(context.upstream)), shape) {}.apply(source)
+        val angleAxis = assertNotNull(shaped.meshes.single().offsets).axes.indexOfFirst { it.parameter == "ParamBrowLAngle" }
+        assertTrue(angleAxis >= 0, "New angle motion must survive composition with an existing expression axis")
+        val angleCells = shaped.meshes.single().offsets!!.cells
+        assertTrue(angleCells.map { it.form.deltas }.distinct().size > offsets.cells.map { it.form.deltas }.distinct().size)
+        val blinkContext = context.withUpstream(context.upstream +
+            ModifierUpstreamCapability("brow.shape", "brow.shape", 2, targets, "shape", config))
+        val result = BrowBlinkAlgorithm().changes(ModifierEvaluationInput(shaped, blinkContext), instance) {}.apply(shaped)
         val updated = result.meshes.single()
         assertEquals(mesh.geometry, updated.geometry)
         // Both expression slices must survive, with the same authored separation.

@@ -185,6 +185,8 @@ class WorkspaceLegacyBindingTest {
             f.edit("modifier_add", JsonObject(f.addition(algorithm.type, "brow") +
                 ("version" to JsonPrimitive(1))))
             val actual = f.now.model
+            val entry = assertNotNull(actual.modifierEvaluation?.entries?.singleOrNull { it.instance.id == "brow" })
+            assertEquals(ModifierStatus.ACTIVE, entry.status, "fitted brow hasEye=$hasEye: ${entry.errorDetails ?: entry.error}")
             val recipe = fittedRecipe(buildMap {
                 put("brow", BaseChoice("brow/fitted"))
                 if (hasEye) put("eye", BaseChoice("eye/fitted", 2))

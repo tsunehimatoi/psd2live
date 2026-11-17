@@ -18,7 +18,7 @@ object EyeFitting {
 
 	/**
 	 * The fits, the reasons an eye was left out, and the head's level in the rig's space ([level], a unit vector from
-	 * the character's right toward its left): the frame the brows and the mouth are read in too.
+	 * canvas +X carried into rig space): the frame the brows and the mouth are read in too.
 	 */
 	class Result(val fits: Map<Side, EyeFit>, val reasons: Map<Side, String>, val level: Pair<Float, Float> = 1f to 0f)
 
@@ -62,11 +62,13 @@ object EyeFitting {
 		}
 		fun centre(points: List<Pair<Float, Float>>) = points.map { it.first }.average().toFloat() to points.map { it.second }.average().toFloat()
 		val centres = whites.mapValues { (_, w) -> w?.second?.takeIf { it.isNotEmpty() }?.let(::centre) }
-		// The head's level, from the character's right eye to its left one; a single eye takes the rig's level.
+		// Names may use either the viewer's or character's left. Orient the geometric frame
+		// toward canvas +X independently of those labels so its perpendicular always points down.
 		val level = centres[Side.LEFT]?.let { l -> centres[Side.RIGHT]?.let { r -> l to r } }?.let { (l, r) ->
-			val canvas = (l.first - r.first) to (l.second - r.second)
+			val direction = if (l.first >= r.first) 1f else -1f
+			val canvas = (direction * (l.first - r.first)) to (direction * (l.second - r.second))
 			val rl = toRig(l.first, l.second); val rr = toRig(r.first, r.second)
-			canvas to ((rl.first - rr.first) to (rl.second - rr.second))
+			canvas to ((direction * (rl.first - rr.first)) to (direction * (rl.second - rr.second)))
 		}
 		val canvasLevel = level?.first?.let { normalized(it) }?.takeIf { abs(it.second) < 0.7f } ?: (1f to 0f)
 		val rigLevel = level?.second?.let { normalized(it) }?.takeIf { abs(it.second) < 0.7f } ?: rigHorizontal(toRig)
@@ -85,7 +87,7 @@ object EyeFitting {
 
 	private fun normalized(v: Pair<Float, Float>): Pair<Float, Float>? {
 		val length = hypot(v.first, v.second)
-		return if (length < 1e-3f) null else (v.first / length) to (v.second / length)
+		return if (length < 1e-3f) null else (v.first / length + 0f) to (v.second / length + 0f)
 	}
 
 	/** The rig's own level: the direction canvas (1, 0) points to once carried into it. */

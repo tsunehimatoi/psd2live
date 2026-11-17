@@ -3,8 +3,12 @@ package io.github.psd2live.algorithms.binding
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.format.model.*
 import kotlinx.serialization.json.*
-import org.umamo.runtime.model.KeyformGrid
-import org.umamo.runtime.model.MeshDeltaForm
+import io.github.psd2live.bridge.PuppetIr
+import org.umamo.edit.VertexSource
+import org.umamo.runtime.eval.colorAt
+import org.umamo.runtime.eval.scalarAt
+import org.umamo.runtime.model.FormChannel
+import org.umamo.runtime.model.MeshForm
 import org.umamo.runtime.model.ParameterId
 
 /** Adds the fitted brow's own overshoot shapes and pendulums to the live binding. */
@@ -78,38 +82,46 @@ class BrowSpringAlgorithm : ReadingModifierAlgorithmPlugin {
             else (coordinate - frame.top) / frame.height.coerceAtLeast(1e-4f)
         }
         val geometry = requireNotNull(mesh.geometry)
-        val posOk = geometry.positions.size == positions.size &&
-            (0 until positions.size).all { kotlin.math.abs(geometry.positions[it] - positions[it]) <= 1e-4f }
-        val uvOk = geometry.uvs == Floats.wrap(raw.atlasUvs)
-        val idxOk = geometry.indices == Ints.wrap(raw.triangles)
-        val branchOk = (mesh.parent == null) == target.branch.isEmpty()
-        require(posOk && uvOk && idxOk && branchOk) {
-            "Brow spring v2 requires the native fitted brow mesh and parent branch. Use v1 with authored or lowered transforms."
-        }
+        require(geometry.positions.size == positions.size && geometry.uvs == Floats.wrap(raw.atlasUvs) &&
+            geometry.indices == Ints.wrap(raw.triangles)) { "Brow spring requires the captured vertex correspondence: ${mesh.id}" }
         val travel = target.eye?.let { it.opening * it.width * lift } ?: (target.fit.length * .25f * lift / .45f)
         val rig = BrowRig(target.fit, travel, options, checkpoint)
         val spring = ParameterId("ParamBrow${side}Spring")
-        val shapes = rig.shapes(raw.rigPositions, frame, ParameterId("ParamBrow${side}X"), ParameterId("ParamBrow${side}Form"),
-            EyeModules.open(target.fit.side), wide = false, spring = spring).map { shape ->
-            BlendBinding(shape.parameterId.raw, Floats.wrap(shape.keys), shape.neutralIndex, shape.forms.map { form ->
-                form?.let { MeshShape(Floats.wrap(it.positionDeltas), target.order, target.opacity, Rgb.White, Rgb.Black) }
-            })
+        require(mesh.shapes.none { it.parameter == spring.raw } && mesh.offsets?.axes.orEmpty().none { it.parameter == spring.raw }) {
+            "Brow spring already has a track: ${mesh.id}"
         }
-        val expectedOffsets = offsets(rig.grid(raw.rigPositions, frame, height, angle))
-        require((mesh.offsets == expectedOffsets ||
-            mesh.offsets?.axes?.any { it.parameter == height.raw } == true) &&
-            mesh.shapes.none { it.parameter == spring.raw } &&
-            shapes.drop(1).all { expected -> mesh.shapes.any { it.parameter == expected.parameter } } &&
-            mesh.channels.isEmpty()) {
-            "Brow spring v2 requires the native height and brow shape tracks. Use v1 with edited or lowered tracks."
+        val shape = rig.shapes(raw.rigPositions, frame, ParameterId("ParamBrow${side}X"), ParameterId("ParamBrow${side}Form"),
+            EyeModules.open(target.fit.side), wide = false, spring = spring).single { it.parameterId == spring }
+        val branch = input.parentsOfMesh(mesh.id)
+        val current = PuppetIr.toPuppet(RigIR(input.canvas, input.parameters, meshes = listOf(mesh), deformers = branch))
+        val drawable = current.drawables.single()
+        val defaults = current.parameters.associate { it.id to it.default }
+        val rest = { id: ParameterId -> defaults[id] ?: 0f }
+        val order = drawable.channelGrids.scalarAt(FormChannel.DRAW_ORDER, drawable.drawOrder, rest)
+        val opacity = drawable.channelGrids.scalarAt(FormChannel.OPACITY, drawable.opacity, rest)
+        val multiply = drawable.channelGrids.colorAt(FormChannel.MULTIPLY_COLOR, drawable.multiplyColor, rest)
+        val screen = drawable.channelGrids.colorAt(FormChannel.SCREEN_COLOR, drawable.screenColor, rest)
+        // Lowered blink grids may introduce a carrier and renormalize the mesh. Locate the
+        // captured source parent still in that chain; authored ancestors remain on the live mesh.
+        val sourceParent = target.branch.firstOrNull()?.let { fingerprint ->
+            branch.firstOrNull { BrowSpringInputs.fingerprint(it) == fingerprint }?.id
         }
-        return mesh.copy(shapes = listOf(shapes.first()) + mesh.shapes)
+        val sourcePositions = if (sourceParent != null) positions else raw.rigPositions
+        val sourceMesh = mesh.copy(parent = sourceParent, geometry = geometry.copy(positions = Floats.wrap(sourcePositions)),
+            offsets = null, shapes = emptyList())
+        val previous = PuppetIr.toPuppet(RigIR(input.canvas, input.parameters, meshes = listOf(sourceMesh), deformers = branch))
+        val generated = shape.copy(forms = shape.forms.map { form -> form?.let {
+            val delta = if (sourceParent != null || target.branch.isEmpty()) it.positionDeltas else
+                FloatArray(it.positionDeltas.size) { i -> it.positionDeltas[i] * if (i % 2 == 0) frame.width else frame.height }
+            MeshForm(delta, order, opacity, multiply, screen)
+        } })
+        val desired = previous.copy(drawables = listOf(previous.drawables.single().copy(blendShapes = listOf(generated))))
+        val correspondence = (0 until positions.size / 2).map { VertexSource.FromOld(it) }
+        val contribution = current.copy(drawables = listOf(drawable.copy(blendShapes = emptyList())))
+        val merged = MeshBlendResidual.merge(contribution, contribution, previous, desired, drawable.id,
+            correspondence, correspondence, checkpoint)
+        return mesh.copy(shapes = PuppetIr.meshToIr(drawable.copy(blendShapes = merged)).shapes + mesh.shapes)
     }
-
-    private fun offsets(grid: KeyformGrid<MeshDeltaForm>) = KeyGrid(
-        grid.axes.map { KeyAxis(it.parameterId.raw, Floats.wrap(it.keys)) },
-        grid.cells.map { KeyCell(Ints.wrap(it.coordinate), MeshOffsets(Floats.wrap(it.form.positionDeltas))) },
-    )
 
     private fun append(nodes: List<ParameterNode>, id: String, children: List<ParameterNode>): List<ParameterNode>? {
         for ((index, node) in nodes.withIndex()) {

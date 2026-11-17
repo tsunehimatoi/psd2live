@@ -44,7 +44,7 @@ class BrowShapeAlgorithm : ReadingModifierAlgorithmPlugin {
         val updated = source.targets.mapNotNull { (id, target) ->
             checkpoint()
             val before = requireNotNull(input.mesh(id))
-            val next = bind(input, before, target, lift, strength, checkpoint)
+            val next = bind(input, before, target, lift, strength, added, checkpoint)
             ModifierObjectUpdate(before, next).takeIf { before != next }
         }
         val tree = if (added.isEmpty()) null else {
@@ -60,6 +60,7 @@ class BrowShapeAlgorithm : ReadingModifierAlgorithmPlugin {
 
     private fun bind(
         input: ModifierEvaluationInput, mesh: Mesh, target: BrowShapeInputs.Target, lift: Float, strength: Float,
+        addedParameters: List<Parameter>,
         checkpoint: () -> Unit,
     ): Mesh {
         val side = if (target.fit.side == Side.LEFT) "L" else "R"
@@ -94,7 +95,9 @@ class BrowShapeAlgorithm : ReadingModifierAlgorithmPlugin {
         val grid = rig.grid(raw.rigPositions, target.frame, height, angle)
         val afterOffsets = offsets(grid)
         val mergedOffsets = if (!extraAxes) afterOffsets else {
-            val parameters = (mesh.offsets?.axes.orEmpty() + afterOffsets.axes).map { it.parameter }.distinct().mapNotNull(input::parameter)
+            // Residual composition samples only declared live parameters. The angle is new
+            // in this change, so resolving solely against input silently drops its motion.
+            val parameters = input.parameters + addedParameters
             val branch = input.parentsOfMesh(mesh.id)
             val current = PuppetIr.toPuppet(RigIR(input.canvas, parameters, deformers = branch, meshes = listOf(mesh)))
             val canonical = mesh.copy(geometry = geometry.copy(positions = Floats.wrap(positions)), offsets = null, shapes = emptyList(), channels = emptyMap())

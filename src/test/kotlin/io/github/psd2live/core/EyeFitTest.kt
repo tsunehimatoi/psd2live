@@ -90,4 +90,24 @@ class EyeFitTest {
 		val bottom = 92f + rig.delta(EyeRig.EyeMesh.WHITE, 140f, 92f, 0f).second
 		assertTrue(abs(top - bottom) < 0.5f, "the white folds into the closed lid: its top at $top, its bottom at $bottom")
 	}
+
+    @Test fun eyeLabelsDoNotReverseTheGeometricFrame() {
+        val rightOnCanvas = ellipseEye()
+        val template = rightOnCanvas.source as WorkspaceSourceLayer
+        val leftOnCanvas = rightOnCanvas.copy(
+            source = template.copy(id = LayerId("second-white"), bounds = template.bounds.copy(left = 0)),
+            semantic = rightOnCanvas.semantic.copy(side = Side.RIGHT),
+            bounds = Bounds(10f, 66f, 70f, 94f), centroidX = 40f)
+        val ordinary = EyeFitting.fit(listOf(rightOnCanvas, leftOnCanvas), 90f) { x, y -> x to y }
+        val swapped = EyeFitting.fit(listOf(rightOnCanvas.copy(semantic = rightOnCanvas.semantic.copy(side = Side.RIGHT)),
+            leftOnCanvas.copy(semantic = leftOnCanvas.semantic.copy(side = Side.LEFT))), 90f) { x, y -> x to y }
+        assertEquals(ordinary.level, swapped.level)
+        assertTrue(swapped.level.first > 0f)
+        for ((a, b) in listOf(Side.LEFT to Side.RIGHT, Side.RIGHT to Side.LEFT)) {
+            val before = assertNotNull(ordinary.fits[a], ordinary.reasons.toString())
+            val after = assertNotNull(swapped.fits[b], swapped.reasons.toString())
+            assertEquals(before.copy(side = b), after)
+            assertTrue(after.upper.zip(after.lower).any { (top, bottom) -> top < bottom })
+        }
+    }
 }
