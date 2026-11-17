@@ -81,7 +81,7 @@ internal class ModifierController(
         }
     }
 
-    fun switchModifierPreset(group: String) {
+    fun switchModifierPreset(group: String, richness: String = "standard") {
         val dialog = modifierAddition ?: return
         if (dialog.committing) return
         val owner = session
@@ -89,7 +89,10 @@ internal class ModifierController(
         modifierPreviewJob?.cancel()
         modifierAddition = dialog.copy(loading = true, committing = true)
         submit(dialog.state, tr("modifier.switch"), listOf(io.github.psd2live.application.WorkspaceDocumentOperation(
-            "modifier_switch", kotlinx.serialization.json.buildJsonObject { put("group", group) }))) { failure ->
+            "modifier_switch", kotlinx.serialization.json.buildJsonObject {
+                put("group", group)
+                put("richness", richness)
+            }))) { failure ->
             if (owner != session) return@submit
             if (failure == null) dismissModifierAddition()
             else modifierAddition = modifierAddition?.copy(loading = false, committing = false, error = failure)

@@ -37,10 +37,32 @@ internal object ModifierConflictAnalysis {
         return a.any(set::contains)
     }
 
-    private fun isHairSwayOrPhysics(instance: RigModifierInstance): Boolean =
-        instance.type == RigSourceModifiers.HAIR ||
-            instance.type in setOf("hair/chains", "hair/legacy") ||
-            (instance.type == "physics" && instance.simId() in hairPhysicsIds)
+    private fun hairSwayPlanes(enabled: List<RigModifierInstance>): Pair<Boolean, Boolean> {
+        val scaffold = enabled.firstOrNull { it.type == RigSourceModifiers.SCAFFOLD }
+        val front = scaffold?.config?.get("frontHairSway")?.jsonPrimitive?.booleanOrNull ?: true
+        val back = scaffold?.config?.get("backHairSway")?.jsonPrimitive?.booleanOrNull ?: true
+        return front to back
+    }
+
+    private fun isHairSwayBinding(instance: RigModifierInstance): Boolean =
+        instance.type == RigSourceModifiers.HAIR || instance.type in setOf("hair/chains", "hair/legacy")
+
+    private fun isHairSwayOrPhysics(instance: RigModifierInstance, enabled: List<RigModifierInstance>, simId: String? = null): Boolean {
+        if (instance.type == "physics" && instance.simId() in hairPhysicsIds) {
+            return when (simId) {
+                ModelPresets.FRONT_HAIR_SIM -> instance.simId() == PhysicsGenerator.FRONT_HAIR_ID
+                ModelPresets.BACK_HAIR_SIM -> instance.simId() == PhysicsGenerator.BACK_HAIR_ID
+                else -> true
+            }
+        }
+        if (!isHairSwayBinding(instance)) return false
+        val (front, back) = hairSwayPlanes(enabled)
+        return when (simId) {
+            ModelPresets.FRONT_HAIR_SIM -> front
+            ModelPresets.BACK_HAIR_SIM -> back
+            else -> front || back
+        }
+    }
 
     private fun isHairSimulation(instance: RigModifierInstance): Boolean =
         instance.type == "simulation" && (instance.simId() in hairSimIds || instance.simKind() == "hair")
@@ -100,8 +122,12 @@ internal object ModifierConflictAnalysis {
         }
 
         // Soft conflicts (functional duplication)
-        if ((isHairSwayOrPhysics(instance) && others.any { isHairSimulation(it) && overlaps(instance.targets, it.targets) }) ||
-            (isHairSimulation(instance) && others.any { isHairSwayOrPhysics(it) && overlaps(instance.targets, it.targets) })) {
+        if ((isHairSwayOrPhysics(instance, enabled) && others.any {
+                isHairSimulation(it) && overlaps(instance.targets, it.targets) && isHairSwayOrPhysics(instance, enabled, it.simId())
+            }) ||
+            (isHairSimulation(instance) && others.any {
+                isHairSwayOrPhysics(it, enabled, instance.simId()) && overlaps(instance.targets, it.targets)
+            })) {
             return ModifierConflict(ModifierConflictSeverity.SOFT, "modifier.conflict.hairSwayAndSim")
         }
         if ((isOutfitSway(instance) && others.any { isClothingSimulation(it) && overlaps(instance.targets, it.targets) }) ||
@@ -169,7 +195,12 @@ internal object ModifierConflictAnalysis {
         // Soft conflicts for presets / modifiers being added
         if (type == "simulation") {
             if (preset in setOf("front_hair", "back_hair") || preset == null) {
-                if (enabled.any { isHairSwayOrPhysics(it) && overlaps(targets, it.targets) }) {
+                val simId = when (preset) {
+                    "front_hair" -> ModelPresets.FRONT_HAIR_SIM
+                    "back_hair" -> ModelPresets.BACK_HAIR_SIM
+                    else -> null
+                }
+                if (enabled.any { isHairSwayOrPhysics(it, enabled, simId) && overlaps(targets, it.targets) }) {
                     return ModifierConflict(ModifierConflictSeverity.SOFT, "modifier.conflict.hairSwayAndSim")
                 }
             }
@@ -180,8 +211,14 @@ internal object ModifierConflictAnalysis {
                 return ModifierConflict(ModifierConflictSeverity.SOFT, "modifier.conflict.duplicateMotion")
             }
         }
-        if (type == RigSourceModifiers.HAIR || (type == "physics" && preset in hairPhysicsIds)) {
-            if (enabled.any { isHairSimulation(it) && overlaps(targets, it.targets) }) {
+        if ((type == RigSourceModifiers.HAIR && hairSwayPlanes(enabled).let { (f, b) -> f || b }) ||
+            (type == "physics" && preset in hairPhysicsIds)) {
+            val simId = when (preset) {
+                PhysicsGenerator.FRONT_HAIR_ID -> ModelPresets.FRONT_HAIR_SIM
+                PhysicsGenerator.BACK_HAIR_ID -> ModelPresets.BACK_HAIR_SIM
+                else -> null
+            }
+            if (enabled.any { isHairSimulation(it) && overlaps(targets, it.targets) && (simId == null || it.simId() == simId) }) {
                 return ModifierConflict(ModifierConflictSeverity.SOFT, "modifier.conflict.hairSwayAndSim")
             }
         }
