@@ -5,6 +5,7 @@ import io.github.psd2live.format.model.*
 import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.*
 import org.umamo.runtime.eval.colorAt
+import org.umamo.runtime.eval.meshGridDefaultDeltas
 import org.umamo.runtime.eval.scalarAt
 import org.umamo.runtime.model.FormChannel
 
@@ -40,31 +41,30 @@ class MouthJawAlgorithm : ReadingModifierAlgorithmPlugin {
         require(!open.blend && open.default == 0f)
         val parameters = input.parameters
         val defaults = parameters.associate { it.id to it.default }
+        val carriers = ArrayList<Deformer>()
         val updates = targets.map { (id, data) ->
             checkpoint()
             require(ModifierTarget("mesh", id) in instance.targets)
             val target = data.jsonObject
             val source = raw.getValue(id)
-            val points = source.rigPositions
             val mesh = requireNotNull(input.mesh(id))
             val geometry = requireNotNull(mesh.geometry)
+            val points = mouthSourcePoints(source, geometry, checkpoint)
             val (left, top, right, bottom) = target.getValue("frame").jsonArray.map { it.jsonPrimitive.float }
+            val frame = Bounds(left, top, right, bottom)
             val invW = 1f / (right - left).coerceAtLeast(1e-4f)
             val invH = 1f / (bottom - top).coerceAtLeast(1e-4f)
             val nose = target.getValue("nose").jsonPrimitive.boolean
             val canonicalParent = target.getValue("parent").jsonPrimitive.contentOrNull
-            val positions = FloatArray(points.size) { i ->
-                if (canonicalParent == null) points[i]
-                else if (i % 2 == 0) (points[i] - left) / (right - left).coerceAtLeast(1e-4f)
-                else (points[i] - top) / (bottom - top).coerceAtLeast(1e-4f)
-            }
+            val positions = mouthLayerPositions(points, frame, canonicalParent, checkpoint)
             val parent = canonicalParent?.let { ScaffoldBinding.deformerId(structure, id, it) }
-            require(mesh.parent == parent && geometry == MeshGeometry(Floats.wrap(positions), Floats.wrap(source.atlasUvs), Ints.wrap(source.triangles)) &&
-                mesh.shapes.none { it.parameter == open.id }) { "Mouth jaw v2 requires an unedited source mesh and parent: $id" }
+            val rawGeometry = MeshGeometry(Floats.wrap(positions), Floats.wrap(source.atlasUvs), Ints.wrap(source.triangles))
+            val preserved = mesh.parent != parent || geometry != rawGeometry
+            require(mesh.shapes.none { it.parameter == open.id }) { "Mouth jaw v2 requires an unedited openness track: $id" }
             val localModel = PuppetIr.toPuppet(RigIR(input.canvas, parameters, meshes = listOf(mesh)))
             val drawable = localModel.drawables.single()
             val rest: (org.umamo.runtime.model.ParameterId) -> Float = {
-                if (it.raw in eyeOpen) 1f else 0f
+                defaults[it.raw] ?: 0f
             }
             val order = drawable.channelGrids.scalarAt(FormChannel.DRAW_ORDER, drawable.drawOrder, { defaults[it.raw] ?: 0f })
             val opacity = drawable.channelGrids.scalarAt(FormChannel.OPACITY, drawable.opacity, rest)
@@ -90,57 +90,64 @@ class MouthJawAlgorithm : ReadingModifierAlgorithmPlugin {
                     Rgb(multiply.red, multiply.green, multiply.blue), Rgb(screen.red, screen.green, screen.blue))
             }
             val keys = if (reach > 1.001f) floatArrayOf(0f, 1f, reach) else floatArrayOf(0f, 1f)
-            val jaw = BlendBinding(open.id, Floats.wrap(keys), 0, keys.map { if (it == 0f) null else pose(it) })
-            // The native lowering folds jaw first and then the two head axes. Recover the independent
-            // head tracks from their neutral slices, so the combined cells keep the same summation order.
-            val prior = mesh.offsets
-            val headAxes = prior?.axes.orEmpty()
-            require(headAxes.all { it.parameter in headParameters }) {
-                "Use mouth jaw v1 for an edited lower-face grid: $id"
+            val neutralDeltas = meshGridDefaultDeltas(drawable, rest) ?: FloatArray(points.size)
+            val jaw = BlendBinding(open.id, Floats.wrap(keys), 0, keys.map { amount ->
+                if (amount == 0f) null else pose(amount).let { form ->
+                    form.copy(deltas = Floats.wrap(FloatArray(points.size) { i -> neutralDeltas[i] + form.deltas[i] }))
+                }
+            })
+            val projectedJaw = if (!preserved) emptyList() else {
+                val rawJaw = org.umamo.runtime.model.BlendShapeBinding(org.umamo.runtime.model.ParameterId(open.id), keys, 0,
+                    keys.map { amount ->
+                        if (amount == 0f) null
+                        else org.umamo.runtime.model.MeshForm(pose(amount).deltas.shared(), order, opacity, multiply, screen)
+                    })
+                mouthProjectShapes(input, parameters, mesh, drawable, parent, parent, points, positions, frame, null,
+                    listOf(rawJaw), checkpoint)
             }
-            val headDefaults = headAxes.map { axis -> axis.keys.shared().indexOfFirst { it == (defaults[axis.parameter] ?: 0f) } }
-            require(headDefaults.all { it >= 0 }) { "Mouth jaw v2 requires neutral head keys: $id" }
-            val headCells = prior?.cells.orEmpty().associateBy { it.coordinate }
-            fun headForm(axis: Int, key: Int) = headCells.getValue(Ints.wrap(headDefaults.toIntArray().also { it[axis] = key })).form
-            for (cell in headCells.values) {
-                checkpoint()
-                val components = headAxes.indices.map { headForm(it, cell.coordinate[it]).deltas }
-                require(points.indices.all { i ->
-                    var expected = 0f
-                    for (part in components) expected += part[i]
-                    expected == cell.form.deltas[i]
-                }) { "Use mouth jaw v1 for a non-additive lower-face grid: $id" }
-            }
-            val neutral = pose(0f)
-            val head = headAxes.mapIndexed { axis, keys ->
-                BlendBinding(keys.parameter, keys.keys, headDefaults[axis], (0 until keys.keys.size).map { key ->
-                    if (key == headDefaults[axis]) null else neutral.copy(deltas = headForm(axis, key).deltas)
-                })
-            }
-            // The preceding mouth and face already key these ordinary axes elsewhere. Represent them
-            // in this local lowering pass without including or writing the other upstream objects.
+            // Keep the complete upstream grid, including coupled cells and interpolated defaults.
+            // Shapes describe absolute forms; lowering subtracts the authored neutral above exactly once.
             val zero = MeshOffsets(Floats.wrap(FloatArray(points.size)))
             val witness = mesh.copy(id = "$id:openness", parent = null, channels = emptyMap(), shapes = emptyList(),
                 offsets = KeyGrid(listOf(KeyAxis(open.id, Floats.wrap(keys))),
                     keys.indices.map { KeyCell(Ints.wrap(intArrayOf(it)), zero) }))
-            val local = PuppetIr.toPuppet(RigIR(input.canvas, parameters, meshes = listOf(
-                mesh.copy(offsets = null, shapes = listOf(jaw) + head), witness, witness.copy(id = "$id:head", offsets = prior))))
-            val lowered = BlendShapeLowering({ _, name -> name }, checkpoint).lawful(local)
-            require(lowered.deformers.isEmpty()) { "Use mouth jaw v1 when the lower-face grid needs a carrier: $id" }
-            val result = PuppetIr.meshToIr(lowered.drawables.first())
             val capture = context.values.getValue("providers").jsonObject.containsKey("mouth.capture")
             val shapes = if (!capture || share == 15f) mesh.shapes else mesh.shapes.map { binding ->
                 if (binding.parameter != "ParamJawOpen") binding else {
-                    val form = requireNotNull(binding.shapes.getOrNull(1))
-                    require(binding.shapes.size == 2 && form.deltas == pose(1.2f, 15f).deltas) {
-                        "Use mouth jaw v1 for an edited capture jaw track: $id"
-                    }
-                    binding.copy(shapes = listOf(null, form.copy(deltas = pose(1.2f).deltas)))
+                    val old = pose(1.2f, 15f).deltas
+                    val changed = pose(1.2f).deltas
+                    binding.copy(shapes = binding.shapes.mapIndexed { index, form -> form?.let {
+                        val amount = binding.keys[index]
+                        it.copy(deltas = Floats.wrap(FloatArray(points.size) { i ->
+                            it.deltas[i] + (changed[i] - old[i]) * amount
+                        }))
+                    } })
                 }
             }
-            ModifierObjectUpdate(mesh, mesh.copy(offsets = result.offsets, shapes = shapes))
+            val parents = input.parentsOfMesh(id)
+            val local = PuppetIr.toPuppet(RigIR(input.canvas, parameters,
+                meshes = listOf(mesh.copy(shapes = if (preserved) shapes else shapes + jaw), witness), deformers = parents))
+            val loweredInput = if (!preserved) local else local.copy(
+                drawables = listOf(local.drawables.first().let { it.copy(blendShapes = it.blendShapes + projectedJaw) }) + local.drawables.drop(1))
+            val candidate = loweredInput.copy(deformers = loweredInput.deformers.map {
+                when (it) {
+                    is org.umamo.runtime.model.Deformer.Warp -> it.copy(blendShapes = emptyList())
+                    is org.umamo.runtime.model.Deformer.Rotation -> it.copy(blendShapes = emptyList())
+                }
+            })
+            val lowered = BlendShapeLowering({ _, name -> name }, checkpoint).lawful(candidate)
+            val added = lowered.deformers.drop(candidate.deformers.size)
+            val remap = ModelIdRemap(deformers = added.associate {
+                it.id to org.umamo.runtime.model.DeformerId(instance.outputId("$id/carrier:${it.id.raw}"))
+            })
+            carriers += added.map { PuppetIr.deformerToIr(remap.deformer(it)) }
+            val result = lowered.drawables.first().let {
+                it.copy(parentDeformerId = it.parentDeformerId?.let(remap::deformer))
+            }
+            ModifierObjectUpdate(mesh, PuppetIr.meshToIr(result))
         }
-        return ModifierModelChanges(meshes = ModifierObjectChanges(updated = updates))
+        return ModifierModelChanges(meshes = ModifierObjectChanges(updated = updates),
+            deformers = ModifierObjectChanges(added = carriers))
     }
 
     companion object {
@@ -149,7 +156,5 @@ class MouthJawAlgorithm : ReadingModifierAlgorithmPlugin {
         const val ENTRYPOINT = "builtin.6d6f7574682e6a6177.v2/jaw"
         val mouthUpstream = setOf("mouth.outline", "mouth.vowel", "mouth.capture")
         val optionalUpstream = mouthUpstream + setOf("body/legacy", "face/legacy", "face/fitted", "face.depth-turn", "eye/fitted")
-        private val headParameters = setOf("ParamAngleX", "ParamAngleY", "ParamAngleZ")
-        private val eyeOpen = setOf("ParamEyeLOpen", "ParamEyeROpen")
     }
 }

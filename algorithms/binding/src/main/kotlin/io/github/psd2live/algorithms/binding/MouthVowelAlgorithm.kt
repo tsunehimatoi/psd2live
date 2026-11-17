@@ -31,7 +31,6 @@ class MouthVowelAlgorithm : ReadingModifierAlgorithmPlugin {
         val context = input.context
         val captured = MouthFittedInputs.decode(ModifierAlgorithmContext(context.values.getValue("source").jsonObject,
             context.resources, context.upstream))
-        require(captured.layers.values.none { it.tag == "MOUTH_CLOSE" }) { "Use mouth vowel v1 for closed-drawing swaps" }
         val vertices = requireNotNull(captured.sourceVertices)
         val raw = ScaffoldMeshContext.decodeRawMeshes(vertices.resource, checkpoint)
         val mouth = requireNotNull(captured.source).rig()
@@ -51,50 +50,58 @@ class MouthVowelAlgorithm : ReadingModifierAlgorithmPlugin {
         }
         val open = requireNotNull(input.parameter("ParamMouthOpenY"))
         require(!open.blend && open.default == 0f)
+        val mouthForm = ParameterId("ParamMouthForm")
+        val mouthOpen = ParameterId(open.id)
+        val rest = { parameter: ParameterId -> byParameter[parameter.raw]?.default ?: if (parameter.raw in eyeOpen) 1f else 0f }
         val updates = captured.layers.map { (id, layer) ->
             checkpoint()
             val mesh = requireNotNull(input.mesh(id))
             val target = vertices.targets.getValue(id)
             val geometry = requireNotNull(mesh.geometry)
             val material = raw.getValue(target.canonical)
-            val points = material.rigPositions
-            val frame = layer.frame
-            val positions = FloatArray(points.size) { i ->
-                if (i % 1024 == 0) checkpoint()
-                if (target.parent == null) points[i]
-                else if (i % 2 == 0) (points[i] - frame.left) / frame.width.coerceAtLeast(1e-4f)
-                else (points[i] - frame.top) / frame.height.coerceAtLeast(1e-4f)
-            }
             val parent = target.parent?.let { ScaffoldBinding.deformerId(structure, id, it) }
-            require(mesh.parent == parent && geometry == MeshGeometry(Floats.wrap(positions), Floats.wrap(material.atlasUvs), Ints.wrap(material.triangles)) &&
-                mesh.shapes.none { it.parameter in vowelIds.mapTo(hashSetOf()) { id -> id.raw } }) {
-                "Mouth vowel v2 requires the fitted source mesh without existing vowel tracks: $id " +
-                    "(parent ${mesh.parent} / $parent, coordinates ${geometry.positions.size} / ${positions.size}, " +
-                    "triangles ${geometry.indices.size} / ${material.triangles.size}, " +
-                    "positions=${geometry.positions == Floats.wrap(positions)}, uvs=${geometry.uvs == Floats.wrap(material.atlasUvs)}, " +
-                    "indices=${geometry.indices == Ints.wrap(material.triangles)}, shapes=${mesh.shapes.map { it.parameter }})"
+            require(mesh.shapes.none { it.parameter in vowelIds.mapTo(hashSetOf()) { param -> param.raw } }) {
+                "Mouth vowel v2 requires a mesh without existing vowel tracks: $id"
             }
-            val model = PuppetIr.toPuppet(RigIR(input.canvas, live, meshes = listOf(mesh)))
+            val frame = layer.frame
+            val rawPositions = mouthLayerPositions(material.rigPositions, frame, target.parent, checkpoint)
+            val matchesSource = mesh.parent == parent &&
+                geometry == MeshGeometry(Floats.wrap(rawPositions), Floats.wrap(material.atlasUvs), Ints.wrap(material.triangles))
+            val points = if (matchesSource) material.rigPositions else mouthSourcePoints(material, geometry, checkpoint)
+            val positions = if (matchesSource) rawPositions else mouthLayerPositions(points, frame, target.parent, checkpoint)
+            val branch = if (matchesSource) emptyList() else input.parentsOfMesh(id)
+            val model = PuppetIr.toPuppet(RigIR(input.canvas, live, meshes = listOf(mesh), deformers = branch))
             val drawable = model.drawables.single()
             val follow = follows.getValue(id).jsonPrimitive.contentOrNull
-            val shapes = if (follow == null) {
-                mouth.faceShapes(points, frame, captured.chin, false, ParameterId(open.id), null, lippedSkin = true)
+            val role = follow?.let(MouthRig.Follow::valueOf)
+            val closed = layer.tag == "MOUTH_CLOSE"
+            val shapes = if (role == null) {
+                mouth.faceShapes(points, frame, captured.chin, false, mouthOpen, null, lippedSkin = true)
             } else {
-                mouth.shapes(points, frame, false, { 1f },
-                    layer.tag == "TONGUE", MouthRig.Follow.valueOf(follow), chin = captured.chin)
+                mouth.shapes(points, frame, closed, { opens -> if (!opens) Float.NaN else if (closed) 0f else 1f },
+                    layer.tag == "TONGUE", role, chin = captured.chin)
             }
-            val rest = { parameter: ParameterId -> if (parameter.raw in eyeOpen) 1f else 0f }
-            val opacity = drawable.channelGrids.scalarAt(FormChannel.OPACITY, drawable.opacity, rest)
+            val opacity = if (drawable.opacity <= 0f) 0f else drawable.channelGrids.scalarAt(FormChannel.OPACITY, drawable.opacity, rest)
             val order = drawable.channelGrids.scalarAt(FormChannel.DRAW_ORDER, drawable.drawOrder, { byParameter[it.raw]?.default ?: 0f })
             val multiply = drawable.channelGrids.colorAt(FormChannel.MULTIPLY_COLOR, drawable.multiplyColor, rest)
             val screen = drawable.channelGrids.colorAt(FormChannel.SCREEN_COLOR, drawable.screenColor, rest)
             val neutralized = shapes.filter { it.parameterId in vowelIds }.map { binding ->
                 binding.copy(forms = binding.forms.map { form ->
-                    form?.let { MeshForm(it.positionDeltas, order, if (it.opacity.isNaN()) opacity else it.opacity * drawable.opacity,
+                    form?.let { MeshForm(it.positionDeltas, order,
+                        if (drawable.opacity <= 0f) 0f else if (it.opacity.isNaN()) opacity else it.opacity * drawable.opacity,
                         multiply, screen) }
                 })
             }
-            val next = PuppetIr.meshToIr(drawable.copy(blendShapes = drawable.blendShapes + neutralized))
+            val projected = if (matchesSource) neutralized else {
+                val sourceGrid = when {
+                    role == null -> mouth.faceGrid(points, frame, mouthForm, mouthOpen, captured.chin)
+                    closed -> mouth.closedGrid(points, frame, mouthForm)
+                    else -> mouth.grid(points, frame, mouthForm, mouthOpen, role, captured.chin)
+                }
+                mouthProjectShapes(input, live, mesh, drawable, target.parent, parent,
+                    points, positions, frame, sourceGrid, neutralized, checkpoint)
+            }
+            val next = PuppetIr.meshToIr(drawable.copy(blendShapes = drawable.blendShapes + projected))
             ModifierObjectUpdate(mesh, mesh.copy(shapes = next.shapes))
         }
         val tree = input.parameterTree
