@@ -1,3 +1,13 @@
+## v3.8.1 · 2026-11-17
+
+### Improvements and fixes
+
+- **PSD import and plugin isolation**: handle irregular PSD input more robustly; failed modifiers retain error details and isolate dependent features while other features continue working.
+- **Brows and deformation precision**: fix composition of brow shape, blink and spring bindings, and improve inverse deformation precision on large canvases.
+- **Eye see-through masks**: preserve existing hair clipping while adding eye windows; export targets without composite masks report the feature loss.
+- **Custom plugin development**: add plugin scaffolding, builds, parameter controls and undoable code updates; fix dependency locks and reloading older build artifacts.
+- **Desktop compatibility**: improve Linux window movement and file selection, and recover from failed transparent-background sessions.
+
 ## v3.8.0 · 2026-11-15
 
 ### New

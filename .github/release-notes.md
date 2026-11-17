@@ -1,30 +1,24 @@
-## v3.8.0 · 2026-11-15
+## v3.8.1 · 2026-11-17
 
-### 新功能
+### 改进与修复
 
-- **修改器菜单与冲突提示**：预设添加菜单改为分类、基础项与详情三栏渐进展开，在修改器栈与添加菜单中标出硬冲突与软冲突。
-- **部位插件嵌套设置与行为预览**：检查器支持展开折叠部位的子功能配置并实时预览行为，重置部位时同步清理继承属性。
-
-### 改进
-
-- **预设与术语统一**：统一「风格化」等算法术语与预设命名，调整默认预设配置（默认关闭位移，区分裙摆与挤压等可选模块）。
-- **源 PSD 绑定与导出一致性**：将网格拆分纳入 `mesh.split` 修改器插件并保留 `.cmo3` 导出与读回的拆分网格引用；完善单眼、分层嘴部及兽耳/尾巴/翅膀的源 PSD 绑定与导出。
-- **预览响应与缓存性能**：局部构建计划与有界缓存减少重复重建开销，确保编辑后的预览首帧与保存状态准确同步。
+- **PSD 导入与插件隔离**：增强不规则 PSD 输入的容错；单个修改器失败时保留其错误信息并隔离依赖，其他可用功能继续运行。
+- **眉毛与变形精度**：修复眉毛形状、眨眼与弹性绑定组合时的兼容问题，提高大画布下的变形求逆精度。
+- **眼睛透视遮罩**：刘海已有裁剪时保留原遮罩并正确叠加眼部透视；不支持组合遮罩的导出目标会报告功能损失。
+- **自定义插件开发**：支持插件模板、构建、参数配置与可撤销的代码更新，修复依赖锁定及旧构建产物的重载兼容性。
+- **桌面兼容性**：改善 Linux 窗口移动与文件选择器兼容性，修复透明背景会话失败后的恢复。
 
 <details>
 <summary>English</summary>
 
-## v3.8.0 · 2026-11-15
+## v3.8.1 · 2026-11-17
 
-### New
+### Improvements and fixes
 
-- **Modifier menu & conflict indicators**: the preset add menu is reorganized into a progressive 3-column layout (category, base, details), marking hard and soft modifier conflicts in both the stack and add menu.
-- **Nested part settings & behavior preview**: collapsed part plugins expose nested sub-feature controls with live behavior preview in the inspector, and resetting a part clears inherited properties cleanly.
-
-### Improved
-
-- **Preset & terminology alignment**: unified "Stylized" algorithm terminology and preset names, with refined default preset options (displacement off by default, skirt and squash separated cleanly).
-- **Source PSD binding & export parity**: integrated mesh splitting as the `mesh.split` modifier plugin while preserving split mesh references on `.cmo3` round-trip, and improved source-frame bindings for single eyes, layered mouths, and creature attachments.
-- **Preview responsiveness & caching**: scoped build plans and bounded caches reduce redundant rebuilds and keep edited frames and save status synchronized.
+- **PSD import and plugin isolation**: handle irregular PSD input more robustly; failed modifiers retain error details and isolate dependent features while other features continue working.
+- **Brows and deformation precision**: fix composition of brow shape, blink and spring bindings, and improve inverse deformation precision on large canvases.
+- **Eye see-through masks**: preserve existing hair clipping while adding eye windows; export targets without composite masks report the feature loss.
+- **Custom plugin development**: add plugin scaffolding, builds, parameter controls and undoable code updates; fix dependency locks and reloading older build artifacts.
+- **Desktop compatibility**: improve Linux window movement and file selection, and recover from failed transparent-background sessions.
 
 </details>
