@@ -81,9 +81,7 @@ import kotlin.math.roundToInt
 import io.github.psd2live.ui.theme.handCursor
 
 /**
- * One panel of the settings page: [module] picks the section, as the page's dock arranges them. Every option applies
- * at once; there is no draft state, since [AppSettings.uiScale] falls back to the detected display scale when the user
- * has never set one and so has no previous value a Cancel could restore.
+ * One topic of the docked settings page.
  *
  * The language comes from the state rather than [I18n]: `tr()` reads a plain field, so without a changed parameter
  * Compose would skip the recomposition and keep showing the old language after a switch made in this very panel.
@@ -175,14 +173,68 @@ internal fun SettingsSectionDescription(text: String) {
 	)
 }
 
-/** Interface scales offered as one click; any other is a drag of the slider away. */
-private val UiScalePresets = listOf(1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
+internal val UiScalePresets = listOf(0.75f, 1f, 1.15f, 1.25f, 1.35f, 1.5f, 1.75f, 2f, 2.5f)
 
 private fun percent(scale: Float) = "${(scale * 100).roundToInt()}%"
 
+internal fun uiScaleLabel(scale: Float): String = when (scale) {
+	1f -> "${percent(scale)} (${tr("settings.scale.standard")})"
+	1.25f -> "${percent(scale)} (2K)"
+	1.5f -> "${percent(scale)} (2K/4K)"
+	1.75f, 2f -> "${percent(scale)} (4K)"
+	else -> percent(scale)
+}
+
+private val SettingsScaleChoices: List<Float?> = UiScalePresets + listOf(null)
+
+internal fun parseUiScalePercent(text: String): Float? =
+	text.trim().removeSuffix("%").trimEnd().toIntOrNull()?.takeIf { it in 75..300 }?.div(100f)
+
+@Composable
+private fun SettingsScalePicker(uiScale: Float, onUiScaleChange: (Float) -> Unit) {
+	var draft by remember(uiScale) { mutableStateOf<String?>(null) }
+	val customLabel = tr("settings.scale.custom")
+	val text = draft
+	CompactDropdown(
+		items = SettingsScaleChoices,
+		selectedItem = uiScale.takeIf { text == null && it in UiScalePresets },
+		onItemSelected = { scale ->
+			if (scale == null) {
+				draft = ((uiScale * 100).roundToInt()).toString()
+			} else {
+				draft = null
+				onUiScaleChange(scale)
+			}
+		},
+		itemLabel = { scale ->
+			when {
+				scale != null -> uiScaleLabel(scale)
+				uiScale !in UiScalePresets -> "$customLabel (${percent(uiScale)})"
+				else -> customLabel
+			}
+		},
+		modifier = Modifier.fillMaxWidth(),
+	)
+	if (text != null) {
+		val scale = parseUiScalePercent(text)
+		Spacer(Modifier.height(4.dp))
+		CompactTextField(text, { draft = it }, Modifier.fillMaxWidth(), isMono = true, selectAllOnFocus = true)
+		SettingsHint("75%–300%", indent = false)
+		Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+			CompactButton(text = tr("action.cancel"), onClick = { draft = null })
+			CompactButton(text = tr("editor.apply"), enabled = scale != null, onClick = {
+				if (scale != null) {
+					draft = null
+					onUiScaleChange(scale)
+				}
+			})
+		}
+	}
+}
+
 /**
  * Scale and display, as the inspector lays out its sections: the interface scale with its common values and the
- * display's own recommendation, the text size, and what the display reports. Everything applies as it changes.
+ * display's own recommendation, the text size, and what the display reports.
  */
 @Composable
 private fun SettingsScaleSection(
@@ -207,29 +259,7 @@ private fun SettingsScaleSection(
 
 	SettingsGroup(tr("settings.scale.group.ui")) {
 		SettingsRow(tr("settings.scale.value")) {
-			Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-				CompactSlider(
-					value = uiScale,
-					onValueChange = { onUiScaleChange((it * 100).roundToInt() / 100f) },
-					valueRange = 0.75f..2.50f,
-					height = 14.dp,
-					modifier = Modifier.weight(1f),
-				)
-				Text(percent(uiScale), style = typography.monoSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
-					color = colors.textPrimary, textAlign = TextAlign.End, modifier = Modifier.width(40.dp))
-			}
-		}
-		SettingsRow(tr("settings.scale.presets")) {
-			Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-				for (preset in UiScalePresets) {
-					CompactToggleChip(
-						text = percent(preset),
-						selected = kotlin.math.abs(uiScale - preset) < 0.005f,
-						onToggle = { onUiScaleChange(preset) },
-						modifier = Modifier.weight(1f),
-					)
-				}
-			}
+			SettingsScalePicker(uiScale, onUiScaleChange)
 		}
 		SettingsRow(
 			tr("settings.scale.recommended"),

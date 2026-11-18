@@ -66,6 +66,8 @@ import io.github.psd2live.agent.AgentMcpController
 import io.github.psd2live.ui.components.AppDataFolders
 import io.github.psd2live.ui.components.LocalAgentMcp
 import io.github.psd2live.ui.components.MenuFolder
+import io.github.psd2live.ui.components.UiScalePresets
+import io.github.psd2live.ui.components.uiScaleLabel
 import io.github.psd2live.ui.components.AppTitleBar
 import io.github.psd2live.ui.components.AppMenuHeader
 import io.github.psd2live.ui.components.AppMenuItem
@@ -955,19 +957,10 @@ private fun StatusBar(
 
 				AppMenuSeparator()
 				AppMenuHeader(tr("menu.view.uiScale"))
-				listOf(1.0f, 1.15f, 1.25f, 1.35f, 1.50f, 1.75f, 2.00f, 2.50f).forEach { scale ->
-					val p = (scale * 100).toInt()
-					val label = when (scale) {
-						1.0f -> "$p% (${tr("settings.scale.standard")})"
-						1.25f -> "$p% (2K)"
-						1.5f -> "$p% (2K/4K)"
-						1.75f, 2.0f -> "$p% (4K)"
-						else -> "$p%"
-					}
-					val isCurrent = kotlin.math.abs(state.uiScale - scale) < 0.03f
+				UiScalePresets.forEach { scale ->
 					AppMenuItem(
-						text = label,
-						isChecked = isCurrent,
+						text = uiScaleLabel(scale),
+						isChecked = state.uiScale == scale,
 						onClick = { showZoomMenu = false; viewModel.setUiScale(scale) },
 					)
 				}
