@@ -39,6 +39,7 @@ class FaceTurn(private val marks: FaceLandmarks, private val setting: TurnStyle.
 	val usable: Boolean = eyeL != null && eyeR != null && contour.size >= 40 && unit > 0f && chin > eyeLine
 
 	private val ends = style.ends(setting)
+	internal val mouthTurnStrength: Float get() = if (style === TurnStyle.DEFAULT && setting.preset == null) setting.turn else 0f
 
 	/** The outline's points the style moves: evenly by arc length from the chin, toward +x first, so point k mirrors point n - k. */
 	private val ring: IntArray = run {
@@ -59,7 +60,10 @@ class FaceTurn(private val marks: FaceLandmarks, private val setting: TurnStyle.
 	 * The head at one pose: [sx] the turn's side (+1 toward +x), [moves] the face's moves and [hair] the hair's role
 	 * fields there, [slide] the face's middle's move, [field] where every point of the face goes.
 	 */
-	inner class Pose internal constructor(val sx: Float, val moves: TurnStyle.Moves, val hair: TurnStyle.Moves) {
+	inner class Pose internal constructor(
+		val sx: Float, val moves: TurnStyle.Moves, val hair: TurnStyle.Moves,
+		internal val yaw: Float, internal val pitch: Float,
+	) {
 		val slide: Pair<Float, Float> = moves["slide_x"] * sx * unit to moves["slide_y"] * unit
 		val field: (Float, Float) -> Pair<Float, Float> = run {
 			if (!usable || ring.isEmpty()) return@run { x: Float, y: Float -> x to y }
@@ -100,7 +104,7 @@ class FaceTurn(private val marks: FaceLandmarks, private val setting: TurnStyle.
 	/** The head at [yaw] degrees (+ toward +x) and [pitch] (+ up). */
 	fun pose(yaw: Float, pitch: Float): Pose {
 		val px = yaw / TURN_END; val py = pitch / LOOK_END
-		return Pose(if (yaw >= 0f) 1f else -1f, style.at(ends, px, py), style.hairAt(ends, px, py))
+		return Pose(if (yaw >= 0f) 1f else -1f, style.at(ends, px, py), style.hairAt(ends, px, py), yaw, pitch)
 	}
 
 	/** Where the face's points go at [yaw] and [pitch]. */

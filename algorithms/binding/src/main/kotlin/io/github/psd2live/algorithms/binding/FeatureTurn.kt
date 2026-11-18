@@ -1,5 +1,6 @@
 package io.github.psd2live.core.fit
 
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.sin
@@ -12,7 +13,7 @@ import kotlin.math.sin
  *   past the white's outer end, moves on its own; the iris keeps its place in the opening, by its own share of it, and
  *   its own width. An eye keeps its room to the outline at its height, from its white's outer end: never less than the
  *   style gives it, and an eye inside the outline at rest never crosses it.
- * - **A brow** leads or lags, narrows, tilts and arches. **The mouth** changes as one linear map too and bends its line.
+ * - **A brow** leads or lags, narrows, tilts and arches. The default **mouth** fits the opening as the head turns.
  * - **The ears** and **headwear** move whole against the face's middle, less where they hang below the chin; the nose
  *   goes with the face.
  *
@@ -111,12 +112,51 @@ object FeatureTurn {
 		val m = pose.moves; val sx = pose.sx; val f = turn.unit
 		val box = Box.of(points)
 		val c1x = box.cx + pose.slide.first + m["mouth_lead"] * sx * f; val c1y = box.cy + pose.slide.second + m["mouth_dy"] * f
+		fittedMouth(marks, turn, pose, box, c1x, c1y)?.let { return it }
 		val a00 = 1f + m["mA00"]; val a01 = m["mA01"] * sx; val a10 = m["mA10"] * sx; val a11 = 1f + m["mA11"]
 		val curve = m["mouth_curve"] * f
 		return { x, y ->
 			val dx = x - box.cx; val dy = y - box.cy
 			val u = (dx / (box.w / 2f)).coerceIn(-1f, 1f)
 			(c1x + a00 * dx + a01 * dy) to (c1y + a10 * dx + a11 * dy + curve * (1f - u * u))
+		}
+	}
+
+	private fun fittedMouth(marks: FaceLandmarks, turn: FaceTurn, pose: FaceTurn.Pose, box: Box,
+	                        centerX: Float, centerY: Float): ((Float, Float) -> Pair<Float, Float>)? {
+		val strength = turn.mouthTurnStrength
+		if (pose.yaw == 0f || strength == 0f || turn.unit <= 0f) return null
+		val chin = marks["face.chin"] ?: return null
+		val upper = marks["mouth.upperMid"] ?: return null
+		val lower = marks["mouth.lowerMid"] ?: return null
+		val a = marks["mouth.cornerA"] ?: return null
+		val b = marks["mouth.cornerB"] ?: return null
+		val opening = lower.y - upper.y
+		val openingRatio = opening / box.w
+		if (openingRatio <= .05f || abs(a.x - b.x) <= .001f) return null
+
+		val level = if (pose.pitch == 0f) pose else turn.pose(pose.yaw, 0f)
+		val pureYaw = turn.style.defaultYaw(pose.yaw / FaceTurn.TURN_END, strength)
+		val moves = pose.moves
+		val fit = MouthTurnFit.shape(box.w / turn.unit, openingRatio, pose.yaw, strength)
+		val chinShift = level.field(chin.x, chin.y).first - chin.x
+		val originalShift = level.slide.first + pureYaw["mouth_lead"] * pose.sx * turn.unit
+		val xCenter = centerX + chinShift - originalShift
+		val width = (fit.width + moves["mA00"] - pureYaw["mA00"]).coerceAtLeast(.3f)
+		val height = (fit.height + moves["mA11"] - pureYaw["mA11"]).coerceAtLeast(.4f)
+		val pitchShear = ((moves["mA01"] - pureYaw["mA01"]) * pose.sx).coerceIn(-.22f, .22f)
+		val tilt = moves["mA10"] * pose.sx
+		val curve = moves["mouth_curve"] * turn.unit
+		return { x, y ->
+			val dx = x - box.cx
+			val dy = y - box.cy
+			val u = (dx / (box.w * .5f)).coerceIn(-1f, 1f)
+			val v = ((y - upper.y) / opening).coerceIn(0f, 1f)
+			val middleWeight = 1f - u * u
+			// A quarter-width center offset would flatten a horizontal row at one corner.
+			val lipOffset = (fit.upper + (fit.lower - fit.upper) * v).coerceIn(-.24f, .24f)
+			val lipShift = lipOffset * pose.sx * width * box.w * middleWeight
+			(xCenter + width * dx + pitchShear * dy + lipShift) to (centerY + tilt * dx + height * dy + curve * middleWeight)
 		}
 	}
 

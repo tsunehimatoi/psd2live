@@ -12,6 +12,8 @@ import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class FaceTurnTest {
@@ -37,6 +39,43 @@ class FaceTurnTest {
 	}
 
 	private fun mirror(f: (Float, Float) -> Pair<Float, Float>): (Float, Float) -> Pair<Float, Float> = { x, y -> f(-x, y).let { -it.first to it.second } }
+
+	private fun openMouthFace(height: Float = 32f): FaceLandmarks {
+		val base = face()
+		val points = base.points.filterNot { it.part == "mouth" } + listOf(
+			Landmark("mouth.cornerA", "mouth", -28f, 100f),
+			Landmark("mouth.cornerB", "mouth", 28f, 100f),
+			Landmark("mouth.upperMid", "mouth", 0f, 100f - height / 2f),
+			Landmark("mouth.lowerMid", "mouth", 0f, 100f + height / 2f),
+			Landmark("face.chin", "face", 0f, 180f),
+		)
+		return FaceLandmarks(points, base.contour, base.measures)
+	}
+
+	private fun mouth(turn: FaceTurn, marks: FaceLandmarks, yaw: Float, pitch: Float) =
+		assertNotNull(FeatureTurn.mouth(marks, turn, turn.pose(yaw, pitch)))
+
+	private fun assertOriginalMouth(marks: FaceLandmarks, turn: FaceTurn, yaw: Float, pitch: Float) {
+		val pose = turn.pose(yaw, pitch)
+		val rule = mouth(turn, marks, yaw, pitch)
+		val points = marks.points.filter { it.part == "mouth" }
+		val centerX = (points.minOf { it.x } + points.maxOf { it.x }) / 2f
+		val centerY = (points.minOf { it.y } + points.maxOf { it.y }) / 2f
+		val halfWidth = (points.maxOf { it.x } - points.minOf { it.x }) / 2f
+		val moves = pose.moves
+		val sx = pose.sx
+		val (x, y) = rule(centerX, centerY)
+		assertEquals(centerX + pose.slide.first + moves["mouth_lead"] * sx * turn.unit, x, 1e-4f)
+		assertEquals(centerY + pose.slide.second + (moves["mouth_dy"] + moves["mouth_curve"]) * turn.unit, y, 1e-4f)
+		val left = rule(centerX - halfWidth, centerY)
+		val right = rule(centerX + halfWidth, centerY)
+		assertEquals(2f * halfWidth * (1f + moves["mA00"]), right.first - left.first, 1e-4f)
+		assertEquals(2f * halfWidth * moves["mA10"] * sx, right.second - left.second, 1e-4f)
+		val upper = rule(centerX, centerY - 10f)
+		val lower = rule(centerX, centerY + 10f)
+		assertEquals(20f * moves["mA01"] * sx, lower.first - upper.first, 1e-4f)
+		assertEquals(20f * (1f + moves["mA11"]), lower.second - upper.second, 1e-4f)
+	}
 
 	@Test fun theStyleTableHoldsEveryMoveAtEveryEnd() {
 		val style = TurnStyle.DEFAULT
@@ -80,6 +119,89 @@ class FaceTurnTest {
 		val eyeB = mirror(FeatureTurn.eye(FeatureTurn.Eye.of(marks, "R")!!, turn, turn.pose(-30f, 0f)).eye)
 		val a = eyeA(80f, -12f); val b = eyeB(80f, -12f)
 		assertTrue(abs(a.first - b.first) < 1f && abs(a.second - b.second) < 1f, "the far eye either way: $a / $b")
+	}
+
+	@Test fun defaultOpenMouthReshapesWithStableCornersInPureYaw() {
+		val marks = openMouthFace()
+		val turn = FaceTurn(marks)
+		val right = mouth(turn, marks, 45f, 0f)
+		val mirroredLeft = mirror(mouth(turn, marks, -45f, 0f))
+		val cornerA = right(-28f, 100f)
+		val cornerB = right(28f, 100f)
+		val upper = right(0f, 84f)
+		val lower = right(0f, 116f)
+		val width = cornerB.first - cornerA.first
+		assertTrue(width in 40f..55f, "the turned opening narrows: $width")
+		assertEquals(cornerA.second, cornerB.second, .3f, "track the authored corners")
+		assertTrue(abs(lower.first - upper.first) in .5f..9f, "the lips retain distinct movements: $upper / $lower")
+		for ((x, y) in listOf(-28f to 100f, 28f to 100f, 0f to 84f, 0f to 116f)) {
+			val a = right(x, y)
+			val b = mirroredLeft(x, y)
+			assertEquals(a.first, b.first, .5f)
+			assertEquals(a.second, b.second, .5f)
+		}
+	}
+
+	@Test fun openMouthKeepsPurePitchAndThePitchContributionOfDiagonalPoses() {
+		val marks = openMouthFace()
+		val turn = FaceTurn(marks)
+		for (pitch in listOf(-30f, 30f)) assertOriginalMouth(marks, turn, 0f, pitch)
+		val side = mouth(turn, marks, 45f, 0f)
+		val yawMoves = turn.pose(45f, 0f).moves
+		fun width(rule: (Float, Float) -> Pair<Float, Float>) = rule(28f, 100f).first - rule(-28f, 100f).first
+		fun height(rule: (Float, Float) -> Pair<Float, Float>) = rule(0f, 116f).second - rule(0f, 84f).second
+		for (pitch in listOf(-30f, -15f, 15f, 30f)) {
+			val diagonal = mouth(turn, marks, 45f, pitch)
+			val moves = turn.pose(45f, pitch).moves
+			assertEquals(56f * (moves["mA00"] - yawMoves["mA00"]), width(diagonal) - width(side), .05f)
+			assertEquals(32f * (moves["mA11"] - yawMoves["mA11"]), height(diagonal) - height(side), .05f)
+		}
+	}
+
+	@Test fun openMouthFallsBackForMissingLandmarksOrNamedStyles() {
+		val complete = openMouthFace()
+		for (missing in listOf("mouth.lowerMid", "face.chin")) {
+			val incomplete = FaceLandmarks(complete.points.filterNot { it.id == missing }, complete.contour, complete.measures)
+			assertOriginalMouth(incomplete, FaceTurn(incomplete), 45f, 0f)
+		}
+		val closed = openMouthFace(height = 0f)
+		assertOriginalMouth(closed, FaceTurn(closed), 45f, 0f)
+		assertOriginalMouth(complete, FaceTurn(complete, TurnStyle.Setting(preset = "soft")), 45f, 15f)
+		val onePoint = FaceLandmarks(complete.points.filter { it.part != "mouth" || it.id == "mouth.cornerA" },
+			complete.contour, complete.measures)
+		val turn = FaceTurn(onePoint)
+		assertNull(FeatureTurn.mouth(onePoint, turn, turn.pose(45f, 0f)))
+	}
+
+	@Test fun openMouthYawRespectsTurnStrength() {
+		val marks = openMouthFace()
+		val zero = FaceTurn(marks, TurnStyle.Setting(turn = 0f))
+		val rule = mouth(zero, marks, 45f, 0f)
+		for (point in marks.points.filter { it.part == "mouth" }) {
+			val (x, y) = rule(point.x, point.y)
+			assertEquals(point.x, x, 1e-4f)
+			assertEquals(point.y, y, 1e-4f)
+		}
+		fun width(strength: Float): Float {
+			val turn = FaceTurn(marks, TurnStyle.Setting(turn = strength))
+			val shape = mouth(turn, marks, 45f, 0f)
+			return shape(28f, 100f).first - shape(-28f, 100f).first
+		}
+		val half = width(.5f)
+		assertTrue(half > width(1f) && half < 56f, "the opening narrows less at half strength: $half")
+	}
+
+	@Test fun defaultMouthYawRespondsToDifferentOpeningProportions() {
+		fun upperOffset(height: Float): Float {
+			val marks = openMouthFace(height)
+			val turned = mouth(FaceTurn(marks), marks, 45f, 0f)
+			val left = turned(-28f, 100f).first
+			val right = turned(28f, 100f).first
+			val upper = turned(0f, 100f - height / 2f).first
+			return (upper - (left + right) / 2f) / (right - left)
+		}
+		assertTrue(abs(upperOffset(14f) - upperOffset(32f)) > .003f,
+			"shallow and tall openings receive distinct lip movement")
 	}
 
 	@Test fun eachMoveKeepsItsOwnTiming() {

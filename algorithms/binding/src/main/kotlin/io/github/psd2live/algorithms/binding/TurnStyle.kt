@@ -63,6 +63,13 @@ class TurnStyle private constructor(
 	fun at(ends: Ends, px: Float, py: Float): Moves =
 		Moves(index, face.at(ends.face, kotlin.math.abs(px).coerceAtMost(1f), py.coerceIn(-1f, 1f)))
 
+	/** The untuned pure yaw component, for replacing the default shape while keeping slider adjustments. */
+	internal fun defaultYaw(px: Float, strength: Float): Moves {
+		val values = face.at(faceVectors.getValue("default"), kotlin.math.abs(px).coerceAtMost(1f), 0f)
+		for (i in values.indices) values[i] *= strength
+		return Moves(index, values)
+	}
+
 	/** The hair sheet's coefficients at [px] of the turn (signed: + where the face's middle goes toward +x) and [py] of the look. */
 	fun hairAt(ends: Ends, px: Float, py: Float): Moves =
 		Moves(hairIndex, hair.at(ends.hair, px.coerceIn(-1f, 1f), py.coerceIn(-1f, 1f)))
