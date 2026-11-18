@@ -415,7 +415,9 @@ internal class RigModifierEvaluator(
                     }
                     writers[key] = instance.id to definition
                 }
-                val keyforms = io.github.psd2live.core.RigBuildProfile.stage("modifier keyform ownership") { ownedKeyforms(before, generated) }
+                val keyforms = io.github.psd2live.core.RigBuildProfile.stage("modifier keyform ownership") {
+                    ownedKeyforms(before, if (instance.type == ModifierAuthorEdits.TYPE && instance.id in stack.appliedNodes) current else generated)
+                }
                 val capability = stack.appliedNodes[instance.id]?.capability ?: instance.capability(definition.appliedConfig(instance), definition.provides)
                 entries += ModifierEvaluation(instance, ModifierStatus.ACTIVE, contributions = contributions,
                     ownedKeyforms = keyforms, overrideIssues = overridden.issues, algorithmWrites = algorithmWrites)
@@ -516,9 +518,7 @@ internal class RigModifierEvaluator(
         require(plan.getValue("can_apply").jsonPrimitive.boolean) {
             "Cannot apply modifiers: ${plan.getValue("blockers")}. Resolve missing dependencies or authored corrections first."
         }
-        val prefix = evaluate(authored, stack.copy(instances = stack.instances.take(end),
-            appliedNodes = stack.appliedNodes.filterKeys { owner -> stack.instances.take(end).any { it.id == owner } },
-            overrides = stack.overrides.filterKeys { owner -> owner in stack.retiredIds || stack.instances.take(end).any { it.id == owner } }), checkpoint = checkpoint)
+        val prefix = evaluate(authored, stack.prefix(end), checkpoint = checkpoint)
         require(prefix.entries.none { it.status in setOf(ModifierStatus.FAILED, ModifierStatus.MISSING_DEPENDENCY, ModifierStatus.MISSING_PLUGIN) }) { "Cannot apply a prefix with failed or missing dependencies or plugins" }
         require(prefix.entries.none { it.overrideIssues.any { issue -> issue.kind == io.github.psd2live.core.GeneratedOverrideIssueKind.ORPHANED } }) {
             "Cannot apply a prefix with overrides that no longer match their generated content"

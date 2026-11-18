@@ -42,6 +42,7 @@ import io.github.psd2live.ui.theme.*
 import kotlinx.serialization.json.*
 
 internal fun modifierName(type: String): String {
+    if (type == ModifierAuthorEdits.TYPE) return tr("modifier.authorEdits")
     val registry = RigModifierAlgorithms.registry
     val stored = registry.storedType(type)
     if (stored != type) return tr("modifier.algorithm.version", modifierName(stored), requireNotNull(registry.defaultDefinition(type)).version)
@@ -190,7 +191,8 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                             if (missing.isNotEmpty()) InspectorHint(tr("modifier.dependencies", missing.joinToString { it.jsonPrimitive.content }), warning = true)
                             when (page) {
                                 0 -> {
-                                    if (selected.id in stack.appliedNodes) InspectorHint(tr("modifier.applied.hint")) else {
+                                    if (selected.id in stack.appliedNodes) InspectorHint(tr(if (selected.type == ModifierAuthorEdits.TYPE)
+                                        "modifier.authorEdits.hint" else "modifier.applied.hint")) else {
                                     ModifierSourceValues(selected, state, enabled, vm) { updatingCodeFor = it }
                                     ModifierModulePhysicsValues(selected, report, state, enabled, vm)
                                     ModifierNativeValues(selected.type, selected.config, state, enabled, vm, instanceId = selected.id) { config, captured, done ->
