@@ -1,6 +1,7 @@
 package io.github.psd2live.core
 
 import io.github.psd2live.i18n.tr
+import org.umamo.format.art.SourceGroup
 import org.umamo.runtime.model.Drawable
 import org.umamo.runtime.model.DrawableId
 import org.umamo.runtime.model.OrgChild
@@ -39,10 +40,10 @@ object SeeThroughLayers {
 	fun copyId(original: DrawableId) = DrawableId(original.raw + SUFFIX)
 
 	/**
-	 * What the base records as candidates: version 2 records every part of an eye, version 1 only lashes and closed-eye
-	 * lines. A stored rig recording other ones is regenerated ([MaterializedRigCodec]).
+	 * What the base records as candidates. Version 3 respects authored brow covers. A stored rig recording other rules
+	 * is regenerated ([MaterializedRigCodec]).
 	 */
-	const val CANDIDATE_RULES = 2
+	const val CANDIDATE_RULES = 3
 
 	/** A feature the bangs cover at rest, as the base rig found it: [eyes] for a part of an eye, else a brow. */
 	data class Candidate(val original: String, val eyes: Boolean, val bangs: List<String>)
@@ -100,17 +101,37 @@ object SeeThroughLayers {
 
 	/**
 	 * Every brow and eye part of [model] that front hair art reaches over at rest, with those bangs: [layerOf] gives
-	 * each head drawable's layer (null for any other). Draw order is not looked at here: it is read when the copies are
-	 * made, after the user's edits of it.
+	 * each head drawable's layer (null for any other). The source order identifies existing painted brow covers. Live
+	 * draw orders for the generated copies are read when they are made, after the user's edits.
 	 */
-	fun candidates(model: PuppetModel, alphaThreshold: Int, layerOf: (DrawableId) -> ClassifiedLayer?): List<Candidate> {
-		val bangs = model.drawables.mapNotNull { drawable -> layerOf(drawable.id)?.takeIf { it.semantic.tag == SemanticTag.FRONT_HAIR }?.let { drawable.id to it } }
+	fun candidates(model: PuppetModel, alphaThreshold: Int, sourceGroups: List<SourceGroup> = emptyList(),
+	               layerOf: (DrawableId) -> ClassifiedLayer?): List<Candidate> {
+		val layers = model.drawables.mapNotNull { drawable -> layerOf(drawable.id)?.let { drawable.id to it } }
+		val bangs = layers.filter { (_, layer) -> layer.semantic.tag == SemanticTag.FRONT_HAIR && layer.semantic.role != PartRole.SHADOW }
 		if (bangs.isEmpty()) return emptyList()
-		return model.drawables.mapNotNull { drawable ->
-			val layer = layerOf(drawable.id)?.takeIf { (it.semantic.tag in BROWS || it.semantic.tag in EYES) && it.opaquePixels > 0 } ?: return@mapNotNull null
+		val hiddenGroups = sourceGroups.filter { !it.visible || it.opacity <= 0f }.mapTo(hashSetOf()) { it.path }
+		fun hiddenByGroup(path: String) = generateSequence(path) { current ->
+			current.substringBeforeLast('/', "").takeIf { it.isNotEmpty() }
+		}.any { it in hiddenGroups }
+		val authoredCovers = layers.map { it.second }.filter { layer ->
+			layer.semantic.tag in BROWS && layer.source.visible && layer.source.opacity > 0f &&
+				layer.semantic.type == LayerType.PRESET && PartRoles.isAuthoredBrowCover(layer.source.name) &&
+				!hiddenByGroup(layer.source.groupPath)
+		}.groupBy { it.semantic.side }
+		return layers.mapNotNull { (id, layer) ->
+			val tag = layer.semantic.tag
+			if ((tag !in BROWS && tag !in EYES) || layer.opaquePixels <= 0) return@mapNotNull null
+			if (layer.semantic.role == PartRole.EYE_DETAIL) return@mapNotNull null
+			if (tag in BROWS && (layer.semantic.role != null || PartRoles.isAuthoredBrowCover(layer.source.name))) return@mapNotNull null
 			val reach = layer.bounds.let { it.copy(top = it.top - it.height * 0.5f, bottom = it.bottom + it.height * 0.5f) }
-			val covering = bangs.filter { (_, hair) -> covers(hair, reach, alphaThreshold) }.map { it.first.raw }
-			if (covering.isEmpty()) null else Candidate(drawable.id.raw, layer.semantic.tag in EYES, covering)
+			val coversOnSide = if (tag in BROWS) authoredCovers[layer.semantic.side].orEmpty() else emptyList()
+			val covering = bangs.filter { (_, hair) ->
+				covers(hair, reach, alphaThreshold) && coversOnSide.none { cover ->
+					cover.source.order < hair.source.order && cover.source.order < layer.source.order &&
+						covers(cover, layer.bounds, alphaThreshold)
+				}
+			}.map { it.first.raw }
+			if (covering.isEmpty()) null else Candidate(id.raw, tag in EYES, covering)
 		}
 	}
 

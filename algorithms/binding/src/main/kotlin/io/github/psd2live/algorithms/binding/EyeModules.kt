@@ -68,9 +68,11 @@ object EyeModules {
 		tag == "EYEWHITE" -> EyeRig.EyeMesh.WHITE
 		tag != "EYELASH" -> null
 		role == "LOWER" -> EyeRig.EyeMesh.LOWER_LASH
-		role == "LID" || role == "SHADOW" -> EyeRig.EyeMesh.SKIN
+		followsLidSkin(role) -> EyeRig.EyeMesh.SKIN
 		else -> EyeRig.EyeMesh.UPPER_LASH
 	}
+
+	internal fun followsLidSkin(role: String?): Boolean = role == "LID" || role == "SHADOW" || role == "EYE_DETAIL"
 
 	/** The openness keys of [eye], with the widened eye's beyond 1. */
 	fun openKeys(eye: EyeRig, options: EyeOptions): FloatArray = if (options.wide) eye.keys + floatArrayOf(1.5f, 2f) else eye.keys

@@ -131,7 +131,7 @@ class CheekAlgorithm : ChangingModifierAlgorithmPlugin {
     private fun tracks(layer: CheekSource.Layer, strength: Float?): ChannelGrids {
         val influence = layer.influence(strength ?: 0f)
         return MoodChannels.apply(ChannelGrids.Empty, influence.warmth, influence.darkness,
-            influence.highlight, strength != null, layer.priorGloom != null)
+            influence.highlight, strength != null, layer.priorGloom != null, restOpacity = 1f)
     }
 
     private fun sample(id: String, tracks: ChannelGrids) = Drawable(

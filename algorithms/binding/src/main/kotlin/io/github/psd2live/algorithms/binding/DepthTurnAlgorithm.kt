@@ -1,6 +1,7 @@
 package io.github.psd2live.algorithms.binding
 
 import io.github.psd2live.core.fit.FaceTurn
+import io.github.psd2live.core.fit.HairTurn
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.bridge.PuppetIr
@@ -110,6 +111,18 @@ class DepthTurnAlgorithm : ChangingModifierAlgorithmPlugin {
             if (deformer.id in selectedBranches) deformer else source.deformers[i]
         }
         val raw = inputs.sourceMeshes?.let { ScaffoldMeshContext.decodeRawMeshes(it, checkpoint) }.orEmpty()
+        val sourceById = source.drawables.associateBy { it.id.raw }
+        val hairDepths = HashMap<String, HairTurn.LockDepth?>()
+        fun carrierDepth(layer: DepthTurnInputs.Layer): HairTurn.LockDepth? {
+            if (layer.tag != "FRONT_HAIR" || layer.role != "SHADOW") return null
+            val id = layer.hairCarrier ?: return null
+            return hairDepths.getOrPut(id) {
+                val carrier = inputs.layers[id]?.takeIf { it.tag == layer.tag && it.role != "SHADOW" }
+                    ?: return@getOrPut null
+                val mesh = sourceById[id]?.mesh ?: return@getOrPut null
+                HairTurn.depthProfile(positions(mesh, carrier, raw))
+            }
+        }
         val mouth = inputs.mouth?.rig()
         val faceOrder = source.drawables.filter { inputs.layers[it.id.raw]?.tag == "FACE" }.minOfOrNull { it.drawOrder }
         val meshes = source.drawables.map { drawable ->
@@ -121,8 +134,8 @@ class DepthTurnAlgorithm : ChangingModifierAlgorithmPlugin {
             val onFace = parent == contour || parent in underFace
             val shellOfLayer = DepthTurnMotion.shell(layer.tag, layer.role)
             val shaped = when {
-                style != null && styled(layer) -> DepthTurnMotion.styledShapes(layer.tag,
-                    positions(geometry, layer, raw), layer.frame, inputs.head, inputs.container, style, checkpoint)
+                style != null && styled(layer) -> DepthTurnMotion.styledShapes(DepthTurnMotion.styleTag(layer.tag, layer.role),
+                    positions(geometry, layer, raw), layer.frame, inputs.head, inputs.container, style, carrierDepth(layer), checkpoint)
                 shellOfLayer == null || parent?.raw?.startsWith("DeformMouthShape") == true || style != null && onFace -> emptyList()
                 else -> {
                     val rest = positions(geometry, layer, raw)

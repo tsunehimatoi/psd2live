@@ -40,6 +40,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.umamo.edit.withDeformerDeleted
 import org.umamo.edit.withParameterDeleted
 import org.umamo.format.art.LayerBlend
+import org.umamo.format.art.isEffectivelyVisible
 import org.umamo.runtime.model.BlendShapeBinding
 import org.umamo.runtime.model.MeshForm
 import org.umamo.runtime.model.BlendMode
@@ -387,6 +388,14 @@ object RigBuilder {
 
 		private val recipeSubject by lazy { io.github.psd2live.core.recipe.RecipeSubject.of(analysis) }
 		private val fittedEyes = java.util.concurrent.ConcurrentHashMap<Identity, io.github.psd2live.core.fit.FittedEyes>()
+		private val hairLayersById by lazy { analysis.layers.associateBy { it.source.id.raw } }
+		private val hairCarriers by lazy {
+			RigDepthTurnSource.shadowCarriers(hairLayersById, analysis.source.groups
+				.filter { !it.visible || it.opacity <= 0f }.mapTo(hashSetOf()) { it.path })
+		}
+
+		internal fun hairCarrier(layer: ClassifiedLayer): ClassifiedLayer? =
+			hairCarriers[layer.source.id.raw]?.let(hairLayersById::get)
 
         private class SourceFitValue<T>(val value: T)
 
@@ -531,10 +540,15 @@ object RigBuilder {
             val eyes = fittedEyes(config)?.fitting
             val brows = fittedBrows(config).mapValues { it.value.fit }
             val mouth = fittedMouth(config)?.rig?.fit
-            val build = { io.github.psd2live.core.fit.FaceLandmarking.read(analysis.layers, eyes, brows, mouth, faceRig.centerX) {
+            val coveringHair = analysis.layers.filter {
+                it.semantic.tag == SemanticTag.FRONT_HAIR && it.semantic.role !in setOf(PartRole.SHADOW, PartRole.HIGHLIGHT, PartRole.AHOGE) &&
+                    it.source.opacity >= .5f && !it.source.clipped && it.opaquePixels > 0 &&
+                    config.layerVisibility[it.source.id.raw] != false && analysis.source.isEffectivelyVisible(it.source)
+            }
+            val build = { io.github.psd2live.core.fit.FaceLandmarking.read(analysis.layers, eyes, brows, mouth, faceRig.centerX, coveringHair) {
                 x, y -> faceRig.coordinateSpace.toAligned(x, y)
             } }
-            val key = listOf(analysis.layers, eyes?.fits, eyes?.reasons, eyes?.level, brows, mouth, faceSignature(faceRig))
+            val key = listOf(analysis.layers, eyes?.fits, eyes?.reasons, eyes?.level, brows, mouth, faceSignature(faceRig), coveringHair)
             if (RigStageCache.enabled && sharedStages != null) sharedStages.get("face landmarks", 32, key, build) else build()
         }
 
@@ -626,7 +640,8 @@ object RigBuilder {
 			val eyes = fittedEyes(config)
 			val level = eyes?.fitting?.level ?: sourceEyes(space).level
 			val fits = brows.groupBy { it.semantic.side }.mapNotNull { (side, layers) ->
-				val layer = layers.maxBy { it.opaquePixels }
+				val layer = layers.filterNot { PartRoles.isAuthoredBrowCover(it.source.name) }
+					.ifEmpty { layers }.maxBy { it.opaquePixels }
 				val fit = sourceFit("brows", listOf(layer, level, faceRig.centerX, space)) {
 					io.github.psd2live.core.fit.fitBrow(layer, level, faceRig.centerX, toRig)
 				}?.moved(rigMoves(config, if (side == Side.LEFT) "brow.L" else "brow.R", toRig)) ?: return@mapNotNull null
@@ -1735,7 +1750,7 @@ object RigBuilder {
         val lipOwnerById = mutableMapOf<DrawableId, DrawableId>()
 		val classifiedByDrawable = mutableMapOf<DrawableId, ClassifiedLayer>()
 		// The finished model can later make copies of brows and eye parts covered by the bangs.
-		fun seeThrough(puppet: PuppetModel) = SeeThroughLayers.candidates(puppet, config.alphaThreshold) { id ->
+		fun seeThrough(puppet: PuppetModel) = SeeThroughLayers.candidates(puppet, config.alphaThreshold, analysis.source.groups) { id ->
 			classifiedByDrawable[id]?.takeIf { inferredGroup(it, analysis.anchors) == LayerGroup.HEAD }
 		}
         val expressions by lazy(LazyThreadSafetyMode.NONE) { sourceExpressions(analysis, config) }
@@ -2712,7 +2727,7 @@ object RigBuilder {
 			geometryGrid,
 			headSpace,
 			neutralValidationBounds(layer, meshData, mouthAperture, headSpace, config.meshOnly, config),
-			if (config.meshOnly) emptyList() else moduleBlendShapes(rigLayer, meshData, parentFrame, context, config, parentId),
+			if (config.meshOnly) emptyList() else moduleBlendShapes(rigLayer, meshData, parentFrame, context, config, parentId, meshCache),
 		)
 	}
 
@@ -3834,11 +3849,12 @@ object RigBuilder {
 	}
 
 	/** The additive shapes the rig modules give [layer]'s mesh: the eyes' and brows' ([eyeBlendShapes]) and the mouth's. */
-	private fun moduleBlendShapes(layer: ClassifiedLayer, data: MeshData, frame: Bounds, context: RigContext, config: PipelineConfig, parent: DeformerId?):
+	private fun moduleBlendShapes(layer: ClassifiedLayer, data: MeshData, frame: Bounds, context: RigContext, config: PipelineConfig,
+	                              parent: DeformerId?, meshCache: PreviewMeshCache? = null):
 		List<org.umamo.runtime.model.BlendShapeBinding<org.umamo.runtime.model.MeshForm>> =
 		eyeBlendShapes(layer, data, frame, context.fittedEyes(config), context.fittedBrows(config),
             sidedCoupling = (config.recipe.modules["brow.lid-coupling"]?.version ?: 1) >= 5) + mouthBlendShapes(layer, data, frame, context.fittedMouth(config)) +
-			(if (context.faceTurn(config) != null && styled(layer)) styleTurnShapes(layer, data.rigPositions, frame, context, config)
+			(if (context.faceTurn(config) != null && styled(layer)) styleTurnShapes(layer, data.rigPositions, frame, context, config, meshCache)
 			else headTurnShapes(layer, turnPositions(layer, data.rigPositions, context.fittedMouth(config)), frame, context.headTurn(config).takeUnless { turnsWithMouth(parent) ||
 				parent != null && (parent == faceContourId || parent in context.underFace) && context.faceTurn(config) != null })) +
 			bustShapes(layer, data.rigPositions, frame, context, config) +
@@ -3925,11 +3941,21 @@ object RigBuilder {
 	 * container's own move: the hair by its role fields ([io.github.psd2live.core.fit.HairTurn]), headwear and earwear
 	 * whole ([io.github.psd2live.core.fit.FeatureTurn.whole]). The turn and the look add; a corner's own change is the face's alone.
 	 */
-	private fun styleTurnShapes(layer: ClassifiedLayer, positions: FloatArray, frame: Bounds, context: RigContext, config: PipelineConfig):
+	private fun styleTurnShapes(layer: ClassifiedLayer, positions: FloatArray, frame: Bounds, context: RigContext, config: PipelineConfig,
+                                meshCache: PreviewMeshCache?):
         List<BlendShapeBinding<MeshForm>> {
         val turn = context.faceTurn(config) ?: return emptyList()
-        return io.github.psd2live.algorithms.binding.DepthTurnMotion.styledShapes(layer.semantic.tag.name, positions, frame, context.head,
-            turnContainer(context.faceRig.centerX, context.faceRig.mouthLineY, config.headTurnStrength, config.rigTuning), turn)
+        val hairDepth = if (layer.semantic.tag == SemanticTag.FRONT_HAIR && layer.semantic.role == PartRole.SHADOW) {
+            context.hairCarrier(layer)?.let { carrier ->
+                val carrierFrame = context.parentAndFrame(carrier, config).second
+                val aligned = context.headSpaceFor(carrier, config)
+                val mesh = buildGridMesh(carrier, carrierFrame, aligned, config, meshCache, MeshResolution.unitScale(config, context.analysis.source))
+                io.github.psd2live.core.fit.HairTurn.depthProfile(mesh.rigPositions)
+            }
+        } else null
+        val styleTag = io.github.psd2live.algorithms.binding.DepthTurnMotion.styleTag(layer.semantic.tag.name, layer.semantic.role?.name)
+        return io.github.psd2live.algorithms.binding.DepthTurnMotion.styledShapes(styleTag, positions, frame, context.head,
+            turnContainer(context.faceRig.centerX, context.faceRig.mouthLineY, config.headTurnStrength, config.rigTuning), turn, hairDepth = hairDepth)
     }
 
 	/** [layer]'s shapes turning the head in depth, on the shell of the head it lies on ([headShell]). */
@@ -4061,7 +4087,7 @@ object RigBuilder {
 		} * config.recipe.value(m.EXPRESSION_CHEEK.id, "strength") / 100f
 		val dark = (if (skin) 1f else 0f) * config.recipe.value(m.EXPRESSION_GLOOM.id, "strength") / 100f
         return io.github.psd2live.algorithms.binding.MoodChannels.apply(grids, warmth, dark,
-            role == PartRole.HIGHLIGHT, cheek, gloom)
+            role == PartRole.HIGHLIGHT, cheek, gloom, layer.source.opacity.coerceIn(0f, 1f))
 	}
 
 	/** [grids] with the opacity the eye modules give [layer] ([io.github.psd2live.core.fit.EyeModules.opacity]) where it has none of its own. */

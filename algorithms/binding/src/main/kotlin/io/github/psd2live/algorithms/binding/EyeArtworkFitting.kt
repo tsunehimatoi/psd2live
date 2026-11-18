@@ -51,7 +51,7 @@ object EyeArtworkFitting {
 		}
 		return fits.mapValues { (side, eye) ->
 			val members = pieces.filter { it.side == side }
-			val ink = members.filter { it.layer.role !in setOf("LID", "SHADOW") && it.hint?.primitive != EyePrimitive.SKIN }
+			val ink = members.filter { !EyeModules.followsLidSkin(it.layer.role) && it.hint?.primitive != EyePrimitive.SKIN }
 			fun correctedStroke(region: EyeRegion): EyeStroke {
 				val observed = stroke(eye, region, ink)
 				val correction = members.asSequence().mapNotNull { piece -> overrides[piece.layer.id]?.get(piece.key)
@@ -212,7 +212,7 @@ object EyeArtworkFitting {
 		val contact = groups.maxByOrNull { it.size }?.let(::contact) ?: contact(contactSet)
 		val span = p.maxOf { it.x } - p.minOf { it.x }
 		val primitive = when {
-			piece.layer.role == "LID" || piece.layer.role == "SHADOW" -> EyePrimitive.SKIN
+			EyeModules.followsLidSkin(piece.layer.role) -> EyePrimitive.SKIN
 			contactPoints.isEmpty() -> EyePrimitive.AUTO
 			span > 0.45f && contact.to - contact.from > span * 0.65f -> EyePrimitive.LINE
 			centre.x > 0.78f && p.maxOf { it.y } - p.minOf { it.y } > span -> EyePrimitive.SIDE

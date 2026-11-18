@@ -40,7 +40,7 @@ class WorkspaceBuiltinPluginsTest {
         val registry = RigModifierAlgorithms.registry
         val ref = assertNotNull(BuiltinModifierPlugins.reference("body/legacy", 1))
         assertEquals("builtin.626f64792f6c6567616379.v1", ref.id)
-        assertEquals("1.0.66", ref.version)
+        assertEquals("1.0.67", ref.version)
         assertEquals(64, ref.digest.length)
         for (entry in BuiltinModifierPlugins.entries) {
             val definition = entry.definition

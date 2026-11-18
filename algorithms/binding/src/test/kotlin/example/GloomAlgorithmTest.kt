@@ -85,4 +85,18 @@ class GloomAlgorithmTest {
         assertEquals(prior.parameterTree, actual.parameterTree)
         assertSame(prior.meshes[1], actual.meshes[1])
     }
+
+    @Test fun highlightFadeKeepsAuthoredOpacityAtRest() {
+        for (opacity in listOf(0f, .4f)) {
+            val highlight = light.copy(opacity = opacity)
+            val input = RigIR(canvas, emptyList(), meshes = listOf(face, highlight))
+            val result = GloomAlgorithm().evaluate(input, instance, context(false, highlight)) {}.meshes.last()
+            assertEquals(opacity, result.opacity)
+            val alpha = result.channels[Channel.OPACITY]
+            if (opacity == 0f) assertNull(alpha) else {
+                assertEquals(opacity, (alpha!!.cells.first().form as ChannelValue.Scalar).value)
+                assertEquals(opacity * .15f, (alpha.cells.last().form as ChannelValue.Scalar).value, .00001f)
+            }
+        }
+    }
 }

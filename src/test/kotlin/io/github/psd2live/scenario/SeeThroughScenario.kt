@@ -1,12 +1,15 @@
 package io.github.psd2live.scenario
 
 import io.github.psd2live.application.WorkspaceFailure
+import io.github.psd2live.algorithms.binding.ScaffoldHead
 import io.github.psd2live.core.IrGeometryEvaluator
 import io.github.psd2live.core.PipelineConfig
 import io.github.psd2live.core.RigIrCompiler
 import io.github.psd2live.core.SeeThroughLayers
+import io.github.psd2live.core.Side
 import io.github.psd2live.format.eval.NativeGeometryEvaluator
 import io.github.psd2live.format.eval.P2lRuntime
+import io.github.psd2live.project.WorkspaceSourceLayer
 import io.github.psd2live.project.WorkspaceSettingsCodec
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
@@ -14,6 +17,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.io.TempDir
+import org.umamo.format.art.LayerId
 import org.umamo.format.cmo3.Cmo3
 import org.umamo.format.cmo3.model.custom.CModelSource
 import org.umamo.interop.cmo3.Cmo3Import
@@ -37,6 +41,55 @@ import kotlin.test.assertTrue
  */
 class SeeThroughScenario {
 	@TempDir lateinit var temp: Path
+
+	@Test fun paintedBrowCoverTakesPrecedenceAndItsDetailsShareTheBrowWarp() {
+		val document = Characters.browed()
+		val original = document.source.layers.single { it.id.raw == "brow_l" } as WorkspaceSourceLayer
+		val cover = original.copy(id = LayerId("brow_cover"), name = "eyebrow cover-l", order = 0, opacity = .5f)
+		val detail = original.copy(id = LayerId("brow_detail"), name = "eyebrow detail-l", order = 1)
+		val source = io.github.psd2live.project.WorkspaceSourceArt(document.source.widthPx, document.source.heightPx,
+			listOf(cover, detail) + document.source.layers, document.source.groups)
+		Studio.run(temp, document.copy(source = source)) {
+			val brow = puppet.drawables.single { it.id.raw == mesh("brow_l") }
+			val painted = puppet.drawables.single { it.id.raw == mesh("brow_cover") }
+			val shading = puppet.drawables.single { it.id.raw == mesh("brow_detail") }
+			assertTrue(painted.drawOrder > puppet.drawables.single { it.id.raw == mesh("front_hair") }.drawOrder)
+			val parents = puppet.deformers.associate { it.id to it.parent }
+			val leftBrow = ScaffoldHead.featureId(ScaffoldHead.Feature.BROW, Side.LEFT)
+			for (layer in listOf(brow, painted, shading)) {
+				assertTrue(leftBrow in generateSequence(layer.parentDeformerId) { parents[it] }.toList(), layer.name)
+			}
+			val angle = puppet.parameters.single { it.id.raw == "ParamAngleX" }
+			fun drift(layer: Drawable, yaw: Float): Float {
+				val base = bounds(layer.id.raw)
+				val posed = bounds(layer.id.raw, mapOf(angle.id.raw to yaw))
+				return ((posed[0] + posed[2]) - (base[0] + base[2])) / (2f * (base[2] - base[0]))
+			}
+			for (yaw in listOf(angle.min, angle.max)) {
+				val reference = drift(brow, yaw)
+				assertTrue(abs(reference) > .05f, "the source brow stays at rest during yaw $yaw")
+				assertEquals(reference, drift(painted, yaw), .08f, "painted brow cover at yaw $yaw")
+				assertEquals(reference, drift(shading, yaw), .08f, "brow detail at yaw $yaw")
+			}
+			assertEquals(setOf(mesh("brow_r")), now.model.rig.seeThroughCopies.values.toSet())
+		}
+	}
+
+	@Test fun aHairProjectionOnTheFaceNeverCutsAnEyeWindowOrMasksABrowCopy() {
+		val document = Characters.browed()
+		val fringe = document.source.layers.single { it.id.raw == "front_hair" } as WorkspaceSourceLayer
+		val shadow = fringe.copy(id = LayerId("fringe_shadow"), name = "发阴影软边", groupPath = "face", opacity = .4f)
+		val source = io.github.psd2live.project.WorkspaceSourceArt(document.source.widthPx, document.source.heightPx,
+			listOf(shadow) + document.source.layers, document.source.groups)
+		Studio.run(temp, document.copy(source = source)) {
+			val projected = mesh("fringe_shadow")
+			val candidates = now.model.rig.seeThrough.orEmpty()
+			assertTrue(candidates.isNotEmpty())
+			assertTrue(candidates.all { projected !in it.bangs })
+			assertTrue(puppet.drawables.filter { it.id.raw in now.model.rig.seeThroughCopies.keys }
+				.none { DrawableId(projected) in it.maskedBy })
+		}
+	}
 
 	@Test fun browCopiesSitOverTheBangsAndFollowTheirOriginals() = Studio.run(temp, Characters.browed()) {
 		val hair = mesh("front_hair"); val brow = mesh("brow_l"); val other = mesh("brow_r")

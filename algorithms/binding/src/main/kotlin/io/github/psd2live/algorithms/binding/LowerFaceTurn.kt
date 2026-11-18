@@ -32,14 +32,14 @@ internal class LowerFaceTurn private constructor(
 	}
 
 	fun place(turn: FaceTurn, pose: FaceTurn.Pose): Placement {
-		val (noseX, mouthX) = if (pose.yaw != 0f && turn.mouthTurnStrength > 0f) yaw(turn, pose.level) else 0f to 0f
+		val (noseX, mouthX) = if (pose.yaw != 0f && turn.defaultTurnStrength > 0f) yaw(turn, pose.level) else 0f to 0f
 		val (noseY, mouthY) = if (pose.pitch != 0f && turn.lookStrength > 0f) pitch(turn, pose.straight) else 0f to 0f
 		// Add only the corrections of the single-axis poses. The authored diagonal contribution stays in the style.
 		return Placement(noseX to noseY, mouthX to mouthY, bridgeY, tip.y)
 	}
 
 	private fun yaw(turn: FaceTurn, level: FaceTurn.Pose): Pair<Float, Float> {
-		val fraction = (abs(level.yaw) / FaceTurn.TURN_END).coerceAtMost(1f) * turn.mouthTurnStrength
+		val fraction = (abs(level.yaw) / FaceTurn.TURN_END).coerceAtMost(1f) * turn.defaultTurnStrength
 		val chinShift = level.field(chin.x, chin.y).first - chin.x
 		val sx = level.sx
 		val noseLead = (.125f * eyeLineWidth * fraction).coerceAtMost(room(tip, level, chinShift))
@@ -48,7 +48,7 @@ internal class LowerFaceTurn private constructor(
 		val mouthLead = (noseLead - .15f * eyeSpacing * fraction).coerceIn(0f, noseLead)
 			.coerceAtMost(room(mouthCorner, level, chinShift))
 		val rawNose = level.field(tip.x, tip.y).first - tip.x
-		val defaultYaw = turn.style.defaultYaw(level.yaw / FaceTurn.TURN_END, turn.mouthTurnStrength)
+		val defaultYaw = turn.style.defaultYaw(level.yaw / FaceTurn.TURN_END, turn.defaultTurnStrength)
 		val rawMouth = level.slide.first + defaultYaw["mouth_lead"] * sx * turn.unit
 		return (chinShift + sx * noseLead - rawNose) to (chinShift + sx * mouthLead - rawMouth)
 	}

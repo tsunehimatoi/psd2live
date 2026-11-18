@@ -11,6 +11,7 @@ object LayerClassifier {
 		names(SemanticTag.BACK_HAIR, "back hair", "backhair", "hair back", "hair_back", "后发", "后髪", "后脑勺", "後ろ髪", "後髪", "うしろがみ", "后头", "後頭部", "马尾", "馬尾", "ポニーテール", "ポニテ", "双马尾", "雙馬尾", "ツインテール", "ツインテ", "背发", "背髪", "뒷머리", "뒤머리", "뒤통수", "포니테일", "트윈테일", "양갈래", "묶은 머리", "묶은머리")
 		names(SemanticTag.FRONT_HAIR, "front hair", "fronthair", "hair front", "hair_front", "hair", "bangs", "前发", "前髪", "刘海", "瀏海", "まえがみ", "侧发", "側髪", "横髪", "鬓角", "もみあげ", "サイドヘア", "サイド", "呆毛", "アホ毛", "ahoge", "앞머리", "옆머리", "잔머리", "머리카락", "구레나룻", "바보털", "더듬이")
 		names(SemanticTag.HEADWEAR, "headwear", "hat", "cap", "帽子", "头饰", "頭飾", "发饰", "髪飾り", "カチューシャ", "リボン", "发带", "蝴蝶结", "모자", "머리띠", "머리장식", "머리 장식", "헤어핀", "머리핀", "리본", "카츄샤", "머리끈")
+		names(SemanticTag.HEADWEAR, "rear headwear", "rear-headwear", "后置头饰", "後置頭飾")
 		names(SemanticTag.FACE, "face", "head", "脸", "臉", "脸部", "面部", "顔", "かお", "輪郭", "脸轮廓", "脸部轮廓", "脸蛋", "头部", "头", "頭", "あたま", "얼굴", "윤곽", "얼굴 윤곽", "얼굴윤곽")
 		names(SemanticTag.FACE_DETAIL, "facedetail", "face detail", "face_detail", "脸部细节", "面部细节", "腮红", "紅暈", "红晕", "ほほ", "頬", "チーク", "blush", "脸颊", "泪痕", "얼굴 디테일", "볼", "볼터치", "홍조", "블러셔", "눈물")
 		names(SemanticTag.IRIDES, "irides", "iris", "pupil", "pupils", "eyes", "eye", "瞳孔", "虹膜", "眼珠", "眼睛", "目", "眼", "瞳", "ひとみ", "眼球", "眼黑", "目玉", "め", "ハイライト", "高光", "眼睛高光", "眼部高光", "瞳高光", "눈", "눈동자", "동공", "홍채", "눈알", "하이라이트", "눈 하이라이트", "눈하이라이트")
@@ -18,6 +19,11 @@ object LayerClassifier {
 		names(SemanticTag.EYEWHITE, "eyewhite", "eye white", "eye_white", "eyewhites", "眼白", "白眼", "白目", "目白", "巩膜", "흰자", "흰자위", "눈흰자", "공막", "눈 흰자")
 		names(SemanticTag.EYELASH, "eyelash", "eyelashes", "lash", "lashes", "eye open", "eye_open", "睫毛", "まつ毛", "まつげ", "上睫毛", "下睫毛", "上まつ毛", "下まつ毛", "上まつげ", "下まつげ", "アイライン", "眼线", "上眼线", "下眼线", "二重", "속눈썹", "윗속눈썹", "위 속눈썹", "아랫속눈썹", "아래 속눈썹", "아이라인", "쌍꺼풀")
 		names(SemanticTag.EYE_CLOSE, "eye close", "eye_close", "eye c", "eye_c", "eyelash c", "eyelash_c", "closed eye", "closed_eye", "闭眼", "閉眼", "目閉じ", "閉じ目", "笑眼", "眯眼", "笑顔", "笑い目", "eye smile", "eye_smile", "감은 눈", "감은눈", "눈 감음", "눈감음", "웃는 눈", "웃는눈")
+		names(SemanticTag.EYELASH, "双眼皮", "雙眼皮", "眼睑线", "眼皮线", "眼瞼線", "细眼线", "細眼線", "眼角黑线", "眼角黑線",
+			"上睫毛内角", "上睫毛外角", "上睫毛內角", "double eyelid", "eyelid line", "eyelid crease", "eyeliner")
+		for (name in PartRoles.lidSkinNames + PartRoles.eyeDetailNames) put(name, SemanticTag.EYELASH)
+		names(SemanticTag.EYELASH, "眼影", "上眼影", "下眼影")
+		for (name in PartRoles.browCoverNames + PartRoles.browFrontNames + PartRoles.browDetailNames) put(name, SemanticTag.EYEBROW)
 		names(SemanticTag.EYEWEAR, "eyewear", "glasses", "眼镜", "眼鏡", "めがね", "안경")
 		names(SemanticTag.EARS, "ears", "ear", "耳朵", "耳", "みみ", "귀")
 		names(SemanticTag.EARWEAR, "earwear", "earring", "earrings", "耳环", "耳環", "耳饰", "耳飾", "イヤリング", "ピアス", "귀걸이", "귀고리", "피어싱", "이어링", "귀 장식", "귀장식")
@@ -58,6 +64,8 @@ object LayerClassifier {
 	private val lipSkinDescriptor = Regex("唇底色|嘴皮|唇皮|上唇|下唇|upper\\s*lip(?!\\s*line)|lower\\s*lip(?!\\s*line)")
 	private val nonMouthPartHint = Regex("眼|眉|鼻|耳|发|髪|袖|裙|衣|裤|鞋|袜|手|脚|腿|尾|翼|腮红|紅暈|红晕|blush|嘴角")
 	private val blushKeyword = Regex("腮红|紅暈|红晕|blush")
+	private val redundantEyePrefix = Regex("^眼(?:上眼线|下眼线|上眼線|下眼線|双眼皮|雙眼皮|上眼皮|下眼皮|上眼睑|下眼睑|上眼瞼|下眼瞼|眼眶|下眼眶|细眼线|細眼線|上睫毛[内內外]角)")
+	private val hairProjection = Regex("^(?:(?:前发|前髮|前髪|刘海|瀏海|头发|頭髮|发|髮|髪)(?:阴影|陰影|投影)|(?:front hair|hair|bangs|fringe) (?:cast )?shadows?(?:$|[ _-]))")
 	private val mouthSuffixKeywords: List<Pair<String, SemanticTag>> = listOf(
 		"张嘴" to SemanticTag.MOUTH_OPEN, "張嘴" to SemanticTag.MOUTH_OPEN, "开口" to SemanticTag.MOUTH_OPEN,
 		"開口" to SemanticTag.MOUTH_OPEN, "开嘴" to SemanticTag.MOUTH_OPEN, "開嘴" to SemanticTag.MOUTH_OPEN,
@@ -109,6 +117,7 @@ object LayerClassifier {
 			}
 			if (!changed) break
 		}
+		if (redundantEyePrefix.containsMatchIn(normalized)) normalized = normalized.removePrefix("眼")
 		val named = aliases[normalized] ?: prefixMatch(normalized) ?: SemanticTag.UNKNOWN
 		val withoutClosed = normalized.replace(closedDescriptor, " ").trim()
 		val unqualified = aliases[withoutClosed] ?: prefixMatch(withoutClosed)
@@ -160,8 +169,15 @@ object LayerClassifier {
 	/** A specific part folder supplies missing semantics; broad eye/body folders are not pixel roles. */
 	internal fun classifyArtwork(name: String, groupPath: String): LayerSemantic {
 		val own = classify(name)
+		val folders = groupPath.split('/').asReversed()
+		// A hair projection painted in the face stack moves as the fringe, while the skin clips its edge.
+		if (own.tag == SemanticTag.UNKNOWN && (hairProjection.containsMatchIn(own.normalizedName) ||
+				folders.any { hairProjection.containsMatchIn(Normalizer.normalize(it, Normalizer.Form.NFKC).trim().lowercase(Locale.ROOT)) }) &&
+			folders.any { classify(it).tag == SemanticTag.FACE }) {
+			return own.copy(tag = SemanticTag.FRONT_HAIR, confidence = .85f, role = PartRole.SHADOW)
+		}
 		if (own.tag != SemanticTag.UNKNOWN) return own
-		for (folder in groupPath.split('/').asReversed()) {
+		for (folder in folders) {
 			val parent = classify(folder)
 			if (parent.tag == SemanticTag.UNKNOWN) continue
 			if (parent.confidence != 1f || parent.tag !in inheritedParts) return own
