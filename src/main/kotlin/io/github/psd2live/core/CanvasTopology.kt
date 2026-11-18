@@ -51,8 +51,9 @@ internal object CanvasTopology {
     ): TopologyOpResult? = when (action) {
         "merge" -> MeshTopologyOps.mergeVertices(mesh, selected.sorted(), MergeTarget.AtCenter)
         "duplicate" -> MeshTopologyOps.duplicateElements(mesh, selected)
-        "connect" -> if (selected.size == 2) MeshTopologyOps.connectVertices(mesh, selected.first(), selected.last()) else null
+        "connect" -> if (selected.size == 2) MeshBoundaryEdits.connect(mesh, selected.min(), selected.max()) else null
         "delete" -> MeshRefinementOps.deleteWithFill(mesh, selected)
+            ?: selected.singleOrNull()?.let { MeshBoundaryEdits.deleteVertexFan(mesh, it) }
         "subdivide", "split" -> MeshRefinementOps.subdivideEdges(mesh, edges.ifEmpty { subdivisionEdges(mesh, selected) })
         "knife" -> MeshRefinementOps.knifeCut(mesh, anchors)
         // Hand placement: free points only - an anchor on an existing vertex has nothing to add.
@@ -100,6 +101,15 @@ internal object CanvasTopology {
 
     /** Every action [build] knows, in the order the public schema lists them. */
     val ACTIONS = listOf("merge", "duplicate", "connect", "delete", "subdivide", "split", "knife", "add_points", "delete_edges", "retriangulate")
+
+    fun refusalKey(mesh: DrawableMesh, action: String, selected: Set<Int>): String = when {
+        action == "connect" && selected.size != 2 -> "editor.topologyRefused.selectPair"
+        action == "connect" && MeshElement.Edge.of(selected.min(), selected.max()) in MeshTopology.uniqueEdges(mesh.indices) ->
+            "editor.topologyRefused.existingEdge"
+        action == "delete" && selected.isEmpty() -> "editor.topologyRefused.selectVertices"
+        action == "delete" && mesh.vertexCount - selected.size < 3 -> "editor.topologyRefused.minimumVertices"
+        else -> "editor.topologyRefused.$action"
+    }
 
     /** A single selected vertex refines its incident edges; a region refines all fully selected edges. */
     fun subdivisionEdges(mesh: DrawableMesh, selected: Set<Int>): Set<MeshElement.Edge> =
