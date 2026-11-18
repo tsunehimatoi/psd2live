@@ -11,7 +11,3 @@ dependencies {
     implementation(project(":format-compile"))
     testImplementation(kotlin("test"))
 }
-tasks.withType<Test>().configureEach {
-    useJUnitPlatform()
-    filter.isFailOnNoMatchingTests = false
-}

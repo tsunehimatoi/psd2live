@@ -56,8 +56,3 @@ tasks.register("pluginPackage") {
         """.trimIndent())
     }
 }
-
-tasks.withType<Test>().configureEach {
-    useJUnitPlatform()
-    filter.isFailOnNoMatchingTests = false
-}

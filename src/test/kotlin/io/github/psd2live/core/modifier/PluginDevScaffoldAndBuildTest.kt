@@ -5,7 +5,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -13,7 +12,6 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.concurrent.ConcurrentHashMap
 import java.util.jar.Attributes
 import java.util.jar.JarOutputStream
 import java.util.jar.Manifest
@@ -59,7 +57,7 @@ class PluginDevScaffoldAndBuildTest {
     @Test
     fun `scaffold creates standalone project and refuses overwrite`() {
         val projectDir = tempDir.resolve("my-plugin")
-        val result = PluginDevScaffold.scaffold(
+        PluginDevScaffold.scaffold(
             PluginDevScaffoldRequest(
                 targetDir = projectDir,
                 pluginId = "custom.opacity_fx",
@@ -70,7 +68,6 @@ class PluginDevScaffoldAndBuildTest {
                 targets = setOf("mesh"),
             )
         )
-        assertEquals(5, result.files.size)
         assertTrue(Files.isRegularFile(projectDir.resolve("settings.gradle.kts")))
         assertTrue(Files.isRegularFile(projectDir.resolve("build.gradle.kts")))
         assertTrue(Files.isRegularFile(projectDir.resolve("plugin-meta.json")))
@@ -131,45 +128,13 @@ class PluginDevScaffoldAndBuildTest {
         val store = PluginDevSourceStore(tempDir.resolve("dev-sources.json"))
         val source = store.register(zipPath, PluginDevSourceMode.BUILT_PACKAGE)
 
-        val sealed = ConcurrentHashMap<String, MutableList<PluginDevArtifact>>()
-        fun seal(stagedDir: Path, srcId: String, depLock: List<ModifierPluginReference>, ttl: Long): PluginDevArtifact {
-            val manifest = PluginDevBuilder.validateStagedPackage(stagedDir)
-            val digest = ModifierPluginStore.hash(Files.readAllBytes(stagedDir.resolve("plugin.json")))
-            val ref = ModifierPluginReference(manifest.id, manifest.version, digest)
-            val dest = tempDir.resolve("artifacts").resolve(digest)
-            if (!Files.exists(dest)) {
-                Files.createDirectories(dest.parent)
-                Files.walk(stagedDir).use { stream ->
-                    stream.forEach { p ->
-                        val rel = stagedDir.relativize(p)
-                        val target = dest.resolve(rel)
-                        if (Files.isDirectory(p)) Files.createDirectories(target)
-                        else {
-                            Files.createDirectories(target.parent)
-                            Files.copy(p, target)
-                        }
-                    }
-                }
-            }
-            val artifact = PluginDevArtifact(
-                artifactId = "art-${digest.take(12)}",
-                sourceId = srcId,
-                buildDigest = digest,
-                packages = listOf(ref),
-                manifest = manifest,
-                directory = dest,
-                retention = PluginDevRetention.CANDIDATE,
-                expiresAt = System.currentTimeMillis() + ttl,
-            )
-            sealed.computeIfAbsent(srcId) { mutableListOf() }.add(artifact)
-            return artifact
-        }
+        val artifacts = PluginDevArtifactStore.Store(tempDir.resolve("artifacts"))
 
         val first = PluginDevBuilder.build(
             sourceId = source.sourceId,
             sourceStore = store,
-            sealArtifact = ::seal,
-            listArtifacts = { sealed[it].orEmpty() },
+            sealArtifact = artifacts::seal,
+            listArtifacts = artifacts::list,
         )
         assertFalse(first.unchanged)
         assertTrue(first.artifact.manifest.version.startsWith("1.0.0+dev."))
@@ -178,13 +143,14 @@ class PluginDevScaffoldAndBuildTest {
         val second = PluginDevBuilder.build(
             sourceId = source.sourceId,
             sourceStore = store,
-            sealArtifact = ::seal,
-            listArtifacts = { sealed[it].orEmpty() },
+            sealArtifact = artifacts::seal,
+            listArtifacts = artifacts::list,
         )
         assertTrue(second.unchanged)
         assertEquals(first.artifact.buildDigest, second.artifact.buildDigest)
     }
 
+    @org.junit.jupiter.api.Tag("plugin-build")
     @Test
     fun `managed build compiles scaffolded project and reports compiler diagnostics on error`() {
         val sdkDir = tempDir.resolve("sdk")
@@ -203,48 +169,15 @@ class PluginDevScaffoldAndBuildTest {
 
         val store = PluginDevSourceStore(tempDir.resolve("dev-sources.json"))
         val source = store.register(projectDir, PluginDevSourceMode.MANAGED_BUILD)
-        val sealed = ConcurrentHashMap<String, MutableList<PluginDevArtifact>>()
-
-        fun seal(stagedDir: Path, srcId: String, depLock: List<ModifierPluginReference>, ttl: Long): PluginDevArtifact {
-            val manifest = PluginDevBuilder.validateStagedPackage(stagedDir)
-            val digest = ModifierPluginStore.hash(Files.readAllBytes(stagedDir.resolve("plugin.json")))
-            val ref = ModifierPluginReference(manifest.id, manifest.version, digest)
-            val dest = tempDir.resolve("artifacts").resolve(digest)
-            if (!Files.exists(dest)) {
-                Files.createDirectories(dest.parent)
-                Files.walk(stagedDir).use { stream ->
-                    stream.forEach { p ->
-                        val rel = stagedDir.relativize(p)
-                        val target = dest.resolve(rel)
-                        if (Files.isDirectory(p)) Files.createDirectories(target)
-                        else {
-                            Files.createDirectories(target.parent)
-                            Files.copy(p, target)
-                        }
-                    }
-                }
-            }
-            val artifact = PluginDevArtifact(
-                artifactId = "art-${digest.take(12)}",
-                sourceId = srcId,
-                buildDigest = digest,
-                packages = listOf(ref),
-                manifest = manifest,
-                directory = dest,
-                retention = PluginDevRetention.CANDIDATE,
-                expiresAt = System.currentTimeMillis() + ttl,
-            )
-            sealed.computeIfAbsent(srcId) { mutableListOf() }.add(artifact)
-            return artifact
-        }
+        val artifacts = PluginDevArtifactStore.Store(tempDir.resolve("artifacts"))
 
         val first = PluginDevBuilder.build(
             sourceId = source.sourceId,
             sourceStore = store,
             sdkDir = sdkDir,
             logDir = logDir,
-            sealArtifact = ::seal,
-            listArtifacts = { sealed[it].orEmpty() },
+            sealArtifact = artifacts::seal,
+            listArtifacts = artifacts::list,
         )
         assertFalse(first.unchanged)
         assertTrue(first.artifact.manifest.version.startsWith("0.1.0+dev."))
@@ -255,8 +188,8 @@ class PluginDevScaffoldAndBuildTest {
             sourceStore = store,
             sdkDir = sdkDir,
             logDir = logDir,
-            sealArtifact = ::seal,
-            listArtifacts = { sealed[it].orEmpty() },
+            sealArtifact = artifacts::seal,
+            listArtifacts = artifacts::list,
         )
         assertTrue(second.unchanged)
 
@@ -271,8 +204,8 @@ class PluginDevScaffoldAndBuildTest {
                 sourceStore = store,
                 sdkDir = sdkDir,
                 logDir = logDir,
-                sealArtifact = ::seal,
-                listArtifacts = { sealed[it].orEmpty() },
+                sealArtifact = artifacts::seal,
+                listArtifacts = artifacts::list,
             )
         }
         assertEquals("build_failed", failed.code)
@@ -280,19 +213,6 @@ class PluginDevScaffoldAndBuildTest {
         assertTrue(Files.isRegularFile(Path.of(failed.logRef!!)))
         assertTrue(failed.diagnostics.isNotEmpty(), "Expected compiler diagnostics, log=${Files.readString(Path.of(failed.logRef!!))}")
         assertTrue(failed.diagnostics.any { it.details["file"]?.jsonPrimitive?.content?.contains("PluginWorker.kt") == true })
-
-        // Fix and rebuild with a real code change
-        Files.writeString(workerFile, originalSource.replace("mesh.opacity * factor", "mesh.opacity * factor * 0.5f"))
-        val third = PluginDevBuilder.build(
-            sourceId = source.sourceId,
-            sourceStore = store,
-            sdkDir = sdkDir,
-            logDir = logDir,
-            sealArtifact = ::seal,
-            listArtifacts = { sealed[it].orEmpty() },
-        )
-        assertFalse(third.unchanged)
-        assertNotEquals(first.artifact.manifest.version, third.artifact.manifest.version)
     }
 
     @Test

@@ -15,14 +15,3 @@ dependencies {
 	// MiniJson, the tests' JSON reader (MIT like this module).
 	testImplementation(testFixtures(project(":targets:spine")))
 }
-
-tasks.withType<Test>().configureEach {
-	useJUnitPlatform()
-	filter.isFailOnNoMatchingTests = false
-}
-
-tasks.register("quickTest") {
-	group = "verification"
-	description = "Runs the glTF target tests."
-	dependsOn(tasks.test)
-}

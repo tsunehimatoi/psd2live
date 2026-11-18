@@ -15,14 +15,3 @@ dependencies {
 	implementation("io.airlift:aircompressor:0.27")
 	testImplementation(kotlin("test"))
 }
-
-tasks.withType<Test>().configureEach {
-	useJUnitPlatform()
-	filter.isFailOnNoMatchingTests = false
-}
-
-tasks.register("quickTest") {
-	group = "verification"
-	description = "Runs the runtime target tests."
-	dependsOn(tasks.test)
-}

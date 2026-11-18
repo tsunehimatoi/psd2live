@@ -23,11 +23,6 @@ dependencies {
     testImplementation(kotlin("test"))
 }
 
-tasks.withType<Test>().configureEach {
-    useJUnitPlatform()
-    filter.isFailOnNoMatchingTests = false
-}
-
 val workerJar by tasks.registering(Jar::class) {
     dependsOn(configurations.runtimeClasspath)
     archiveClassifier.set("worker")

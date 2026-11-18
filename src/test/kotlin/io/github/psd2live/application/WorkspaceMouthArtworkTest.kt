@@ -80,7 +80,8 @@ class WorkspaceMouthArtworkTest {
         assertEquals(null, prepared.layerVisibility["m1"])
     }
     @Test fun selectionAndClippingSurviveReopeningAndExport() {
-        val original = document().copy(rigEdits = RigEditOverlay(modifierStack = io.github.psd2live.core.modifier.RigModifierStack().toJson()))
+        val original = document().copy(settings = WorkspaceSettingsCodec.encode(PipelineConfig(atlasSize = 256)),
+            rigEdits = RigEditOverlay(modifierStack = io.github.psd2live.core.modifier.RigModifierStack().toJson()))
         val (candidate, choices) = WorkspacePresetInitialize.prepare(original, WorkspaceInitialModifiers.RECOMMENDED)
         val (initialized, preview) = WorkspacePresetInitialization.prepare(candidate, WorkspaceRasterWork.Direct, choices!!)
         val baseMouth = preview.modifierEvaluation!!.entries.filter { it.instance.type in setOf("mouth", "mouth/fitted") }

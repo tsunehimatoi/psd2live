@@ -25,24 +25,24 @@ runs:
         java-version: '21'
         cache: gradle
     - uses: dtolnay/rust-toolchain@stable
-    - name: Build and test the runtime
+    - uses: ./.github/actions/test-native
       if: inputs.run-tests == 'true'
-      shell: bash
-      run: |
-        cargo test --manifest-path runtime/Cargo.toml --release
-        cargo build --manifest-path runtime/Cargo.toml --release
     - name: Test launcher error handling
       shell: bash
       run: bash packaging/macos/test-launcher.sh
-    - name: Test JVM application
-      if: inputs.run-tests == 'true'
-      shell: bash
-      run: ./gradlew test --no-daemon
-    - name: Package DMG
+    - name: Test and package DMG
       id: package
       shell: bash
+      env:
+        RUN_TESTS: ${{ inputs.run-tests }}
+        PSD2LIVE_NATIVE_REQUIRED: '1'
       run: |
-        ./gradlew packageDistributionForCurrentOS --no-daemon
+        tasks=(packageDistributionForCurrentOS)
+        if [[ "$RUN_TESTS" == true ]]; then
+          tasks+=(test)
+          if [[ "$(uname -m)" == arm64 ]]; then tasks+=(pluginBuildTest); fi
+        fi
+        ./gradlew "${tasks[@]}" --no-daemon
         images=(build/PSD2Live-*-macos-*.dmg)
         [[ ${#images[@]} -eq 1 && -s "${images[0]}" ]]
         echo "dmg=${images[0]}" >> "$GITHUB_OUTPUT"

@@ -1,8 +1,6 @@
 package io.github.psd2live.core.modifier
 
 import io.github.psd2live.algorithms.binding.SkinClipAlgorithm
-import io.github.psd2live.algorithms.motion.MotionAlgorithm
-import io.github.psd2live.algorithms.physics.PendulumAlgorithm
 import io.github.psd2live.application.WorkspaceInitialPreset
 import io.github.psd2live.application.WorkspacePresetInitialization
 import io.github.psd2live.application.WorkspaceRasterWork
@@ -25,7 +23,6 @@ import java.util.UUID
 import java.util.prefs.Preferences
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
-import kotlin.system.measureNanoTime
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -116,7 +113,7 @@ class NativeCoreBatchAndPresetE2ETest {
     }
 
     @Test
-    fun batchNativeCoreParityBenchmarkAndExtensibleDeps() {
+    fun nativeAlgorithmsMatchJvmAndKeepLockedDependencies() {
         val exeName = if (ModifierPluginStore.platform.startsWith("windows")) "psd2live-native-core.exe" else "psd2live-native-core"
         val exePath = Path.of("plugins/native-core/target/release/$exeName").toAbsolutePath().normalize()
         if (System.getenv("PSD2LIVE_NATIVE_REQUIRED") == "1")
@@ -185,19 +182,10 @@ class NativeCoreBatchAndPresetE2ETest {
             val clipInst = RigModifierInstance("sc1", "psd2live.native.core/skin-clip", 1, listOf(ModifierTarget("mesh", "blush")), plugin = corePkg.reference)
 
             // Cold start + parity for physics, motion, skin.clip
-            lateinit var jvmPhysOut: RigIR
-            val jvmPhysCold = measureNanoTime {
-                jvmPhysOut = ModifierPluginWorkers.evaluate(jvmPhysPkg, jvmPhysPkg.manifest.algorithms.single(), rig, physInst, {}, store)
-            }
-            lateinit var jvmMotOut: RigIR
-            val jvmMotCold = measureNanoTime {
-                jvmMotOut = ModifierPluginWorkers.evaluate(jvmMotPkg, jvmMotPkg.manifest.algorithms.single(), rig, motInst, {}, store)
-            }
+            val jvmPhysOut = ModifierPluginWorkers.evaluate(jvmPhysPkg, jvmPhysPkg.manifest.algorithms.single(), rig, physInst, {}, store)
+            val jvmMotOut = ModifierPluginWorkers.evaluate(jvmMotPkg, jvmMotPkg.manifest.algorithms.single(), rig, motInst, {}, store)
 
-            lateinit var natPhysOut: RigIR
-            val natCold = measureNanoTime {
-                natPhysOut = ModifierPluginWorkers.evaluate(corePkg, physAlg, rig, physInst.copy(type = physAlg.type, plugin = corePkg.reference), {}, store)
-            }
+            val natPhysOut = ModifierPluginWorkers.evaluate(corePkg, physAlg, rig, physInst.copy(type = physAlg.type, plugin = corePkg.reference), {}, store)
             val natMotOut = ModifierPluginWorkers.evaluate(corePkg, motAlg, rig, motInst.copy(type = motAlg.type, plugin = corePkg.reference), {}, store)
             val natClipOut = ModifierPluginWorkers.evaluate(corePkg, clipAlg, rig, clipInst, {}, store, context = clipCtx)
 
@@ -206,51 +194,6 @@ class NativeCoreBatchAndPresetE2ETest {
             assertEquals(jvmMotOut.parameterRoles, natMotOut.parameterRoles)
             val directClipOut = SkinClipAlgorithm().evaluate(rig, clipInst, clipCtx) {}
             assertEquals(directClipOut.meshes, natClipOut.meshes)
-
-            // Equal warmup before 100x benchmarks across all 3 migrated algorithms
-            repeat(5) { i ->
-                ModifierPluginWorkers.evaluate(jvmPhysPkg, jvmPhysPkg.manifest.algorithms.single(), rig, physInst.copy(id = "wjp_$i"), {}, store)
-                ModifierPluginWorkers.evaluate(jvmMotPkg, jvmMotPkg.manifest.algorithms.single(), rig, motInst.copy(id = "wjm_$i"), {}, store)
-                ModifierPluginWorkers.evaluate(corePkg, physAlg, rig, physInst.copy(id = "wnp_$i", type = physAlg.type, plugin = corePkg.reference), {}, store)
-                ModifierPluginWorkers.evaluate(corePkg, motAlg, rig, motInst.copy(id = "wnm_$i", type = motAlg.type, plugin = corePkg.reference), {}, store)
-                ModifierPluginWorkers.evaluate(corePkg, clipAlg, rig, clipInst.copy(id = "wnc_$i"), {}, store, context = clipCtx)
-                PendulumAlgorithm().changes(ModifierEvaluationInput(rig, ModifierAlgorithmContext.Empty), physInst.copy(id = "wdp_$i")) {}
-                MotionAlgorithm().changes(ModifierEvaluationInput(rig, ModifierAlgorithmContext.Empty), motInst.copy(id = "wdm_$i")) {}
-                SkinClipAlgorithm().changes(ModifierEvaluationInput(rig, clipCtx), clipInst.copy(id = "wdc_$i")) {}
-            }
-            val iters = 100
-            val jvmPhysWarm = measureNanoTime {
-                repeat(iters) { i ->
-                    ModifierPluginWorkers.evaluate(jvmPhysPkg, jvmPhysPkg.manifest.algorithms.single(), rig, physInst.copy(id = "jp_$i"), {}, store)
-                }
-            }
-            val jvmMotWarm = measureNanoTime {
-                repeat(iters) { i ->
-                    ModifierPluginWorkers.evaluate(jvmMotPkg, jvmMotPkg.manifest.algorithms.single(), rig, motInst.copy(id = "jm_$i"), {}, store)
-                }
-            }
-            val natPhysWarm = measureNanoTime {
-                repeat(iters) { i ->
-                    ModifierPluginWorkers.evaluate(corePkg, physAlg, rig, physInst.copy(id = "np_$i", type = physAlg.type, plugin = corePkg.reference), {}, store)
-                }
-            }
-            val natMotWarm = measureNanoTime {
-                repeat(iters) { i ->
-                    ModifierPluginWorkers.evaluate(corePkg, motAlg, rig, motInst.copy(id = "nm_$i", type = motAlg.type, plugin = corePkg.reference), {}, store)
-                }
-            }
-            val natClipWarm = measureNanoTime {
-                repeat(iters) { i ->
-                    ModifierPluginWorkers.evaluate(corePkg, clipAlg, rig, clipInst.copy(id = "nc_$i"), {}, store, context = clipCtx)
-                }
-            }
-            val directAllWarm = measureNanoTime {
-                repeat(iters) { i ->
-                    PendulumAlgorithm().changes(ModifierEvaluationInput(rig, ModifierAlgorithmContext.Empty), physInst.copy(id = "dp_$i")) {}
-                    MotionAlgorithm().changes(ModifierEvaluationInput(rig, ModifierAlgorithmContext.Empty), motInst.copy(id = "dm_$i")) {}
-                    SkinClipAlgorithm().changes(ModifierEvaluationInput(rig, clipCtx), clipInst.copy(id = "dc_$i")) {}
-                }
-            }
 
             // Verify dependency can be upgraded/added in store without touching host app:
             // existing corePkg stays pinned to its locked depV1, while a fresh install picks depV2 (1.1.0).
@@ -262,15 +205,6 @@ class NativeCoreBatchAndPresetE2ETest {
             ModifierPluginWorkers.stop(coreWithV2.reference)
             ModifierPluginWorkers.stop(depV2.reference)
 
-            println(
-                "[BENCHMARK batch-core] " +
-                    "Rust(proto2) cold=${natCold / 1e6}ms | " +
-                    "Warm100(ms): physics[JVM=${jvmPhysWarm / 1e6}, Rust=${natPhysWarm / 1e6}], " +
-                    "motion[JVM=${jvmMotWarm / 1e6}, Rust=${natMotWarm / 1e6}], " +
-                    "skin-clip[Rust=${natClipWarm / 1e6}], " +
-                    "DirectAll3=${directAllWarm / 1e6}ms | " +
-                    "JVMcold(phys=${jvmPhysCold / 1e6}ms, mot=${jvmMotCold / 1e6}ms)"
-            )
         } finally {
             ModifierPluginWorkers.stop(jvmPhysArt.reference)
             ModifierPluginWorkers.stop(jvmMotArt.reference)
@@ -339,36 +273,17 @@ class NativeCoreBatchAndPresetE2ETest {
                 .map { it.id }.toSet() + setOf("physics", "motion")).intersect(overrides.keys)
             assertTrue(expectedOverrides.containsAll(setOf("physics", "motion")),
                 "The fixture must exercise the requested native feature families")
-            // Equal warmup for both paths before timing
-            WorkspacePresetInitialization.prepare(
+            val baselinePair = WorkspacePresetInitialization.prepare(
                 baseDoc,
                 WorkspaceRasterWork.Direct,
                 WorkspaceInitialPreset(clothing = false),
             )
-            WorkspacePresetInitialization.prepare(
+            val nativePair = WorkspacePresetInitialization.prepare(
                 baseDoc,
                 WorkspaceRasterWork.Direct,
                 WorkspaceInitialPreset(clothing = false),
                 pluginOverrides = overrides,
             )
-
-            lateinit var baselinePair: Pair<WorkspaceDocument, RigPreviewModel>
-            val baselineNs = measureNanoTime {
-                baselinePair = WorkspacePresetInitialization.prepare(
-                    baseDoc,
-                    WorkspaceRasterWork.Direct,
-                    WorkspaceInitialPreset(clothing = false),
-                )
-            }
-            lateinit var nativePair: Pair<WorkspaceDocument, RigPreviewModel>
-            val nativeNs = measureNanoTime {
-                nativePair = WorkspacePresetInitialization.prepare(
-                    baseDoc,
-                    WorkspaceRasterWork.Direct,
-                    WorkspaceInitialPreset(clothing = false),
-                    pluginOverrides = overrides,
-                )
-            }
 
             val baselineStack = RigModifierStack.fromJson(baselinePair.first.rigEdits.modifierStack!!)
             val nativeStack = RigModifierStack.fromJson(nativePair.first.rigEdits.modifierStack!!)
@@ -484,11 +399,6 @@ class NativeCoreBatchAndPresetE2ETest {
             )
             assertEquals(lidBuiltin.meshes, lidNative.meshes)
 
-            println(
-                "[BENCHMARK real-preset] " +
-                    "baseline(in-proc, warmed)=${baselineNs / 1e6}ms | " +
-                    "native(physics+motion+skin-clip+see-through via Rust proto2, warmed)=${nativeNs / 1e6}ms"
-            )
         } finally {
             coreRef?.let {
                 runCatching { store.uninstall(it) }

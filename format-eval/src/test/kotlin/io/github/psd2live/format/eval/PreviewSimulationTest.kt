@@ -2,11 +2,11 @@ package io.github.psd2live.format.eval
 
 import io.github.psd2live.format.model.*
 import io.github.psd2live.targets.runtime.P2lrt
-import org.junit.jupiter.api.Assumptions.assumeTrue
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class PreviewSimulationTest {
@@ -38,11 +38,7 @@ class PreviewSimulationTest {
 		)
 	}
 
-	private fun runtime(): P2lRuntime {
-		val runtime = P2lRuntime.load()
-		assumeTrue(runtime != null, "The native runtime is not built")
-		return runtime!!
-	}
+	private fun runtime(): P2lRuntime = assertNotNull(P2lRuntime.load(nativeRuntimeLibrary()), "Incompatible runtime ABI")
 
 	@Test fun simulationMovesWhilePausedAndPreservesThePhysicsAlreadyInTheHostPose() {
 		val runtime = runtime()

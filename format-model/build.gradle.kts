@@ -12,14 +12,3 @@ kotlin {
 dependencies {
 	testImplementation(kotlin("test"))
 }
-
-tasks.withType<Test>().configureEach {
-	useJUnitPlatform()
-	filter.isFailOnNoMatchingTests = false
-}
-
-tasks.register("quickTest") {
-	group = "verification"
-	description = "Runs the IR tests."
-	dependsOn(tasks.test)
-}

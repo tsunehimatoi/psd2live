@@ -27,14 +27,3 @@ val writeCompilerVersion by tasks.registering {
 	}
 }
 sourceSets.main { resources.srcDir(writeCompilerVersion) }
-
-tasks.withType<Test>().configureEach {
-	useJUnitPlatform()
-	filter.isFailOnNoMatchingTests = false
-}
-
-tasks.register("quickTest") {
-	group = "verification"
-	description = "Runs the export framework tests."
-	dependsOn(tasks.test)
-}

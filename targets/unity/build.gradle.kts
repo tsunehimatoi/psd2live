@@ -14,14 +14,3 @@ dependencies {
 	testImplementation(kotlin("test"))
 	testImplementation(testFixtures(project(":targets:spine")))
 }
-
-tasks.withType<Test>().configureEach {
-	useJUnitPlatform()
-	filter.isFailOnNoMatchingTests = false
-}
-
-tasks.register("quickTest") {
-	group = "verification"
-	description = "Runs the Unity target tests."
-	dependsOn(tasks.test)
-}

@@ -333,6 +333,7 @@ internal object Oracles {
 
 	/** [actual] is [expected], or a failure naming the first objects that differ and how. */
 	fun sameRig(step: String, what: String, expected: PuppetModel, actual: PuppetModel) {
+		if (expected === actual) return
 		if (hash(expected) == hash(actual)) return
 		throw ScenarioFailure("Step '$step': the $what rig differs from the committed one:\n    " + difference(expected, actual).joinToString("\n    "), null)
 	}

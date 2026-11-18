@@ -43,7 +43,11 @@ def check_launcher(app, home):
         result = subprocess.run([str(app / "bin/PSD2Live"), *args], cwd=home, env=env,
                                 capture_output=True, text=True, timeout=30)
         assert result.returncode == 0, f"{args}: exit {result.returncode}\n{result.stderr}"
-        assert result.stdout.strip(), f"{args}: no output"
+        if args[0] == "--help":
+            assert "--input" in result.stdout, result.stdout
+        else:
+            targets = {line.split()[0] for line in result.stdout.splitlines() if line and not line[0].isspace()}
+            assert {"cmo3", "moc3", "p2lrt"} <= targets, targets
         print(f"{app.name}: {' '.join(args)} passed")
 
 

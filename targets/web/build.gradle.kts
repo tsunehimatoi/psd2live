@@ -15,17 +15,6 @@ dependencies {
 	testImplementation(kotlin("test"))
 }
 
-tasks.withType<Test>().configureEach {
-	useJUnitPlatform()
-	filter.isFailOnNoMatchingTests = false
-}
-
-tasks.register("quickTest") {
-	group = "verification"
-	description = "Runs the web target tests."
-	dependsOn(tasks.test)
-}
-
 // The player ships the runtime built for WebAssembly as a resource, so building PSD2Live needs no Rust
 // toolchain; after changing runtime/, refresh it (needs `rustup target add wasm32-unknown-unknown`).
 tasks.register<Exec>("updateWasm") {

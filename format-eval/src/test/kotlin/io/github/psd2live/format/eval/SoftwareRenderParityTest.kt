@@ -9,7 +9,6 @@ import io.github.psd2live.format.compile.render.IrColors
 import io.github.psd2live.format.compile.render.SoftwareRasterizer
 import io.github.psd2live.format.model.*
 import io.github.psd2live.targets.runtime.P2lrt
-import org.junit.jupiter.api.Assumptions.assumeTrue
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
 import javax.imageio.ImageIO
@@ -37,10 +36,10 @@ class SoftwareRenderParityTest {
 	}
 
 	private fun native(): Native13 {
-		val library = P2lRuntime.locate()
-		assumeTrue(library != null, "The native runtime is not built")
-		val native = Native.load(library!!.absolutePath, Native13::class.java)
-		assumeTrue(runCatching { native.p2l_abi_version() and 0xffff >= 3 }.getOrDefault(false), "The runtime predates ABI 1.3")
+		val native = Native.load(nativeRuntimeLibrary().absolutePath, Native13::class.java)
+		val abi = native.p2l_abi_version()
+		assertEquals(1, abi ushr 16)
+		assertTrue((abi and 0xffff) >= 3, "Rendering needs runtime ABI 1.3 or newer")
 		return native
 	}
 

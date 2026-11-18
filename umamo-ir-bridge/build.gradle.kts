@@ -16,6 +16,5 @@ dependencies {
 }
 
 tasks.withType<Test>().configureEach {
-    useJUnitPlatform()
     maxParallelForks = providers.gradleProperty("psd2live.testForks").orNull?.toInt() ?: 1
 }

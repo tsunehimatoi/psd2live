@@ -1,0 +1,11 @@
+name: Test native runtime and algorithm worker
+description: Build the native artifacts subsequently loaded by the JVM parity tests.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        cargo test --locked --release --manifest-path runtime/Cargo.toml
+        cargo build --locked --release --lib --manifest-path runtime/Cargo.toml
+        cargo test --locked --release --manifest-path plugins/native-core/Cargo.toml
+        cargo build --locked --release --manifest-path plugins/native-core/Cargo.toml

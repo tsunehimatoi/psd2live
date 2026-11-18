@@ -40,6 +40,7 @@ import kotlin.test.assertTrue
  * -> undo (reverts to A) -> redo (restores B)
  * -> plugin_dev_detach + delete source dir -> save .psd2live -> reopen in fresh WorkspaceHost -> verify B replays.
  */
+@org.junit.jupiter.api.Tag("plugin-build")
 class PluginDevEndToEndClosedLoopTest {
     @TempDir
     lateinit var temp: Path

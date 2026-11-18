@@ -63,27 +63,31 @@ jobs:
         if: runner.os == 'Linux' && runner.arch == 'ARM64'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1 libgl1
 
-      # The Rust runtime: its own tests, and the library the runtime conformance tests load.
-      - name: Build and test the runtime
-        working-directory: runtime
+      - uses: ./.github/actions/test-native
+
+      - name: Test Godot shader generation
+        if: matrix.os == 'ubuntu-latest'
         run: |
-          cargo test --release
-          cargo build --release
+          rustc --edition=2021 --test runtime/godot/src/shaders.rs -o "$RUNNER_TEMP/shader-tests"
+          "$RUNNER_TEMP/shader-tests"
 
-      - name: Run tests (Unix)
-        if: runner.os != 'Windows'
-        run: ./gradlew test --no-daemon
+      - name: Test and package application
+        shell: bash
+        env:
+          PSD2LIVE_NATIVE_REQUIRED: '1'
+        run: |
+          tasks=(test)
+          if [[ "$RUNNER_ARCH" == X64 ]]; then tasks+=(pluginBuildTest); fi
+          if [[ "$RUNNER_OS" == Linux ]]; then tasks+=(packageDeb); else tasks+=(createDistributable); fi
+          ./gradlew "${tasks[@]}" --no-daemon
 
-      - name: Run tests (Windows)
+      - name: Verify packaged Windows worker
         if: runner.os == 'Windows'
-        shell: cmd
-        run: gradlew.bat test --no-daemon
+        run: python packaging/smoke-test-workers.py build/compose/binaries/main/app/PSD2Live
 
-      - name: Verify packaged Linux launcher
+      - name: Verify packaged Linux launcher and worker
         if: runner.os == 'Linux'
         run: |
-          ./gradlew packageDeb --no-daemon
-          python3 packaging/linux/smoke-test.py build/compose/binaries/main/app/PSD2Live
           dpkg-deb -x build/compose/binaries/main/deb/*.deb "$RUNNER_TEMP/deb-root"
           deb_apps=("$RUNNER_TEMP"/deb-root/opt/*)
           test "${#deb_apps[@]}" -eq 1

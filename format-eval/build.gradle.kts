@@ -17,14 +17,9 @@ dependencies {
 }
 
 tasks.withType<Test>().configureEach {
-	useJUnitPlatform()
-	filter.isFailOnNoMatchingTests = false
+	mustRunAfter(":buildRuntime")
 	// A runtime built with `cargo build --release` in runtime/; tests that need it skip without it.
 	systemProperty("psd2live.runtime.dir", rootProject.file("runtime/target/release").absolutePath)
-}
-
-tasks.register("quickTest") {
-	group = "verification"
-	description = "Runs the runtime binding tests."
-	dependsOn(tasks.test)
+	inputs.property("nativeRequired", providers.environmentVariable("PSD2LIVE_NATIVE_REQUIRED").orElse("0"))
+	inputs.files(rootProject.fileTree("runtime/target/release") { include(System.mapLibraryName("p2l_runtime")) })
 }
