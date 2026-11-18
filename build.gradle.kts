@@ -461,9 +461,17 @@ compose.desktop {
 // classpath short; the JVM reads the original, ordered dependencies from a standard JAR manifest.
 // https://github.com/openjdk/jdk/commit/54c5e41cbaabcd21d7bbf8f5667b2e35cfe12dd7
 if (hostOs == "linux") afterEvaluate {
+	val packageName = compose.desktop.application.nativeDistributions.packageName!!
+	for (variant in listOf("", "Release")) {
+		val image = tasks.named<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask>("create${variant}Distributable")
+		tasks.named<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask>("package${variant}Deb") {
+			// Use the patched image as jpackage's --app-image input for the Debian installer.
+			appImage.set(image.flatMap { it.destinationDir.dir(packageName) })
+		}
+	}
 	tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask>()
 		.matching { it.name in setOf("createDistributable", "createReleaseDistributable") }.configureEach {
-			val name = compose.desktop.application.nativeDistributions.packageName!!
+			val name = packageName
 			val image = destinationDir.dir(name)
 			doLast {
 				val app = image.get().asFile.resolve("lib/app")

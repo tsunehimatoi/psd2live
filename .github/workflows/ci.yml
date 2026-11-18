@@ -82,8 +82,13 @@ jobs:
       - name: Verify packaged Linux launcher
         if: runner.os == 'Linux'
         run: |
-          ./gradlew createDistributable --no-daemon
+          ./gradlew packageDeb --no-daemon
           python3 packaging/linux/smoke-test.py build/compose/binaries/main/app/PSD2Live
+          dpkg-deb -x build/compose/binaries/main/deb/*.deb "$RUNNER_TEMP/deb-root"
+          deb_apps=("$RUNNER_TEMP"/deb-root/opt/*)
+          test "${#deb_apps[@]}" -eq 1
+          python3 packaging/linux/smoke-test.py "${deb_apps[0]}"
+          python3 packaging/smoke-test-workers.py "${deb_apps[0]}"
 
       - name: Upload test results on failure
         if: failure()
