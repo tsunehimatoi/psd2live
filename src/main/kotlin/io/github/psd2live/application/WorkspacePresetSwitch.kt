@@ -7,7 +7,8 @@ import kotlinx.serialization.json.*
 
 /** Whole replacement is prepared inside the existing document candidate/CAS transaction. */
 internal object WorkspacePresetSwitch {
-    fun apply(document: WorkspaceDocument, id: String, work: WorkspaceRasterWork, model: RigPreviewModel? = null, richness: String? = null): WorkspaceDocument {
+    fun apply(document: WorkspaceDocument, id: String, work: WorkspaceRasterWork, model: RigPreviewModel? = null,
+              richness: String? = null, draftInputs: WorkspaceModifierDraftInputs? = null): WorkspaceDocument {
         val preset = WorkspaceModelPresetLibrary.shared.get(id)
         val previous = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack))
         require(previous.appliedNodes.isEmpty()) { "Applied content remains at its authored position; apply its prefix before switching presets" }
@@ -25,7 +26,7 @@ internal object WorkspacePresetSwitch {
         val config = WorkspacePresetBaseline.configure(document.config(), preset)
         val candidate = document.copy(settings = WorkspaceSettingsCodec.encode(config),
             rigEdits = document.rigEdits.copy(modifierStack = cleared.toJson()))
-        val initialized = WorkspacePresetInitialization.create(candidate, work, preset.choices, richness ?: preset.richness)
+        val initialized = WorkspacePresetInitialization.create(candidate, work, preset.choices, richness ?: preset.richness, draftInputs)
         val stack = RigModifierStack.fromJson(requireNotNull(initialized.rigEdits.modifierStack))
         return initialized.copy(rigEdits = initialized.rigEdits.copy(modifierStack = stack.copy(
             instances = stack.instances.map { it.copy(presetGroup = id) }).toJson()))

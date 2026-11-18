@@ -44,7 +44,26 @@ class SimBakedAxis(val parameter: String, val keys: FloatArray, val offsets: Map
         )
 
         /** Six significant digits: a lattice-local delta is a fraction of the lattice, so plain decimals would lose it. */
-        private fun round(value: Float): Float = "%.6g".format(java.util.Locale.ROOT, value).toFloat()
+        private const val MIN_DECIMAL_POWER = -50
+        private val powersOfTen = DoubleArray(101) { "1e${it + MIN_DECIMAL_POWER}".toDouble() }
+
+        private fun round(value: Float): Float {
+            if (value == 0f || !value.isFinite()) return value
+            val magnitude = kotlin.math.abs(value.toDouble())
+            val exponent = kotlin.math.floor(kotlin.math.log10(magnitude)).toInt() - 5
+            val shifted = magnitude * powersOfTen[-exponent - MIN_DECIMAL_POWER]
+            val whole = kotlin.math.floor(shifted)
+            val rounded = kotlin.math.floor(shifted + 0.5) * powersOfTen[exponent - MIN_DECIMAL_POWER]
+            val result = rounded.toFloat()
+            val neighbor = if (result.toDouble() < rounded) Math.nextUp(result) else Math.nextDown(result)
+            val boundary = (neighbor.toDouble() + result.toDouble()) * 0.5
+            // Decimal ties and exact Float midpoints use the formatter's rounding rules.
+            if (kotlin.math.abs(shifted - whole - 0.5) <= 1e-8 ||
+                kotlin.math.abs(rounded - boundary) <= 2 * Math.ulp(rounded)) {
+                return "%.6g".format(java.util.Locale.ROOT, value).toFloat()
+            }
+            return Math.copySign(result, value)
+        }
     }
 }
 

@@ -56,7 +56,7 @@ class SimBakeProfileTool {
 			val marks = ArrayList<Pair<Float, Long>>()
 			val start = System.nanoTime()
 			val sampler = Sampler()
-			val bake = SimBaker.bake(model, edit, SimBaker.Options(parallel = parallel, method = method, progress = { synchronized(marks) { marks += it to System.nanoTime() } }))
+			val bake = (if (method == SimBaker.Method.DIRECT) SimBaker::bake else SimBaker::bakeReference)(model, edit, SimBaker.Options(parallel = parallel, method = method, progress = { synchronized(marks) { marks += it to System.nanoTime() } }))
 			sampler.stop()
 			val total = (System.nanoTime() - start) / 1e9
 			println("sim-profile: parallel=$parallel total %.2f s; held-out R² %.4f, p95 %.2f px, peak %.3f, jerk ×%.3f".format(total, bake.fit, bake.maxErrorPx, bake.peak, bake.jerk))

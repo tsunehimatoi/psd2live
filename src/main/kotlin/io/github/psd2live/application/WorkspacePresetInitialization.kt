@@ -11,10 +11,21 @@ import java.util.concurrent.FutureTask
 
 /** A preset is a recipe for explicit instances, never a second model-generation pipeline. */
 internal object WorkspacePresetInitialization {
+    private class Plan(val document: WorkspaceDocument, val finalPreview: () -> RigPreviewModel)
+
     fun create(document: WorkspaceDocument, work: WorkspaceRasterWork,
                choices: WorkspaceInitialPreset = WorkspaceInitialPreset(),
-               richness: String? = null): WorkspaceDocument =
-        prepare(document, work, choices, richness = richness).first
+               richness: String? = null, draftInputs: WorkspaceModifierDraftInputs? = null): WorkspaceDocument {
+        val pipeline = PSD2LivePipeline()
+        try {
+            val planned = plan(document, work, choices, pipeline, richness = richness)
+            // The command builder will evaluate the normalized candidate and materialize its bundle.
+            draftInputs?.pipeline = pipeline
+            return planned.document
+        } finally {
+            if (draftInputs?.pipeline !== pipeline) pipeline.modifierBuildOwner.close()
+        }
+    }
 
     fun prepare(document: WorkspaceDocument, work: WorkspaceRasterWork,
                 choices: WorkspaceInitialPreset = WorkspaceInitialPreset(),
@@ -23,15 +34,29 @@ internal object WorkspacePresetInitialization {
                 restoreSourceRotations: Boolean = false,
                 pluginOverrides: Map<String, Pair<String, ModifierPluginReference>> = emptyMap(),
                 richness: String? = null): Pair<WorkspaceDocument, RigPreviewModel> {
+        val pipeline = PSD2LivePipeline()
+        try {
+            val planned = plan(document, work, choices, pipeline, requestedVersions, cliBindings,
+                restoreSourceRotations, pluginOverrides, richness)
+            return planned.document to planned.finalPreview()
+        } catch (failure: Throwable) {
+            pipeline.modifierBuildOwner.close()
+            throw failure
+        }
+    }
+
+    private fun plan(document: WorkspaceDocument, work: WorkspaceRasterWork, choices: WorkspaceInitialPreset,
+                     pipeline: PSD2LivePipeline, requestedVersions: Map<String, Int> = emptyMap(),
+                     cliBindings: CliPresetBindings? = null, restoreSourceRotations: Boolean = false,
+                     pluginOverrides: Map<String, Pair<String, ModifierPluginReference>> = emptyMap(),
+                     richness: String? = null): Plan {
         val rawConfig = cliBindings?.config?.takeIf { restoreSourceRotations }
         fun configOf(candidate: WorkspaceDocument) = rawConfig?.copy(rigEdits = candidate.rigEdits) ?: candidate.config()
         val config = configOf(document)
         var stack = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack))
         require(stack.instances.isEmpty()) { "Initialize presets only into an empty stack" }
-        val pipeline = PSD2LivePipeline().apply {
-            deferRuntimeBundles = true
-            rawSourceRotations = restoreSourceRotations && cliBindings != null && freshSource(config)
-        }
+        pipeline.deferRuntimeBundles = true
+        pipeline.rawSourceRotations = restoreSourceRotations && cliBindings != null && freshSource(config)
         val baseDocument = if (document.rigEdits.checkpointIndex < 0) document else {
             val stripped = document.rigEdits.copy(authoringJournal = document.rigEdits.authoringJournal.filterNot {
                 RigCheckpoint.isRecord(it) || it["op"]?.jsonPrimitive?.contentOrNull == ArtPrimitiveJournal.OP
@@ -43,9 +68,8 @@ internal object WorkspacePresetInitialization {
             document.copy(rigEdits = document.rigEdits.copy(authoringJournal = document.rigEdits.authoringJournal.filterNot(RigCheckpoint::isRecord) + checkpoint))
         }
         fun current() = baseDocument.copy(rigEdits = baseDocument.rigEdits.copy(modifierStack = stack.toJson()))
-        fun build(stage: String): RigPreviewModel = RigBuildProfile.stage("source preset: $stage") {
+        fun build(stage: String, candidate: WorkspaceDocument = current()): RigPreviewModel = RigBuildProfile.stage("source preset: $stage") {
             work.checkpoint()
-            val candidate = current()
             var lastProgress: Pair<String, Double>? = null
             pipeline.buildPreview(candidate.source, configOf(candidate), ProgressListener { message, fraction ->
                 work.checkpoint()
@@ -74,8 +98,10 @@ internal object WorkspacePresetInitialization {
         }
         if (targets.isEmpty()) {
             require(requestedVersions.isEmpty()) { "Cannot select preset versions without mesh targets" }
-            if (rawConfig == null) model.runtimeBundle.materialize()
-            return document to model
+            return Plan(document) {
+                if (rawConfig == null) model.runtimeBundle.materialize()
+                model
+            }
         }
         // Import and CLI callers preserve their configured recipe unless a template tier is explicitly selected.
         val tiers = when (richness) {
@@ -209,15 +235,18 @@ internal object WorkspacePresetInitialization {
             } ?: captured
         })
         RigModifierAlgorithms.evaluator().validateOrder(stack)
+        RigBuildProfile.mark("source preset: begin simulation")
         stack = RigBuildProfile.stage("source preset: simulation preparation") {
             WorkspaceModifierSimulation.prepare(current(), stack, work, pipeline = pipeline, isolateFailures = true)
         }
-        val finalModel = build("final preview").also {
+        val candidate = current()
+        return Plan(candidate) {
+            val finalModel = build("final preview", candidate)
             work.checkpoint()
-            if (rawConfig == null) it.runtimeBundle.materialize()
+            if (rawConfig == null) finalModel.runtimeBundle.materialize()
             work.checkpoint()
+            finalModel
         }
-        return current() to finalModel
     }
 
     internal fun freshSource(config: PipelineConfig): Boolean =

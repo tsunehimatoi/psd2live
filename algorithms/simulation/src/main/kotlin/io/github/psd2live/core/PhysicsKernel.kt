@@ -31,7 +31,8 @@ class PhysicsKernel(settings: List<RigPhysicsEdit>, ranges: Map<String, PhysicsE
 		val x = FloatArray(n); val y = FloatArray(n)
 		val lastX = FloatArray(n); val lastY = FloatArray(n)
 		val vx = FloatArray(n); val vy = FloatArray(n)
-		val gravityX = FloatArray(n); val gravityY = FloatArray(n)
+		// Each segment starts with the same gravity and receives the same gravity after every step.
+		var gravityX = 0f; var gravityY = 1f
 		val current = FloatArray(setting.outputs.size)
 		val previous = FloatArray(setting.outputs.size)
 		val length = FloatArray(setting.segments.size) { setting.segments[it].length }
@@ -52,12 +53,12 @@ class PhysicsKernel(settings: List<RigPhysicsEdit>, ranges: Map<String, PhysicsE
 		val outputRange = Array(setting.outputs.size) { ranges[setting.outputs[it].parameter] }
 
 		fun reset() {
+			gravityX = 0f; gravityY = 1f
 			var at = 0f
 			for (i in 0 until n) {
 				if (i > 0) at += length[i - 1]
 				x[i] = 0f; y[i] = at; lastX[i] = 0f; lastY[i] = at
 				vx[i] = 0f; vy[i] = 0f
-				gravityX[i] = 0f; gravityY[i] = 1f
 			}
 			current.fill(0f); previous.fill(0f)
 		}
@@ -152,8 +153,10 @@ class PhysicsKernel(settings: List<RigPhysicsEdit>, ranges: Map<String, PhysicsE
 			}
 		}
 		val radian = -angle / 180f * PI
-		tx = tx * cos(radian) - ty * sin(radian)
-		ty = tx * sin(radian) + ty * cos(radian)
+		val cosAngle = cos(radian)
+		val sinAngle = sin(radian)
+		tx = tx * cosAngle - ty * sinAngle
+		ty = tx * sinAngle + ty * cosAngle
 		update(s, tx, ty, angle, PhysicsEngine.MOVEMENT_THRESHOLD * n.positionMax, dt)
 	}
 
@@ -165,6 +168,9 @@ class PhysicsKernel(settings: List<RigPhysicsEdit>, ranges: Map<String, PhysicsE
 		var gy = cos(totalRadian)
 		val gl = sqrt(gx * gx + gy * gy)
 		gx /= gl; gy /= gl
+		val turn = direction(s.gravityX, s.gravityY, gx, gy) / PhysicsEngine.AIR_RESISTANCE
+		val cosTurn = cos(turn)
+		val sinTurn = sin(turn)
 		for (i in 1 until s.n) {
 			val forceX = gx * s.acceleration[i - 1]
 			val forceY = gy * s.acceleration[i - 1]
@@ -173,9 +179,8 @@ class PhysicsKernel(settings: List<RigPhysicsEdit>, ranges: Map<String, PhysicsE
 			val delay = s.delay[i - 1] * dt * 30f
 			var dx = s.x[i] - s.x[i - 1]
 			var dy = s.y[i] - s.y[i - 1]
-			val radian = direction(s.gravityX[i], s.gravityY[i], gx, gy) / PhysicsEngine.AIR_RESISTANCE
-			dx = cos(radian) * dx - dy * sin(radian)
-			dy = sin(radian) * dx + dy * cos(radian)
+			dx = cosTurn * dx - dy * sinTurn
+			dy = sinTurn * dx + dy * cosTurn
 			var px = s.x[i - 1] + dx + s.vx[i] * delay + forceX * delay * delay
 			var py = s.y[i - 1] + dy + s.vy[i] * delay + forceY * delay * delay
 			var nx = px - s.x[i - 1]
@@ -191,9 +196,9 @@ class PhysicsKernel(settings: List<RigPhysicsEdit>, ranges: Map<String, PhysicsE
 				s.vx[i] = (px - s.lastX[i]) / delay * s.mobility[i - 1]
 				s.vy[i] = (py - s.lastY[i]) / delay * s.mobility[i - 1]
 			}
-			s.gravityX[i] = gx
-			s.gravityY[i] = gy
 		}
+		s.gravityX = gx
+		s.gravityY = gy
 	}
 
 	private fun output(s: Strand, o: PhysicsOutput): Float {

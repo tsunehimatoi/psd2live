@@ -1,6 +1,7 @@
 package io.github.psd2live.application
 
 import io.github.psd2live.core.RigPreviewModel
+import io.github.psd2live.core.RigBuildProfile
 import io.github.psd2live.core.GeometrySafetyEvaluator
 import io.github.psd2live.core.GeometrySafetyRejectedException
 import io.github.psd2live.core.GeometrySafetyReport
@@ -44,8 +45,10 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
         val context = currentCoroutineContext()
         val batch = context[WorkspaceBatchJobExecution]
         require(batch == null || batch.edits == edits) { "A nested document command cannot replace the active batch" }
-        val prepared = prepare(projectId, state, edits, resources)
-        val geometry = checkGeometry(prepared)
+        val prepared = RigBuildProfile.stage("document edit: prepare candidate") {
+            prepare(projectId, state, edits, resources)
+        }
+        val geometry = RigBuildProfile.stage("document edit: validate geometry") { checkGeometry(prepared) }
         if (!geometry.safe) throw GeometrySafetyRejectedException(geometry)
         val diagnostics = geometry.takeIf { it.affectedTargets.isNotEmpty() }?.toJson()
         val result = runtime.commitPrepared(projectId, state, summary, author, prepared.draft.document, prepared.model,

@@ -166,7 +166,15 @@ internal object RigBuildProfile {
 		return if (requestedRecording) calls.computeIfAbsent(name) { AtomicLong() }.addAndGet(amount) else 0L
 	}
 
-	fun reset() { nanos.clear(); calls.clear() }
+	private val marks = ConcurrentHashMap<String, Long>()
+
+	fun reset() { nanos.clear(); calls.clear(); marks.clear() }
+
+    fun mark(name: String) {
+        if (requestedRecording) marks[name] = System.nanoTime()
+    }
+
+    fun markedAt(name: String): Long? = marks[name]
 
 	/** Milliseconds per stage and call counts, sorted by stage name. */
 	fun snapshot(): Map<String, Pair<Double, Long>> =

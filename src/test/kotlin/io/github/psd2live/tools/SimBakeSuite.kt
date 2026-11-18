@@ -73,7 +73,7 @@ class SimBakeSuite {
 	private fun bench(p: SimBenchPart, label: String, method: SimBaker.Method, out: File, report: StringBuilder) {
 		val marks = ArrayList<Pair<Float, Long>>()
 		val start = System.nanoTime()
-		val bake = SimBaker.bake(p.model, p.edit, SimBaker.Options(physicsFps = p.overlay.physicsFps, method = method,
+		val bake = (if (method == SimBaker.Method.DIRECT) SimBaker::bake else SimBaker::bakeReference)(p.model, p.edit, SimBaker.Options(physicsFps = p.overlay.physicsFps, method = method,
 			progress = { synchronized(marks) { marks += it to System.nanoTime() } }))
 		val seconds = since(start) / 1000
 		println("sim-bench: $label baked in %.2f s: fit %.3f, p95 %.1f px, peak %.2f, clipped %.3f, jerk %.2f".format(

@@ -37,7 +37,16 @@ class WorkspaceModifierCommandsTest {
     @Test fun initializePresetsOnEmptyArtworkIsAtomicAndCannotBeRepeated(): Unit = runBlocking {
         val f = fixture()
         val before = f.now.document
-        f.edit("modifier_initialize", buildJsonObject { put("modifiers", "minimal") })
+        val recording = RigBuildProfile.recording
+        val generation = try {
+            RigBuildProfile.recording = true
+            RigBuildProfile.measureSuspending(RigBuildProfile.Operation("initialize", "empty", "preset", "minimal", 1, 0)) {
+                f.edit("modifier_initialize", buildJsonObject { put("modifiers", "minimal") })
+            }
+        } finally { RigBuildProfile.recording = recording }
+        assertTrue("source preset: binding preview" in generation.stages)
+        assertFalse("source preset: final preview" in generation.stages, "The document commit owns the final preview")
+        assertTrue((generation.stages["modifier cache hits"]?.second ?: 0) > 0, "The commit must reuse the prepared prefix")
         val initialized = f.now.document
         val stack = RigModifierStack.fromJson(requireNotNull(initialized.rigEdits.modifierStack))
         assertTrue(stack.instances.isNotEmpty())

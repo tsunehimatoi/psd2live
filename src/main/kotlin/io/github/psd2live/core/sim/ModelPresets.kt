@@ -432,7 +432,8 @@ object ModelPresets {
             val edit = previous?.copy(targets = allTargets, groups = groups, enabled = true,
                 inputs = if (previous.inputs == RigSimEdit.defaultInputs(available)) defaults else previous.inputs,
                 material = if (previous.material == SimMaterial.preset(kind)) material else previous.material)
-                ?: RigSimEdit(id, name, kind, allTargets, material, groups = groups, inputs = defaults)
+                ?: RigSimEdit(id, name, kind, allTargets, material, groups = groups, inputs = defaults,
+                    modes = if (kind == SimKind.HAIR) 3 else 2, keys = 9)
             overlay = SimAuthoring.put(overlay, model, edit)
             simulationIds += id
         }
