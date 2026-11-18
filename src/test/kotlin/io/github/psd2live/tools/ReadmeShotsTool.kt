@@ -128,8 +128,15 @@ class ReadmeShotsTool {
 				}
 				capture("01-start")
 			}
-			vm.openRecentFile((if (reuse) project.toPath() else sample.path).toAbsolutePath().toString())
-			waitFor(600, "model") { vm.state.value.previewModel != null && !vm.state.value.isBusy && !vm.startPageShown }
+			val importSplitPrompt = AppSettings.autoDetectMeshSplitsOnImport
+			try {
+				// Take the split dialog screenshot from the explicit model check below.
+				if (!reuse) SwingUtilities.invokeAndWait { vm.setAutoDetectMeshSplitsOnImport(false) }
+				vm.openRecentFile((if (reuse) project.toPath() else sample.path).toAbsolutePath().toString())
+				waitFor(600, "model") { vm.state.value.previewModel != null && !vm.state.value.isBusy && !vm.startPageShown }
+			} finally {
+				if (!reuse) SwingUtilities.invokeAndWait { vm.setAutoDetectMeshSplitsOnImport(importSplitPrompt) }
+			}
 			if (!reuse) {
 				idle()
 				bakes()

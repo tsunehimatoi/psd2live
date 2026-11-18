@@ -395,7 +395,8 @@ private fun MutableList<ToolOption>.addLayerActions(editor: CanvasEditor, layerI
         add(SectionOption("layer.mesh", "editor.menu.mesh", OptionPlace.MENU, submenu = true, icon = OptionIcon.MESH, alwaysFolds = true))
         add(ActionOption("layer.meshRebuild", "mesh.rebuild", { it.editable }, { it.viewModel.rebuildLayerMesh(layerId) },
             OptionIcon.REBUILD, place = OptionPlace.MENU))
-        add(ActionOption("layer.meshSplit", "canvas.hierarchy.splitMeshComponents", { it.editable }, { it.viewModel.requestMeshSplit(layerId) },
+        add(ActionOption("layer.meshSplit", "canvas.hierarchy.splitMeshComponents",
+            { it.editable && it.state.canCheckMeshSplits }, { it.viewModel.requestMeshSplit(layerId) },
             OptionIcon.SPLIT, place = OptionPlace.MENU, opensDialog = true))
         val split = meshId?.let { id -> editor.model.drawables.firstOrNull { it.id.raw == id }?.takeIf { editor.viewModel.depthSplitMiddleIds(id).isNotEmpty() } }
         if (split != null) add(ActionOption("layer.depthSplit", "editor.depthSplit.quick", { it.editable }, { it.viewModel.requestDepthSplit(split.id.raw) },

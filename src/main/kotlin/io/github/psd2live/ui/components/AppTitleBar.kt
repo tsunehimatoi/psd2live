@@ -156,6 +156,7 @@ fun AppTitleBar(
 	windowState: WindowState,
 	isBusy: Boolean,
 	hasInput: Boolean,
+	canScanMeshSplits: Boolean = hasInput,
 	folders: List<MenuFolder> = emptyList(),
 	currentLanguage: AppLanguage,
 	darkTheme: Boolean = true,
@@ -700,7 +701,7 @@ fun AppTitleBar(
 
 					AppMenuItem(
 						text = tr("menu.tools.meshSplit"),
-						enabled = hasInput && !isBusy,
+						enabled = canScanMeshSplits && !isBusy,
 						onHover = { activeSubmenu = null },
 						onClick = { activeMenu = null; activeSubmenu = null; onMeshSplitScan() },
 					)

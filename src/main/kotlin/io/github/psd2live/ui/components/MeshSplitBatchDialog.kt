@@ -119,10 +119,12 @@ internal fun MeshSplitBatchDialog(
                 color = colors.textMuted,
             )
         },
-        footerStart = {
-            DontShowAgainCheckbox(AppPrompt.MESH_SPLITS_ON_IMPORT, mutedOnImport, onPromptMutedChange,
-                label = tr("prompt.dontShowOnImport"))
-        },
+        footerStart = if (offer.splits.first().fromImport) {
+            {
+                DontShowAgainCheckbox(AppPrompt.MESH_SPLITS_ON_IMPORT, mutedOnImport, onPromptMutedChange,
+                    label = tr("prompt.dontShowOnImport"))
+            }
+        } else null,
         footer = {
             CompactButton(text = tr("editor.meshSplit.keepAll"), onClick = onDismiss)
             CompactButton(

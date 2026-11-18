@@ -67,43 +67,12 @@ class MeshSplitAlgorithm : ChangingModifierAlgorithmPlugin {
         val triCount = indices.size / 3
         if (vertexCount <= 0 || triCount <= 1) return null
 
-        if (positions.size % 2 != 0 || uvs.size != positions.size || indices.size % 3 != 0 ||
-            indices.any { it !in 0 until vertexCount }) {
+        if (positions.size % 2 != 0 || uvs.size != positions.size) {
             throw MeshSplitRejected("mesh.split.invalid_geometry", "mesh:${mesh.id}")
         }
-        val parent = IntArray(vertexCount) { it }
-        fun find(v: Int): Int {
-            var x = v
-            while (parent[x] != x) {
-                parent[x] = parent[parent[x]]
-                x = parent[x]
-            }
-            return x
-        }
-        fun union(a: Int, b: Int) {
-            val ra = find(a)
-            val rb = find(b)
-            if (ra != rb) parent[rb] = ra
-        }
-
-        for (t in 0 until triCount) {
-            if (t % 256 == 0) checkpoint()
-            val base = t * 3
-            val a = indices[base]
-            val b = indices[base + 1]
-            val c = indices[base + 2]
-            if (a !in 0 until vertexCount || b !in 0 until vertexCount || c !in 0 until vertexCount) continue
-            union(a, b)
-            union(a, c)
-        }
-
-        val triByRoot = linkedMapOf<Int, MutableList<Int>>()
-        for (t in 0 until triCount) {
-            val a = indices[t * 3]
-            if (a !in 0 until vertexCount) continue
-            triByRoot.getOrPut(find(a)) { mutableListOf() }.add(t)
-        }
-        if (triByRoot.size < 2) return null
+        val topology = MeshSplitTopology.connectedIslands(vertexCount, indices, checkpoint)
+            ?: throw MeshSplitRejected("mesh.split.invalid_geometry", "mesh:${mesh.id}")
+        if (topology.isEmpty()) return null
 
         fun checkDeltas(deltas: Floats) {
             if (deltas.size != 0 && deltas.size != positions.size)
@@ -112,18 +81,11 @@ class MeshSplitAlgorithm : ChangingModifierAlgorithmPlugin {
         mesh.offsets?.cells?.forEach { checkDeltas(it.form.deltas) }
         mesh.shapes.forEach { binding -> binding.shapes.forEach { it?.let { shape -> checkDeltas(shape.deltas) } } }
 
-        data class Island(val triangles: List<Int>, val vertices: IntArray, val centerX: Float, val centerY: Float)
+        data class PositionedIsland(val island: MeshSplitTopology.Island, val centerX: Float, val centerY: Float)
 
-        val islands = triByRoot.values.map { triangles ->
+        val islands = topology.map { island ->
             checkpoint()
-            val seen = linkedSetOf<Int>()
-            for (t in triangles) {
-                val base = t * 3
-                seen.add(indices[base])
-                seen.add(indices[base + 1])
-                seen.add(indices[base + 2])
-            }
-            val vertices = seen.toIntArray().also { it.sort() }
+            val vertices = island.vertices
             var minX = Float.POSITIVE_INFINITY
             var maxX = Float.NEGATIVE_INFINITY
             var minY = Float.POSITIVE_INFINITY
@@ -136,14 +98,15 @@ class MeshSplitAlgorithm : ChangingModifierAlgorithmPlugin {
                 if (y < minY) minY = y
                 if (y > maxY) maxY = y
             }
-            Island(triangles, vertices, (minX + maxX) * 0.5f, (minY + maxY) * 0.5f)
-        }.sortedWith(compareBy<Island>({ it.centerY }, { it.centerX }))
+            PositionedIsland(island, (minX + maxX) * 0.5f, (minY + maxY) * 0.5f)
+        }.sortedWith(compareBy<PositionedIsland>({ it.centerY }, { it.centerX }))
 
         val validIds = customPieceIds?.takeIf { it.size == islands.size && it.distinct().size == it.size }
         val validNames = customNames?.takeIf { it.size == islands.size }
         val remap = IntArray(vertexCount)
         val vertexMap = arrayOfNulls<MeshSplitVertex>(vertexCount)
-        val pieces = islands.mapIndexed { pieceIndex, island ->
+        val pieces = islands.mapIndexed { pieceIndex, positioned ->
+            val island = positioned.island
             checkpoint()
             remap.fill(-1)
             val newPos = FloatArray(island.vertices.size * 2)
@@ -155,9 +118,8 @@ class MeshSplitAlgorithm : ChangingModifierAlgorithmPlugin {
                 newUvs[newIdx * 2] = uvs[oldIdx * 2]
                 newUvs[newIdx * 2 + 1] = uvs[oldIdx * 2 + 1]
             }
-            val newIndices = IntArray(island.triangles.size * 3)
-            island.triangles.forEachIndexed { localTri, oldTri ->
-                val srcBase = oldTri * 3
+            val newIndices = IntArray(island.triangleOffsets.size * 3)
+            island.triangleOffsets.forEachIndexed { localTri, srcBase ->
                 val dstBase = localTri * 3
                 newIndices[dstBase] = remap[indices[srcBase]]
                 newIndices[dstBase + 1] = remap[indices[srcBase + 1]]
@@ -189,7 +151,7 @@ class MeshSplitAlgorithm : ChangingModifierAlgorithmPlugin {
                 shapes = slicedShapes,
             )
         }
-        return MeshSplitResult(mesh, pieces, vertexMap.toList(), islands.map { it.vertices })
+        return MeshSplitResult(mesh, pieces, vertexMap.toList(), islands.map { it.island.vertices })
     }
 
     private fun sliceDeltas(deltas: FloatArray, vertices: IntArray): Floats {
