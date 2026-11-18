@@ -88,6 +88,15 @@ Windows 也可以直接运行根目录的 `run-gui.bat`。不带参数启动 GUI
 ./gradlew packageDmg                             # 仅 macOS：带 Swift 外壳的 DMG
 ```
 
+Linux 应用目录使用清单 `Class-Path` JAR 保留依赖顺序，缩短原生启动器参数，避免
+[JDK-8380085](https://github.com/openjdk/jdk/commit/54c5e41cbaabcd21d7bbf8f5667b2e35cfe12dd7)
+在长类路径下于 JVM 启动前崩溃。更换 JDK 或打包配置后，运行以下检查；它使用临时用户设置，
+并检查包含空格、引号及非英文字符的迁移路径：
+
+```bash
+python3 packaging/linux/smoke-test.py build/compose/binaries/main/app/PSD2Live
+```
+
 - `packageDmg` 只在 macOS 上可用。它使用 `createDistributable` 打进包里的运行时，并把启动程序换成 `packaging/macos` 里的 Swift 外壳，因此 Dock 名称、文档类型和窗口按钮都是系统的。菜单出现在屏幕顶部菜单栏；窗口里的菜单仍保留，因为那里列出了全部命令。DMG 的架构与构建它的 Mac 相同（Apple 芯片或 Intel），需要 macOS 13 或更新。包没有公证：从网络下载后，在访达里用辅助点按打开，再把 `PSD2Live` 拖进“应用程序”。
 - `CI` 工作流在 PR 和推送时运行 Ubuntu、Windows 与 macOS 测试，其中 macOS 任务分别测试并打包 Apple 芯片和 Intel 版本；也可手动运行，从产物中下载 DMG。它验证原生启动器的错误处理，并用包内运行时启动挂载后的应用。共享的 `.github/actions/package-macos` 也为发行工作流提供两种架构的 DMG，不包含 Cubism SDK。
 - 两种打包都只包含当前构建平台的原生库，并在应用资源目录附带 `LICENSE`、`THIRD_PARTY_NOTICES.md` 与 `licenses/`。

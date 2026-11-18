@@ -16,6 +16,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.jar.JarEntry
+import java.util.jar.JarFile
 import java.util.jar.JarOutputStream
 
 /** Host API/protocol contracts, environment checks, SDK staging, and minimal runnable examples. */
@@ -209,10 +210,7 @@ internal object PluginDevContracts {
         }
 
         // Also sweep java.class.path for format-compile or kotlinx-serialization jars if not yet staged.
-        val cpEntries = System.getProperty("java.class.path").orEmpty()
-            .split(File.pathSeparator)
-            .filter { it.isNotBlank() }
-            .map { Path.of(it) }
+        val cpEntries = classpathEntries(System.getProperty("java.class.path").orEmpty())
         val extraPrefixes = listOf("algorithm-api", "algorithm-worker", "format-model", "format-compile", "kotlinx-serialization-")
         for (entry in cpEntries) {
             val pathStr = entry.toString().replace('\\', '/')
@@ -228,6 +226,23 @@ internal object PluginDevContracts {
             }
         }
         return targetDir
+    }
+
+    /** A packaged launcher may use a manifest Class-Path rather than listing every dependency itself. */
+    internal fun classpathEntries(classpath: String): List<Path> {
+        val entries = LinkedHashSet<Path>()
+        val pending = ArrayDeque(classpath.split(File.pathSeparator).filter { it.isNotBlank() }.map(Path::of))
+        while (pending.isNotEmpty()) {
+            val entry = pending.removeFirst().toAbsolutePath().normalize()
+            if (!entries.add(entry) || !Files.isRegularFile(entry) || !entry.toString().endsWith(".jar", true)) continue
+            val linked = runCatching { JarFile(entry.toFile()).use { it.manifest?.mainAttributes?.getValue("Class-Path") } }
+                .getOrNull().orEmpty().split(Regex("\\s+")).filter { it.isNotBlank() }
+            linked.asReversed().forEach { link ->
+                val path = runCatching { entry.toUri().resolve(link).takeIf { it.scheme == "file" }?.let(Path::of) }.getOrNull()
+                if (path != null) pending.addFirst(path)
+            }
+        }
+        return entries.toList()
     }
 
     private fun packageClassesDirToJar(classesDir: Path, jarOut: Path) {
