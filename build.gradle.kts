@@ -565,6 +565,33 @@ afterEvaluate {
 // ISCC.exe is found from -Ppsd2live.iscc, the ISCC environment variable or Inno Setup 6's default install folders.
 if (hostOs == "windows") afterEvaluate {
 	val distributions = compose.desktop.application.nativeDistributions
+	val packageName = distributions.packageName!!
+	val utf8Manifest = file("packaging/windows/utf8.manifest")
+	tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask>()
+		.matching { it.name in setOf("createDistributable", "createReleaseDistributable") }.configureEach {
+			val image = destinationDir.dir(packageName)
+			inputs.file(utf8Manifest)
+			doLast {
+				// Both launchers locate DLLs via narrow Windows APIs before the JVM starts.
+				val sdkBin = File(System.getenv("ProgramFiles(x86)"), "Windows Kits/10/bin")
+				val arch = if (hostArm) "arm64" else "x64"
+				val mt = (System.getenv("PATH").split(File.pathSeparator).map { File(it, "mt.exe") } +
+					sdkBin.listFiles().orEmpty().sortedByDescending { it.name }.flatMap {
+						listOf(it.resolve("$arch/mt.exe"), it.resolve("x86/mt.exe"))
+					}).firstOrNull { it.isFile } ?: error("Windows packaging requires mt.exe from the Windows SDK.")
+				for (relative in listOf("$packageName.exe", "runtime/bin/java.exe")) {
+					val target = image.get().asFile.resolve(relative)
+					val patched = temporaryDir.resolve("patched.exe")
+					val existing = temporaryDir.resolve("launcher.manifest")
+					target.copyTo(patched, overwrite = true)
+					patched.setWritable(true)
+					providers.exec { commandLine(mt, "-nologo", "-inputresource:$patched;#1", "-out:$existing") }.result.get()
+					providers.exec { commandLine(mt, "-nologo", "-manifest", existing, utf8Manifest, "-outputresource:$patched;#1") }.result.get()
+					target.setWritable(true)
+					Files.move(patched.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+				}
+			}
+		}
 	val createDistributable = tasks.named<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask>("createDistributable")
 	val packageExe = tasks.register<Exec>("packageExe") {
 		group = "compose desktop"

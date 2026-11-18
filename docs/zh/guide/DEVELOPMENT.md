@@ -109,6 +109,8 @@ python3 packaging/linux/smoke-test.py build/compose/binaries/main/app/PSD2Live
 
 ### 算法插件运行时检查
 
+Windows 构建应用镜像时需要 Windows SDK 的 `mt.exe`。打包任务为应用和包内 Java 启动器合并 UTF-8 清单，以便从跨系统代码页的安装路径加载运行时 DLL。
+
 应用内的算法插件通过 `java.home/bin/java`（Windows 为 `java.exe`）启动独立 JVM，因此打包运行时必须保留 Java 启动程序。
 以下检查使用包内真实的算法 worker，在无系统 JDK、临时用户设置及包含空格和非英文字符的迁移路径下验证启动：
 

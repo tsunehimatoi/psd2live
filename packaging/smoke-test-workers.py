@@ -79,7 +79,7 @@ def main():
         directory = Path(directory)
         check_worker(app, directory / "worker")
         # Copy the image to exercise executable and JAR paths with spaces, apostrophes and Unicode.
-        relocated = directory / "A user's 模型" / app.name
+        relocated = directory / "A user's 模型 한글" / app.name
         shutil.copytree(app, relocated, symlinks=True)
         check_worker(relocated, directory / "relocated worker 模型", verify_export=True)
 
