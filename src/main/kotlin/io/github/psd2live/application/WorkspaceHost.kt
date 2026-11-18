@@ -1660,7 +1660,7 @@ internal class WorkspaceHost<V>(
         val before = captureForMutation()
         val current = presentation.current()
         val selected = runtime.checkout(before.projectId, before.state, nodeId) { _, document, model ->
-            showCommit(model, document, "Checked out history node $nodeId", current, restoreCheckedOutPose = true, base = null)
+            showCommit(model, document, "Checked out history node $nodeId", current, base = null)
         }
         discardEditorQueues()
         scheduleHistoryPersistence(before.projectId)
@@ -1787,9 +1787,8 @@ internal class WorkspaceHost<V>(
         next: WorkspaceDocument,
         status: String,
         view: V = presentation.current(),
-        restoreCheckedOutPose: Boolean = false,
         base: WorkspaceDocument? = runtime.capture().document,
-    ) = presentation.show(view, preview, base, next, status, restoreCheckedOutPose)
+    ) = presentation.show(view, preview, base, next, status)
 
     private val repository = io.github.psd2live.project.ProjectRepository()
     private val saves = Mutex()
