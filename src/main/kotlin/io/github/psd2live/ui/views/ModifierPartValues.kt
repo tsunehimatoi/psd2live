@@ -6,6 +6,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import io.github.psd2live.application.WorkspaceDocumentOperation
 import io.github.psd2live.core.Physics3Json
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.i18n.tr
@@ -19,10 +20,12 @@ import kotlinx.serialization.json.*
 /** A part's public subfeatures use the same fields and captured-state submission as standalone bindings. */
 @Composable
 internal fun ModifierPartValues(instance: RigModifierInstance, state: PSD2LiveState, enabled: Boolean, vm: PSD2LiveViewModel) {
+    fun edit(config: JsonObject) = WorkspaceDocumentOperation("modifier_update", buildJsonObject {
+        put("id", instance.id); put("type", instance.type); put("config", config)
+    })
     fun commit(config: JsonObject, captured: String?, done: (String?) -> Unit) {
-        vm.editModifier("modifier_update", buildJsonObject {
-            put("id", instance.id); put("type", instance.type); put("config", config)
-        }, captured, done)
+        val operation = edit(config)
+        vm.editModifier(operation.operation, operation.request, captured, done)
     }
     val modes = when (instance.type) {
         "hair" -> listOf("chains", "legacy")
@@ -53,7 +56,7 @@ internal fun ModifierPartValues(instance: RigModifierInstance, state: PSD2LiveSt
                     }, enabled = enabled)
                 }
             }
-            key(baseType) { ModifierBindingValues(instance.copy(type = baseType, plugin = null), enabled, vm, ::commit) }
+            key(baseType) { ModifierBindingValues(instance.copy(type = baseType, plugin = null), enabled, vm, ::edit) }
         }
 
         for ((flag, type) in ModifierPartConfig.features[instance.type].orEmpty()) key(instance.id, type) {
@@ -96,7 +99,9 @@ internal fun ModifierPartValues(instance: RigModifierInstance, state: PSD2LiveSt
                 }
                 fun childCommit(config: JsonObject, captured: String?, done: (String?) -> Unit) =
                     commit(ModifierPartEditing.withChildConfig(instance, type, config), captured, done)
-                ModifierBindingValues(child, enabled && active, vm, ::childCommit)
+                ModifierBindingValues(child.copy(enabled = instance.enabled && active), enabled && active, vm) { config ->
+                    edit(ModifierPartEditing.withChildConfig(instance, type, config))
+                }
                 ModifierPartPhysics(child, state, enabled && active, vm, ::childCommit)
             }
         }

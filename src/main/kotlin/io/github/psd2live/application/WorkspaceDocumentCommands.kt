@@ -4,12 +4,18 @@ import io.github.psd2live.core.RigPreviewModel
 import io.github.psd2live.core.GeometrySafetyEvaluator
 import io.github.psd2live.core.GeometrySafetyRejectedException
 import io.github.psd2live.core.GeometrySafetyReport
+import io.github.psd2live.core.PSD2LivePipeline
+import io.github.psd2live.core.ProgressListener
+import io.github.psd2live.core.modifier.BuiltinModifierPlugins
+import io.github.psd2live.core.modifier.ModifierStatus
+import io.github.psd2live.core.modifier.RigModifierStack
 import io.github.psd2live.project.MutationAuthor
 import io.github.psd2live.project.WorkspaceDocument
 import io.github.psd2live.project.WorkspaceMutationResult
 import io.github.psd2live.project.WorkspaceRevisions
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
@@ -124,6 +130,67 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
         }
     }
 
+    /** Rebuilds the static rig for a style sample without preparing playback or publishing a document draft. */
+    suspend fun <T> renderTurnStyle(projectId: String, state: String, operation: WorkspaceDocumentOperation,
+                                   render: suspend (RigPreviewModel) -> T): T {
+        val before = runtime.withCapture {
+            if (it.state != state) throw WorkspaceConflict(state, it.state)
+            require(it.projectId == projectId) { "Operation targets another project" }
+            it
+        }
+        val model = when (operation.operation) {
+            "modifier_update" -> buildTurnStyleStack(before, operation.request)
+            "settings_update" -> {
+                val builder = WorkspacePreviewBuilder(deferRuntimeBundles = true)
+                val document = runInterruptible(Dispatchers.Default) {
+                    val settings = WorkspaceSettingsIntent.parse(before.document, before.model, operation.request.getValue("changes").jsonObject).settings
+                    val overlay = before.document.rigEdits
+                    before.document.copy(settings = settings, rigEdits = overlay.copy(simEdits = overlay.simEdits.map { it.copy(enabled = false) }))
+                }
+                builder.build(builder.normalizeMeshEdits(document, before.model), before.model)
+            }
+            else -> error("Unsupported turn style edit: ${operation.operation}")
+        }
+        try {
+            if (operation.operation == "modifier_update") {
+                val id = operation.request.getValue("id").jsonPrimitive.content
+                val entry = model.modifierEvaluation?.entries?.firstOrNull { it.instance.id == id }
+                require(entry?.status == ModifierStatus.ACTIVE) { entry?.error ?: "Modifier $id is inactive" }
+            }
+            return render(model)
+        } finally {
+            model.modifierBuildOwner?.takeUnless { it.published }?.close()
+        }
+    }
+
+    private suspend fun buildTurnStyleStack(before: WorkspaceCapture<RigPreviewModel>, request: JsonObject): RigPreviewModel {
+        val context = currentCoroutineContext()
+        return runInterruptible(Dispatchers.Default) {
+            val current = before.model
+            val overlay = before.document.rigEdits
+            val stack = WorkspaceModifierEdits.updateConfiguration(
+                RigModifierStack.fromJson(requireNotNull(overlay.modifierStack)), request, current)
+            // Applied patches are authored geometry. Only live playback stages are omitted from the render stack.
+            val skipped = stack.instances.filter { it.type in playbackModifierTypes && it.id !in stack.appliedNodes }
+                .mapTo(HashSet()) { it.id }
+            val staticStack = if (skipped.isEmpty()) stack else stack.copy(
+                instances = stack.instances.filterNot { it.id in skipped },
+                overrides = stack.overrides - skipped,
+                initializationFailures = stack.initializationFailures - skipped,
+                retryRevisions = stack.retryRevisions - skipped,
+                organization = null,
+            )
+            val pipeline = PSD2LivePipeline().apply {
+                deferRuntimeBundles = true
+                reuseModifierInputs(current)
+            }
+            val config = current.config.copy(rigEdits = overlay.copy(modifierStack = staticStack.toJson()))
+            val model = pipeline.buildPreview(before.document.source, config,
+                ProgressListener { _, _ -> context.ensureActive() }, current.atlas)
+            WorkspaceReferenceMeshes.sketched(model, before.document)
+        }
+    }
+
     private suspend fun prepare(projectId: String, state: String, edits: List<WorkspaceDocumentOperation>,
                                 resources: WorkspaceAssetWorkflow?): WorkspacePreparedDraft<RigPreviewModel> {
         val context = currentCoroutineContext()
@@ -231,6 +298,12 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
         }
 
     companion object {
+        private val playbackModifierTypes by lazy {
+            val aliases = setOf("simulation", "physics", "motion")
+            aliases + aliases.flatMap { type ->
+                BuiltinModifierPlugins.entry(type, 1)?.artifact?.manifest?.algorithms.orEmpty().map { it.type }
+            }
+        }
         /** The authored poses a commit changes, read against the committed model as every later reader will. */
         fun changedPoses(before: WorkspaceCapture<RigPreviewModel>, draft: WorkspaceDraft, model: RigPreviewModel): Map<String, WorkspacePose> {
             val records = draft.auxiliary["posesByWorkspace"]?.jsonObject.orEmpty()

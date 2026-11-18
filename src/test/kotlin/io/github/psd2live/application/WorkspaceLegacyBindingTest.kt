@@ -7,8 +7,21 @@ import io.github.psd2live.core.recipe.BaseChoice
 import io.github.psd2live.core.recipe.ModuleChoice
 import io.github.psd2live.core.recipe.RigModules
 import io.github.psd2live.core.recipe.RigRecipe
+import io.github.psd2live.core.sim.RigSimEdit
+import io.github.psd2live.core.sim.SimBake
+import io.github.psd2live.core.sim.SimBakeResult
+import io.github.psd2live.core.sim.SimBakedAxis
+import io.github.psd2live.core.sim.SimBakedMode
+import io.github.psd2live.core.sim.SimKind
 import io.github.psd2live.project.*
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.*
 import org.umamo.format.art.*
 import org.umamo.render.eval.CpuDeformationEvaluator
@@ -231,6 +244,149 @@ class WorkspaceLegacyBindingTest {
         val beforeApply = RigIrCompiler.compile(f.now.model)
         f.edit("modifier_apply", buildJsonObject { put("id", "brow") })
         assertEquals(beforeApply, RigIrCompiler.compile(f.now.model))
+    }
+
+    @Test fun turnStylePreviewUsesTheCapturedPoseAndOnlyApplyChangesHistory(): Unit = runBlocking {
+        val f = Fixture(document(pairedBrows = true, bilateralEyes = true, bangOverlay = true))
+        f.install()
+        f.edit("modifier_add_group", buildJsonObject {
+            put("group", "parts")
+            putJsonArray("entries") {
+                add(f.addition("rig.scaffold", "structure"))
+                add(f.addition("face", "face"))
+            }
+        })
+        val before = f.now
+        val parameters = before.model.rig.puppet.parameters.associateBy { it.id }
+        val yaw = parameters.getValue(StandardParameters.ANGLE_X)
+        val pitch = parameters.getValue(StandardParameters.ANGLE_Y)
+        val pose = mapOf(yaw.id to yaw.min, pitch.id to pitch.max)
+        val preview = WorkspaceTurnStylePreview(before, f.commands, pose, before.document.renderVisibleLayers(before.model))
+        val instance = RigModifierStack.fromJson(before.document.rigEdits.modifierStack!!).instances.last()
+        fun updateRequest(turn: Float) = buildJsonObject {
+            put("id", instance.id)
+            put("type", instance.type)
+            put("config", JsonObject(instance.config + ("values" to buildJsonObject { put("turn", turn) })))
+        }
+        val request = updateRequest(72f)
+        val operation = WorkspaceDocumentOperation("modifier_update", request)
+        val (thumbnail, milder) = coroutineScope {
+            val stronger = async { preview.thumbnail(operation) }
+            val weaker = async { preview.thumbnail(WorkspaceDocumentOperation("modifier_update", updateRequest(22f))) }
+            stronger.await() to weaker.await()
+        }
+        withTimeout(20_000) {
+            val frameStarted = CompletableDeferred<Unit>()
+            val requestToCancel = launch {
+                preview.angles(operation) { _, _ ->
+                    frameStarted.complete(Unit)
+                    awaitCancellation()
+                }
+            }
+            frameStarted.await()
+            requestToCancel.cancelAndJoin()
+        }
+        val otherFrame = CompletableDeferred<Unit>()
+        val streamed = arrayOfNulls<WorkspaceTurnStylePreview.AngleFrame>(WorkspaceTurnStylePreview.ANGLE_COUNT)
+        val angles = withTimeout(20_000) {
+            preview.angles(operation) { index, frame ->
+                if (index == 0) otherFrame.await() else otherFrame.complete(Unit)
+                streamed[index] = frame
+            }
+        }
+        assertEquals(angles, streamed.toList())
+        fun pixels(image: java.awt.image.BufferedImage) = image.getRGB(0, 0, image.width, image.height, null, 0, image.width)
+        assertEquals(9, angles.size)
+        assertEquals(yaw.min to pitch.max, angles.first().let { it.x to it.y })
+        assertEquals(yaw.default to pitch.default, angles[4].let { it.x to it.y })
+        assertEquals(yaw.max to pitch.min, angles.last().let { it.x to it.y })
+        assertContentEquals(pixels(angles.first().image), pixels(thumbnail.current))
+        assertFalse(pixels(angles.first().image).contentEquals(pixels(angles.last().image)))
+        assertFalse(pixels(thumbnail.turned).contentEquals(pixels(milder.turned)))
+        assertEquals(before, f.now)
+        f.edit("modifier_update", request)
+        val applied = f.now
+        assertNotEquals(before.historyHead, applied.historyHead)
+        val appliedInstance = RigModifierStack.fromJson(applied.document.rigEdits.modifierStack!!).instances.last()
+        assertEquals(72f, appliedInstance.config.getValue("values").jsonObject.getValue("turn").jsonPrimitive.float)
+        assertFailsWith<WorkspaceConflict> { preview.thumbnail(operation) }
+        f.runtime.checkout(applied.projectId, applied.state, before.historyHead)
+        assertEquals(before.document.rigEdits.modifierStack, f.now.document.rigEdits.modifierStack)
+    }
+
+    @Test fun recipeTurnStylePreviewMatchesTheAppliedSetting(): Unit = runBlocking {
+        val art = document(pairedBrows = true, bilateralEyes = true)
+        val module = RigModules.FACE_DEPTH_TURN
+        val recipe = fittedRecipe(emptyMap()).let {
+            it.copy(modules = it.modules + (module.id to ModuleChoice(true, module.version)))
+        }
+        val config = art.config().copy(rigEdits = RigEditOverlay.Empty, recipe = recipe, meshOnly = false, generateDeformers = true)
+        val f = Fixture(art.copy(rigEdits = config.rigEdits, settings = WorkspaceSettingsCodec.encode(config)))
+        f.install()
+        val before = f.now
+        val request = buildJsonObject {
+            putJsonObject("changes") { putJsonObject(WorkspaceSettingsCodec.RIG) {
+                putJsonObject("modules") { putJsonObject(module.id) { putJsonObject("values") { put("turn", 70f) } } }
+            } }
+        }
+        val operation = WorkspaceDocumentOperation("settings_update", request)
+        val previewTurn = f.commands.renderTurnStyle(before.projectId, before.state, operation) { candidate ->
+            assertEquals(70f, candidate.config.recipe.value(module.id, "turn"))
+            RigCanvasSupport.evaluateExact(candidate, mapOf(StandardParameters.ANGLE_X to 30f)).worldPositions
+        }
+        assertEquals(before, f.now)
+        f.edit("settings_update", request)
+        val appliedTurn = RigCanvasSupport.evaluateExact(f.now.model, mapOf(StandardParameters.ANGLE_X to 30f)).worldPositions
+        assertEquals(previewTurn.keys, appliedTurn.keys)
+        previewTurn.forEach { (id, positions) -> assertContentEquals(positions, appliedTurn[id]) }
+    }
+
+    @Test fun turnStylePreviewEvaluatesVisibleBindingsWithoutPlaybackModifiers(): Unit = runBlocking {
+        val f = Fixture(document(bilateralEyes = true))
+        f.install()
+        f.edit("modifier_add_group", buildJsonObject {
+            put("group", "parts")
+            putJsonArray("entries") {
+                add(f.addition("rig.scaffold", "structure"))
+                add(f.addition("face", "face"))
+            }
+        })
+        val bound = f.now
+        val model = bound.model.rig.puppet
+        val target = model.drawables.first { bound.model.rig.layerOf(it.id.raw) == "back" }
+        val count = requireNotNull(target.mesh).vertexCount
+        val mesh = listOf(ModifierTarget("mesh", target.id.raw))
+        val yaw = StandardParameters.ANGLE_X.raw
+        val pitch = StandardParameters.ANGLE_Y.raw
+        val motion = MotionClip("clip", "Turn", duration = 1f, curves = listOf(MotionCurve(yaw, listOf(MotionKey(0f, 0f), MotionKey(1f, 25f)))))
+        val physics = RigPhysicsEdit("physics", "Head motion", listOf(PhysicsInput(yaw)), listOf(PhysicsOutput(pitch)))
+        val sim = RigSimEdit("cloth", "Cloth", SimKind.CLOTH, listOf(target.id.raw), autoBake = false)
+        val axis = SimBakedAxis("Mode", floatArrayOf(-1f, 0f, 1f), mapOf(target.id.raw to listOf(
+            FloatArray(count * 2) { -.2f }, FloatArray(count * 2), FloatArray(count * 2) { .2f })))
+        val baked = sim.copy(bake = SimBakeResult(SimBake.fingerprint(model, sim), mapOf(target.id.raw to count),
+            emptyList(), listOf(SimBakedMode(axis, 1f, 1f))))
+        val stack = RigModifierStack.fromJson(bound.document.rigEdits.modifierStack!!)
+            .add("motion", 1, mesh, MotionClips.toJson(motion), id = "clip")
+            .add("physics", 1, mesh, physics.toJson(), id = "physics")
+            .add("simulation", 1, mesh, baked.toJson(), id = "cloth")
+        val document = bound.document.copy(rigEdits = bound.document.rigEdits.copy(modifierStack = stack.toJson()))
+        f.runtime.install(bound.state, bound.projectId, document, f.builder.build(document, bound.model), discardUnsaved = true)
+        val before = f.now
+        assertTrue(before.model.modifierEvaluation!!.entries.all { it.status == ModifierStatus.ACTIVE })
+        val operation = WorkspaceDocumentOperation("modifier_update", buildJsonObject {
+            put("id", "face")
+            put("type", "face")
+            put("config", JsonObject(stack.instances.single { it.id == "face" }.config +
+                ("values" to buildJsonObject { put("turn", 70f) })))
+        })
+        val stages = f.commands.renderTurnStyle(before.projectId, before.state, operation) { rendered ->
+            val output = assertNotNull(rendered.rig.modifierOutput)
+            assertTrue(output.clips.isEmpty())
+            assertTrue(output.physics.groups.isEmpty())
+            rendered.modifierEvaluation!!.entries.map { it.instance.id }
+        }
+        assertEquals(listOf("structure", "face"), stages)
+        assertEquals(before, f.now)
     }
 
     private fun compare(native: RigPreviewModel, actual: RigPreviewModel, poses: List<Map<ParameterId, Float>>,

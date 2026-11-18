@@ -27,9 +27,10 @@ internal class WorkspacePreviewProgress(val update: (Float) -> Unit) : kotlin.co
 /** Rebuild and ordered replay are application work; adapters only project the resulting model. */
 internal class WorkspacePreviewBuilder(
     private val modifierCachesEnabled: Boolean = true,
+    deferRuntimeBundles: Boolean = false,
     private val observeBuildPlan: (WorkspaceBuildPlan) -> Unit = {},
 ) {
-    private val pipeline = PSD2LivePipeline()
+    private val pipeline = PSD2LivePipeline().also { it.deferRuntimeBundles = deferRuntimeBundles }
 
     private companion object {
         /** The binding key an imported model's checkpoints carry: its rig is bound to the import's atlas. */

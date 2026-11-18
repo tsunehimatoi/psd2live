@@ -39,6 +39,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.psd2live.application.WorkspaceDocumentOperation
 import io.github.psd2live.core.RigTuning
 import io.github.psd2live.core.PhysicsGenerator
 import io.github.psd2live.core.sim.ModelPresets
@@ -67,7 +68,10 @@ import io.github.psd2live.ui.theme.LocalToolTypography
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.floatOrNull
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 import io.github.psd2live.ui.theme.Motion
 import io.github.psd2live.ui.theme.handCursor
 
@@ -704,7 +708,18 @@ internal fun RigModulePresets(state: PSD2LiveState, viewModel: PSD2LiveViewModel
 						}
 						RowDetail(costText(costs[module]), moduleOn && recipe.modern || module.setting != null && moduleOn)
 					}
-					if (moduleOn && module === RigModules.FACE_DEPTH_TURN) TurnStyleRow(recipe.value(module.id, "style"), usable, viewModel::applyTurnStyle)
+					if (moduleOn && module === RigModules.FACE_DEPTH_TURN) {
+						TurnStyleRow(recipe.value(module.id, "style"), usable, viewModel::applyTurnStyle)
+						TurnStyleExploreButton(usable, viewModel) { chosen ->
+							WorkspaceDocumentOperation("settings_update", buildJsonObject {
+								putJsonObject("changes") { putJsonObject(io.github.psd2live.project.WorkspaceSettingsCodec.RIG) {
+									putJsonObject("modules") { putJsonObject(module.id) { putJsonObject("values") {
+										chosen.forEach { (id, value) -> put(id, value) }
+									} } }
+								} }
+							})
+						}
+					}
 					if (moduleOn) for (knob in module.knobs.filter { !it.advanced }) KnobRow(
 						label = tr("settings.rig.knob.${module.id}.${knob.id}"),
 						hint = tr("settings.rig.knob.${module.id}.${knob.id}.hint", "%.0f".format(knob.default)),

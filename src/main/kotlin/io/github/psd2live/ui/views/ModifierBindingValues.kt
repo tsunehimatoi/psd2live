@@ -6,6 +6,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import io.github.psd2live.application.WorkspaceDocumentOperation
 import io.github.psd2live.core.RigTuning
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.i18n.tr
@@ -17,8 +18,12 @@ import kotlinx.serialization.json.*
 /** Binding descriptors drive both ordinary instances and a part's local settings. */
 @Composable
 internal fun ModifierBindingValues(instance: RigModifierInstance, enabled: Boolean, vm: PSD2LiveViewModel,
-    commit: (JsonObject, String?, (String?) -> Unit) -> Unit) {
+    edit: (JsonObject) -> WorkspaceDocumentOperation) {
     val spec = RigLegacyBindings.find(instance.type) ?: return
+    fun commit(config: JsonObject, expected: String?, done: (String?) -> Unit) {
+        val operation = edit(config)
+        vm.editModifier(operation.operation, operation.request, expected, done)
+    }
     if (spec.hasPhysics) InspectorFormRow(tr("swing.physics")) {
         CompactCheckbox(instance.config["physicsEnabled"]?.jsonPrimitive?.booleanOrNull != false, { value ->
             commit(JsonObject(instance.config + ("physicsEnabled" to JsonPrimitive(value))), vm.modifierEditState()) {}
@@ -70,6 +75,10 @@ internal fun ModifierBindingValues(instance: RigModifierInstance, enabled: Boole
                         spec.knobs.forEach { knob -> put(knob.id, if (knob.id == "style") index.toFloat() else knob.default) }
                     }
                     commit(JsonObject(instance.config + ("values" to values)), vm.modifierEditState()) {}
+                }
+                TurnStyleExploreButton(enabled && instance.enabled, vm) { chosen ->
+                    val values = JsonObject(instance.config["values"]?.jsonObject.orEmpty() + chosen.mapValues { JsonPrimitive(it.value) })
+                    edit(JsonObject(instance.config + ("values" to values)))
                 }
             }
             spec.knobs.filterNot { hasTurnStyle && it.id == "style" }.forEach { knob ->

@@ -549,6 +549,13 @@ internal class WorkspaceHost<V>(
 
     /** The committed HEAD, read without the runtime lock. */
     internal fun currentHistoryHead(): String? = runtime.state.value.capture?.historyHead
+
+    internal fun turnStylePreview(expectedState: String, pose: Map<org.umamo.runtime.model.ParameterId, Float>,
+                                  visibleLayers: Set<String>): WorkspaceTurnStylePreview? =
+        runtime.read().runtime.capture?.takeIf { it.state == expectedState }?.let { capture ->
+            WorkspaceTurnStylePreview(capture, documentCommands, pose, visibleLayers)
+        }
+
     /** Installs a source the presentation analysed itself, when it holds one. */
     internal fun attachCurrentWorkspace() {
         if (presentation.importedSource(presentation.current()) != null) runBlocking { importedPsd() }

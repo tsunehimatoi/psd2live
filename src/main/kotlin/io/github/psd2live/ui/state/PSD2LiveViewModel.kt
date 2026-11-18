@@ -1775,6 +1775,16 @@ class PSD2LiveViewModel : AutoCloseable {
         modifiers.switchModifierPreset(group, richness)
     internal fun confirmModifierAddition() = modifiers.confirmModifierAddition()
     internal fun modifierEditState(): String? = modifiers.modifierEditState()
+    internal fun openTurnStylePreview(): io.github.psd2live.application.WorkspaceTurnStylePreview? {
+        val workspace = workspaceBackend as? DesktopWorkspace ?: return null
+        val current = _state.value
+        if (current.isBusy || current.workspaceEditBusy || current.editorDraftBusy) return null
+        val expected = modifierEditState() ?: return null
+        val pose = current.parameterValues + current.previewParameterValues.takeIf { current.previewLive }.orEmpty()
+        return workspace.host.turnStylePreview(expected, pose, current.effectiveVisibleLayerIds)
+            ?: run { setErrorMessage(tr("modifier.stale")); null }
+    }
+
     internal fun editModifier(operation: String, request: kotlinx.serialization.json.JsonObject, expectedState: String? = modifierEditState(),
                               onComplete: (String?) -> Unit = {}) = modifiers.editModifier(operation, request, expectedState, onComplete)
     internal fun editModifiers(operations: List<io.github.psd2live.application.WorkspaceDocumentOperation>, expectedState: String? = modifierEditState(),

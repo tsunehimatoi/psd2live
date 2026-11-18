@@ -27,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.psd2live.application.WorkspaceDocumentOperation
 import io.github.psd2live.application.WorkspaceModifierPlan
 import io.github.psd2live.core.RigTuning
 import io.github.psd2live.core.modifier.*
@@ -649,8 +650,10 @@ private fun ModifierSourceValues(
             title = modifierName(instance.type),
             defaultExpanded = true,
         ) {
-            ModifierBindingValues(instance, enabled, vm) { config, expected, done ->
-                vm.editModifier("modifier_update", buildJsonObject { put("id", instance.id); put("type", instance.type); put("config", config) }, expected, done)
+            ModifierBindingValues(instance, enabled, vm) { config ->
+                WorkspaceDocumentOperation("modifier_update", buildJsonObject {
+                    put("id", instance.id); put("type", instance.type); put("config", config)
+                })
             }
         }
     }
