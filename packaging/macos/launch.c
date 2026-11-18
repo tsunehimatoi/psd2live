@@ -195,7 +195,8 @@ int psd2live_launch(const char *resources, int argc, char **argv) {
 		snprintf(dir, sizeof(dir), "%s/Library/Logs/PSD2Live", home);
 		mkdir(dir, 0755);
 		snprintf(log_path, sizeof(log_path), "%s/launch.log", dir);
-		chdir(home);
+		/* Desktop launches start in the user's home. CLI file arguments resolve against the caller's directory. */
+		if (argc <= 1) chdir(home);
 	}
 	note("launch");
 

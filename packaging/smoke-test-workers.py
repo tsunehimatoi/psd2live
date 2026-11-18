@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Start a bundled algorithm worker with the packaged Java runtime, without a system JDK or GUI."""
+"""Exercise the bundled algorithm worker and export an archived project with the relocated launcher."""
 import argparse
 import json
 import os
@@ -14,14 +14,14 @@ import zipfile
 def app_paths(app):
     # Accept Compose app images and the final macOS Swift-shell bundle.
     if (app / "Contents").is_dir():
-        return app / "Contents/app", app / "Contents/runtime/Contents/Home/bin/java"
+        return app / "Contents/app", app / "Contents/runtime/Contents/Home/bin/java", app / "Contents/MacOS/PSD2Live"
     if (app / "lib/app").is_dir():
-        return app / "lib/app", app / "lib/runtime/bin/java"
-    return app / "app", app / "runtime/bin/java.exe"
+        return app / "lib/app", app / "lib/runtime/bin/java", app / "bin/PSD2Live"
+    return app / "app", app / "runtime/bin/java.exe", app / "PSD2Live.exe"
 
 
-def check_worker(app, directory):
-    jars, java = app_paths(app)
+def check_worker(app, directory, *, verify_export=False):
+    jars, java, launcher = app_paths(app)
     assert java.is_file(), f"Packaged worker launcher is missing: {java}"
     directory.mkdir()
     worker = directory / "runtime.jar"
@@ -56,6 +56,18 @@ def check_worker(app, directory):
     assert result.stdout[4 + size:] == struct.pack("<I", 0), "Unexpected response blobs or trailing output"
     assert response["protocol"] == 2 and response["id"] == 37 and response["error"], response
     print(f"{ascii(str(app))}: bundled worker responded over protocol 2")
+    if verify_export:
+        fixture = Path(__file__).resolve().parents[1] / "src/test/resources/projects/legacy-split.psd2live"
+        shutil.copyfile(fixture, directory / "input.psd2live")
+        result = subprocess.run([str(launcher), "export", "input.psd2live", "--target", "p2lrt",
+                                 "--output", "out", "--name", "probe"], cwd=directory, env=env,
+                                capture_output=True, timeout=60)
+        assert result.returncode == 0, result.stderr.decode(errors="replace")
+        output = directory / "out"
+        report = json.loads((output / "probe.p2lrt.report.json").read_bytes())
+        assert report["target"] == "p2lrt" and report["files"] == ["probe.p2lrt"], report
+        assert (output / "probe.p2lrt").read_bytes().startswith(b"P2LRT\0\0\0")
+        print("Packaged launcher opened a project and exported its runtime rig")
 
 
 def main():
@@ -69,7 +81,7 @@ def main():
         # Copy the image to exercise executable and JAR paths with spaces, apostrophes and Unicode.
         relocated = directory / "A user's 模型" / app.name
         shutil.copytree(app, relocated, symlinks=True)
-        check_worker(relocated, directory / "relocated worker 模型")
+        check_worker(relocated, directory / "relocated worker 模型", verify_export=True)
 
 
 if __name__ == "__main__":
