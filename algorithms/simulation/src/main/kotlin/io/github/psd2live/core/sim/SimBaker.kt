@@ -1,6 +1,8 @@
 package io.github.psd2live.core.sim
 
 import io.github.psd2live.core.PhysicsEngine
+import io.github.psd2live.core.modifier.SimulationInput
+import io.github.psd2live.core.modifier.ModifierAlgorithmStages.stage
 import org.umamo.runtime.model.Parameter
 import org.umamo.runtime.model.ParameterId
 import org.umamo.runtime.model.ParameterKind
@@ -54,7 +56,7 @@ object SimBaker {
         val progress: (Float) -> Unit = {},
         val cancelled: () -> Boolean = { false },
         /** How the motion the pendulum is fitted on is made. */
-        val method: Method = Method.DOF,
+        val method: Method = Method.DIRECT,
         /** The model's own motions to train on as well ([RigSimEdit.trainingClips]), sampled at [fps]; [Method.DOF] only. */
         val trainingMotions: List<TrainingMotion> = emptyList(),
     )
@@ -67,6 +69,8 @@ object SimBaker {
         LEGACY,
         /** Each input that moves the body driven on its own through short designed motion ([SimDofTraining]). */
         DOF,
+        /** Independent keyform solves and closed-form Cubism pendulum parameters. */
+        DIRECT,
     }
 
     /** Below this much motion (px) at the default pose a mode or static axis is not worth keys. */
@@ -89,15 +93,23 @@ object SimBaker {
     private const val JERK_ALLOWANCE = 1.2
     private const val JERK_COST = 0.5
 
-    fun bake(model: PuppetModel, edit: RigSimEdit, options: Options = Options()): SimBakeResult {
-        val calibrated = SimScene.build(model, edit)
-        calibrated.calibrate(model)
-        val space = SimSpace(model, calibrated)
+    fun bake(model: PuppetModel, edit: RigSimEdit, options: Options = Options()): SimBakeResult =
+        DirectSimBaker.bake(model, edit, options)
+
+    /** Opt-in reference for development comparisons. Product entry points only call [bake]. */
+    fun bakeReference(model: PuppetModel, edit: RigSimEdit, options: Options): SimBakeResult {
+        require(options.method != Method.DIRECT)
+        val poseModel = SimulationInput.bakeModel(model, edit)
+        fun newBody() = SimScene.build(poseModel, edit).also { it.solver.fixedRestTopology = true }
+        val calibrated = stage("simulation: calibrate") {
+            newBody().also { it.calibrate(poseModel, cancelled = options.cancelled) }
+        }
+        val space = SimSpace(poseModel, calibrated)
         val dt = 1f / options.fps
         val parameters = model.parameters.associateBy { it.id.raw }
         fun check() { if (options.cancelled()) throw CancellationException("Bake cancelled") }
         /** A copy of the calibrated body for one piece of work. */
-        fun body() = SimScene.build(model, edit).also { it.adopt(calibrated) }
+        fun body() = newBody().also { it.adopt(calibrated) }
         fun <T, R> each(items: List<T>, work: (T) -> R): List<R> =
             if (options.parallel && items.size > 1) items.parallelStream().map(work).toList() else items.map(work)
 
@@ -107,9 +119,11 @@ object SimBaker {
             val parameter = parameters[raw]?.takeIf { it.kind == ParameterKind.NORMAL } ?: return@mapNotNull null
             staticKeys(parameter, edit.keys).takeIf { it.size >= 2 }?.let { parameter to it }
         }
-        val settled = each(staticAxes.flatMap { (parameter, keys) -> keys.map { parameter to it } }) { (parameter, key) ->
-            check()
-            if (key == parameter.default) FloatArray(space.size) else space.settle(body(), mapOf(parameter.id to key), dt)
+        val settled = stage("simulation: static response") {
+            each(staticAxes.flatMap { (parameter, keys) -> keys.map { parameter to it } }) { (parameter, key) ->
+                check()
+                if (key == parameter.default) FloatArray(space.size) else space.settle(body(), mapOf(parameter.id to key), dt)
+            }
         }
         var cursor = 0
         val statics = staticAxes.mapNotNull { (parameter, keys) ->
@@ -144,7 +158,9 @@ object SimBaker {
         }
         val dof = options.method == Method.DOF
         // Input by input: which inputs move the body, and in which group, read off the rig.
-        val analysis = if (!dof) null else SimKinematics.analyze(model, edit, ::body, inputs.map { parameters.getValue(it) }, options.parallel)
+        val analysis = if (!dof) null else stage("simulation: input analysis") {
+            SimKinematics.analyze(poseModel, edit, ::body, inputs.map { parameters.getValue(it) }, options.parallel)
+        }
         val (side, up) = if (analysis == null) emptyList<SimKinematics.Input>() to emptyList()
             else SimDofTraining.groups(analysis, edit.vertical, edit.forcedInputs.toSet())
         val checks = analysis?.inputs.orEmpty().map { input ->
@@ -165,11 +181,13 @@ object SimBaker {
         val hasBounce = if (dof) side.isNotEmpty() && up.isNotEmpty() else split
         if (dof) { shares[0] = if (hasBounce) 0.6f else 0.85f; shares[1] = if (hasBounce) 0.25f else 0f }
         // Both groups' pieces at once: an input drives the body the same whichever group reads it.
-        val dofTrainings = if (!dof) null else SimDofTraining.train(model, listOf(side.ifEmpty { up }, if (side.isNotEmpty()) up else emptyList()),
-            space, statics, ::body, ::check, dt, options, progress = { progress(0)(it * 0.6f); progress(1)(it * 0.6f) })
+        val dofTrainings = if (!dof) null else stage("simulation: training") {
+            SimDofTraining.train(poseModel, listOf(side.ifEmpty { up }, if (side.isNotEmpty()) up else emptyList()),
+                space, statics, ::body, ::check, dt, options, progress = { progress(0)(it * 0.6f); progress(1)(it * 0.6f) })
+        }
         fun training(group: Int, main: Boolean, progress: (Float) -> Unit): Training =
             if (dof) requireNotNull(dofTrainings!![group])
-            else libraryTraining(model, edit, space, statics, ::body, ::check, dt, options, if (main) sideways.ifEmpty { vertical } else vertical)
+            else libraryTraining(poseModel, edit, space, statics, ::body, ::check, dt, options, if (main) sideways.ifEmpty { vertical } else vertical)
         val main: () -> Dynamic? = {
             if (!hasMain) null else dynamic(model, edit, space, ::check, dt, options,
                 training(0, true, progress(0)), outputs = (1..edit.modes).map { SimGenerator.parameterId(edit, it) },
@@ -184,7 +202,7 @@ object SimBaker {
                 segments = 1 + options.extraSegments, previous = options.previousExtra.firstOrNull { it.id == bounceId }, previousExtra = emptyList(),
                 minimum = if (edit.vertical == true) 0f else MIN_BOUNCE_PX, progress = progress(1))
         }
-        val groups = each(listOf(main, bounce)) { it() }.filterNotNull()
+        val groups = stage("simulation: dynamic fit") { each(listOf(main, bounce)) { it() }.filterNotNull() }
         // A correctly configured body can remain stationary under all selected inputs.
         // Its measured zero response is a valid bake, not a malformed PSD or simulation.
         options.progress(1f)

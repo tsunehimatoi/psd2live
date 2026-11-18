@@ -1,5 +1,6 @@
 package io.github.psd2live.core.sim
 
+import org.umamo.render.eval.DrawableSpaceMapping
 import org.umamo.render.eval.drawableLocalPosed
 import org.umamo.render.eval.drawableSpaceMapping
 import org.umamo.runtime.model.DrawableId
@@ -29,6 +30,9 @@ class SimSpace(val model: PuppetModel, scene: SimScene) {
     private val jacobian = FloatArray(scene.state.count * 4)
     private val inverse = FloatArray(scene.state.count * 4)
 
+    private data class NeutralMapping(val offset: Int, val mapping: DrawableSpaceMapping, val local: FloatArray, val world: FloatArray)
+    private val neutralMappings = ArrayList<NeutralMapping>()
+
     init {
         val stretch = scene.solver.stretch
         val along = (0 until stretch.size).filter { scene.edgeAlong[it] > 0.5f }
@@ -45,6 +49,7 @@ class SimSpace(val model: PuppetModel, scene: SimScene) {
             for (k in local.indices step 2) extent = maxOf(extent, abs(local[k] - local[0]), abs(local[k + 1] - local[1]))
             val eps = (extent * 1e-3f).coerceAtLeast(1e-6f)
             val base = mapping.localToWorld(local)
+            neutralMappings += NeutralMapping(offset * 2, mapping, local, base)
             val dx = mapping.localToWorld(FloatArray(local.size) { if (it % 2 == 0) local[it] + eps else local[it] })
             val dy = mapping.localToWorld(FloatArray(local.size) { if (it % 2 == 1) local[it] + eps else local[it] })
             for (v in 0 until count) {
@@ -66,6 +71,38 @@ class SimSpace(val model: PuppetModel, scene: SimScene) {
     fun toPx(local: FloatArray) = FloatArray(size) { k ->
         val p = k / 2; val i = p * 4; val x = local[p * 2]; val y = local[p * 2 + 1]
         if (k % 2 == 0) jacobian[i] * x + jacobian[i + 2] * y else jacobian[i + 1] * x + jacobian[i + 3] * y
+    }
+
+    /** Default-pose keyforms. Larger deltas follow the curved warp instead of extrapolating its tangent. */
+    internal fun fromPx(world: FloatArray): FloatArray {
+        require(world.size == size)
+        val result = FloatArray(size) { k ->
+            val p = k / 2
+            val j = p * 4 + k % 2
+            inverse[j] * world[2 * p] + inverse[j + 2] * world[2 * p + 1]
+        }
+        for ((offset, mapping, local, neutral) in neutralMappings) {
+            val candidate = FloatArray(local.size) { i -> local[i] + result[offset + i] }
+            val target = FloatArray(local.size) { i -> neutral[i] + world[offset + i] }
+            val projected = mapping.localToWorld(candidate)
+            val displaced = LinkedHashSet<Int>()
+            fun error(actual: FloatArray, k: Int): Float {
+                val x = actual[k] - target[k]
+                val y = actual[k + 1] - target[k + 1]
+                return x * x + y * y
+            }
+            for (k in local.indices step 2) if (error(projected, k) > 0.04f) displaced += k / 2
+            if (displaced.isEmpty()) continue
+            val solved = mapping.worldToLocalLinearized(target, candidate, neutral, displaced, 0.08f)
+            val corrected = mapping.localToWorld(solved)
+            for (vertex in displaced) {
+                val k = vertex * 2
+                if (error(corrected, k) >= error(projected, k) || !corrected[k].isFinite() || !corrected[k + 1].isFinite()) continue
+                result[offset + k] = solved[k] - local[k]
+                result[offset + k + 1] = solved[k + 1] - local[k + 1]
+            }
+        }
+        return result
     }
 
     /** The largest single-vertex distance of [local] in px. */

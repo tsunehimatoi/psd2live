@@ -9,7 +9,7 @@ import kotlinx.serialization.json.*
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 
-/** Carries an evaluated simulation prefix only between preparation and rebuild of the same draft member. */
+/** Carries preset and simulation evaluation inputs from preparation to the same draft member's rebuild. */
 internal class WorkspaceModifierDraftInputs : AbstractCoroutineContextElement(Key) {
     companion object Key : CoroutineContext.Key<WorkspaceModifierDraftInputs>
     var pipeline: PSD2LivePipeline? = null
@@ -45,7 +45,9 @@ internal object WorkspaceModifierSimulation {
             val prefix = next.copy(instances = next.instances.take(index))
             val overlay = document.rigEdits.copy(modifierStack = prefix.toJson())
             work.progress(0f, "Evaluating simulation inputs: ${instance.id}")
-            val model = pipeline.buildPreview(document.source, document.config().copy(rigEdits = overlay), previousAtlas = evaluated?.modifierAuthorAtlas ?: evaluated?.atlas)
+            val model = RigBuildProfile.stage("modifier simulation: evaluate prefix") {
+                pipeline.buildPreview(document.source, document.config().copy(rigEdits = overlay), previousAtlas = evaluated?.modifierAuthorAtlas ?: evaluated?.atlas)
+            }
             work.checkpoint()
             val activeProviders = model.rig.modifierReport?.get("entries")?.jsonArray.orEmpty().map { it.jsonObject }
                 .filter { it.getValue("status").jsonPrimitive.content == "active" }.mapTo(HashSet()) { it.getValue("id").jsonPrimitive.content }
@@ -65,13 +67,8 @@ internal object WorkspaceModifierSimulation {
             require(source.autoBake) { "${instance.id}: simulation needs a valid bake; enable automatic baking before updating it" }
             SimAuthoring.validate(weighted, source)
             require(source.inputs.isNotEmpty()) { "${instance.id}: simulation needs existing input parameters before baking" }
-            val motions = prefix.instances.filter { it.enabled && it.type == "motion" }.map {
-                MotionClips.fromJson(it.config).copy(id = it.outputId("motion"), builtin = null)
-            }
-            val trainingOverlay = overlay.copy(motionClips = overlay.motionClips + motions)
             val bake = RigBuildProfile.stage("modifier simulation: bake") { SimBaker.bake(weighted, source.copy(bake = null), SimBaker.Options(
                 physicsFps = overlay.physicsFps,
-                trainingMotions = SimAuthoring.trainingMotions(trainingOverlay, source, model.rig.puppet),
                 progress = { work.progress(it, "Baking simulation: ${instance.id}") },
                 cancelled = { work.checkpoint(); false },
             )) }

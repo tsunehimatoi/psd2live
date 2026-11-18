@@ -2,6 +2,9 @@ package io.github.psd2live.core.sim
 
 import io.github.psd2live.core.RigPhysicsEdit
 import kotlinx.serialization.json.*
+import org.umamo.runtime.model.BlendWeightLimit
+import org.umamo.runtime.model.BlendWeightLimitPoint
+import org.umamo.runtime.model.ParameterId
 import org.umamo.runtime.model.PuppetModel
 import java.security.MessageDigest
 
@@ -9,7 +12,15 @@ import java.security.MessageDigest
  * Keys on one parameter axis, with what each target mesh adds at each key: local mesh deltas, the same
  * space the mesh's keyforms are stored in. Between keys the offsets blend as keyforms do.
  */
-class SimBakedAxis(val parameter: String, val keys: FloatArray, val offsets: Map<String, List<FloatArray>>) {
+class SimBakedAxis @JvmOverloads constructor(
+    val parameter: String,
+    val keys: FloatArray,
+    val offsets: Map<String, List<FloatArray>>,
+    /** Weight caps against other baked parameter IDs, in their base parameter ranges. */
+    val limits: List<BlendWeightLimit> = emptyList(),
+    /** Constant limit when the target only supports ordinary keyform grids. */
+    val normalWeight: Float = 1f,
+) {
     init {
         require(parameter.isNotBlank()) { "Baked axis needs a parameter" }
         require(keys.size >= 2 && keys.toList() == keys.sorted() && keys.distinct().size == keys.size) { "Baked axis needs sorted distinct keys" }
@@ -28,11 +39,19 @@ class SimBakedAxis(val parameter: String, val keys: FloatArray, val offsets: Map
         return FloatArray(a.size) { a[it] + (b[it] - a[it]) * t }
     }
 
+    fun withMeshOffsets(offsets: Map<String, List<FloatArray>>) = SimBakedAxis(parameter, keys, offsets, limits, normalWeight)
+
     fun toJson() = buildJsonObject {
         put("parameter", parameter)
         putJsonArray("keys") { keys.forEach { add(it) } }
         putJsonObject("offsets") {
             for ((mesh, per) in offsets) putJsonArray(mesh) { per.forEach { form -> addJsonArray { form.forEach { add(round(it)) } } } }
+        }
+        if (normalWeight != 1f) put("normal_weight", normalWeight)
+        if (limits.isNotEmpty()) putJsonObject("limits") {
+            for (limit in limits) putJsonArray(limit.parameterId.raw) {
+                for (point in limit.points) addJsonArray { add(point.value); add(point.weight) }
+            }
         }
     }
 
@@ -41,22 +60,51 @@ class SimBakedAxis(val parameter: String, val keys: FloatArray, val offsets: Map
             o.getValue("parameter").jsonPrimitive.content,
             o.getValue("keys").jsonArray.map { it.jsonPrimitive.float }.toFloatArray(),
             o.getValue("offsets").jsonObject.mapValues { (_, per) -> per.jsonArray.map { form -> form.jsonArray.map { it.jsonPrimitive.float }.toFloatArray() } },
+            o["limits"]?.jsonObject?.map { (id, curve) ->
+                BlendWeightLimit(ParameterId(id), curve.jsonArray.map { point ->
+                    val (value, weight) = point.jsonArray
+                    BlendWeightLimitPoint(value.jsonPrimitive.float, weight.jsonPrimitive.float)
+                })
+            }.orEmpty(),
+            o["normal_weight"]?.jsonPrimitive?.floatOrNull ?: 1f,
         )
 
         /** Six significant digits: a lattice-local delta is a fraction of the lattice, so plain decimals would lose it. */
-        private fun round(value: Float): Float = "%.6g".format(java.util.Locale.ROOT, value).toFloat()
+        private const val MIN_DECIMAL_POWER = -50
+        private val powersOfTen = DoubleArray(101) { "1e${it + MIN_DECIMAL_POWER}".toDouble() }
+
+        private fun round(value: Float): Float {
+            if (value == 0f || !value.isFinite()) return value
+            val magnitude = kotlin.math.abs(value.toDouble())
+            val exponent = kotlin.math.floor(kotlin.math.log10(magnitude)).toInt() - 5
+            val shifted = magnitude * powersOfTen[-exponent - MIN_DECIMAL_POWER]
+            val whole = kotlin.math.floor(shifted)
+            val rounded = kotlin.math.floor(shifted + 0.5) * powersOfTen[exponent - MIN_DECIMAL_POWER]
+            val result = rounded.toFloat()
+            val neighbor = if (result.toDouble() < rounded) Math.nextUp(result) else Math.nextDown(result)
+            val boundary = (neighbor.toDouble() + result.toDouble()) * 0.5
+            // Decimal ties and exact Float midpoints use the formatter's rounding rules.
+            if (kotlin.math.abs(shifted - whole - 0.5) <= 1e-8 ||
+                kotlin.math.abs(rounded - boundary) <= 2 * Math.ulp(rounded)) {
+                return "%.6g".format(java.util.Locale.ROOT, value).toFloat()
+            }
+            return Math.copySign(result, value)
+        }
     }
 }
 
 /** One dynamic mode: the axis of its parameter, how far it swings (px) and its share of the motion. */
-class SimBakedMode(val axis: SimBakedAxis, val amplitude: Float, val energy: Float) {
+class SimBakedMode @JvmOverloads constructor(val axis: SimBakedAxis, val amplitude: Float, val energy: Float, val motion: String? = null) {
+    fun withAxis(axis: SimBakedAxis) = SimBakedMode(axis, amplitude, energy, motion)
     fun toJson() = buildJsonObject {
         put("axis", axis.toJson()); put("amplitude_px", amplitude); put("energy", energy)
+        motion?.let { put("motion", it) }
     }
 
     companion object {
         fun fromJson(o: JsonObject) = SimBakedMode(SimBakedAxis.fromJson(o.getValue("axis").jsonObject),
-            o["amplitude_px"]?.jsonPrimitive?.floatOrNull ?: 0f, o["energy"]?.jsonPrimitive?.floatOrNull ?: 0f)
+            o["amplitude_px"]?.jsonPrimitive?.floatOrNull ?: 0f, o["energy"]?.jsonPrimitive?.floatOrNull ?: 0f,
+            o["motion"]?.jsonPrimitive?.contentOrNull)
     }
 }
 
@@ -154,7 +202,10 @@ class SimBakeResult(
     /** What the panel and MCP show: no arrays. */
     fun summary() = buildJsonObject {
         putJsonArray("modes") {
-            for (mode in modes) addJsonObject { put("parameter", mode.axis.parameter); put("amplitude_px", mode.amplitude); put("energy", mode.energy) }
+            for (mode in modes) addJsonObject {
+                put("parameter", mode.axis.parameter); put("amplitude_px", mode.amplitude); put("energy", mode.energy)
+                mode.motion?.let { put("motion", it) }
+            }
         }
         modes.firstOrNull()?.let { put("keys", it.axis.keys.size) }
         physics?.let { put("pendulum", it.id); put("segments", it.segments.size) }
@@ -200,7 +251,7 @@ object SimBake {
      * Changes whenever the simulation itself moves differently for the same setup, so bakes made by an
      * earlier solver read as stale and are made again.
      */
-    private const val SOLVER_VERSION = "4"
+    private const val SOLVER_VERSION = "6"
 
     /**
      * What a bake of [edit] depends on in [model]: the settings, the targets' rest meshes, their vertex

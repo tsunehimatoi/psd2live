@@ -87,7 +87,12 @@ object SimGenerator {
         val stretch = sim.outputRange(axis.parameter) / MODE_RANGE
         val gain = sim.outputGain(axis.parameter)
         return SimBakedAxis(sim.outputId(axis.parameter), FloatArray(axis.keys.size) { axis.keys[it] * stretch },
-            if (gain == 1f) axis.offsets else axis.offsets.mapValues { (_, per) -> per.map { form -> FloatArray(form.size) { form[it] * gain } } })
+            if (gain == 1f) axis.offsets else axis.offsets.mapValues { (_, per) -> per.map { form -> FloatArray(form.size) { form[it] * gain } } },
+            axis.limits.map { limit ->
+                val source = limit.parameterId.raw
+                val sourceStretch = sim.outputRange(source) / MODE_RANGE
+                BlendWeightLimit(ParameterId(sim.outputId(source)), limit.points.map { it.copy(value = it.value * sourceStretch) })
+            }, axis.normalWeight)
     }
 
     /** The simulation a generated pendulum belongs to. */
@@ -108,6 +113,7 @@ object SimGenerator {
     fun usesBlendShapes(model: PuppetModel, sim: RigSimEdit): Boolean {
         if (!model.runtimeTarget.supports(RuntimeFeature.MeshWarpBlendShapes)) return false
         sim.blendShapes?.let { return it }
+        if (sim.bake?.modes?.any { it.axis.limits.isNotEmpty() } == true) return true
         val modes = sim.bake?.modes?.map { it.axis.keys.size } ?: List(sim.modes) { sim.keys }
         val own = (sim.bake?.parameters ?: (1..sim.modes).map { parameterId(sim, it) }).map { ParameterId(sim.outputId(it)) }.toSet()
         val added = modes.fold(1L) { n, keys -> n * keys }
@@ -153,7 +159,12 @@ object SimGenerator {
         val vertical = verticalParameterId(sim)
         val sideways = bake.modes.count { it.axis.parameter != vertical }
         val created = ArrayList<ParameterId>()
-        val modes = bake.modes.map { written(sim, it.axis) }
+        val modes = bake.modes.map { mode ->
+            val axis = written(sim, mode.axis)
+            if (blend || axis.normalWeight == 1f) axis else axis.withMeshOffsets(axis.offsets.mapValues { (_, forms) ->
+                forms.map { form -> FloatArray(form.size) { form[it] * axis.normalWeight } }
+            })
+        }
         for ((k, mode) in bake.modes.withIndex()) {
             val baked = mode.axis.parameter
             val keys = modes[k].keys
@@ -215,12 +226,13 @@ object SimGenerator {
         val multiply = drawable.channelGrids.colorAt(FormChannel.MULTIPLY_COLOR, drawable.multiplyColor, defaultValue)
         val screen = drawable.channelGrids.colorAt(FormChannel.SCREEN_COLOR, drawable.screenColor, defaultValue)
         val neutral = axis.keys.indexOfFirst { it == 0f }
+        val limits = axis.limits.filter { limit -> model.parameters.any { it.id == limit.parameterId } }
         return BlendShapeBinding(parameter, axis.keys.copyOf(), neutral, axis.keys.indices.map { k ->
             if (k == neutral) null else {
                 val add = axis.offsets.getValue(mesh)[k]
                 MeshForm(FloatArray(count) { reference[it] + add[it] }, drawOrder, opacity, multiply, screen)
             }
-        })
+        }, limits)
     }
 
     /**

@@ -8,8 +8,10 @@ import org.umamo.runtime.model.VertexGroupKind
 /** Small simulation diagnostics, without serialized vertex arrays or materialized bake keyforms. */
 internal object WorkspaceSimulationResultSchemas {
     private val s = WorkspaceResultSchema
+    val motion = s.choices("sway", "turn", "compression", "follow_through")
     private val summaryFields = linkedMapOf(
-        "modes" to s.array(s.obj(mapOf("parameter" to s.handle(), "amplitude_px" to s.number(), "energy" to s.number()))),
+        "modes" to s.array(s.obj(mapOf("parameter" to s.handle(), "amplitude_px" to s.number(), "energy" to s.number(),
+            "motion" to motion), setOf("parameter", "amplitude_px", "energy"))),
         "keys" to s.integer(2), "pendulum" to s.handle(), "segments" to s.integer(1),
         "own_pendulums" to s.array(s.handle(), 1, Int.MAX_VALUE), "static_inputs" to s.array(s.handle(), 1, Int.MAX_VALUE),
     ) + listOf("fit_r2", "error_p95_px", "parameter_peak", "clipped_frames", "jerk_ratio").associateWith { s.number() }

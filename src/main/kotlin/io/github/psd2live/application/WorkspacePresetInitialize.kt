@@ -8,11 +8,12 @@ import kotlinx.serialization.json.*
 
 /** Finish source import after artwork splitting/naming, without replacing any existing bindings. */
 internal object WorkspacePresetInitialize {
-    fun apply(document: WorkspaceDocument, request: JsonObject, work: WorkspaceRasterWork): WorkspaceDocument {
+    fun apply(document: WorkspaceDocument, request: JsonObject, work: WorkspaceRasterWork,
+              draftInputs: WorkspaceModifierDraftInputs? = null): WorkspaceDocument {
         val mode = WorkspaceInitialModifiers.valueOf(request.getValue("modifiers").jsonPrimitive.content.uppercase())
         val preset = request["preset"]?.let { Json.decodeFromJsonElement(WorkspaceInitialPreset.serializer(), it) }
         val (candidate, choices) = prepare(document, mode, preset)
-        return if (choices == null) candidate else WorkspacePresetInitialization.create(candidate, work, choices)
+        return if (choices == null) candidate else WorkspacePresetInitialization.create(candidate, work, choices, draftInputs = draftInputs)
     }
 
     /** Choose bindings and compatible artwork while retaining the imported source and explicit edits. */

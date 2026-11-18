@@ -5,6 +5,9 @@ import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.sim.*
 import kotlinx.serialization.json.*
 import org.junit.jupiter.api.io.TempDir
+import org.umamo.runtime.model.BlendWeightLimit
+import org.umamo.runtime.model.BlendWeightLimitPoint
+import org.umamo.runtime.model.ParameterId
 import java.nio.file.Path
 import kotlin.test.*
 
@@ -113,6 +116,17 @@ class WorkspaceModifierSchemasTest {
         }
         assertEquals(setOf("swing", "simulation", "physics", "motion", "mesh.split", "rig.scaffold", "eye", "brow", "mouth", "face", "body", "hair", "body/legacy", "face/legacy",
             "eye/legacy", "brow/legacy", "mouth/legacy", "hair/legacy", "face/fitted", "eye/fitted", "brow/fitted", "mouth/fitted", "eye.smile", "eye.squash", "eye.wide", "eye.lid-fade", "eye.highlight", "eye.aftershock", "brow.shape", "brow.spring", "eye.emotion", "mouth.vowel", "eye.gaze-lid", "brow.blink", "brow.lid-coupling", "mouth.cheek-lid", "mouth.capture", "mouth.tongue", "mouth.jaw", "mouth.interior-depth", "mouth.spring", "mouth.outline", "expression.cheek", "expression.gloom", "expression.toggles", "face.skin-clip", "face.neck", "face.depth-turn", "eye.see-through", "brow.see-through", "hair/chains", "body.bust", "body.arms", "outfit.skirt", "outfit.ribbons", "outfit.creature"), WorkspaceModifierSchemas.types.toSet())
+    }
+
+    @Test fun simulationSchemasAcceptTheDirectModeAndItsBlendLimits() {
+        val axis = SimBakedAxis("P", floatArrayOf(-30f, 0f, 30f), mapOf("mesh" to List(3) { FloatArray(6) }),
+            listOf(BlendWeightLimit(ParameterId("Q"), listOf(BlendWeightLimitPoint(0f, 1f), BlendWeightLimitPoint(30f, 0.6f)))),
+            normalWeight = 0.7f)
+        val bake = SimBakeResult("fingerprint", mapOf("mesh" to 3), emptyList(),
+            listOf(SimBakedMode(axis, 15f, 1f, "compression")), method = "direct")
+        val simulation = RigSimEdit("template", "Simulation", SimKind.CLOTH, listOf("mesh"), bake = bake)
+        validateOperationSchema(simulation.toJson(), WorkspaceModifierSchemas.configuration("simulation"))
+        validateOperationSchema(bake.summary(), WorkspaceSimulationResultSchemas.bakeSummary, "result")
     }
 
     @Test fun modifierJobsAndDiscriminatedSchemasParticipateInTheOrdinaryAtomicBatchContract() {

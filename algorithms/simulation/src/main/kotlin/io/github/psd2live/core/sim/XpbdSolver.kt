@@ -241,7 +241,6 @@ class XpbdSolver(
     private val stretchLambda = FloatArray(stretch.size)
     private val areaLambda = FloatArray(triangles.size)
     private val flipLambda = FloatArray(triangles.size)
-    private val bendLambda = FloatArray(bends.size)
     private val weldLambda = FloatArray(welds.size * 2)
     private val pinLambda = FloatArray(n * 2)
     private val goalLambda = FloatArray(n * 2)
@@ -250,8 +249,13 @@ class XpbdSolver(
     private val restArea = FloatArray(triangles.size)
     /** Per triangle, the inverse of its rest edge matrix, row-major (p, q, r, t). */
     private val restInverse = FloatArray(triangles.size * 4)
+    /** Rest measurements stay valid across substeps and frames at the same held pose. */
+    internal var fixedRestTopology = false
+    private val measuredGoalX = FloatArray(n)
+    private val measuredGoalY = FloatArray(n)
+    private val measuredStretch = FloatArray(stretch.size)
+    private var hasHeldRest = false
     /** Scratch for one bend: up to six corners, merged where the triangles share one. */
-    private val bendIndex = IntArray(6)
     private val bendGx = FloatArray(6)
     private val bendGy = FloatArray(6)
     private val bendCorners = IntArray(bends.size * 6)
@@ -306,6 +310,9 @@ class XpbdSolver(
             activeBends[k] = (0 until bendCounts[k]).any { effectiveMass[bendCorners[k * 6 + it]] != 0f }
             bendAlpha[k] = bends.compliance[k] / h2
         }
+        val held = fixedRestTopology && s.lastGoalX.contentEquals(s.goalX) && s.lastGoalY.contentEquals(s.goalY)
+        hasHeldRest = held && hasHeldRest && measuredGoalX.contentEquals(s.goalX) &&
+            measuredGoalY.contentEquals(s.goalY) && measuredStretch.contentEquals(stretch.rest)
         for (sub in 1..substeps) {
             checkpoint()
             val t = sub.toFloat() / substeps
@@ -318,15 +325,23 @@ class XpbdSolver(
             s.stepColliders = s.colliders.mapIndexed { k, c -> s.lastColliders.getOrNull(k)?.lerp(c, t) ?: c }
             val angle = s.lastFrameAngle + (s.frameAngle - s.lastFrameAngle) * t
             val reverse = sub % 2 == 0
-            measureRest()
+            if (!hasHeldRest) {
+                measureRest()
+                if (held) {
+                    s.goalX.copyInto(measuredGoalX)
+                    s.goalY.copyInto(measuredGoalY)
+                    stretch.rest.copyInto(measuredStretch)
+                    hasHeldRest = true
+                }
+            }
             integrate(h)
-            stretchLambda.fill(0f); areaLambda.fill(0f); flipLambda.fill(0f); bendLambda.fill(0f)
+            stretchLambda.fill(0f); areaLambda.fill(0f); flipLambda.fill(0f)
             weldLambda.fill(0f); pinLambda.fill(0f); goalLambda.fill(0f)
             solvePins(h)
             solveDistances(h, reverse)
             checkpoint()
             solveTriangles(h, reverse)
-            solveBends(h, reverse)
+            solveBends(reverse)
             solveWelds(h, reverse)
             checkpoint()
             solveGoals(h, angle)
@@ -477,15 +492,14 @@ class XpbdSolver(
         return true
     }
 
-    private fun solveBends(h: Float, reverse: Boolean) {
+    private fun solveBends(reverse: Boolean) {
         val s = state
-        val h2 = h * h
         for (step in 0 until bends.size) {
             val k = if (reverse) bends.size - 1 - step else step
             if (!activeBends[k]) continue
             val t1 = bends.t1[k]; val t2 = bends.t2[k]
             val count = bendCounts[k]
-            for (j in 0 until count) bendIndex[j] = bendCorners[k * 6 + j]
+            val offset = k * 6
             if (!turn(t1)) continue
             accumulateBend(k, 0, 1f)
             val c1 = turnCos; val s1 = turnSin
@@ -495,13 +509,13 @@ class XpbdSolver(
             // instead of one per triangle; the library's atan2 was most of a step's time.
             val constraint = atan2(s1 * turnCos - c1 * turnSin, c1 * turnCos + s1 * turnSin)
             var w = 0f
-            for (j in 0 until count) w += mobility(bendIndex[j]) * (bendGx[j] * bendGx[j] + bendGy[j] * bendGy[j])
+            for (j in 0 until count) w += mobility(bendCorners[offset + j]) * (bendGx[j] * bendGx[j] + bendGy[j] * bendGy[j])
             if (w < 1e-12f) continue
             val alpha = bendAlpha[k]
-            val delta = (-constraint - alpha * bendLambda[k]) / (w + alpha)
-            bendLambda[k] += delta
+            // A bend is visited once per substep, so its multiplier is still at its initial zero.
+            val delta = (-constraint - alpha * 0f) / (w + alpha)
             for (j in 0 until count) {
-                val i = bendIndex[j]
+                val i = bendCorners[offset + j]
                 val wi = mobility(i)
                 s.x[i] += wi * delta * bendGx[j]; s.y[i] += wi * delta * bendGy[j]
             }
@@ -664,5 +678,10 @@ class XpbdSolver(
     }
 
     /** Triangle [k]'s turn from rest and its gradient over corners a, b, c; for tests. */
-    internal fun turnOf(k: Int): Pair<Float, FloatArray> { measureRest(); val angle = if (turn(k)) atan2(turnSin, turnCos) else Float.NaN; return angle to turnGrad.copyOf() }
+    internal fun turnOf(k: Int): Pair<Float, FloatArray> {
+        hasHeldRest = false
+        measureRest()
+        val angle = if (turn(k)) atan2(turnSin, turnCos) else Float.NaN
+        return angle to turnGrad.copyOf()
+    }
 }

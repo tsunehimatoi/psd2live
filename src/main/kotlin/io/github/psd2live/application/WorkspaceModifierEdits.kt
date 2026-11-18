@@ -26,7 +26,7 @@ internal object WorkspaceModifierEdits {
 
     fun apply(operation: WorkspaceDocumentOperation, document: WorkspaceDocument, model: RigPreviewModel,
               work: WorkspaceRasterWork = WorkspaceRasterWork.Direct, draftInputs: WorkspaceModifierDraftInputs? = null): WorkspaceDocument {
-        if (operation.operation == "modifier_initialize") return WorkspacePresetInitialize.apply(document, operation.request, work)
+        if (operation.operation == "modifier_initialize") return WorkspacePresetInitialize.apply(document, operation.request, work, draftInputs)
         if (operation.operation == "modifier_convert") return WorkspaceModifierConversion.convert(document, model, work)
         if (operation.operation == "modifier_switch") return WorkspacePresetSwitch.apply(
             document,
@@ -34,6 +34,7 @@ internal object WorkspaceModifierEdits {
             work,
             model,
             operation.request["richness"]?.jsonPrimitive?.contentOrNull,
+            draftInputs,
         )
         val stack = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack) {
             "Convert legacy presets before editing a modifier stack"

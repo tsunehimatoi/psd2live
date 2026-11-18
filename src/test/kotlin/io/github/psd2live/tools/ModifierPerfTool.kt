@@ -6,12 +6,112 @@ import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.fail
 import io.github.psd2live.format.model.RigIR
-import io.github.psd2live.project.config
+import io.github.psd2live.project.*
 import io.github.psd2live.core.modifier.*
 import kotlinx.serialization.json.*
+import org.junit.jupiter.api.io.TempDir
+import java.lang.management.ManagementFactory
+import java.nio.file.Path
 
 /** Opt-in end-to-end PSD import, including presets, simulation baking and initial history. */
 class ModifierPerfTool {
+    @TempDir lateinit var temp: Path
+    private val rounds get() = setting("PSD2LIVE_IMPORT_ROUNDS", "2").toInt().also { require(it >= 2) }
+
+    private fun gcMillis() = ManagementFactory.getGarbageCollectorMXBeans().sumOf { it.collectionTime.coerceAtLeast(0L) }
+
+    private fun StringBuilder.stages(stages: Map<String, Pair<Double, Long>>, prefix: String = "") {
+        for ((name, value) in stages) appendLine("%s%-65s %9.1f ms x%d".format(prefix, name, value.first, value.second))
+    }
+
+    /** Desktop command path with no manual split, including the initial empty project and the second commit. */
+    @Test fun deferredImport() = runBlocking {
+        requireTools()
+        val sample = Sample.fromEnvironment()
+        val report = StringBuilder()
+        val count = rounds
+        RigBuildProfile.recording = true
+        try {
+            repeat(count) { round ->
+                val builder = WorkspacePreviewBuilder()
+                val runtime = WorkspaceRuntime<RigPreviewModel>({ builder.build(it) },
+                    rebuildFrom = { document, previous -> builder.build(document, previous) })
+                RigBuildProfile.reset()
+                val gcStart = gcMillis()
+                val start = System.nanoTime()
+                val initial = WorkspaceSourceImporter(runtime, build = { builder.build(it) }).importPsd(
+                    sample.path.toAbsolutePath(), null, runtime.state.value.state, modifiers = WorkspaceInitialModifiers.EMPTY).capture
+                val imported = System.nanoTime()
+                val importStages = RigBuildProfile.snapshot()
+                RigBuildProfile.reset()
+                val result = WorkspaceDocumentCommands(runtime).execute(initial.projectId, initial.state, "Initialize full preset",
+                    listOf(WorkspaceDocumentOperation("modifier_initialize", buildJsonObject { put("modifiers", "full") })),
+                    MutationAuthor.USER).capture
+                val end = System.nanoTime()
+                report.appendLine("round $round: GC ${gcMillis() - gcStart} ms")
+                report.appendLine("round $round: import %.1f ms, initialize %.1f ms, total %.1f ms".format(
+                    (imported - start) / 1e6, (end - imported) / 1e6, (end - start) / 1e6))
+                RigBuildProfile.markedAt("source preset: begin simulation")?.let { startOfBake ->
+                    report.appendLine("round $round: simulation through committed writeback %.1f ms".format((end - startOfBake) / 1e6))
+                }
+                report.stages(importStages, "import ")
+                report.stages(RigBuildProfile.snapshot(), "initialize ")
+                val model = result.model
+                report.appendLine("statuses: " + requireNotNull(model.modifierEvaluation).entries.groupingBy { it.status }.eachCount())
+                for (asset in model.runtimeBundle.assets.sortedBy { it.path }) report.appendLine("${asset.path} ${sha256(asset.bytes)}")
+                val stack = RigModifierStack.fromJson(requireNotNull(result.document.rigEdits.modifierStack))
+                val simulations = stack.instances.filter { it.type == "simulation" }
+                val requiredMethod = setting("PSD2LIVE_EXPECT_BAKE_METHOD", "")
+                if (requiredMethod.isNotEmpty()) {
+                    val required = setOf("preset_front_hair", "preset_back_hair", "preset_top", "preset_skirt")
+                    val baked = simulations.map { io.github.psd2live.core.sim.RigSimEdit.fromJson(it.config) }
+                    check(required.all { id -> baked.any { it.id == id && it.bake?.let { result -> result.method == requiredMethod && result.modes.isNotEmpty() } == true } }) {
+                        "Expected each of the four simulation bakes to use $requiredMethod"
+                    }
+                    check(RigBuildProfile.snapshot().keys.none { it in setOf(
+                        "algorithm stage: simulation: calibrate", "algorithm stage: simulation: training", "algorithm stage: simulation: dynamic fit",
+                    ) }) { "Continuous-frame training ran during the preset bake" }
+                }
+                for (entry in simulations) {
+                    val simulation = io.github.psd2live.core.sim.RigSimEdit.fromJson(entry.config)
+                    report.appendLine("${simulation.id} bake method ${simulation.bake?.method} modes ${simulation.bake?.modes?.size ?: 0}")
+                    val bake = entry.config["bake"]
+                    report.appendLine("${entry.id} bake " + (bake?.let { sha256(it.toString().toByteArray()) } ?: "absent"))
+                }
+                output("modifier-perf").resolve("deferred.txt").writeText(report.toString())
+                if (round == count - 1 && setting("PSD2LIVE_VERIFY", "0") == "1") {
+                    verifyDeferred(runtime, sample.path)
+                }
+                runtime.releaseBuildCaches()
+            }
+        } finally { RigBuildProfile.recording = false }
+    }
+
+    private suspend fun verifyDeferred(runtime: WorkspaceRuntime<RigPreviewModel>, source: Path) {
+        val current = runtime.capture()
+        val file = temp.resolve("import.psd2live")
+        val repository = ProjectRepository(writeHeadCache = false)
+        repository.save(ProjectSaveCapture(current.projectId, runtime.history(), JsonObject(emptyMap()),
+            source, WorkspaceStore(temp.resolve("store")), auxiliary = current.auxiliary), file)
+        repository.open(file).use { opened ->
+            val document = opened.history.head().snapshot
+            val replay = WorkspacePreviewBuilder(modifierCachesEnabled = false).build(document)
+            try {
+                val original = current.model
+                check(RigIrCompiler.compile(original, tileArt = true) == RigIrCompiler.compile(replay, tileArt = true))
+                check(original.rig.modifierReport == replay.rig.modifierReport)
+                val visible = document.renderVisibleLayers(replay).intersect(replay.rig.layerIdByDrawableId.values.toSet())
+                val frame = WorkspaceViewFrame.CanvasRect(Bounds(0f, 0f, document.source.widthPx.toFloat(), document.source.heightPx.toFloat()))
+                for (pose in listOf(emptyMap(), mapOf("ParamAngleX" to 20f, "ParamMouthOpenY" to .7f))) {
+                    fun render(model: RigPreviewModel) = WorkspaceViewRenderer.modelComposite(model, "verify", pose, visible,
+                        emptySet(), frame, WorkspaceViewBackground.CHECKERBOARD, WorkspaceViewOutputSpec(512)).png
+                    check(render(original).contentEquals(render(replay))) { "Reopened pose differs: $pose" }
+                }
+                org.umamo.format.moc3.Moc3.read(replay.runtimeBundle.assets.single { it.path.endsWith(".moc3") }.bytes)
+            } finally { replay.modifierBuildOwner?.close() }
+        }
+    }
+
     @Test fun profile() = runBlocking {
         requireTools()
         System.setProperty("psd2live.validatePreviewBundles", "false")
@@ -33,10 +133,12 @@ class ModifierPerfTool {
             jdk.jfr.Recording(jdk.jfr.Configuration.getConfiguration("profile")).apply { start() } else null
         RigBuildProfile.recording = true
         try {
-            repeat(2) { round ->
+            val count = rounds
+            repeat(count) { round ->
                 RigBuildProfile.reset()
                 val builder = WorkspacePreviewBuilder()
                 val runtime = WorkspaceRuntime<RigPreviewModel>({ builder.build(it) }, rebuildFrom = { document, previous -> builder.build(document, previous) })
+                val gcStart = gcMillis()
                 val start = System.nanoTime()
                 val installed = WorkspaceSourceImporter(runtime, build = { builder.build(it) }, preparePreset = { document, work, choices ->
                     WorkspacePresetInitialization.prepare(document, work, choices, requestedVersions = importVersions)
@@ -56,15 +158,14 @@ class ModifierPerfTool {
                 val baking = stages["modifier simulation: bake"]?.first ?: 0.0
                 val counted = elapsed - baking
                 report.appendLine("import $round: %.1f ms".format(elapsed))
+                report.appendLine("import $round GC: ${gcMillis() - gcStart} ms")
                 report.appendLine("import $round baking excluded: %.1f ms".format(baking))
                 report.appendLine("import $round excluding baking: %.1f ms".format(counted))
-                stages.forEach { (name, value) ->
-                    report.appendLine("%-65s %9.1f ms x%d".format(name, value.first, value.second))
-                }
+                report.stages(stages)
                 output("modifier-perf").resolve("report.txt").writeText(report.toString())
                 checkIndependent("import $round", stages)
                 println("import $round: $elapsed ms")
-                if (round == 1) {
+                if (round == count - 1) {
                     val before = runtime.capture()
                     val stack = RigModifierStack.fromJson(requireNotNull(before.document.rigEdits.modifierStack))
                     val eye = stack.instances.firstOrNull { it.type == "eye/fitted" }
@@ -87,7 +188,7 @@ class ModifierPerfTool {
                         checkIndependent("modifier adjustment", RigBuildProfile.snapshot())
                     }
                 }
-                if (round == 1 && setting("PSD2LIVE_VERIFY", "0") == "1") {
+                if (round == count - 1 && setting("PSD2LIVE_VERIFY", "0") == "1") {
                     val capture = runtime.capture()
                     val enabled = RigStageCache.enabled
                     try {
@@ -108,7 +209,7 @@ class ModifierPerfTool {
                         output("modifier-perf").resolve("report.txt").writeText(report.toString())
                     } finally { RigStageCache.enabled = enabled }
                 }
-                if (round == 1 && baseline.isNotEmpty()) {
+                if (round == count - 1 && baseline.isNotEmpty()) {
                     val captured = runtime.capture()
                     val overlay = captured.document.rigEdits
                     val stack = RigModifierStack.fromJson(requireNotNull(overlay.modifierStack))
@@ -166,6 +267,7 @@ class ModifierPerfTool {
                         } finally { RigStageCache.enabled = enabled }
                     }
                 }
+                runtime.releaseBuildCaches()
             }
         } finally {
             RigBuildProfile.recording = false

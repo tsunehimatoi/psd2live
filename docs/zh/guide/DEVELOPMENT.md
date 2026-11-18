@@ -183,6 +183,7 @@ PSD2LIVE_TOOLS=1 PSD2LIVE_SAMPLE=ds ./gradlew test --tests "io.github.psd2live.t
 | `ModelProfileTool.sample` | 生成模型（无骨架和自动骨架）的分段运动剖面、身体图层与自动骨骼 | `model-profile/<示例>.txt` |
 | `SkeletonAutoViewTool.view` | 把自动骨架叠画在示例上并打印每根骨骼，检查关节位置与分叉；`PSD2LIVE_SAMPLES` 逗号分隔多个示例或 PSD 路径，`PSD2LIVE_ZOOM=左,上,右,下`（画布像素）裁出局部 | `skeleton-auto/<示例>.png` |
 | `SimBakeSuite` | 按模型预设生成后发、前发、服装等物理体（另加顶部 10% 固定的后发），用旧方法和逐输入方法烘焙，在没参与拟合的动作（类面捕跟随、歪头、内置动作、逐输入阶跃、转头、拖动、摇晃）上对比参考模拟与导出模型的视觉指标，见[模拟与烘焙](SIMULATION.md) | `build/tools/sim-bake/<样例>/`：`summary.md`、每个设置的 JSON、尖端轨迹图 |
+| `DirectSimulationReviewTool.exportedAnimations` | 同一输入播放完整 XPBD 或 MOC3 与物理文件导出读回。默认使用真实预设和 5 个关键形。设置 `PSD2LIVE_DIRECT_REVIEW_TRACK=xpbd` 记录 60 Hz 完整模拟，读回时用 `PSD2LIVE_DIRECT_REVIEW_REFERENCE_OUT` 指向参考输出以逐顶点比较。用 `PSD2LIVE_DIRECT_REVIEW_FIXTURE=controlled` 单独测强腰部旋转，或用 `PSD2LIVE_DIRECT_REVIEW_KEYS=9` 检查关键形密度。设置 `PSD2LIVE_DIRECT_REVIEW_MIX_ANALYSIS=1` 记录混合段的逐轴位移叠加、限重和三阶帧差。用 `PSD2LIVE_DIRECT_REVIEW_MIX_ONLY=1` 只运行混合段 | `build/tools/direct-simulation/` 中的 25 fps 图像序列、逐帧 CSV、导出模型与参考轨迹 |
 | `SimRootDofExperiment` | 检验物体是否只响应根部的平移与旋转：每个输入带动根部多少、额外改变多少形状，真实驱动与刚体驱动、不同幅度、同样根部运动的不同输入之间的差别 | `build/tools/sim-root-dof/<样例>.md` |
 | `SimBakeProfileTool` | `tml` 后发单线程与多线程烘焙各一次，按进度标记分段计时并对所有线程采样 | 标准输出 |
 | `PendulumKernelTool` | 摆锤数组内核（精确与快速模式）与 `PhysicsEngine` 每帧耗时及偏差 | 标准输出 |
@@ -252,6 +253,21 @@ PSD2LIVE_TOOLS=1 PSD2LIVE_SAMPLE=ds ./gradlew test --tests "io.github.psd2live.t
 | `PSD2LIVE_GEOMETRY_EDITS` | `SkeletonCommitTool.profile` 在骨架提交前做的几何提交次数，默认 24 |
 | `PSD2LIVE_RIG_MODES` | `CommitPerfTool.baseline` / `.rigStages` 的生成类提交只测 `staged` 或 `unstaged`，默认 `both` |
 | `PSD2LIVE_TEST_CUBISM_CORE` | 官方 Cubism Core 动态库的路径，供 `CubismCoreCheckTool` 与 `:umamo` 的 `MocDefaultColorsTest`；未设置时二者跳过 |
+
+### 从 PSD 导入到修改器全部生成
+
+桌面开始页通过 `WorkspaceHost.importPsd` 捕获所选文件。`WorkspaceSourceImporter` 解码 PSD，建立图层与素材的关联，生成空修改器栈的可编辑网格预览，固定初始图集并安装工程。拆层和命名结束后，`ImportPresetContinuation` 只在同一工程提交一次 `modifier_initialize`。选择空栈时流程止于导入。MCP 的 `asset_import_psd` 也支持在一次导入中指定预设，这条路径在安装工程前完成下表各阶段。
+
+| 阶段 | 执行位置 | 下游使用的结果 |
+| --- | --- | --- |
+| 准备基础输入 | `WorkspacePresetInitialization` → `RigModifierPipeline` → `buildOrdinaryPreview` | 分析源图，建立图集和普通网格，重放已有编辑，编译修改器的输入 IR。 |
+| 规划与绑定 | `WorkspaceModifierPlan` → `RigModifierEvaluator` | 从实际网格选取目标，按依赖建立实例。每个实例读取上一个实例的输出。绑定结果决定可用参数和已被驱动的物理输出。 |
+| 物理、动作与模拟 | `WorkspacePresetInitialization` → `WorkspaceModifierSimulation.prepare` | 依据已生成参数添加物理和动作。每个模拟读取自身之前的栈，跟踪目标、碰撞网格、Glue 连通网格和祖先变形器，将烘焙结果写入文档。 |
+| 最终求值与提交 | 直接导入由 `WorkspaceSourceImporter` 安装；延后初始化由 `WorkspacePreviewBuilder` 重建候选，再经 `WorkspaceRuntime` 提交 | 候选复用输入匹配的求值前缀，生成最终预览包。延后初始化的整个修改器栈只追加一个历史节点。 |
+
+CLI 从原始 PSD 直接导出时，`buildSourceExport` 选择生成分支。启用变形器的完整生成经过 `CliPresetBindings.build`，共用上述预设规划和有序求值，再按 CLI 配置整理导出模型。仅网格和关闭变形器各有专用分支。
+
+用 `ModifierPerfTool.profile` 测推荐预设的直接导入，用 `ModifierPerfTool.deferredImport` 测空栈导入后执行完整预设的命令路径。`PSD2LIVE_IMPORT_ROUNDS` 控制同一 JVM 内新建工程的次数，默认 2。报告按轮列出耗时、GC 计时，以及模拟校准、训练、动态拟合等各阶段耗时。子阶段耗时已计入所属的上层阶段。延后初始化基准还将预览包文件与模拟烘焙数据的 SHA-256 写入 `build/tools/modifier-perf/deferred.txt`。设置 `PSD2LIVE_VERIFY=1` 后，它会保存并重开最后一次生成的工程，核对完整 IR、修改器报告、静止与转头张嘴姿态的画面，并读回 MOC3。计时仅覆盖应用层命令，验证、窗口绘制和人工拆层时间均在计时范围之外。
 
 ## 代码结构
 

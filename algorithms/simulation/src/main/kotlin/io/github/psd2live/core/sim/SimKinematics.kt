@@ -74,7 +74,8 @@ internal object SimKinematics {
     const val TURN = 2
 
     /** [inputs] on bodies of [model] from [body], each reset at the input's sampled values; inputs side by side when [parallel]. */
-    fun analyze(model: PuppetModel, edit: RigSimEdit, body: () -> SimScene, inputs: List<Parameter>, parallel: Boolean = true): Analysis {
+    fun analyze(model: PuppetModel, edit: RigSimEdit, body: () -> SimScene, inputs: List<Parameter>, parallel: Boolean = true,
+                samplesPerSide: Int = SIDE, checkpoint: () -> Unit = {}): Analysis {
         val scene = body()
         val s = scene.state
         val n = s.count
@@ -96,11 +97,12 @@ internal object SimKinematics {
             fun rootX(i: Int) = if (useAnchors) s.anchorX[i] else s.goalX[i]
             fun rootY(i: Int) = if (useAnchors) s.anchorY[i] else s.goalY[i]
             val (low, rest, high) = SimBaker.trainingSpan(parameter, edit.inputRanges[parameter.id.raw])
-            val values = (List(SIDE) { low + (rest - low) * it / SIDE } + rest + List(SIDE) { rest + (high - rest) * (it + 1) / SIDE })
+            val values = (List(samplesPerSide) { low + (rest - low) * it / samplesPerSide } + rest + List(samplesPerSide) { rest + (high - rest) * (it + 1) / samplesPerSide })
                 .distinct().toFloatArray()
             var motion = 0f; var reshape = 0f; var across = 0.0; var along = 0.0
             val roots = values.map { u ->
                 if (u == rest) return@map floatArrayOf(0f, 0f, 0f)
+                checkpoint()
                 scene.reset(model, mapOf(parameter.id to u))
                 var cx = 0.0; var cy = 0.0
                 for (i in root) { cx += rootX(i); cy += rootY(i) }

@@ -458,17 +458,20 @@ internal object SimPendulumFit {
             val b = readout ?: run {
                 var left = target
                 List(n) { k ->
-                    val bk = regress(listOf(angles[k]), left, 1, m, weights).first.single()
+                    val bk = regress(listOf(angles[k]), left, 1, m, weights, measureError = false).first.single()
                     if (k < n - 1) left = left.mapIndexed { f, row -> FloatArray(m) { d -> row[d] - angles[k][f] * bk[d] } }
                     bk
                 }
             }
-            val predicted = Array(frames) { f -> DoubleArray(m) { d -> var s = base?.get(f)?.get(d) ?: 0.0; for (k in 0 until n) s += angles[k][f] * b[k][d]; s } }
+            val predicted = DoubleArray(frames * m)
             var missed = 0.0; var stillMissed = 0.0
             for (f in 0 until frames) {
                 val wf = w(f)
                 for (d in 0 until m) {
-                    val e = motion[f][d] - predicted[f][d]
+                    var value = base?.get(f)?.get(d) ?: 0.0
+                    for (k in 0 until n) value += angles[k][f] * b[k][d]
+                    predicted[f * m + d] = value
+                    val e = motion[f][d] - value
                     missed += wf * e * e
                     if (still[f]) stillMissed += wf * e * e
                 }
@@ -478,7 +481,7 @@ internal object SimPendulumFit {
             var jerky = 0.0
             for ((p, piece) in pieces.withIndex()) {
                 if (targetJerk[p] <= 1e-12) continue
-                val ratio = sqrt(jerk(piece.first, piece.second) { f, d -> predicted[f][d] } / targetJerk[p])
+                val ratio = sqrt(jerk(piece.first, piece.second) { f, d -> predicted[f * m + d] } / targetJerk[p])
                 val excess = maxOf(0.0, ratio - JERK_ALLOWANCE)
                 jerky += excess * excess / pieces.size
             }
@@ -583,9 +586,9 @@ internal object SimPendulumFit {
     }
 
     /** The ridge least-squares readout of [signals] onto the motion and the error it leaves. */
-    internal fun regress(signals: List<FloatArray>, motion: List<FloatArray>, n: Int, m: Int, weights: FloatArray? = null): Pair<List<FloatArray>, Double> {
+    internal fun regress(signals: List<FloatArray>, motion: List<FloatArray>, n: Int, m: Int, weights: FloatArray? = null,
+                         measureError: Boolean = true): Pair<List<FloatArray>, Double> {
         val frames = motion.size
-        val total = (0 until frames).sumOf { f -> (weights?.get(f)?.toDouble() ?: 1.0) * motion[f].sumOf { (it * it).toDouble() } }
         // Normal equations (SᵀWS + λI) B = SᵀWY, n ≤ 3.
         val a = Array(n) { DoubleArray(n) }
         val b = Array(n) { DoubleArray(m) }
@@ -598,14 +601,18 @@ internal object SimPendulumFit {
         }
         val scale = (0 until n).maxOf { a[it][it] }.coerceAtLeast(1e-12)
         for (k in 0 until n) a[k][k] += RIDGE * scale
-        val solved = solve(a, b) ?: return List(n) { FloatArray(m) } to total
+        val solved = solve(a, b)
+        val result = solved?.map { row -> FloatArray(m) { row[it].toFloat() } } ?: List(n) { FloatArray(m) }
+        if (!measureError) return result to 0.0
+        val total = (0 until frames).sumOf { f -> (weights?.get(f)?.toDouble() ?: 1.0) * motion[f].sumOf { (it * it).toDouble() } }
+        if (solved == null) return result to total
         // ‖Y - SB‖² = ‖Y‖² - 2 tr(BᵀSᵀY) + tr(BᵀSᵀSB), without another pass over the frames.
         var error = total
         for (k in 0 until n) for (d in 0 until m) {
             error -= 2 * solved[k][d] * b[k][d]
             for (j in 0 until n) error += solved[k][d] * (a[k][j] - if (j == k) RIDGE * scale else 0.0) * solved[j][d]
         }
-        return solved.map { row -> FloatArray(m) { row[it].toFloat() } } to error.coerceAtLeast(0.0)
+        return result to error.coerceAtLeast(0.0)
     }
 
     /** Gaussian elimination with partial pivoting; null when singular. */
