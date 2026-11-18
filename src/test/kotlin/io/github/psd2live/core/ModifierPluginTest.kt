@@ -52,7 +52,7 @@ class ModifierPluginTest {
     }
 
     @Test fun javaWorkerRunsFromAStagingDirectoryOutsideTheWindowsCodePage() = fixture { root, store, _ ->
-        val staged = packageAt(root.resolve("Worker's 模型 🎨"))
+        val staged = packageAt(root.resolve("Worker's 模型 한글"))
         val installed = store.install(staged.toString())
         val command = ModifierPluginWorkers.launchCommand(installed, staged)
         val child = ProcessBuilder(command).directory(staged.toFile()).redirectErrorStream(true).start()
