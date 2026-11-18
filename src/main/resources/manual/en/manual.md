@@ -749,6 +749,8 @@ The **Model presets** panel decides in one place what is generated automatically
 With **Selected only** ticked, the physics and simulation presets act only on the selected layers.
 *> It is best to generate with the defaults first and preview; when you need to adjust, change one item at a time so you can see what each does. Texture atlas settings are not here but in the export window.
 
+With custom `MOUTH_CLOSE` artwork, open **Closed-mouth Visibility** in the fitted mouth settings. Add or move keys on the Mouth Open axis, select a key to set its opacity, then choose **Apply**. For a later fade, set 100% at 0.20 and 0% at 0.25. The open artwork fades in over the same interval. Mouth deformation keys stay in place.
+
 @@ update-generated-rig | Update Generated Rig
 Actions such as turning on hair simulation, enabling the skeleton or splitting layers merge your edits onto the generated result of that moment and pin it, so that upgrading the program never quietly changes your model. When you want the improvements of a newer generator, run **Update Generated Rig** yourself.
 ## Operations

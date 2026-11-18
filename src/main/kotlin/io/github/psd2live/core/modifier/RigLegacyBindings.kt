@@ -190,10 +190,12 @@ internal object RigLegacyBindings {
         } },
         validate = { _, instance ->
             val allowed = setOf("scaffold", "tuning") + (if (spec.hasPhysics) setOf("physics", "physicsEnabled") else emptySet()) + (if (spec.related.isNotEmpty()) setOf("dependencies") else emptySet()) + (if (spec.module?.base != null) setOf("base") else emptySet()) + (if (spec.strength) setOf("strength") else emptySet()) +
-                (if (spec.knobs.isNotEmpty()) setOf("values") else emptySet()) + (if (spec.mouthOutline) setOf("color") else emptySet())
+                (if (spec.knobs.isNotEmpty()) setOf("values") else emptySet()) + (if (spec.mouthOutline) setOf("color") else emptySet()) +
+                (if (spec.type == "mouth/fitted") setOf(ClosedMouthVisibility.CONFIG) else emptySet())
             require(instance.config.keys.all { it in allowed } && "scaffold" in instance.config) { "Specify ${spec.type}'s scaffold and editable values" }
             instance.config["physicsEnabled"]?.jsonPrimitive?.boolean
             providers(instance); strength(instance); tuning(instance, RigTuning()); values(instance); outlineColor(instance)
+            if (spec.type == "mouth/fitted") ClosedMouthVisibility.fromConfig(instance.config)
             require(instance.targets.all { it.kind == "mesh" && source?.hasMesh(it.id) == true }) { "Binding targets must have captured source layers" }
             requireNotNull(source).provider(instance)
         }, composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter") +

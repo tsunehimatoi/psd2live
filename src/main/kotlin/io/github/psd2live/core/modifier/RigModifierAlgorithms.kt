@@ -46,55 +46,63 @@ internal object RigModifierAlgorithms {
 
     fun evaluator(source: RigModifierSource? = null, stack: RigModifierStack? = null,
                   rawSourceRotations: Boolean = false, workerSession: ModifierPluginWorkers.Session? = null,
-                  overlayPackages: List<InstalledModifierPlugin> = emptyList()) = RigModifierEvaluator(
-        when {
-            stack?.instances?.isEmpty() == true -> emptyRegistry
-            source == null && workerSession == null && overlayPackages.isEmpty() -> registry
-            else -> registryFor(source, stack, workerSession, overlayPackages)
-        },
-        sourceTargetExists = { it.kind == "layer" && source?.hasLayer(it.id) == true },
-        physicsOrder = source?.physicsOrder.orEmpty(),
-        rawSourceRotations = rawSourceRotations,
-        resolveRasters = source?.let { it::resolveRasters } ?: RigModifierRasterAssets::resolve) { rig, instance, commands ->
-        var model = PuppetIr.toPuppet(rig)
-        val issues = ArrayList<GeneratedOverrideIssue>()
-        val parameterOverrides = HashSet<String>()
-        for (command in commands) {
-            if (GeneratedOverrides.isOverride(command)) {
-                val result = GeneratedOverrides.apply(model, command)
-                model = result.model
-                issues += result.issues
-            } else if (command["op"]?.jsonPrimitive?.content == "structure" && command["generator"]?.jsonPrimitive?.content == "modifier:${instance.id}") {
-                val edit = command.getValue("edits").jsonArray.single().jsonObject
-                val kind = edit.getValue("kind").jsonPrimitive.content
-                val id = edit.getValue("id").jsonPrimitive.content
-                try {
-                    model = RigAuthoringJournal.apply(model, command)
-                    if (kind == "parameter" && edit.getValue("action").jsonPrimitive.content == "update") parameterOverrides += id
-                } catch (_: IllegalArgumentException) {
-                    issues += GeneratedOverrideIssue(GeneratedOverrideIssueKind.ORPHANED, "modifier:${instance.id}",
-                        "$kind:$id", emptyMap(), 1, 1, GeneratedOverrideOrphanReason.SUPERSEDED)
-                }
-            } else if (command["op"]?.jsonPrimitive?.content in setOf("parameter_keys", "delete") &&
-                command["generator"]?.jsonPrimitive?.content == "modifier:${instance.id}") {
-                val changed = try {
-                    RigAuthoringJournal.apply(model, command)
-                } catch (_: IllegalArgumentException) {
-                    model
-                } catch (_: NoSuchElementException) {
-                    model
-                }
-                val target = command["target"]?.jsonPrimitive?.content
-                val parameter = command.getValue("parameter").jsonPrimitive.content
-                if (changed === model) {
-                    issues += GeneratedOverrideIssue(GeneratedOverrideIssueKind.ORPHANED, "modifier:${instance.id}",
-                        target ?: "parameter:$parameter", emptyMap(), 1, 1, GeneratedOverrideOrphanReason.MISSING_KEYFORM)
-                } else if (target == null) parameterOverrides += parameter
-                model = changed
-            } else model = RigAuthoringJournal.apply(model, command)
+                  overlayPackages: List<InstalledModifierPlugin> = emptyList()): RigModifierEvaluator {
+        val protectedOpacity by lazy { MouthVisibilityCustomization.protectedTracks(source, stack) }
+        return RigModifierEvaluator(
+            when {
+                stack?.instances?.isEmpty() == true -> emptyRegistry
+                source == null && workerSession == null && overlayPackages.isEmpty() -> registry
+                else -> registryFor(source, stack, workerSession, overlayPackages)
+            },
+            sourceTargetExists = { it.kind == "layer" && source?.hasLayer(it.id) == true },
+            physicsOrder = source?.physicsOrder.orEmpty(),
+            rawSourceRotations = rawSourceRotations,
+            algorithmInstance = MouthVisibilityCustomization::algorithmInstance,
+            customizeGenerated = { before, generated, instance -> MouthVisibilityCustomization.apply(source, before, generated, instance) },
+            resolveRasters = source?.let { it::resolveRasters } ?: RigModifierRasterAssets::resolve) { rig, instance, commands ->
+            var model = PuppetIr.toPuppet(rig)
+            val issues = ArrayList<GeneratedOverrideIssue>()
+            val parameterOverrides = HashSet<String>()
+            for (command in commands) {
+                if (GeneratedOverrides.isOverride(command)) {
+                    val result = GeneratedOverrides.apply(model, command)
+                    model = result.model
+                    issues += result.issues
+                } else if (command["op"]?.jsonPrimitive?.content == "structure" && command["generator"]?.jsonPrimitive?.content == "modifier:${instance.id}") {
+                    val edit = command.getValue("edits").jsonArray.single().jsonObject
+                    val kind = edit.getValue("kind").jsonPrimitive.content
+                    val id = edit.getValue("id").jsonPrimitive.content
+                    try {
+                        model = RigAuthoringJournal.apply(model, command)
+                        if (kind == "parameter" && edit.getValue("action").jsonPrimitive.content == "update") parameterOverrides += id
+                    } catch (_: IllegalArgumentException) {
+                        issues += GeneratedOverrideIssue(GeneratedOverrideIssueKind.ORPHANED, "modifier:${instance.id}",
+                            "$kind:$id", emptyMap(), 1, 1, GeneratedOverrideOrphanReason.SUPERSEDED)
+                    }
+                } else if (command["op"]?.jsonPrimitive?.content in setOf("parameter_keys", "delete") &&
+                    command["generator"]?.jsonPrimitive?.content == "modifier:${instance.id}") {
+                    val changed = try {
+                        val edited = RigAuthoringJournal.apply(model, command)
+                        if (command["target"] == null && command["parameter"]?.jsonPrimitive?.content == ClosedMouthVisibility.PARAMETER.raw)
+                            MouthVisibilityCustomization.keepOpacity(model, edited, protectedOpacity)
+                        else edited
+                    } catch (_: IllegalArgumentException) {
+                        model
+                    } catch (_: NoSuchElementException) {
+                        model
+                    }
+                    val target = command["target"]?.jsonPrimitive?.content
+                    val parameter = command.getValue("parameter").jsonPrimitive.content
+                    if (changed === model) {
+                        issues += GeneratedOverrideIssue(GeneratedOverrideIssueKind.ORPHANED, "modifier:${instance.id}",
+                            target ?: "parameter:$parameter", emptyMap(), 1, 1, GeneratedOverrideOrphanReason.MISSING_KEYFORM)
+                    } else if (target == null) parameterOverrides += parameter
+                    model = changed
+                } else model = RigAuthoringJournal.apply(model, command)
+            }
+            val updated = rig.withPuppet(model)
+            ModifierOverrideResult(updated, issues, updated.parameters.filter { it.id in parameterOverrides }.associateBy { it.id })
         }
-        val updated = rig.withPuppet(model)
-        ModifierOverrideResult(updated, issues, updated.parameters.filter { it.id in parameterOverrides }.associateBy { it.id })
     }
 
     internal fun simulationOutputs(instance: RigModifierInstance, source: RigSimEdit): RigSimEdit =

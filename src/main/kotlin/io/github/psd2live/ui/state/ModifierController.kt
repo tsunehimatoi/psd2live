@@ -7,6 +7,9 @@ import io.github.psd2live.i18n.tr
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
 
+/** A long-lived draft may follow pose-only commits, but never another document or project session. */
+internal data class ModifierEditOrigin(val projectId: String?, val generation: Long, val historyHead: String)
+
 /** UI-only modifier session. Published documents and all commits remain owned by WorkspaceRuntime. */
 internal class ModifierController(
     private val state: () -> PSD2LiveState,
@@ -115,12 +118,24 @@ internal class ModifierController(
     }
 
     /** Reject a field captured from a projection that has not caught up with the authoritative stack. */
-    fun modifierEditState(): String? {
+    fun modifierEditOrigin(): ModifierEditOrigin? {
+        val current = state()
+        val head = current.historySnapshot?.headNodeId ?: return null
+        modifierEditState() ?: return null
+        return ModifierEditOrigin(current.projectId, current.projectOpenGeneration, head)
+    }
+
+    fun modifierEditState(origin: ModifierEditOrigin? = null): String? {
+        val current = state()
+        if (origin != null && (origin.projectId != current.projectId || origin.generation != current.projectOpenGeneration)) {
+            reportError(tr("modifier.stale")); return null
+        }
         val shown = state().rigEdits.modifierStack?.let(io.github.psd2live.core.modifier.RigModifierStack::fromJson)
         val observed = readPort()?.captureQueries()?.modifierStack() ?: return null
         val rows = observed.getValue("entries").jsonArray
         val entries = shown?.instances.orEmpty()
-        val matches = state().historySnapshot?.headNodeId == observed.getValue("history_node_id").jsonPrimitive.content &&
+        val head = observed.getValue("history_node_id").jsonPrimitive.content
+        val matches = current.historySnapshot?.headNodeId == head && (origin == null || origin.historyHead == head) &&
             observed.getValue("legacy").jsonPrimitive.boolean == (shown == null) &&
             rows.size == entries.size && entries.zip(rows).all { (instance, raw) ->
             val row = raw.jsonObject
