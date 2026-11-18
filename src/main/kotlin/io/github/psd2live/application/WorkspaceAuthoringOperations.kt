@@ -249,6 +249,11 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
                 "before tracing, so fine protrusions such as lashes or strand tips share one envelope; 0 (default) traces the drawn edge. " +
                 "Every painted pixel stays inside the mesh. Layers with a layer_mesh override keep their own wrap")
         })
+        put("meshAlphaCoverage", buildJsonObject {
+            put("type", "boolean")
+            put("description", "Generated meshes cover every pixel with any alpha, not only those above alphaThreshold, so soft " +
+                "antialiased edges are never clipped; false (default) meshes what alphaThreshold keeps")
+        })
         put("runtimeTarget", string()); put("textureUpscale", upscaleSettings)
         put("meshFillParameters", fillParameterFields)
         put("rigTuning", rigTuningFields)

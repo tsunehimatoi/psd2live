@@ -255,6 +255,7 @@ internal object WorkspaceSettingsCodec {
         put("meshUnits", config.meshUnits.name)
         // Absent means the canvas trace, so the settings of projects saved before it keep their exact text.
         if (config.meshTrace != io.github.psd2live.core.MeshTrace.CANVAS) put("meshTrace", config.meshTrace.name)
+        if (config.meshAlphaCoverage) put("meshAlphaCoverage", true)
         // Absent means no wrap, likewise.
         if (config.meshWrap != 0f) put("meshWrap", config.meshWrap)
         put("meshOuterMargin", config.meshOuterMargin)
@@ -352,6 +353,8 @@ internal object WorkspaceSettingsCodec {
             ?: if ("meshSpacing" in value) io.github.psd2live.core.MeshTrace.CANVAS else base.meshTrace,
         // Complete settings without a wrap wrap nothing.
         meshWrap = value["meshWrap"]?.let(::decodeWrap) ?: if ("meshSpacing" in value) 0f else base.meshWrap,
+        meshAlphaCoverage = value["meshAlphaCoverage"]?.jsonPrimitive?.booleanOrNull
+            ?: if ("meshSpacing" in value) false else base.meshAlphaCoverage,
         meshOuterMargin = value["meshOuterMargin"]?.jsonPrimitive?.floatOrNull ?: base.meshOuterMargin,
         meshEdgeMode = value["meshEdgeMode"]?.jsonPrimitive?.contentOrNull?.let { runCatching { io.github.psd2live.core.MeshEdgeMode.valueOf(it) }.getOrNull() } ?: base.meshEdgeMode,
         meshEdgeWidth = value["meshEdgeWidth"]?.jsonPrimitive?.floatOrNull ?: value["meshInnerMargin"]?.jsonPrimitive?.floatOrNull?.let { (value["meshOuterMargin"]?.jsonPrimitive?.floatOrNull ?: base.meshOuterMargin) + it } ?: base.meshEdgeWidth,

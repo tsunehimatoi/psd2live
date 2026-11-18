@@ -22,7 +22,7 @@ internal object MeshGenerationBaseline {
         if (present(overlay)) return overlay
         val marker = buildJsonObject {
             put("op", OP)
-            put("settings", JsonObject(WorkspaceSettingsCodec.encode(config).filterKeys { it in fields || it == WRAP }))
+            put("settings", JsonObject(WorkspaceSettingsCodec.encode(config).filterKeys { it in fields || it == WRAP || it == "meshAlphaCoverage" }))
         }
         return overlay.copy(authoringJournal = overlay.authoringJournal + marker)
     }
@@ -52,7 +52,7 @@ internal object MeshGenerationBaseline {
     private fun settings(command: JsonObject): JsonObject {
         require(command.keys == setOf("op", "settings")) { "Invalid mesh generation baseline" }
         return command.getValue("settings").jsonObject.also {
-            val keys = it.keys - WRAP
+            val keys = it.keys - WRAP - "meshAlphaCoverage"
             require(keys == fields || keys == unitFields || (keys == legacyFields && WRAP !in it)) { "Invalid mesh generation baseline settings" }
             it["meshUnits"]?.jsonPrimitive?.content?.let { units ->
                 require(MeshUnits.entries.any { value -> value.name == units }) { "Invalid baseline mesh units" }

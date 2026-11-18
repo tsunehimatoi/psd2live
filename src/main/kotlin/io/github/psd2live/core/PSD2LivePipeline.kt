@@ -599,7 +599,8 @@ class PSD2LivePipeline {
 		before.meshMaxEdgeDistance != config.meshMaxEdgeDistance || before.meshInteriorDensity != config.meshInteriorDensity ||
 		before.meshFillAlgorithm != config.meshFillAlgorithm || before.meshSuppressBoundaryDiagonals != config.meshSuppressBoundaryDiagonals ||
 		before.meshFillParameters != config.meshFillParameters || before.meshUnits != config.meshUnits ||
-		before.meshTrace != config.meshTrace || before.meshWrap != config.meshWrap || before.alphaThreshold != config.alphaThreshold
+		before.meshTrace != config.meshTrace || before.meshWrap != config.meshWrap ||
+		before.meshAlphaCoverage != config.meshAlphaCoverage || before.alphaThreshold != config.alphaThreshold
 
 	private fun meshControlsChanged(before: PipelineConfig, config: PipelineConfig) =
 		globalMeshControlsChanged(before, config) || before.meshOverrides != config.meshOverrides

@@ -36,7 +36,7 @@ internal object MouthLipLayers {
         val key = listOf(input, config.deletedLayerIds, config.rigPendingLayerIds, config.rigEdits,
             config.mouthOutlineEnabled, config.meshOnly, config.deferRig, config.mouthColor, config.mouthThickness,
             config.alphaThreshold, config.meshMaxEdgeDistance, config.meshInteriorDensity, config.meshOverrides,
-            config.meshFillAlgorithm, config.meshSuppressBoundaryDiagonals, config.meshFillParameters,
+            config.meshFillAlgorithm, config.meshSuppressBoundaryDiagonals, config.meshFillParameters, config.meshAlphaCoverage,
             MeshResolution.unitScale(config, input.source), io.github.psd2live.i18n.I18n.currentLanguage)
         return cache.stages.get("mouth outline artwork", 16, key, compute)
     }
@@ -120,6 +120,7 @@ internal object MouthLipLayers {
                 ?: config.meshSuppressBoundaryDiagonals,
             fillParameters = config.meshOverrides[owner.source.id.raw]?.fillParameters ?: config.meshFillParameters,
             unitScale = unitScale,
+            coverAllAlpha = config.meshAlphaCoverage,
         )
         if (adaptive == null) return emptyList()
         val positions = FloatArray(adaptive.positions.size)

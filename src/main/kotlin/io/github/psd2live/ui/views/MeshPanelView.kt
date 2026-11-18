@@ -198,6 +198,13 @@ private fun GlobalMeshSettingsEditor(
 				)
 			}
 			if (showHints) Text(tr("mesh.settings.alphaThresholdHint"), style = typography.caption.copy(fontSize = 9.sp), color = colors.textMuted)
+			CompactCheckbox(
+				checked = state.meshAlphaCoverage,
+				onCheckedChange = viewModel::setMeshAlphaCoverage,
+				label = tr("mesh.settings.alphaCoverage"),
+				enabled = !isBusy,
+			)
+			if (showHints) Text(tr("mesh.settings.alphaCoverageHint"), style = typography.caption.copy(fontSize = 9.sp), color = colors.textMuted)
 			MeshUnitsToggle(state = state, viewModel = viewModel, enabled = !isBusy, showHints = showHints)
 		}
 	}

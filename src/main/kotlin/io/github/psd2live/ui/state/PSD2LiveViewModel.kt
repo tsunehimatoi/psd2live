@@ -3684,6 +3684,20 @@ class PSD2LiveViewModel : AutoCloseable {
 		editorChanged()
 	}
 
+	/** Switches whether meshes cover every pixel with any alpha; the meshes are rebuilt like any global mesh change. */
+	fun setMeshAlphaCoverage(enabled: Boolean) {
+		if (state.value.meshAlphaCoverage == enabled) return
+        workspaceBackend?.takeUnless { editorSessions.anyOpen }?.let { workspace ->
+            val port: io.github.psd2live.application.WorkspaceSettingsPort = workspace
+            runWorkspaceCommand { state -> port.updateProjectSettings(state,
+                kotlinx.serialization.json.buildJsonObject { put("meshAlphaCoverage", enabled) }) }
+            return
+        }
+		updateState { it.copy(meshAlphaCoverage = enabled) }
+		schedulePreviewRebuild()
+		editorChanged()
+	}
+
 	fun setPartMeshSettings(layerId: String, settings: MeshSettings) {
 		clearMeshSettingsPreviewState(layerId)
         workspaceBackend?.let { workspace ->

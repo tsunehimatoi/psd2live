@@ -50,7 +50,7 @@ private val ranges = mapOf(
 )
 private val integers = setOf("atlasSize", "meshSpacing", "texturePadding", "alphaThreshold")
 private val booleans = setOf(
-    "meshSuppressBoundaryDiagonals", "meshOnly", "generateDeformers", "featureDisplacementEnabled", "mouthOutlineEnabled",
+    "meshSuppressBoundaryDiagonals", "meshAlphaCoverage", "meshOnly", "generateDeformers", "featureDisplacementEnabled", "mouthOutlineEnabled",
     "seeThroughBrows", "seeThroughEyes", "generatePhysics", "physicsFrontHair", "physicsBackHair", "physicsEyeJelly",
     "exportMotions", "motionBasic", "motionIdle", "motionBlink", "motionNod", "motionShake", "motionSkeleton",
     "exportCmo3", "exportMoc3", "exportJson", "exportCan3", "exportHiddenParts", "exportHiddenDrawables",

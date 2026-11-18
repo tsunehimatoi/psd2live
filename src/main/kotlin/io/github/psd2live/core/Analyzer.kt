@@ -15,7 +15,7 @@ object CharacterAnalyzer {
 	internal fun expandLayer(original: ClassifiedLayer, config: PipelineConfig, unitScale: Float = 1f,
 	                         references: LegacySplitReferences = LegacySplitReferences(config)): List<ClassifiedLayer> {
 		if (!references.preserves(original.source.id.raw)) return listOf(original)
-		return ComponentSplitter.split(original, config.meshSpacing.toFloat(), config.alphaThreshold, unitScale).map { component ->
+		return ComponentSplitter.split(original, config.meshSpacing.toFloat(), config.alphaThreshold, unitScale, config.meshAlphaCoverage).map { component ->
 			val override = config.layerOverrides[component.source.id.raw] ?: config.layerOverrides[original.source.id.raw]
 			component.withOverride(override, preserveSide = component.source.id != original.source.id)
 		}
