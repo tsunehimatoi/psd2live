@@ -27,12 +27,15 @@ internal object WorkspaceModifierSchemas {
         "segments" to s.array(segment, 1, RigPhysicsEdit.MAX_SEGMENTS), "normalization" to s.obj(mapOf("position" to range, "angle" to range))),
         setOf("id", "name", "inputs", "outputs", "segments"))
     private val axis = s.obj(mapOf("parameter" to s.handle(), "keys" to s.array(s.number(), 2, 256),
-        "offsets" to s.dictionary(s.array(s.array(s.number())))))
+        "offsets" to s.dictionary(s.array(s.array(s.number()))),
+        "limits" to s.dictionary(s.array(s.vector(2))), "normal_weight" to s.number(0, 1)),
+        setOf("parameter", "keys", "offsets"))
     private val bakeInput = s.obj(mapOf("parameter" to s.handle(), "motion_px" to s.number(), "rigid" to s.boolean(),
         "group" to s.choices("sideways", "vertical"), "dropped" to s.constant(true), "forced" to s.constant(true)),
         setOf("parameter", "motion_px", "rigid"))
     private val bakeFields = mapOf("fingerprint" to s.handle(), "vertex_counts" to s.dictionary(s.integer(0)),
-        "statics" to s.array(axis), "modes" to s.array(s.obj(mapOf("axis" to axis, "amplitude_px" to s.number(), "energy" to s.number()))),
+        "statics" to s.array(axis), "modes" to s.array(s.obj(mapOf("axis" to axis, "amplitude_px" to s.number(), "energy" to s.number(),
+            "motion" to WorkspaceSimulationResultSchemas.motion), setOf("axis", "amplitude_px", "energy"))),
         "physics" to physics, "extra_physics" to s.array(physics), "inputs" to s.array(bakeInput),
         "visual" to s.array(WorkspaceSimulationChecks.motion), "method" to s.handle()) +
         listOf("fit", "max_error_px", "peak", "clipped", "jerk").associateWith { s.number() }

@@ -241,12 +241,12 @@ internal object RigGenerationMigration {
         return overlay.copy(simEdits = overlay.simEdits.map { sim ->
             checkpoint()
             val bake = sim.bake ?: return@map sim
-            fun axis(axis: SimBakedAxis): SimBakedAxis = SimBakedAxis(axis.parameter, axis.keys, axis.offsets.mapValues { (id, values) ->
+            fun axis(axis: SimBakedAxis): SimBakedAxis = axis.withMeshOffsets(axis.offsets.mapValues { (id, values) ->
                 val transform = transforms[id] ?: return@mapValues values
                 values.map { offset -> checkpoint(); transform(offset) }
             })
             sim.copy(bake = SimBakeResult.fromJson(bake.withGeometry(bake.vertexCounts,
-                bake.statics.map(::axis), bake.modes.map { SimBakedMode(axis(it.axis), it.amplitude, it.energy) }).toJson()))
+                bake.statics.map(::axis), bake.modes.map { it.withAxis(axis(it.axis)) }).toJson()))
         })
     }
 

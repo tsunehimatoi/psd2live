@@ -2,6 +2,9 @@ package io.github.psd2live.core.sim
 
 import io.github.psd2live.core.modifier.ModifierAlgorithmStages.stage
 import io.github.psd2live.core.modifier.SimulationInput
+import org.umamo.runtime.model.BlendWeightLimit
+import org.umamo.runtime.model.BlendWeightLimitPoint
+import org.umamo.runtime.model.ParameterId
 import org.umamo.runtime.model.ParameterKind
 import org.umamo.runtime.model.PuppetModel
 import java.util.concurrent.CancellationException
@@ -15,6 +18,7 @@ internal enum class DirectMotionKind { SWAY, TURN, COMPRESSION, FOLLOW_THROUGH }
 /** Original-resolution world-space keyforms in scene particle order. Positive keys follow the spatial axis. */
 internal class DirectSpatialMode(
     val kind: DirectMotionKind,
+    val keys: FloatArray,
     val offsets: List<FloatArray>,
     val frequencyHz: Float,
     val dampingRatio: Float,
@@ -25,6 +29,7 @@ internal class DirectPhysicsMode(
     val kind: DirectMotionKind,
     val frequencyHz: Float,
     val dampingRatio: Float,
+    val reachPx: Float = 0f,
 )
 
 /** Compiles static geometry and discrete pendulum poles. No step, settle, replay or frame training is used here. */
@@ -56,7 +61,7 @@ internal object DirectSimBaker {
             when (edit.kind) {
                 SimKind.HAIR -> DirectHairShapes.build(scene, keys, ::checkpoint)
                 SimKind.CLOTH -> DirectClothShapes.build(scene, keys, ::checkpoint)
-            }
+            }.filter { mode -> mode.offsets.maxOf(SimBaker::maxDistance) >= 0.25f }
         }
         options.progress(0.55f)
         val active = analysis.inputs.filter { input -> inputs.any { it.id == input.parameter.id } }
@@ -64,39 +69,61 @@ internal object DirectSimBaker {
         val triggers = active.filter { it.moves || it.id in edit.forcedInputs }
         val ordered = listOf(DirectMotionKind.SWAY, DirectMotionKind.TURN, DirectMotionKind.FOLLOW_THROUGH)
         val lateral = ordered.mapNotNull { kind -> shapes.firstOrNull { it.kind == kind } }
-            .filter { DirectPendulumCompiler.supported(it.kind, triggers, analysis.length) }.take(edit.modes)
+            .filter { DirectPendulumCompiler.supported(edit, it.kind, triggers, analysis.length) }.take(edit.modes)
         val upward = shapes.firstOrNull { it.kind == DirectMotionKind.COMPRESSION }?.takeIf {
-            edit.vertical != false && DirectPendulumCompiler.supported(it.kind, triggers, analysis.length)
+            edit.vertical != false && DirectPendulumCompiler.supported(edit, it.kind, triggers, analysis.length)
         }
         val selected = lateral.mapIndexed { index, mode -> SimGenerator.parameterId(edit, index + 1) to mode } +
             listOfNotNull(upward?.let { SimGenerator.verticalParameterId(edit) to it })
-        val descriptions = selected.map { (id, mode) -> DirectPhysicsMode(id, mode.kind, mode.frequencyHz, mode.dampingRatio) }
+        val descriptions = selected.map { (id, mode) ->
+            DirectPhysicsMode(id, mode.kind, mode.frequencyHz, mode.dampingRatio, mode.offsets.maxOf(SimBaker::maxDistance))
+        }
+        val reachable = HashMap<String, Float>()
         val pendulums = stage("simulation: direct pendulums") {
-            DirectPendulumCompiler.compile(edit, descriptions, triggers, options.physicsFps, ::checkpoint, bodyLength = analysis.length)
+            DirectPendulumCompiler.compile(edit, descriptions, triggers, options.physicsFps, ::checkpoint,
+                bodyLength = analysis.length, onDriveScale = { id, fraction -> reachable[id] = fraction })
         }
         val driven = pendulums.flatMapTo(HashSet()) { group -> group.outputs.map { it.parameter } }
         val used = selected.filter { it.first in driven }
         val worldKeys = used.map { (id, mode) ->
             mode.offsets.map { form -> FloatArray(form.size) { form[it] * edit.outputGain(id) } }
         }
-        val gains = stage("simulation: direct geometry limits") {
-            val separate = worldKeys.map { forms ->
-                DirectGeometryLimit.gain(scene, space.rest, listOf(forms), ::checkpoint)
+        val mixing = stage("simulation: direct geometry limits") {
+            val projector = DirectBlendGeometry(scene, space.rest, ::checkpoint)
+            val keyPositions = used.map { it.second.keys }
+            val reach = FloatArray(used.size) { index ->
+                val id = used[index].first
+                if (edit.outputGain(id) > 0f) reachable.getValue(id) else 0f
             }
-            val bounded = worldKeys.mapIndexed { index, forms ->
-                forms.map { row -> FloatArray(row.size) { row[it] * separate[index] } }
+            // A strongly driven hair turn defines the gross silhouette. Resolve a shared strain
+            // mostly through the remaining local bend fields before moving that silhouette.
+            val mobility = FloatArray(used.size) { index ->
+                if (edit.kind == SimKind.HAIR && used[index].second.kind == DirectMotionKind.TURN) 0.20f else 1f
             }
-            val mixed = if (bounded.size > 1) DirectGeometryLimit.gain(scene, space.rest, bounded, ::checkpoint, combinedOnly = true)
-                else 1f
-            separate.map { it * mixed }
+            val noLimits = DirectGeometryLimit.BlendLimits(List(used.size) { emptyList() }, 1f)
+            val unbounded = projector.project(keyPositions, worldKeys, reach, mobility)
+            if (unbounded.safe) return@stage unbounded.offsets to noLimits
+
+            val geometry = DirectGeometryLimit(scene, space.rest, ::checkpoint)
+            val bounded = worldKeys.map { forms ->
+                val gain = geometry.axisGain(forms)
+                forms.map { row -> FloatArray(row.size) { row[it] * gain } }
+            }
+            val projected = projector.project(keyPositions, bounded, reach, mobility)
+            if (projected.safe) projected.offsets to noLimits
+            else bounded to geometry.blendLimits(used.map { ParameterId(it.first) }, bounded)
         }
-        val amplitudes = used.mapIndexed { index, (_, mode) -> gains[index] * mode.offsets.maxOf(SimBaker::maxDistance) }
+        val (mixedOffsets, blend) = mixing
+        val amplitudes = mixedOffsets.map { it.maxOf(SimBaker::maxDistance) }
         val total = amplitudes.sumOf { (it * it).toDouble() }.coerceAtLeast(1e-9)
-        val scaledKeys = FloatArray(keys.size) { keys[it] * SimGenerator.MODE_RANGE }
         val modes = used.mapIndexed { index, (id, mode) ->
-            val local = mode.offsets.map { shape -> space.fromPx(FloatArray(shape.size) { shape[it] * gains[index] }) }
-            SimBakedMode(SimBakedAxis(id, scaledKeys, space.split(local)), amplitudes[index],
-                (amplitudes[index] * amplitudes[index] / total).toFloat())
+            val scaledKeys = FloatArray(mode.keys.size) { mode.keys[it] * SimGenerator.MODE_RANGE }
+            val gain = edit.outputGain(id)
+            val local = if (gain == 0f) mode.offsets.map(space::fromPx) else mixedOffsets[index].map { shape ->
+                space.fromPx(FloatArray(shape.size) { shape[it] / gain })
+            }
+            SimBakedMode(SimBakedAxis(id, scaledKeys, space.split(local), blend.curves[index], blend.normalWeight), amplitudes[index],
+                (amplitudes[index] * amplitudes[index] / total).toFloat(), mode.kind.name.lowercase())
         }
         val sway = shapes.firstOrNull { it.kind == DirectMotionKind.SWAY }
         val compress = shapes.firstOrNull { it.kind == DirectMotionKind.COMPRESSION }
@@ -107,12 +134,12 @@ internal object DirectSimBaker {
             val offsets = at.map { value ->
                 checkpoint()
                 val turn = input.root(value, SimKinematics.TURN).coerceIn(-1f, 1f)
-                val lean = sway?.let { SimBaker.at(it.offsets, keys, sin(turn)) }
-                val hang = compress?.let { SimBaker.at(it.offsets, keys, 1f - cos(turn)) }
+                val lean = sway?.let { SimBaker.at(it.offsets, it.keys, sin(turn)) }
+                val hang = compress?.let { SimBaker.at(it.offsets, it.keys, 1f - cos(turn)) }
                 FloatArray(space.size) { (lean?.get(it) ?: 0f) + (hang?.get(it) ?: 0f) }
             }
             if (offsets.maxOf(SimBaker::maxDistance) < 0.5f) return@mapNotNull null
-            val limit = DirectGeometryLimit.gain(scene, space.rest, listOf(offsets), ::checkpoint)
+            val limit = DirectGeometryLimit(scene, space.rest, ::checkpoint).axisGain(offsets)
             SimBakedAxis(parameter.id.raw, at, space.split(offsets.map { row -> space.fromPx(FloatArray(row.size) { row[it] * limit }) }))
         }
         val inputChecks = active.map { input ->
@@ -129,36 +156,65 @@ internal object DirectSimBaker {
     }
 }
 
-/** Bounds stored keys and combined extremes in the original topology, with a fixed number of spatial tests. */
-internal object DirectGeometryLimit {
-    fun gain(scene: SimScene, rest: FloatArray, axes: List<List<FloatArray>>, checkpoint: () -> Unit,
-             combinedOnly: Boolean = false): Float {
-        if (axes.isEmpty()) return 1f
-        val triangles = scene.solver.triangles
-        val areas = FloatArray(triangles.size) { area(rest, triangles.a[it] * 2, triangles.b[it] * 2, triangles.c[it] * 2) }
-        val colliders = scene.state.colliders
-        val restClearance = colliders.map { body ->
-            FloatArray(rest.size / 2) { i -> clearance(body, rest[2 * i], rest[2 * i + 1]) }
-        }
-        val corners = ArrayList<FloatArray>()
-        fun addCorners(indices: List<Int>) {
-            // Test two fully active responses, then share the same squared displacement budget
-            // across the other independent channels when they all act together.
-            val drive = 0.72f * sqrt(2f / indices.size)
-            for (bits in 0 until (1 shl indices.size)) {
+/** Finds geometric weight limits using isolated poses on the original mesh. */
+internal class DirectGeometryLimit(scene: SimScene, private val rest: FloatArray, private val checkpoint: () -> Unit) {
+    private val triangles = scene.solver.triangles
+    private val kind = scene.edit.kind
+    private val areas = FloatArray(triangles.size) { area(rest, triangles.a[it] * 2, triangles.b[it] * 2, triangles.c[it] * 2) }
+    private val colliders = scene.state.colliders
+    private val restClearance = colliders.map { body ->
+        FloatArray(rest.size / 2) { i -> clearance(body, rest[2 * i], rest[2 * i + 1]) }
+    }
+    private val posed = FloatArray(rest.size)
+
+    fun axisGain(forms: List<FloatArray>): Float {
+        val midpoints = forms.zipWithNext { a, b -> FloatArray(rest.size) { (a[it] + b[it]) * 0.5f } }
+        return gain(forms + midpoints)
+    }
+
+    class BlendLimits(val curves: List<List<BlendWeightLimit>>, val normalWeight: Float)
+
+    fun blendLimits(ids: List<ParameterId>, axes: List<List<FloatArray>>): BlendLimits {
+        val result = List(axes.size) { ArrayList<BlendWeightLimit>() }
+        if (axes.size < 2) return BlendLimits(result, 1f)
+
+        fun corners(indices: List<Int>, drive: Float): List<FloatArray> =
+            List(1 shl indices.size) { bits ->
                 val row = FloatArray(rest.size)
                 for ((slot, index) in indices.withIndex()) {
                     val forms = axes[index]
                     val extreme = if (bits and (1 shl slot) == 0) forms.first() else forms.last()
                     for (k in row.indices) row[k] += extreme[k] * drive
                 }
-                corners += row
+                row
             }
+
+        val groupLimit = if (axes.size > 2) gain(corners(axes.indices.toList(), 0.72f * sqrt(2f / axes.size))) else 1f
+        var normalWeight = groupLimit
+        for (a in axes.indices) for (b in a + 1 until axes.size) {
+            val pair = listOf(a, b)
+            val pairLimit = gain(corners(pair, 0.72f))
+            normalWeight = minOf(normalWeight, pairLimit)
+            // A cloth panel can buckle under three simultaneous loads even when a pair is safe.
+            val regular = if (kind == SimKind.CLOTH) minOf(groupLimit, pairLimit) else pairLimit
+            val extreme = minOf(regular, gain(corners(pair, 1f)))
+            if (extreme == 1f) continue
+            // The other axis carries its full weight near rest. Only shared peaks are damped.
+            val half = listOf(
+                0f to 1f, 0.25f to 1f,
+                0.41f to (1f + (regular - 1f) * 0.25f),
+                0.56f to (1f + (regular - 1f) * 0.75f),
+                0.72f to regular, 0.86f to (regular + extreme) * 0.5f, 1f to extreme,
+            )
+            val points = half.drop(1).asReversed().map { (at, weight) -> BlendWeightLimitPoint(-at * SimGenerator.MODE_RANGE, weight) } +
+                half.map { (at, weight) -> BlendWeightLimitPoint(at * SimGenerator.MODE_RANGE, weight) }
+            result[a] += BlendWeightLimit(ids[b], points)
+            result[b] += BlendWeightLimit(ids[a], points)
         }
-        for (a in axes.indices) for (b in a + 1 until axes.size) addCorners(listOf(a, b))
-        if (axes.size > 2) addCorners(axes.indices.toList())
-        val checks = if (combinedOnly) corners else axes.flatten() + corners
-        val posed = FloatArray(rest.size)
+        return BlendLimits(result, normalWeight)
+    }
+
+    private fun gain(checks: List<FloatArray>): Float {
         fun valid(gain: Float): Boolean {
             for (shape in checks) {
                 checkpoint()
@@ -179,6 +235,10 @@ internal object DirectGeometryLimit {
             return true
         }
         if (valid(1f)) return 1f
+        return lastSafe(::valid)
+    }
+
+    private inline fun lastSafe(valid: (Float) -> Boolean): Float {
         var low = 0f
         var high = 1f
         repeat(7) {

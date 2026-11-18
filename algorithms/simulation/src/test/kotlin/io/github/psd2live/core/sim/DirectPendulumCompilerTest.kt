@@ -82,7 +82,7 @@ class DirectPendulumCompilerTest {
             DirectPhysicsMode("Turn", DirectMotionKind.TURN, 0.9f, 0.18f),
             DirectPhysicsMode(SimGenerator.verticalParameterId(edit), DirectMotionKind.COMPRESSION, 2f, 0.25f),
         )
-        assertTrue(modes.all { DirectPendulumCompiler.supported(it.kind, inputs, 180f) })
+        assertTrue(modes.all { DirectPendulumCompiler.supported(edit, it.kind, inputs, 180f) })
         val groups = DirectPendulumCompiler.compile(edit, modes, inputs, 60, {}, bodyLength = 180f)
         assertEquals(listOf("Side", "Roll", "Lift"), groups.map { it.inputs.single().parameter })
         assertTrue(groups.all { it.inputs.single().type == PhysicsSourceType.X && it.inputs.single().reflect })
@@ -105,6 +105,31 @@ class DirectPendulumCompilerTest {
     }
 
     @Test
+    fun clothTurnRespondsToTheMeasuredTiltWithoutAmplifyingASidewaysWarp() {
+        val warp = input("Warp", 18f, 0f, 0.13f, reshape = 15f)
+        val smallRoll = input("Roll", 2f, 0f, 0.005f)
+        val largeRoll = input("Roll", 25f, 0f, 0.27f)
+        val edit = RigSimEdit("skirt", "Skirt", SimKind.CLOTH, listOf("Mesh"), inputs = listOf(
+            PhysicsInput(warp.id, type = PhysicsSourceType.X),
+            PhysicsInput(smallRoll.id, type = PhysicsSourceType.ANGLE),
+        ))
+        val mode = DirectPhysicsMode("Turn", DirectMotionKind.TURN, 1.1f, 0.2f)
+        val drive = mutableListOf<Float>()
+        fun group(input: SimKinematics.Input) =
+            DirectPendulumCompiler.compile(edit, listOf(mode), listOf(warp, input), 60, {}, bodyLength = 180f,
+                onDriveScale = { parameter, amount ->
+                    assertEquals(mode.parameter, parameter)
+                    drive += amount
+                }).single()
+        val weak = group(smallRoll)
+        val strong = group(largeRoll)
+        assertEquals(listOf("Roll"), weak.inputs.map { it.parameter })
+        assertEquals(listOf("Roll"), strong.inputs.map { it.parameter })
+        assertEquals(0.005f / 0.27f, weak.outputs.single().scale / strong.outputs.single().scale, 1e-4f)
+        assertEquals(0.005f / 0.27f, drive[0] / drive[1], 1e-4f)
+    }
+
+    @Test
     fun hairRollHasARestoringTiltAndAnIndependentDelayedTail() {
         val roll = input("Roll", 9f, 0f, 0.2f)
         val side = input("Side", 20f, 0f, 0f)
@@ -122,7 +147,9 @@ class DirectPendulumCompilerTest {
         assertEquals(listOf("Roll"), turn.inputs.map { it.parameter })
         assertEquals(PhysicsSourceType.ANGLE, turn.inputs.single().type)
         assertTrue(!turn.inputs.single().reflect)
-        assertTrue(sway.inputs.any { it.parameter == roll.id && it.type == PhysicsSourceType.X })
+        assertEquals(listOf("Side"), sway.inputs.map { it.parameter })
+        assertTrue(!DirectPendulumCompiler.supported(edit, DirectMotionKind.SWAY, listOf(roll), 180f))
+        assertTrue(DirectPendulumCompiler.supported(edit, DirectMotionKind.TURN, listOf(roll), 180f))
         assertTrue(tail.inputs.any { it.parameter == roll.id && it.type == PhysicsSourceType.X })
         assertTrue(tail.segments.single().acceleration < sway.segments.single().acceleration)
         val range = PhysicsEngine.Range(-1f, 1f, 0f)
@@ -135,17 +162,29 @@ class DirectPendulumCompilerTest {
         repeat(4) { kernel.step(values, dt, output) }
         values[kernel.indexOf(roll.id)] = 0.5f
         var peak = 0f
+        var tipPeak = 0f
         repeat(300) {
             kernel.step(values, dt, output)
             peak = maxOf(peak, abs(output[kernel.outputs.indexOf("RollLean")]))
+            tipPeak = maxOf(tipPeak, abs(output[kernel.outputs.indexOf("Tips")]))
+            assertEquals(0f, output[kernel.outputs.indexOf("Sway")], 1e-7f)
         }
         assertTrue(output[kernel.outputs.indexOf("RollLean")] < -1f)
-        assertTrue(abs(output[kernel.outputs.indexOf("Sway")]) < 0.5f)
+        assertTrue(tipPeak > 0.5f)
         assertTrue(abs(output[kernel.outputs.indexOf("Tips")]) < 0.5f)
         assertTrue(peak < SimGenerator.MODE_RANGE * 0.90f)
         values[kernel.indexOf(roll.id)] = 0f
         repeat(300) { kernel.step(values, dt, output) }
         assertTrue(output.all { abs(it) < 0.5f })
+
+        values[kernel.indexOf(side.id)] = 0.5f
+        var swayPeak = 0f
+        repeat(60) {
+            kernel.step(values, dt, output)
+            swayPeak = maxOf(swayPeak, abs(output[kernel.outputs.indexOf("Sway")]))
+            assertTrue(abs(output[kernel.outputs.indexOf("RollLean")]) < 0.5f)
+        }
+        assertTrue(swayPeak > 0.5f)
     }
 
     @Test
@@ -175,11 +214,11 @@ class DirectPendulumCompilerTest {
         }
     }
 
-    private fun input(id: String, x: Float, y: Float, turn: Float): SimKinematics.Input =
+    private fun input(id: String, x: Float, y: Float, turn: Float, reshape: Float = 0f): SimKinematics.Input =
         SimKinematics.Input(
             Parameter(ParameterId(id), id, -1f, 1f, 0f),
             -1f, 0f, 1f, floatArrayOf(-1f, 0f, 1f),
             arrayOf(floatArrayOf(-x, -y, -turn), floatArrayOf(0f, 0f, 0f), floatArrayOf(x, y, turn)),
-            maxOf(abs(x), abs(y), abs(turn) * 180f), 0f, abs(x) >= abs(y),
+            maxOf(abs(x), abs(y), abs(turn) * 180f), reshape, abs(x) >= abs(y),
         )
 }

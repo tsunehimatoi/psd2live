@@ -433,7 +433,7 @@ object ModelPresets {
                 inputs = if (previous.inputs == RigSimEdit.defaultInputs(available)) defaults else previous.inputs,
                 material = if (previous.material == SimMaterial.preset(kind)) material else previous.material)
                 ?: RigSimEdit(id, name, kind, allTargets, material, groups = groups, inputs = defaults,
-                    modes = if (kind == SimKind.HAIR) 3 else 2, keys = 9)
+                    modes = 3)
             overlay = SimAuthoring.put(overlay, model, edit)
             simulationIds += id
         }

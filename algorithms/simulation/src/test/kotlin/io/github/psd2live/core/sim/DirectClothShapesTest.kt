@@ -13,6 +13,10 @@ import org.umamo.runtime.model.DrawableId
 import org.umamo.runtime.model.VertexGroup
 import org.umamo.runtime.model.VertexGroupKind
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.hypot
+import kotlin.math.sin
+import kotlin.math.sqrt
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -54,14 +58,41 @@ class DirectClothShapesTest {
         val oppositeTurn = modes.getValue(DirectMotionKind.TURN).offsets.first()
         assertTrue(turn[leftHemX] > turn[rightHemX], "The loose hem should bunch toward the direction of travel")
         assertTrue(oppositeTurn[rightHemX] < oppositeTurn[leftHemX], "The loose side should move with the turn direction")
+        val waist = 2 * 2
+        val centralHem = 2 * 8
+        fun length(form: FloatArray): Float = hypot(
+            original[centralHem] + form[centralHem] - original[waist],
+            original[centralHem + 1] + form[centralHem + 1] - original[waist + 1],
+        )
+        val restLength = length(FloatArray(original.size))
+        val turnShortening = restLength - length(turn)
+        val swayShortening = restLength - length(sway)
+        assertTrue(turnShortening > 3f && turnShortening > 2f * abs(swayShortening),
+            "The hem should gather during a strong turn (turn $turnShortening, sway $swayShortening)")
         val follow = modes.getValue(DirectMotionKind.FOLLOW_THROUGH).offsets.last()
         assertTrue(abs(follow[rightHemY] - follow[leftHemY]) > abs(swayTilt))
         assertTrue(abs(follow[leftHemX]) < abs(sway[leftHemX]))
+        var shared = 0.0
+        var swayEnergy = 0.0
+        var followEnergy = 0.0
+        for (p in 0 until scene.state.count) {
+            val mass = 1.0 / scene.state.invMass[p]
+            val primary = sway[2 * p]
+            val hem = follow[2 * p]
+            shared += mass * primary * hem
+            swayEnergy += mass * primary * primary
+            followEnergy += mass * hem * hem
+        }
+        assertTrue(abs(shared) < 0.04 * sqrt(swayEnergy * followEnergy) + 1e-7, "The follow-through must not duplicate primary sweep")
         val fold = modes.getValue(DirectMotionKind.COMPRESSION).offsets
         val up = fold.last()[2 * 6 + 1]
         val down = fold.first()[2 * 6 + 1]
         assertTrue(up > 1f && down < 0f)
         assertTrue(up > abs(down) * 1.15f && abs(down) > up * 0.6f, "Compression should keep a distinct release with visible rebound")
+        val upperFold = fold.last()[2 * 3 + 1]
+        val centralFold = fold.last()[centralHem + 1]
+        assertTrue(up > 2.2f * abs(upperFold) && up > 1.25f * centralFold,
+            "Compression should concentrate near the free edge (edge $up, upper $upperFold, center $centralFold)")
         val nearRelease = fold[1][leftHemY]
         val nearCompression = fold[3][leftHemY]
         assertTrue(abs(nearCompression / nearRelease + 1f) < 0.16f, "The two segments touching neutral should have similar speed")
@@ -90,15 +121,34 @@ class DirectClothShapesTest {
         }
     }
 
-    private fun twoPanels(thinFold: Boolean = false): SimScene {
+    @Test fun compressionFollowsSlantedGrainAndReturnsAlongIt() {
+        val scene = twoPanels(slanted = true)
+        val rest = scene.state.positions()
+        val fold = DirectClothShapes.build(scene, floatArrayOf(-1f, 0f, 1f)) {}
+            .single { it.kind == DirectMotionKind.COMPRESSION }.offsets
+        val tip = 8 * 2
+        val root = 2 * 2
+        val restX = rest[tip] - rest[root]
+        val restY = rest[tip + 1] - rest[root + 1]
+        val length = hypot(restX, restY)
+        val gx = restX / length
+        val gy = restY / length
+        for ((sign, shape) in listOf(1f to fold.last(), -1f to fold.first())) {
+            val along = -sign * (gx * shape[tip] + gy * shape[tip + 1])
+            val across = abs(gx * shape[tip + 1] - gy * shape[tip])
+            assertTrue(along > 2f, "Slanted fabric should shorten and release on its own axis")
+            assertTrue(across < 0.60f * along, "Vertical screen motion should not dominate a slanted fabric fold")
+        }
+    }
+
+    private fun twoPanels(thinFold: Boolean = false, slanted: Boolean = false): SimScene {
         fun panel(id: String, x: Float): Mesh {
             val positions = FloatArray(18) { component ->
                 val v = component / 2
-                when {
-                    component % 2 == 0 -> x + (v % 3) * 30f
-                    thinFold && v == 4 -> 0.07f
-                    else -> (v / 3) * 60f
-                }
+                val px = x + (v % 3) * 30f
+                val py = if (thinFold && v == 4) 0.07f else (v / 3) * 60f
+                val angle = if (slanted) 0.98f else 0f
+                if (component % 2 == 0) px * cos(angle) - py * sin(angle) else px * sin(angle) + py * cos(angle)
             }
             val uvs = FloatArray(18) { component ->
                 val v = component / 2

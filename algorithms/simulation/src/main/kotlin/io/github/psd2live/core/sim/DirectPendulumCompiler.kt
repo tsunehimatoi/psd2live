@@ -30,14 +30,16 @@ internal object DirectPendulumCompiler {
     // interval with proportionally stronger links to keep the same physical carrier travel.
     private const val POSITION_RANGE = 1.875f
     private const val OUTPUT_HEADROOM = 0.86f
+    private const val ROLL_TRAVEL_RESERVE = 0.09f
     private val normalization = PhysicsNormalization(
         positionMin = -POSITION_RANGE, positionMax = POSITION_RANGE, angleMin = -30f, angleMax = 30f,
     )
 
     private class Drive(val id: String, val travel: Float)
 
-    fun supported(kind: DirectMotionKind, inputs: List<SimKinematics.Input>, bodyLength: Float): Boolean =
-        inputs.any { abs(travel(kind, it, bodyLength)) >= MIN_TRAVEL }
+    fun supported(edit: RigSimEdit, kind: DirectMotionKind, inputs: List<SimKinematics.Input>, bodyLength: Float): Boolean =
+        inputs.any { abs(travel(edit, kind, it, bodyLength)) >= MIN_TRAVEL ||
+            it.id in edit.forcedInputs && forcedChannel(kind, it, edit) }
 
     fun compile(
         edit: RigSimEdit,
@@ -46,13 +48,15 @@ internal object DirectPendulumCompiler {
         physicsFps: Int,
         checkpoint: () -> Unit,
         bodyLength: Float = 0f,
+        onDriveScale: (String, Float) -> Unit = { _, _ -> },
     ): List<RigPhysicsEdit> {
         val fps = if (physicsFps > 0) physicsFps else 60
         val step = 1.0 / fps
         val base = SimGenerator.physicsId(edit)
-        val angularInputs = if (modes.any { it.kind == DirectMotionKind.TURN }) inputs.filter { input ->
+        val angularInputs = if (edit.kind == SimKind.HAIR || modes.any { it.kind == DirectMotionKind.TURN }) inputs.filter { input ->
             edit.inputs.any { it.parameter == input.id && it.type == PhysicsSourceType.ANGLE } &&
-                abs(travel(DirectMotionKind.TURN, input, bodyLength)) >= MIN_TRAVEL
+                (abs(travel(edit, DirectMotionKind.TURN, input, bodyLength)) >= MIN_TRAVEL ||
+                    edit.kind == SimKind.HAIR && input.id in edit.forcedInputs)
         }.mapTo(hashSetOf()) { it.id } else emptySet()
         var side = 0
         return modes.mapNotNull { mode ->
@@ -60,15 +64,10 @@ internal object DirectPendulumCompiler {
             val lean = edit.kind == SimKind.HAIR && mode.kind == DirectMotionKind.TURN && angularInputs.isNotEmpty()
             val drives = inputs.mapNotNull drive@{ input ->
                 if (lean && input.id !in angularInputs) return@drive null
-                val turnCarrier = input.id in angularInputs &&
+                val clothTurnCarrier = edit.kind == SimKind.CLOTH && input.id in angularInputs &&
                     (mode.kind == DirectMotionKind.SWAY || mode.kind == DirectMotionKind.FOLLOW_THROUGH)
-                val travel = if (turnCarrier) {
-                    if (edit.kind != SimKind.HAIR) return@drive null
-                    // Rotation also accelerates the hanging length sideways. The dedicated turn keeps the
-                    // lean about the root; a portion of the angular lever arm drives loose follow-through.
-                    val contribution = if (mode.kind == DirectMotionKind.FOLLOW_THROUGH) 0.46f else 0.09f
-                    travel(DirectMotionKind.TURN, input, bodyLength) * contribution
-                } else travel(mode.kind, input, bodyLength)
+                if (clothTurnCarrier) return@drive null
+                val travel = travel(edit, mode.kind, input, bodyLength)
                 when {
                     abs(travel) >= MIN_TRAVEL -> Drive(input.id, travel)
                     input.id in edit.forcedInputs && forcedChannel(mode.kind, input, edit) ->
@@ -84,10 +83,22 @@ internal object DirectPendulumCompiler {
             val weightBudget = if (lean) ANGLE_INPUT_WEIGHT else TRANSLATION_INPUT_WEIGHT
             val links = drives.map { d -> PhysicsInput(d.id, (abs(d.travel) / amount * weightBudget).toFloat(),
                 type, reflect = (d.travel > 0f) != lean) }
+            // The freed roll budget should not make the same measured lateral motion much stronger.
+            // Keep its share in the closed-form amplitude calibration without wiring an extra input.
+            val reserved = if (edit.kind == SimKind.HAIR && mode.kind == DirectMotionKind.SWAY) {
+                inputs.filter { it.id in angularInputs }.map { input ->
+                    abs(travel(edit, DirectMotionKind.TURN, input, bodyLength)) * ROLL_TRAVEL_RESERVE
+                }.filter { it >= MIN_TRAVEL }
+            } else emptyList()
+            val totalTravel = amount + reserved.sumOf { it.toDouble() }
+            val translationShare = (amount / totalTravel).toFloat()
+            val rmsTravel = sqrt(drives.sumOf { it.travel.toDouble() * it.travel } +
+                reserved.sumOf { it.toDouble() * it })
+            val effectiveWeight = weightBudget * maxOf(0.83, rmsTravel / totalTravel)
             val frequencyScale = when (mode.kind) {
                 DirectMotionKind.FOLLOW_THROUGH -> 0.74f
                 DirectMotionKind.COMPRESSION -> 1.24f
-                DirectMotionKind.TURN -> if (lean) 1f else 1.15f
+                DirectMotionKind.TURN -> if (lean) 1.55f else 1.15f
                 DirectMotionKind.SWAY -> if (edit.kind == SimKind.HAIR) 1.08f else 1f
             }
             val dampingScale = when (mode.kind) {
@@ -98,7 +109,21 @@ internal object DirectPendulumCompiler {
             }
             val frequency = mode.frequencyHz * frequencyScale
             val segment = segment(frequency, mode.dampingRatio * dampingScale, step)
-            val rangeScale = scale(segment, frequency, step, links, edit.kind, mode.kind)
+            val driveScale = when {
+                edit.kind == SimKind.CLOTH && mode.kind == DirectMotionKind.TURN && bodyLength > 0f ->
+                    // The turn key spans a broad bend. Retain the actual lever arm of a small tilt.
+                    (drives.maxOf { abs(it.travel) } / (0.35f * bodyLength)).coerceAtMost(1f)
+                edit.kind == SimKind.HAIR && mode.kind == DirectMotionKind.SWAY && mode.reachPx > 0f -> {
+                    // A long lock should only use its full bend when the scalp or the rig shape
+                    // drives it sufficiently far. Normalized Cubism inputs alone lose this ratio.
+                    val travel = drives.maxOf { abs(it.travel) }
+                    (2.7f * travel / mode.reachPx).coerceIn(0.2f, 1f)
+                }
+                else -> 1f
+            }
+            val geometryTravel = driveScale * translationShare
+            val rangeScale = scale(segment, frequency, step, lean, effectiveWeight, edit.kind, mode.kind) * geometryTravel
+            onDriveScale(mode.parameter, OUTPUT_HEADROOM * geometryTravel)
             val id = if (mode.parameter == SimGenerator.verticalParameterId(edit)) SimGenerator.verticalPhysicsId(edit) else {
                 side++
                 if (side == 1) base else "${base}_$side"
@@ -119,8 +144,14 @@ internal object DirectPendulumCompiler {
         }
     }
 
-    private fun travel(kind: DirectMotionKind, input: SimKinematics.Input, bodyLength: Float): Float {
+    private fun travel(edit: RigSimEdit, kind: DirectMotionKind, input: SimKinematics.Input, bodyLength: Float): Float {
         if (!input.moves) return 0f
+        val declaredAngle = edit.inputs.any { it.parameter == input.id && it.type == PhysicsSourceType.ANGLE }
+        // The root's arc under a roll is not a second lateral load. Gravity acts on the
+        // core turn while angular acceleration can still pull the loose tips.
+        if (edit.kind == SimKind.HAIR && declaredAngle && kind == DirectMotionKind.SWAY) return 0f
+        // Procrustes can read an apparent root angle from a sideways warp. It is not a turn load.
+        if (kind == DirectMotionKind.TURN && edit.kind == SimKind.CLOTH && !declaredAngle && !input.rigid) return 0f
         fun acrossRange(axis: Int): Float {
             val slope = input.slope(axis) * input.halfRange
             if (abs(slope) > 1e-4f) return slope
@@ -151,7 +182,9 @@ internal object DirectPendulumCompiler {
             DirectMotionKind.COMPRESSION ->
                 if (vertical >= maxOf(lateral, rotation) * 0.48f ||
                     !input.rigid && !input.sideways && rotation < input.motion * 0.8f) withReshape(y, !input.sideways) else 0f
-            DirectMotionKind.FOLLOW_THROUGH -> sway().takeIf { abs(it) >= MIN_TRAVEL } ?: turning()
+            DirectMotionKind.FOLLOW_THROUGH ->
+                if (edit.kind == SimKind.HAIR && declaredAngle) 0.55f * turning()
+                else sway().takeIf { abs(it) >= MIN_TRAVEL } ?: turning()
         }
     }
 
@@ -177,11 +210,11 @@ internal object DirectPendulumCompiler {
         segment: PhysicsSegment,
         frequencyHz: Float,
         step: Double,
-        links: List<PhysicsInput>,
+        lean: Boolean,
+        effectiveWeight: Double,
         kind: SimKind,
         motion: DirectMotionKind,
     ): Float {
-        val lean = links.first().type == PhysicsSourceType.ANGLE
         val response = RootResponse(segment, step, lean)
         val frequencies = doubleArrayOf(0.45, 0.75, 1.25, 1.8, 2.5,
             frequencyHz * 0.87, frequencyHz.toDouble(), frequencyHz * 1.12)
@@ -200,8 +233,6 @@ internal object DirectPendulumCompiler {
         }
         val transient = if (lean) response.tiltPeak() else response.rampPeak((attack / step).roundToInt().coerceAtLeast(1))
         val peak = maxOf(transient, steady * sustained)
-        val weightBudget = if (lean) ANGLE_INPUT_WEIGHT else TRANSLATION_INPUT_WEIGHT
-        val effectiveWeight = maxOf(sqrt(links.sumOf { it.weight.toDouble() * it.weight }), weightBudget * 0.83)
         val carrier = if (lean) normalization.angleMax * (PI / 180.0) else normalization.positionMax / segment.length.toDouble()
         val normalizedTravel = carrier * effectiveWeight / 100.0
         return ((SimGenerator.MODE_RANGE * OUTPUT_HEADROOM) / (peak * normalizedTravel).coerceAtLeast(0.03)).toFloat()

@@ -183,6 +183,7 @@ PSD2LIVE_TOOLS=1 PSD2LIVE_SAMPLE=ds ./gradlew test --tests "io.github.psd2live.t
 | `ModelProfileTool.sample` | 生成模型（无骨架和自动骨架）的分段运动剖面、身体图层与自动骨骼 | `model-profile/<示例>.txt` |
 | `SkeletonAutoViewTool.view` | 把自动骨架叠画在示例上并打印每根骨骼，检查关节位置与分叉；`PSD2LIVE_SAMPLES` 逗号分隔多个示例或 PSD 路径，`PSD2LIVE_ZOOM=左,上,右,下`（画布像素）裁出局部 | `skeleton-auto/<示例>.png` |
 | `SimBakeSuite` | 按模型预设生成后发、前发、服装等物理体（另加顶部 10% 固定的后发），用旧方法和逐输入方法烘焙，在没参与拟合的动作（类面捕跟随、歪头、内置动作、逐输入阶跃、转头、拖动、摇晃）上对比参考模拟与导出模型的视觉指标，见[模拟与烘焙](SIMULATION.md) | `build/tools/sim-bake/<样例>/`：`summary.md`、每个设置的 JSON、尖端轨迹图 |
+| `DirectSimulationReviewTool.exportedAnimations` | 同一输入播放完整 XPBD 或 MOC3 与物理文件导出读回。默认使用真实预设和 5 个关键形。设置 `PSD2LIVE_DIRECT_REVIEW_TRACK=xpbd` 记录 60 Hz 完整模拟，读回时用 `PSD2LIVE_DIRECT_REVIEW_REFERENCE_OUT` 指向参考输出以逐顶点比较。用 `PSD2LIVE_DIRECT_REVIEW_FIXTURE=controlled` 单独测强腰部旋转，或用 `PSD2LIVE_DIRECT_REVIEW_KEYS=9` 检查关键形密度。设置 `PSD2LIVE_DIRECT_REVIEW_MIX_ANALYSIS=1` 记录混合段的逐轴位移叠加、限重和三阶帧差。用 `PSD2LIVE_DIRECT_REVIEW_MIX_ONLY=1` 只运行混合段 | `build/tools/direct-simulation/` 中的 25 fps 图像序列、逐帧 CSV、导出模型与参考轨迹 |
 | `SimRootDofExperiment` | 检验物体是否只响应根部的平移与旋转：每个输入带动根部多少、额外改变多少形状，真实驱动与刚体驱动、不同幅度、同样根部运动的不同输入之间的差别 | `build/tools/sim-root-dof/<样例>.md` |
 | `SimBakeProfileTool` | `tml` 后发单线程与多线程烘焙各一次，按进度标记分段计时并对所有线程采样 | 标准输出 |
 | `PendulumKernelTool` | 摆锤数组内核（精确与快速模式）与 `PhysicsEngine` 每帧耗时及偏差 | 标准输出 |

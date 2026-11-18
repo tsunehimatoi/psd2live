@@ -13,13 +13,18 @@ internal object DirectClothShapes {
     fun build(scene: SimScene, keys: FloatArray, check: () -> Unit): List<DirectSpatialMode> {
         val cloth = Cloth(scene, check)
         if (cloth.freeCount == 0) return emptyList()
+        val neutral = FloatArray(scene.state.count * 2)
+        val sway = keys.map { key ->
+            check()
+            if (key == 0f) neutral.copyOf() else cloth.displace(DirectMotionKind.SWAY, key, check)
+        }
         return DirectMotionKind.entries.map { kind ->
-            val offsets = keys.map { key ->
+            val offsets = if (kind == DirectMotionKind.SWAY) sway else keys.mapIndexed { index, key ->
                 check()
-                if (key == 0f) FloatArray(scene.state.count * 2) else cloth.displace(kind, key, check)
+                if (key == 0f) neutral.copyOf() else cloth.displace(kind, key, check, sway[index])
             }
             val (frequency, damping) = cloth.response(offsets.first(), offsets.last())
-            DirectSpatialMode(kind, offsets, frequency, damping)
+            DirectSpatialMode(kind, keys, offsets, frequency, damping)
         }
     }
 
@@ -43,6 +48,9 @@ internal object DirectClothShapes {
         private val downward = DoubleArray(state.count)
         private val across = DoubleArray(state.count)
         private val depth = DoubleArray(state.count)
+        private val grainX = DoubleArray(state.count)
+        private val grainY = DoubleArray(state.count) { -1.0 }
+        private val representative: IntArray
         private val extent: Double
         private val masses: DoubleArray
         private val damping: DoubleArray
@@ -69,6 +77,8 @@ internal object DirectClothShapes {
             var free = 0
             for (p in parent.indices) if (root(parent, p) == p && !pinned[p]) row[p] = free++
             for (p in parent.indices) row[p] = row[root(parent, p)]
+            representative = IntArray(free)
+            for (p in row.indices) if (row[p] >= 0) representative[row[p]] = p
             val particleMass = DoubleArray(state.count) { 1.0 / state.invMass[it].coerceAtLeast(1e-9f) }
             masses = DoubleArray(free)
             damping = DoubleArray(free)
@@ -80,9 +90,12 @@ internal object DirectClothShapes {
             }
 
             val path = DoubleArray(state.count)
+            val anchor = IntArray(state.count) { -1 }
             val attachments = solver.longRange
             for (i in 0 until attachments.size) {
-                path[attachments.particle[i]] = attachments.maxDistance[i] / (1.0 + material.slack)
+                val p = attachments.particle[i]
+                path[p] = attachments.maxDistance[i] / (1.0 + material.slack)
+                anchor[p] = attachments.root[i]
             }
             val stretch = solver.stretch
             // Two panels welded into one garment rotate about the same waist, while disconnected
@@ -171,6 +184,65 @@ internal object DirectClothShapes {
             }
             matrix = ElasticMatrix(diagonal, Array(free) { lower[it].keys.toIntArray() },
                 Array(free) { lower[it].values.toDoubleArray() }, check)
+            resolveGrain(anchor, check)
+        }
+
+        /** Grain follows the smoothed gradient of distance from the seam, including slanted fabric panels. */
+        private fun resolveGrain(anchor: IntArray, check: () -> Unit) {
+            val gx = DoubleArray(state.count)
+            val gy = DoubleArray(state.count)
+            for (t in areas.indices) {
+                if (t % 256 == 0) check()
+                val area = areas[t]
+                if (abs(area) < 0.01) continue
+                val a = triangles.a[t]
+                val b = triangles.b[t]
+                val c = triangles.c[t]
+                val alongB = depth[b] - depth[a]
+                val alongC = depth[c] - depth[a]
+                val x = (alongB * (state.y[c] - state.y[a]) - alongC * (state.y[b] - state.y[a])) / area
+                val y = (alongC * (state.x[b] - state.x[a]) - alongB * (state.x[c] - state.x[a])) / area
+                val length = hypot(x, y)
+                if (length < 1e-7) continue
+                val weight = abs(area) / length
+                val wx = weight * x
+                val wy = weight * y
+                gx[a] += wx
+                gx[b] += wx
+                gx[c] += wx
+                gy[a] += wy
+                gy[b] += wy
+                gy[c] += wy
+            }
+            val rhsX = DoubleArray(freeCount)
+            val rhsY = DoubleArray(freeCount)
+            for (p in row.indices) {
+                if (p % 256 == 0) check()
+                val j = row[p]
+                if (j < 0) continue
+                val a = anchor[p]
+                val dx = if (a >= 0) (state.x[p] - state.anchorX[a]).toDouble() else horizontal[p]
+                val dy = if (a >= 0) (state.y[p] - state.anchorY[a]).toDouble() else -downward[p]
+                val chord = hypot(dx, dy)
+                val fallX = if (chord > 1e-5) dx / chord else 0.0
+                val fallY = if (chord > 1e-5) dy / chord else -1.0
+                val grad = hypot(gx[p], gy[p])
+                val useGradient = grad > 1e-7 && gx[p] * fallX + gy[p] * fallY > 0.0
+                val px = if (useGradient) 0.78 * gx[p] / grad + 0.22 * fallX else fallX
+                val py = if (useGradient) 0.78 * gy[p] / grad + 0.22 * fallY else fallY
+                rhsX[j] += loadGain[p] * px
+                rhsY[j] += loadGain[p] * py
+            }
+            val sx = matrix.solve(rhsX, check)
+            val sy = matrix.solve(rhsY, check)
+            for (p in row.indices) {
+                val j = row[p]
+                if (j < 0) continue
+                val length = hypot(sx[j], sy[j])
+                if (length < 1e-7) continue
+                grainX[p] = sx[j] / length
+                grainY[p] = sy[j] / length
+            }
         }
 
         private fun join(parent: IntArray, a: Int, b: Int) {
@@ -191,7 +263,7 @@ internal object DirectClothShapes {
             return canonical
         }
 
-        fun displace(kind: DirectMotionKind, key: Float, check: () -> Unit): FloatArray {
+        fun displace(kind: DirectMotionKind, key: Float, check: () -> Unit, sway: FloatArray? = null): FloatArray {
             val x = DoubleArray(freeCount)
             val y = DoubleArray(freeCount)
             val u = key.toDouble()
@@ -212,21 +284,24 @@ internal object DirectClothShapes {
                         y[j] += loadGain[p] * (width * sin(angle) * 0.36 + drop * (1.0 - cos(angle)))
                     }
                     DirectMotionKind.TURN -> {
-                        // The lower skirt travels through the turn while the trailing edge folds inward.
-                        // A signed load separates that loose edge from the side still under tension.
                         val hem = t * t * (3.0 - 2.0 * t)
                         val side = across[p] * if (u < 0.0) -1.0 else 1.0
                         val loose = maxOf(0.0, -side)
                         val taut = maxOf(0.0, side)
                         val softness = 1.0 - material.area
-                        val section = width * (1.0 + u2 * hem *
-                            (0.045 * taut - (0.065 + 0.26 * softness * loose * loose)))
+                        val pinch = 0.065 + 0.26 * softness * loose * loose - 0.045 * taut
+                        // As the turn deepens, slack fabric gathers along its grain before the
+                        // section rotates. The trailing side gathers farther than the tense edge.
+                        val gather = depth[p] * hem * u2 * (0.45 + 0.55 * u2) * softness *
+                            (0.34 + 0.14 * loose - 0.08 * taut)
+                        val section = width * (1.0 - u2 * hem * pinch) - grainX[p] * gather
+                        val shortenedDrop = drop + grainY[p] * gather
                         val angle = u * (0.54 + 0.07 * u2) * flexibility * t.pow(0.85)
                         val edgeTravel = u * u2 * (2.0 - u2) * extent * (0.12 + 0.12 * softness) *
                             t * t * (1.3 - 0.3 * t) * loose * loose
                         val edgeLift = extent * 0.026 * softness * u2 * hem * side
-                        x[j] += loadGain[p] * (section * cos(angle) - width + drop * sin(angle) + edgeTravel)
-                        y[j] += loadGain[p] * (section * sin(angle) + drop * (1.0 - cos(angle)) + edgeLift)
+                        x[j] += loadGain[p] * (section * cos(angle) - width + shortenedDrop * sin(angle) + edgeTravel)
+                        y[j] += loadGain[p] * (section * sin(angle) + drop - shortenedDrop * cos(angle) + edgeLift)
                     }
                     DirectMotionKind.COMPRESSION -> {
                         // Closing a fold travels farther than opening it. An even, fourth-order term
@@ -235,10 +310,17 @@ internal object DirectClothShapes {
                         val u4 = u2 * u2
                         val fold = (0.09 + 0.025 * softness) * u + (0.009 + 0.006 * softness) * u4
                         val flare = 0.055 * u + 0.027 * u4
+                        // Concentrate the shortening in deep folds and keep the upper panel under tension.
                         val ease = t * (0.42 + 0.58 * t)
-                        val edge = 0.78 + 0.47 * across[p] * across[p]
-                        x[j] += loadGain[p] * width * flare * ease * (1.15 - 0.55 * material.area)
-                        y[j] += loadGain[p] * extent * fold * ease * edge * flexibility
+                        val foldDepth = t * t * (0.55 + 0.45 * t)
+                        val edge = 0.43 + 0.82 * across[p] * across[p]
+                        val along = extent * fold * foldDepth * edge * flexibility
+                        val gx = grainX[p]
+                        val gy = grainY[p]
+                        val normalWidth = -width * gy - drop * gx
+                        val acrossGrain = normalWidth * flare * ease * (1.15 - 0.55 * material.area)
+                        x[j] += loadGain[p] * (-gx * along - gy * acrossGrain)
+                        y[j] += loadGain[p] * (-gy * along + gx * acrossGrain)
                     }
                     DirectMotionKind.FOLLOW_THROUGH -> {
                         // A second response bends the free hem below the main panel. Its two sides
@@ -256,11 +338,26 @@ internal object DirectClothShapes {
             }
             val dx = matrix.solve(x, check)
             val dy = matrix.solve(y, check)
+            if (kind == DirectMotionKind.FOLLOW_THROUGH && sway != null) removeSharedSweep(dx, sway)
             preserveArea(dx, dy, check)
             return FloatArray(row.size * 2) { coordinate ->
                 val j = row[coordinate / 2]
                 if (j < 0) 0f else (if (coordinate % 2 == 0) dx[j] else dy[j]).toFloat()
             }
+        }
+
+        /** Leave the free-edge mode with its own shape instead of replaying the primary horizontal sweep. */
+        private fun removeSharedSweep(x: DoubleArray, sway: FloatArray) {
+            var projection = 0.0
+            var energy = 0.0
+            for (j in x.indices) {
+                val sweep = sway[representative[j] * 2].toDouble()
+                projection += masses[j] * x[j] * sweep
+                energy += masses[j] * sweep * sweep
+            }
+            if (energy <= 1e-10) return
+            val scale = projection / energy
+            for (j in x.indices) x[j] -= scale * sway[representative[j] * 2]
         }
 
         /** Fix thin triangle folds locally so one small pleat does not damp the whole garment. */

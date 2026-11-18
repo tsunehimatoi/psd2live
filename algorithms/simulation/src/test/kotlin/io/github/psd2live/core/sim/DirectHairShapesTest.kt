@@ -15,6 +15,7 @@ import org.umamo.runtime.model.VertexGroupKind
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -65,6 +66,68 @@ class DirectHairShapesTest {
         }
         assertTrue(turn.offsets.first()[11] - turn.offsets.first()[9] < 0f)
         assertTrue(turn.offsets.last()[11] - turn.offsets.last()[9] > 0f)
+        assertTrue((turn.offsets.first()[11] + turn.offsets.first()[9]) * 0.5f > 10f)
+        assertTrue((turn.offsets.last()[11] + turn.offsets.last()[9]) * 0.5f > 10f)
+    }
+
+    @Test fun swayCarriesTheStrandTurnChangesItsAngleAndFollowThroughCounterBends() {
+        val scene = strands(length = 100f, curve = false)
+        val finerKeys = FloatArray(9) { (it - 4) / 4f }
+        val modes = DirectHairShapes.build(scene, finerKeys) {}.associateBy { it.kind }
+        val sway = modes.getValue(DirectMotionKind.SWAY).offsets.last()
+        val turn = modes.getValue(DirectMotionKind.TURN).offsets.last()
+        val follow = modes.getValue(DirectMotionKind.FOLLOW_THROUGH).offsets.last()
+        val tipCenterX: (FloatArray) -> Float = { (it[8] + it[10]) * 0.5f }
+        val tipTilt: (FloatArray) -> Float = { it[11] - it[9] }
+        assertTrue(tipCenterX(sway) > 0f && tipCenterX(turn) > 0f)
+        assertTrue(tipTilt(turn) > 2f * (tipTilt(sway) + tipTilt(follow)))
+        assertTrue(follow[4] + follow[6] < -0.5f && tipCenterX(follow) > 0f)
+        val mixedX = 12f + (sway[10] - sway[8]) + (turn[10] - turn[8]) + (follow[10] - follow[8])
+        val mixedY = tipTilt(sway) + tipTilt(turn) + tipTilt(follow)
+        assertTrue(hypot(mixedX, mixedY) in 11.4f..13.8f)
+        assertTrue(modes.values.all { it.offsets[4].all { v -> v == 0f } })
+    }
+
+    @Test fun fiveTurnKeysLimitSlopeChangesAndKeepTheirEndCurves() {
+        for (curve in listOf(false, true)) {
+            val scene = strands(length = 100f, curve = curve)
+            val denseKeys = FloatArray(9) { (it - 4) / 4f }
+            val dense = DirectHairShapes.build(scene, denseKeys) {}.single { it.kind == DirectMotionKind.TURN }
+            val smooth = DirectHairShapes.build(scene, keys) {}.single { it.kind == DirectMotionKind.TURN }
+            assertContentEquals(floatArrayOf(-1f, -0.20f, 0f, 0.20f, 1f), smooth.keys)
+            assertContentEquals(dense.offsets.first(), smooth.offsets.first())
+            assertContentEquals(dense.offsets.last(), smooth.offsets.last())
+            for (i in smooth.offsets[0].indices) {
+                val nearSlope = (smooth.offsets[3][i] - smooth.offsets[1][i]) / (smooth.keys[3] - smooth.keys[1])
+                val totalSlope = (smooth.offsets.last()[i] - smooth.offsets.first()[i]) * 0.5f
+                assertEquals(totalSlope, nearSlope, 1e-5f)
+            }
+            fun maxSlopeJump(at: FloatArray, forms: List<FloatArray>): Float = (1 until at.lastIndex).maxOf { key ->
+                fun jump(i: Int): Float = (forms[key + 1][i] - forms[key][i]) / (at[key + 1] - at[key]) -
+                    (forms[key][i] - forms[key - 1][i]) / (at[key] - at[key - 1])
+                (forms[key].indices step 2).maxOf { i -> hypot(jump(i), jump(i + 1)) }
+            }
+            val old = maxSlopeJump(keys, dense.offsets.filterIndexed { index, _ -> index % 2 == 0 })
+            val new = maxSlopeJump(smooth.keys, smooth.offsets)
+            assertTrue(new < old * 0.8f, "Turn slope jump: $new px instead of $old px")
+        }
+    }
+
+    @Test fun compressionKeepsOneNeutralTangentAndRetainsTheAsymmetricEnds() {
+        val scene = strands(length = 100f, curve = false)
+        val nine = FloatArray(9) { (it - 4) / 4f }
+        val compression = DirectHairShapes.build(scene, nine) {}.first { it.kind == DirectMotionKind.COMPRESSION }
+        val tip = compression.offsets.map { (it[9] + it[11]) * 0.5f }
+        assertTrue(tip.zipWithNext().all { (a, b) -> b > a })
+        assertEquals(tip[4] - tip[3], tip[5] - tip[4], 0.05f)
+        assertTrue(tip.last() > -2f * tip.first())
+        val five = DirectHairShapes.build(scene, keys) {}.first { it.kind == DirectMotionKind.COMPRESSION }
+        assertTrue(five.keys.contentEquals(floatArrayOf(-1f, -0.25f, 0f, 0.25f, 1f)))
+        val near = five.offsets.map { (it[9] + it[11]) * 0.5f }
+        assertEquals(near[2] - near[1], near[3] - near[2], 0.05f)
+        val singleAxis = DirectHairShapes.build(scene, floatArrayOf(-1f, 0f, 1f)) {}.first { it.kind == DirectMotionKind.COMPRESSION }
+        assertEquals(tip.first(), (singleAxis.offsets.first()[9] + singleAxis.offsets.first()[11]) * 0.5f)
+        assertEquals(tip.last(), (singleAxis.offsets.last()[9] + singleAxis.offsets.last()[11]) * 0.5f)
     }
 
     private fun strands(length: Float, weld: Boolean = false, curve: Boolean = true): SimScene {

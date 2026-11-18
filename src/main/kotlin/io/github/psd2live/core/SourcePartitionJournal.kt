@@ -234,13 +234,13 @@ internal object SourcePartitionJournal {
                     val previous = axis.offsets[source] ?: return axis
                     require(previous.all { it.size == plan.ownerByVertex.size * 2 }) { "Simulation bake has a stale partition topology" }
                     val offsets = ids.mapIndexed { index, id -> id to previous.map { interpolate(it, plan.pieces[index].sources) } }.toMap()
-                    return SimBakedAxis(axis.parameter, axis.keys, axis.offsets - source + offsets)
+                    return axis.withMeshOffsets(axis.offsets - source + offsets)
                 }
                 val bake = sim.bake?.let { previous ->
                     require(previous.vertexCounts[source] == plan.ownerByVertex.size) { "Simulation bake has a stale partition topology" }
                     SimBakeResult.fromJson(previous.withGeometry(
                         previous.vertexCounts - source + ids.mapIndexed { index, id -> id to plan.pieces[index].mesh.vertexCount },
-                        previous.statics.map(::migrate), previous.modes.map { SimBakedMode(migrate(it.axis), it.amplitude, it.energy) }).toJson())
+                        previous.statics.map(::migrate), previous.modes.map { it.withAxis(migrate(it.axis)) }).toJson())
                 }
                 sim.copy(targets = sim.targets.flatMap { if (it == source) ids else listOf(it) }, bake = bake, glueRoles = roles)
             }

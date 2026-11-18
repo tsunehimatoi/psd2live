@@ -10,6 +10,8 @@ import kotlin.math.sqrt
 internal object DirectHairShapes {
     private const val HARD_PIN = 0.5f
     private const val EPS = 1e-4f
+    private const val AXIAL_NEUTRAL_RANGE = 0.25
+    private const val TURN_NEUTRAL_RANGE = 0.20f
     private val nodes = doubleArrayOf(0.1127016654, 0.5, 0.8872983346)
     private val weights = doubleArrayOf(5.0 / 18.0, 8.0 / 18.0, 5.0 / 18.0)
 
@@ -59,16 +61,38 @@ internal object DirectHairShapes {
         return DirectMotionKind.entries.map { kind ->
             check()
             val response = response(scene, strands, depth, kind)
-            val forms = keys.map { key ->
+            val smoothTurn = kind == DirectMotionKind.TURN && keys.size == 5
+            val neutralRange = when {
+                smoothTurn -> TURN_NEUTRAL_RANGE
+                kind == DirectMotionKind.COMPRESSION && keys.size == 5 -> AXIAL_NEUTRAL_RANGE.toFloat()
+                else -> 0f
+            }
+            val axisKeys = if (neutralRange > 0f) floatArrayOf(keys.first(), -neutralRange, 0f, neutralRange, keys.last()) else keys
+            val forms = axisKeys.mapIndexed { index, key ->
                 val offsets = FloatArray(state.count * 2)
-                if (key != 0f) {
+                if (key != 0f && (!smoothTurn || index == 0 || index == axisKeys.lastIndex)) {
                     check()
                     for (strand in strands) writeStrand(scene, strand, depth, kind, key, offsets)
                     enforceWelds(offsets, seams, pins)
                 }
                 offsets
             }
-            DirectSpatialMode(kind, forms, response.hz, response.damping)
+            if (smoothTurn) {
+                // The odd component follows one angular tangent. Distribute the even shortening
+                // and curl so the three changes of slope have the same magnitude.
+                val negative = forms.first()
+                val positive = forms.last()
+                val angularScale = TURN_NEUTRAL_RANGE * 0.5f
+                val curlScale = angularScale / (3f - 2f * TURN_NEUTRAL_RANGE)
+                for (i in negative.indices) {
+                    if ((i and 255) == 0) check()
+                    val turn = (positive[i] - negative[i]) * angularScale
+                    val curl = (positive[i] + negative[i]) * curlScale
+                    forms[1][i] = curl - turn
+                    forms[3][i] = curl + turn
+                }
+            }
+            DirectSpatialMode(kind, axisKeys, forms, response.hz, response.damping)
         }
     }
 
@@ -107,6 +131,17 @@ internal object DirectHairShapes {
     private fun writeStrand(scene: SimScene, strand: Strand, depth: FloatArray, kind: DirectMotionKind, key: Float, offsets: FloatArray) {
         val state = scene.state
         val pins = scene.solver.pinWeight
+        // Give the turn most of the section's change of orientation. Sway and rebound mainly move
+        // the section center, so concurrent channels do not rotate the same curl twice.
+        val section = when (kind) {
+            DirectMotionKind.SWAY -> 0.38
+            DirectMotionKind.TURN -> 1.0
+            DirectMotionKind.FOLLOW_THROUGH -> 0.15
+            DirectMotionKind.COMPRESSION -> 0.0
+        }
+        val axial = if (kind == DirectMotionKind.COMPRESSION) axialTravel(key.toDouble(), scene.edit.material.area) else 0.0
+        val spreadProgress = ((key - AXIAL_NEUTRAL_RANGE) / (1.0 - AXIAL_NEUTRAL_RANGE)).coerceIn(0.0, 1.0)
+        val spreadWeight = spreadProgress * spreadProgress * (3.0 - 2.0 * spreadProgress)
         for (index in strand.vertices) {
             val u = (depth[index] / strand.reach).toDouble().coerceIn(0.0, 1.0)
             val free = (1f - pins[index] / HARD_PIN).coerceIn(0f, 1f)
@@ -119,11 +154,9 @@ internal object DirectHairShapes {
             val dx: Double
             val dy: Double
             if (kind == DirectMotionKind.COMPRESSION) {
-                val soft = 1f - scene.edit.material.area
-                val amount = if (key > 0f) 0.095f + 0.045f * soft else 0.037f + 0.018f * soft
-                val shorten = key * amount * u * u
+                val shorten = axial * u * u
                 val compressed = u * (1.0 - shorten)
-                val spread = if (key > 0f) 1.4 * shorten * (1.0 - 0.5 * u) else 0.0
+                val spread = 1.4 * shorten * (1.0 - 0.5 * u) * spreadWeight
                 dx = compressed * (strand.linearX + compressed * strand.curveX) - centerX + crossX * spread
                 dy = compressed * (strand.linearY + compressed * strand.curveY) - centerY + crossY * spread
             } else {
@@ -139,17 +172,47 @@ internal object DirectHairShapes {
                     centerShiftX += u * weights[k] * (c * tangentX - sine * tangentY)
                     centerShiftY += u * weights[k] * (sine * tangentX + c * tangentY)
                 }
-                // Transport the artwork with each section. Inside the turn, neighboring sections now
-                // converge; outside, they open. The curl widths are carried by the section rotation.
-                val a = angle(kind, key, u, strand.linearX + 2.0 * u * strand.curveX, strand.linearY + 2.0 * u * strand.curveY)
+                val tangentX = strand.linearX + 2.0 * u * strand.curveX
+                val tangentY = strand.linearY + 2.0 * u * strand.curveY
+                val a = section * angle(kind, key, u, tangentX, tangentY)
                 val c = cos(a) - 1.0
                 val sine = sin(a)
-                dx = centerShiftX + c * crossX - sine * crossY
-                dy = centerShiftY + sine * crossX + c * crossY
+                // As a descending lock rolls across the image plane its projected length shortens.
+                // The inner side bunches more while the outer edge opens around its own section.
+                val outer = if (kind == DirectMotionKind.TURN) {
+                    val normal = (-tangentY * crossX + tangentX * crossY) / hypot(tangentX, tangentY).coerceAtLeast(1e-6)
+                    val reach = ((kotlin.math.abs(normal) / strand.reach - 0.08) / 0.28).coerceIn(0.0, 1.0)
+                    Math.copySign(reach * reach * (3.0 - 2.0 * reach), normal) * sine
+                } else 0.0
+                val inset = if (kind == DirectMotionKind.TURN) -u * c * (0.88 - 0.28 * outer) else 0.0
+                val breadth = if (kind == DirectMotionKind.TURN) 1.0 + 0.18 * outer * -c else 1.0
+                val folded = u - inset
+                dx = centerShiftX + (c * crossX - sine * crossY) * breadth +
+                    (breadth - 1.0) * crossX + folded * (strand.linearX + folded * strand.curveX) - centerX
+                dy = centerShiftY + (sine * crossX + c * crossY) * breadth +
+                    (breadth - 1.0) * crossY + folded * (strand.linearY + folded * strand.curveY) - centerY
             }
             offsets[2 * index] = (fade * dx).toFloat()
             offsets[2 * index + 1] = (fade * dy).toFloat()
         }
+    }
+
+    /** Exact rest tangent on both sides, followed by a monotone cubic to the asymmetric endpoints. */
+    private fun axialTravel(key: Double, area: Float): Double {
+        val soft = 1.0 - area
+        val contraction = 0.095 + 0.045 * soft
+        val release = 0.037 + 0.018 * soft
+        val neutralSlope = (contraction + release) * 0.5
+        val reach = kotlin.math.abs(key)
+        if (reach <= AXIAL_NEUTRAL_RANGE) return key * neutralSlope
+        val outer = if (key > 0.0) contraction else release
+        val interval = 1.0 - AXIAL_NEUTRAL_RANGE
+        val inner = AXIAL_NEUTRAL_RANGE * neutralSlope
+        val t = (reach - AXIAL_NEUTRAL_RANGE) / interval
+        val blend = t * t * (3.0 - 2.0 * t)
+        val fromSlope = t * (1.0 - t) * (1.0 - t) * interval * neutralSlope
+        val toSlope = t * t * (t - 1.0) * (outer - inner) * 0.5
+        return Math.copySign(inner + (outer - inner) * blend + fromSlope + toSlope, key)
     }
 
     private fun angle(kind: DirectMotionKind, key: Float, t: Double, tangentX: Double, tangentY: Double): Double {
@@ -169,7 +232,9 @@ internal object DirectHairShapes {
         DirectMotionKind.SWAY -> t * (3f - t * (3f - t))
         // The scalp holds the tangent while the loose end can continue turning as the head changes direction.
         DirectMotionKind.TURN -> t * t * (3f - 2f * t)
-        DirectMotionKind.FOLLOW_THROUGH -> t * t * t * t
+        // Slope of t²(t - 0.7), normalized at the tip. The clamped root has zero offset and slope.
+        // Its small inner counterbend leaves the loose tip to finish a reversal on its own.
+        DirectMotionKind.FOLLOW_THROUGH -> t * (3f * t - 1.4f) / 1.6f
         DirectMotionKind.COMPRESSION -> t * t
     }
 
