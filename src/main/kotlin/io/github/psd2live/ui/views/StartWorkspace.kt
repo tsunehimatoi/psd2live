@@ -517,11 +517,15 @@ internal fun StartDetailsPanel(state: PSD2LiveState, viewModel: PSD2LiveViewMode
 	}
 	Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
 		when (viewModel.startSection) {
-			StartSection.GENERATE -> PresetInspector(viewModel.startChoices, model.selection, enabled, viewModel::setStartChoices)
+			StartSection.GENERATE -> {
+				ImportMeshSplitOption(state.autoDetectMeshSplitsOnImport, enabled, viewModel)
+				PresetInspector(viewModel.startChoices, model.selection, enabled, viewModel::setStartChoices)
+			}
 			StartSection.LAYOUT -> LayoutDetails()
 			StartSection.CMO3 -> Cmo3Details(enabled && state.previewModel != null, actions.onReplaceCmo3)
 			StartSection.RECENT -> RecentInspector(
 				file = files.selectedRecent,
+				checkMeshSplits = state.autoDetectMeshSplitsOnImport,
 				choices = viewModel.startChoices,
 				selection = model.selection,
 				enabled = enabled,
@@ -1520,6 +1524,7 @@ private fun HairRow(label: String, mode: HairMode, enabled: Boolean, onChange: (
 @Composable
 private fun RecentInspector(
 	file: RecentFile?,
+	checkMeshSplits: Boolean,
 	choices: StartPresetChoices,
 	selection: StartSelection,
 	enabled: Boolean,
@@ -1558,9 +1563,16 @@ private fun RecentInspector(
 		}
 		if (file.kind == RecentFileKind.PSD) {
 			Box(Modifier.fillMaxWidth().height(0.5.dp).background(colors.divider))
+			ImportMeshSplitOption(checkMeshSplits, enabled, viewModel)
 			PresetInspector(choices, selection, enabled, onChoicesChange)
 		}
 	}
+}
+
+@Composable
+private fun ImportMeshSplitOption(checked: Boolean, enabled: Boolean, viewModel: PSD2LiveViewModel) {
+	CheckRow(tr("editor.meshSplit.promptOnImport"), checked, enabled, viewModel::setAutoDetectMeshSplitsOnImport)
+	InspectorNote(tr("editor.meshSplit.promptOnImport.detail"))
 }
 
 @Composable

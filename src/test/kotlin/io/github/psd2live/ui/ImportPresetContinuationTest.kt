@@ -32,7 +32,7 @@ class ImportPresetContinuationTest {
         assertNull(pending.take(1, blocked = false))
     }
 
-    @Test fun failedCheckOrCancelledImportDoesNotBind() {
+    @Test fun cancelledImportDoesNotBind() {
         val pending = ImportPresetContinuation()
         pending.start(1, choices)
         pending.clear()

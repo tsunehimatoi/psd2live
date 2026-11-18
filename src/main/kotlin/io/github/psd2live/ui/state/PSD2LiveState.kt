@@ -671,6 +671,8 @@ data class PSD2LiveState(
     }
 	val darkTheme: Boolean get() = toolColors.isDark
 
+	internal val canCheckMeshSplits: Boolean
+		get() = previewModel?.let { it.config.rigEdits.importedCmo3 == null } == true
 	val autoDetectMeshSplitsOnImport: Boolean get() = AppPrompt.MESH_SPLITS_ON_IMPORT !in mutedPrompts
 
 	val activeWorkspace: EditorWorkspace

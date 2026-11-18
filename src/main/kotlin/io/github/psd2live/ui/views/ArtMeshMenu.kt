@@ -91,8 +91,9 @@ internal fun ArtMeshMenu(
         if (overridden) add(highlight = editable) { FloatingMenuRow(tr("canvas.drawOrder.reset"),
             { close(); viewModel.resetLayerDrawOrder(ownLayer ?: drawable.id.raw) }, enabled = editable,
             icon = { IconReset(Modifier.size(12.dp), it) }) }
-        add(highlight = editable && drawable.mesh != null) { FloatingMenuRow(tr("canvas.hierarchy.splitMeshComponents"),
-            { close(); viewModel.requestMeshSplit(layerId) }, enabled = editable && drawable.mesh != null,
+        val canCheckMesh = editable && drawable.mesh != null && state.canCheckMeshSplits
+        add(highlight = canCheckMesh) { FloatingMenuRow(tr("canvas.hierarchy.splitMeshComponents"),
+            { close(); viewModel.requestMeshSplit(layerId) }, enabled = canCheckMesh,
             icon = { IconMeshWireframe(it, Modifier.size(12.dp)) }) }
         objectRows(drawable, state, viewModel, editable, close, ::add)
         add(highlight = editable, danger = true) { FloatingMenuRow(tr("canvas.hierarchy.deleteLayer"),

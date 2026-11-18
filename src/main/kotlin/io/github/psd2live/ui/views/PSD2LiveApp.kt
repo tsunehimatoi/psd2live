@@ -341,7 +341,7 @@ private fun FrameWindowScope.PSD2LiveAppContent(
 		}
         val onReanalyzeAction = {
 			if (hasInput && !isBusy) {
-				viewModel.withSavedChanges { viewModel.analyze(discardUnsaved = true) }
+				viewModel.withSavedChanges { viewModel.analyze(discardUnsaved = true, checkImportedMeshSplits = false) }
 			}
 		}
 
@@ -603,6 +603,7 @@ private fun FrameWindowScope.PSD2LiveAppContent(
 						)
 					}
 					AppTitleBar(
+						canScanMeshSplits = state.canCheckMeshSplits,
 						window = window,
 						windowState = windowState,
 						isBusy = isBusy,

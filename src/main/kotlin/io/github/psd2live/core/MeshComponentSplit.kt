@@ -1,5 +1,6 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.algorithms.binding.MeshSplitTopology
 import io.github.psd2live.document.WorkspaceSourceLayer
 import org.umamo.format.art.LayerBounds
 import org.umamo.format.art.LayerId
@@ -142,31 +143,10 @@ internal object MeshComponentSplit {
         val width = source.raster.width
         val height = source.raster.height
         if (width <= 0 || height <= 0 || mesh.indices.size < 6 || mesh.uvs.size != mesh.positions.size) return null
-        val parent = IntArray(mesh.vertexCount) { it }
-        fun find(v: Int): Int {
-            var root = v
-            while (root != parent[root]) root = parent[root]
-            var current = v
-            while (current != root) {
-                val next = parent[current]
-                parent[current] = root
-                current = next
-            }
-            return root
-        }
-        fun union(a: Int, b: Int) { parent[find(a)] = find(b) }
-        val used = BooleanArray(mesh.vertexCount)
-        for (i in mesh.indices.indices step 3) {
-            if (i % 1023 == 0) checkpoint()
-            val a = mesh.indices[i]
-            val b = mesh.indices[i + 1]
-            val c = mesh.indices[i + 2]
-            if (a !in used.indices || b !in used.indices || c !in used.indices) return null
-            used[a] = true; used[b] = true; used[c] = true
-            union(a, b); union(b, c)
-        }
-        val groups = (used.indices).filter { used[it] }.groupBy(::find).values
-        if (groups.size < 2) return null
+        val islands = MeshSplitTopology.connectedIslands(mesh.vertexCount, mesh.indices, checkpoint) ?: return null
+        if (islands.isEmpty()) return null
+        // Preserve source component order for ties in old requests; modifiers keep their own model-space order.
+        val groups = islands.sortedBy { it.vertices.first() }.map { it.vertices.asList() }
         require(local.size == mesh.positions.size && local.all(Float::isFinite))
         fun localX(v: Int) = local[v * 2]
         fun localY(v: Int) = local[v * 2 + 1]

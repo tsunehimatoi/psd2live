@@ -39,7 +39,6 @@ internal fun MeshSplitDialog(
     offer: PSD2LiveViewModel.MeshSplitOffer,
     onSplit: (List<String>, List<Side>) -> Unit,
     onDismiss: () -> Unit,
-    onDismissAll: (() -> Unit)? = null,
     mutedOnImport: Boolean = !AppSettings.autoDetectMeshSplitsOnImport,
     onPromptMutedChange: (AppPrompt, Boolean) -> Unit = { prompt, muted -> AppSettings.setPromptEnabled(prompt, !muted) },
 ) {
@@ -78,14 +77,13 @@ internal fun MeshSplitDialog(
         title = tr("editor.meshSplit.title"),
         onDismiss = onDismiss,
         width = 520.dp,
-        footerStart = {
-            DontShowAgainCheckbox(AppPrompt.MESH_SPLITS_ON_IMPORT, mutedOnImport, onPromptMutedChange,
-                label = tr("prompt.dontShowOnImport"))
-        },
-        footer = {
-            if (onDismissAll != null) {
-                CompactButton(tr("editor.meshSplit.keepAll"), onDismissAll)
+        footerStart = if (offer.fromImport) {
+            {
+                DontShowAgainCheckbox(AppPrompt.MESH_SPLITS_ON_IMPORT, mutedOnImport, onPromptMutedChange,
+                    label = tr("prompt.dontShowOnImport"))
             }
+        } else null,
+        footer = {
             CompactButton(tr("editor.meshSplit.keep"), onDismiss)
             CompactButton(tr("editor.meshSplit.confirm"), { onSplit(generated, sides) }, enabled = valid, isPrimary = true)
         },
