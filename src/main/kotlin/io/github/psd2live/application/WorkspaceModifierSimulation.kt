@@ -52,6 +52,12 @@ internal object WorkspaceModifierSimulation {
             activeProviders += prefix.appliedCapabilities.mapNotNull { it.id }
             val parameters = model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }
             if (instance.parameterProviders.any { (parameter, provider) -> provider !in activeProviders || parameter !in parameters }) continue
+            val held = next.pendingWeightEdits[instance.id]
+            if (!held.isNullOrEmpty()) {
+                if (BakedWeightInput.replayInput(requireNotNull(model.rig.modifierOutput), instance, held) != null) continue
+                // The input changed independently of weight painting. Use normal preparation.
+                next = next.copy(pendingWeightEdits = next.pendingWeightEdits - instance.id)
+            }
             val fingerprint = RigModifierInput.simulationFingerprint(requireNotNull(model.rig.modifierOutput), source)
             val weighted = RigSimulationWeights.apply(model.rig.puppet, instance.config)
             val availableMotions = requireNotNull(model.rig.modifierOutput).clips.mapTo(HashSet()) { it.id }
@@ -92,6 +98,7 @@ internal object WorkspaceModifierSimulation {
     fun unchangedPrefix(before: RigModifierStack, after: RigModifierStack): Int {
         if (before.appliedCapabilities != after.appliedCapabilities) return 0
         return before.instances.zip(after.instances).takeWhile { (a, b) ->
+            before.pendingWeightEdits[a.id] == after.pendingWeightEdits[b.id] &&
             a == b && before.overrides[a.id].orEmpty() == after.overrides[b.id].orEmpty() &&
                 before.appliedNodes[a.id] == after.appliedNodes[b.id] &&
                 before.retryRevisions[a.id] == after.retryRevisions[b.id]

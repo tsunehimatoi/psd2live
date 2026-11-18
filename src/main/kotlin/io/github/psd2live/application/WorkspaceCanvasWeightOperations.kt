@@ -1,6 +1,7 @@
 package io.github.psd2live.application
 
 import kotlinx.serialization.json.*
+import io.github.psd2live.core.CanvasWeightStroke
 
 internal object WorkspaceCanvasWeightSchemas {
     private fun text() = buildJsonObject { put("type", "string"); put("minLength", 1) }
@@ -29,20 +30,22 @@ internal object WorkspaceCanvasWeightSchemas {
         ("action" to buildJsonObject { put("type", "string"); put("const", action) }), listOf("action", "targets", "kind") + required)
     val weights = buildJsonObject {
         put("type", "object"); put("additionalProperties", false)
-        val brushFields = mapOf("points" to array(point, 1, 4096), "radius" to number(0.5f, 4096f), "hardness" to number(0f, 0.95f),
+        val brushFields = mapOf("points" to array(point, 1, CanvasWeightStroke.POINTS_PER_BATCH),
+            "point_batches" to array(array(point, 1, CanvasWeightStroke.POINTS_PER_BATCH), 1, CanvasWeightStroke.MAX_BATCHES), "radius" to number(0.5f, 4096f), "hardness" to number(0f, 0.95f),
             "shape" to choice("circle", "line", "rectangle"), "angle" to number(), "aspect" to number(0.1f, 10f),
             "falloff" to choice("smooth", "sphere", "root", "inverse_square", "sharp", "linear", "constant", "random"),
             "connected_only" to buildJsonObject { put("type", "boolean") })
         // Outer inventory permits fields; branches still strictly delimit each action's fields.
         put("properties", JsonObject(common + brushFields + mapOf("from" to point, "to" to point, "action" to choice("brush", "gradient", "invert"))))
         put("required", JsonArray(listOf("action", "targets", "kind").map(::JsonPrimitive)))
-        put("oneOf", JsonArray(listOf(variant("brush", brushFields, listOf("points", "radius")),
+        put("oneOf", JsonArray(listOf(variant("brush", brushFields - "point_batches", listOf("points", "radius")),
+            variant("brush", brushFields - "points", listOf("point_batches", "radius")),
             variant("gradient", mapOf("from" to point, "to" to point), listOf("from", "to")),
             variant("invert", emptyMap(), emptyList()))))
     }
     fun request(id: String): JsonObject = when (id) {
         "canvas_glue_edit" -> glue
-        "vertex_group_paint" -> obj(mapOf("edit" to weights), listOf("edit"))
+        "vertex_group_paint" -> obj(mapOf("edit" to weights, "auto_bake" to buildJsonObject { put("type", "boolean") }), listOf("edit"))
         else -> error("Unknown canvas weight operation: $id")
     }
 }
@@ -53,7 +56,7 @@ internal fun registerCanvasWeightOperations(registry: WorkspaceOperationRegistry
     val output = s.obj(s.identity + mapOf("applied" to s.constant(false), "changed" to s.array(s.handle(), 1, Int.MAX_VALUE)), s.identity.keys)
     val descriptions = mapOf(
         "canvas_glue_edit" to "Edit the canvas Glue seam using selected current vertex indices: brush extends its welds, remerge rebuilds selected welds (empty selections rebuild both outlines), unglue removes selected welds, and weights paints directional A/B or balanced pull by delta. Every continuous Glue record on the unordered mesh pair retains its own animation channels and order when weights or selected welds are removed. Welds are made where both meshes rest (the default pose, as Cubism's glue), so a weld does nothing at rest; index validation is against the captured candidate. Later atomic batch members see the edited topology.",
-        "vertex_group_paint" to "Paint or invert simulation vertex weights using the canvas algorithms. Targets are current mesh IDs. Brush points and radius use canvas pixels (X right, Y down) at pose; shape, falloff, angle and aspect match the UI tip. connected_only confines the reach to the mesh component under each segment. A stroke uses maximum coverage before add/subtract/set or four smoothing passes. Gradient reaches 1 at from and 0 at to. Omit name to edit the first group of kind or allocate its unique default name. invert skips meshes without that group. Groups remain editor metadata; their baked simulation affects exported models.")
+        "vertex_group_paint" to "Paint or invert simulation vertex weights using the canvas algorithms. Targets are current mesh IDs. Brush points and radius use canvas pixels (X right, Y down) at pose; shape, falloff, angle and aspect match the UI tip. connected_only confines the reach to the mesh component under each segment. A stroke uses maximum coverage before add/subtract/set or four smoothing passes. Long gestures use point_batches (up to 256 arrays of 4096 points); adjacent batches remain one continuous stroke and one undo operation. Coordinates may lie outside the canvas. auto_bake defaults to false; the previous bake stays active until Bake updates it using the painted weights. Gradient reaches 1 at from and 0 at to. Omit name to edit the first group of kind or allocate its unique default name. invert skips meshes without that group. Groups remain editor metadata; their baked simulation affects exported models.")
     for (id in WorkspaceCanvasWeightEdits.supported) {
         val business = WorkspaceCanvasWeightSchemas.request(id)
         val properties = business.getValue("properties").jsonObject + ("state" to s.handle())

@@ -42,6 +42,10 @@ internal data class RigModifierStack(
     val retryRevisions: Map<String, Long> = emptyMap(),
     /** Materialized ordinary stages stay at their original evaluation positions. */
     val appliedNodes: Map<String, AppliedModifierNode> = emptyMap(),
+    /** Authored weights changed; retain saved bakes and enabled state until an explicit Bake. */
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val pendingWeightEdits: Map<String, List<BakedWeightInput>> = emptyMap(),
 ) {
     init {
         require(nextId > 0) { "Invalid modifier ID sequence" }
@@ -71,6 +75,7 @@ internal data class RigModifierStack(
             "Updating a modifier cannot change its identity or algorithm version"
         }
         return copy(instances = instances.toMutableList().apply { set(index, updated) },
+            pendingWeightEdits = if (updated.config != instances[index].config) pendingWeightEdits - id else pendingWeightEdits,
             initializationFailures = if (updated.enabled && updated != instances[index]) initializationFailures - id else initializationFailures)
     }
 
@@ -79,13 +84,13 @@ internal data class RigModifierStack(
         require(id !in appliedNodes) { "Applied content has no running algorithm to replace" }
         val idx = index(id)
         val updated = instances[idx].copy(plugin = plugin, version = version)
-        return copy(instances = instances.toMutableList().apply { set(idx, updated) })
+        return copy(instances = instances.toMutableList().apply { set(idx, updated) }, pendingWeightEdits = pendingWeightEdits - id)
     }
 
     fun remove(id: String): RigModifierStack {
         require(id !in appliedNodes) { "Applied content is ordinary authored content; delete its objects or undo application" }
         index(id)
-        return copy(instances = instances.filterNot { it.id == id }, retiredIds = retiredIds + id)
+        return copy(instances = instances.filterNot { it.id == id }, retiredIds = retiredIds + id, pendingWeightEdits = pendingWeightEdits - id)
     }
 
     /** The index in the resulting list. Validation against providers happens before a candidate is published. */

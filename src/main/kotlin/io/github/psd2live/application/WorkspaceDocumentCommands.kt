@@ -148,7 +148,8 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
                 }, rasterWork.cancellable(context) { fraction, message ->
                     batch?.painting(index, fraction, message) ?: context[WorkspaceJobContext]?.progress(0.05f + 0.75f * fraction, message)
                 }, resources, draftInputs) }
-                draft.copy(document = if (operation.operation in WorkspaceModifierEdits.supported || operation.operation == "modifier_rebind") previews.normalizeMeshEdits(candidate, model)
+                val paintOnly = operation.operation == "vertex_group_paint" && operation.request["auto_bake"]?.jsonPrimitive?.boolean != true
+                draft.copy(document = if (paintOnly || operation.operation in WorkspaceModifierEdits.supported || operation.operation == "modifier_rebind") previews.normalizeMeshEdits(candidate, model)
                     else normalizeCandidate(candidate, model))
             }
         }

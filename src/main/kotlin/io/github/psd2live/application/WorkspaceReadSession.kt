@@ -213,6 +213,9 @@ internal class WorkspaceReadSession(
         val captured = read.runtime.capture ?: return emptyList()
         return io.github.psd2live.core.quality.SkeletonBindingQuality.issues(captured.model.rig.puppet, captured.document.rigEdits.skeleton)
     }
+    override fun simulationBakeStale(sim: io.github.psd2live.core.sim.RigSimEdit): Boolean = capture().let {
+        io.github.psd2live.core.sim.SimulationCatalog.stale(it.document.rigEdits, it.model.rig.puppet, sim)
+    }
     override fun listSimulations(): List<io.github.psd2live.core.sim.RigSimEdit> = io.github.psd2live.core.sim.SimulationCatalog.entries(capture().document.rigEdits)
     override fun physicsFps(): Int = capture().document.rigEdits.physicsFps
     override fun previewSession(): JsonObject = PreviewSessions.encode(pose)
