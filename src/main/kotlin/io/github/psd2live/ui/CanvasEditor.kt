@@ -5815,22 +5815,22 @@ internal class CanvasEditor(
             put("hits_a", JsonArray(hitsA.sorted().map(::JsonPrimitive)))
             put("hits_b", JsonArray(hitsB.sorted().map(::JsonPrimitive)))
         }
-        commitWeightOperations(listOf(io.github.psd2live.application.WorkspaceDocumentOperation("canvas_glue_edit", cmd)))
+        commitWeightOperation(io.github.psd2live.application.WorkspaceDocumentOperation("canvas_glue_edit", cmd))
     }
 
-    /** Preview neutral requests locally; their final materialization uses the captured candidate. */
-    private fun commitWeightOperations(operations: List<io.github.psd2live.application.WorkspaceDocumentOperation>) {
-        if (!editable || operations.isEmpty()) return
+    private fun commitWeightOperation(operation: io.github.psd2live.application.WorkspaceDocumentOperation, localPreview: PuppetModel? = null) {
+        if (!editable) return
         val expected = gestureState ?: viewModel.currentWorkspaceState() ?: return
+        val base = editSource ?: return
+        val generation = state.projectOpenGeneration
         try {
-            val base = editSource ?: return
-            var evaluated = base
-            for (operation in operations) {
-                val commands = io.github.psd2live.application.WorkspaceCanvasWeightEdits.commands(evaluated, operation)
-                evaluated = RigAuthoringJournal.compile(evaluated, commands).first
-            }
-            preview = evaluated; busy = true; error = null
-            viewModel.saveDocumentEdits(expected, "Edited canvas weights", operations) { failure ->
+            preview = localPreview ?: RigAuthoringJournal.compile(base,
+                io.github.psd2live.application.WorkspaceCanvasWeightEdits.commands(base, operation)).first
+            busy = true; error = null
+            val submitted = if (operation.operation == "vertex_group_paint") operation.copy(request =
+                JsonObject(operation.request + ("auto_bake" to JsonPrimitive(viewModel.simulationAutoBake.value)))) else operation
+            viewModel.saveDocumentEdits(expected, "Edited canvas weights", listOf(submitted)) { failure ->
+                if (state.projectOpenGeneration != generation) return@saveDocumentEdits
                 busy = false; preview = null; pending = null; gestureState = null; error = failure
                 endTransformBox()
             }
@@ -5999,7 +5999,8 @@ internal class CanvasEditor(
 
     private fun accumulateWeightStroke(from: Offset, to: Offset, viewport: CanvasViewport) {
         if (weightStrokePoints.isEmpty()) weightStrokePoints += weightCanvasPoint(from, viewport)
-        weightStrokePoints += weightCanvasPoint(to, viewport)
+        val nextPoint = weightCanvasPoint(to, viewport)
+        if (weightStrokePoints.size == 1 || weightStrokePoints.last() != nextPoint) weightStrokePoints += nextPoint
         val reached = weightReach(from, to, viewport)
         val next = weightStroke.toMutableMap()
         for ((id, w) in reached) {
@@ -6024,17 +6025,26 @@ internal class CanvasEditor(
             put("pose", JsonObject(strokePose.mapValues { JsonPrimitive(it.value) }))
             fun point(p: io.github.psd2live.core.CanvasBrushPoint) = JsonArray(listOf(JsonPrimitive(p.x), JsonPrimitive(p.y)))
             if (gradient == null) {
-                put("points", JsonArray(points.map(::point))); put("radius", radius); put("hardness", hardness)
+                val (field, batches) = io.github.psd2live.core.CanvasWeightStroke.encode(points)
+                put(field, batches); put("radius", radius); put("hardness", hardness)
                 put("shape", brushShape.name.lowercase()); put("angle", brushAngle); put("aspect", brushAspect)
                 put("falloff", brushFalloff.name.lowercase()); put("connected_only", connectedOnly)
             } else { put("from", point(weightCanvasPoint(gradient.first, vp))); put("to", point(weightCanvasPoint(gradient.second, vp))) }
+        }
+        // The live gesture already computed coverage. Keep its materialized preview while the
+        // background transaction validates/replays the request against the captured workspace state.
+        val local = targets.fold(model) { current, id ->
+            val values = paintedWeights(id) ?: return@fold current
+            if (paintedGroup(id) == null && values.none { it > 0f }) return@fold current
+            val group = VertexGroup(paintedGroupName(id), DrawableId(id), weightGroupKind, values)
+            VertexGroupJournal.apply(current, VertexGroupJournal.encode(group))
         }
         weightStroke = emptyMap()
         weightGradient = null
         weightStrokePoints.clear()
         weightStrokePose = null
         if (targets.isEmpty() || (gradient == null && points.isEmpty())) return
-        commitWeightOperations(listOf(io.github.psd2live.application.WorkspaceDocumentOperation("vertex_group_paint", buildJsonObject { put("edit", request) })))
+        commitWeightOperation(io.github.psd2live.application.WorkspaceDocumentOperation("vertex_group_paint", buildJsonObject { put("edit", request) }), local)
     }
 
     /** Fills or clears the brushed group on every edited mesh at once. */
@@ -6052,9 +6062,9 @@ internal class CanvasEditor(
     fun invertVertexGroup() {
         val targets = editMeshTargets().map { it.id }
         if (targets.isEmpty()) return
-        commitWeightOperations(listOf(io.github.psd2live.application.WorkspaceDocumentOperation("vertex_group_paint", buildJsonObject { put("edit", buildJsonObject {
+        commitWeightOperation(io.github.psd2live.application.WorkspaceDocumentOperation("vertex_group_paint", buildJsonObject { put("edit", buildJsonObject {
             put("action", "invert"); put("targets", JsonArray(targets.map(::JsonPrimitive))); put("kind", weightGroupKind.jsonName)
-        }) })))
+        }) }))
     }
 
     /** Removes the brushed group from every edited mesh that has it. */

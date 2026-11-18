@@ -44,10 +44,14 @@ internal object WorkspaceMeshPointEdits {
         val evaluation = model.modifierEvaluation ?: return null
         val stack = evaluation.stack
         val tail = stack.instances.takeLastWhile { instance ->
+            val records = stack.overrides[instance.id].orEmpty()
             instance.enabled && instance.type == ModifierAuthorEdits.TYPE && instance.id in stack.appliedNodes &&
-                stack.overrides[instance.id].orEmpty().let { it.isNotEmpty() && it.all { edit -> "mesh_baseline" in edit } }
+                records.any { "mesh_baseline" in it } && records.all { edit ->
+                    "mesh_baseline" in edit || edit["op"]?.jsonPrimitive?.content == VertexGroupJournal.PUT
+                }
         }
-        val edits = tail.flatMap { stack.overrides.getValue(it.id) }
+        // Painted values move with their stage. The fallback weights only need the topology migration.
+        val edits = tail.flatMap { stack.overrides.getValue(it.id) }.filter { "mesh_baseline" in it }
         val meshes = edits.mapTo(hashSetOf()) { it.getValue("id").jsonPrimitive.content }
         if (targets.none { it in meshes }) return null
         val start = stack.instances.indexOfFirst { it.type == "simulation" && it.id !in stack.appliedNodes }
@@ -83,7 +87,7 @@ internal object WorkspaceMeshPointEdits {
 
     /** Weights painted on a mesh that has already been edited must use that vertex numbering.
      * Ordinary weight gestures continue through the existing weight journal. */
-    fun recordWeights(document: WorkspaceDocument, model: RigPreviewModel, edits: JsonArray): WorkspaceDocument? {
+    fun recordWeights(document: WorkspaceDocument, model: RigPreviewModel, edits: JsonArray, autoBake: Boolean = false): WorkspaceDocument? {
         val evaluation = model.modifierEvaluation ?: return null
         if (edits.isEmpty() || edits.any { it.jsonObject["op"]?.jsonPrimitive?.content !in weightOperations } ||
             GeometryEditStages.stage(edits) != "auto") return null
@@ -126,7 +130,9 @@ internal object WorkspaceMeshPointEdits {
             stack = appended.copy(instances = stack.instances.take(boundary) + entry + stack.instances.drop(boundary))
             entry.id
         }
-        val updated = stack.withOverrides(owner, stack.overrides[owner].orEmpty() + commands)
+        val pending = if (autoBake) stack.pendingWeightEdits - stack.instances.drop(boundary).map { it.id }
+            else stack.pendingWeightEdits
+        val updated = stack.withOverrides(owner, stack.overrides[owner].orEmpty() + commands).copy(pendingWeightEdits = pending)
         return document.copy(rigEdits = document.rigEdits.copy(modifierStack = updated.toJson()))
     }
 

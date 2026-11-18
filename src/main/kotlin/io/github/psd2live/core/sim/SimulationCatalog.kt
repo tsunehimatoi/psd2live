@@ -55,7 +55,9 @@ internal object SimulationCatalog {
     }
 
     fun stale(overlay: RigEditOverlay, model: PuppetModel, edit: RigSimEdit): Boolean {
-        val original = owner(overlay, edit.id)?.let { RigSimEdit.fromJson(it.config) }
+        val stack = overlay.modifierStack?.let(RigModifierStack::fromJson)
+        if (stack?.pendingWeightEdits?.containsKey(edit.id) == true) return true
+        val original = stack?.instances?.firstOrNull { it.type == "simulation" && it.id == edit.id }?.let { RigSimEdit.fromJson(it.config) }
         return SimBake.stale(model, if (original == null) edit else edit.copy(id = original.id))
     }
 }

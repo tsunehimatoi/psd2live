@@ -244,6 +244,14 @@ class WorkspaceModifierCommandsTest {
     }
 
     @Test fun mergedMeshKeepsPaintedWeightsAndRebakesWithTheNewVertexCount(): Unit = runBlocking {
+        assertBakingPaintOnMergedMesh(autoBake = false)
+    }
+
+    @Test fun paintingMergedMeshWithAutoBakeRebakesWithTheNewVertexCount(): Unit = runBlocking {
+        assertBakingPaintOnMergedMesh(autoBake = true)
+    }
+
+    private suspend fun assertBakingPaintOnMergedMesh(autoBake: Boolean) {
         val f = fixture()
         val initial = f.now.model.rig.puppet
         val target = initial.drawables.single()
@@ -267,19 +275,27 @@ class WorkspaceModifierCommandsTest {
         val count = mesh.vertexCount - 1
         val surface = CanvasWeightAuthoring.surfaces(f.now.model.rig.puppet, listOf(target.id), emptyMap(), false).single()
         val point = surface.points.first()
-        f.edit("vertex_group_paint", buildJsonObject { putJsonObject("edit") {
-            put("action", "brush"); put("mode", "set"); put("kind", "pin"); put("name", group.name)
-            putJsonArray("targets") { add(target.id.raw) }; put("strength", 1f); put("radius", 5)
-            putJsonArray("points") { addJsonArray { add(point.x); add(point.y) } }
-        } })
+        f.edit("vertex_group_paint", buildJsonObject {
+            put("auto_bake", autoBake)
+            putJsonObject("edit") {
+                put("action", "brush"); put("mode", "set"); put("kind", "pin"); put("name", group.name)
+                putJsonArray("targets") { add(target.id.raw) }; put("strength", 1f); put("radius", 5)
+                putJsonArray("points") { addJsonArray { add(point.x); add(point.y) } }
+            }
+        })
         val weights = f.now.model.rig.puppet.vertexGroups.single { it.name == group.name }.weights
         assertEquals(count, weights.size)
         assertEquals(1f, weights.first())
-        f.edit("simulation_bake", id("cloth"))
+        if (!autoBake) {
+            assertEquals(oldBake, RigSimEdit.fromJson(stack(f).instances.single { it.id == "cloth" }.config).bake)
+            assertContentEquals(weights, f.builder.build(f.now.document).rig.puppet.vertexGroups.single { it.name == group.name }.weights)
+            f.edit("simulation_bake", id("cloth"))
+        }
         val simulation = stack(f).instances.single { it.id == "cloth" }
         val baked = assertNotNull(RigSimEdit.fromJson(simulation.config).bake)
         assertEquals(count, baked.vertexCounts.getValue(target.id.raw))
-        assertEquals(count, simulation.config.getValue("automatic_weights").jsonArray.single().jsonObject.getValue("weights").jsonArray.size)
+        val fallback = simulation.config.getValue("automatic_weights").jsonArray.single().jsonObject.getValue("weights").jsonArray
+        assertContentEquals(expected.vertexGroups.single { it.name == group.name }.weights, fallback.map { it.jsonPrimitive.float }.toFloatArray())
         assertEquals(ModifierStatus.ACTIVE, f.now.model.modifierEvaluation!!.entries.single { it.instance.id == "cloth" }.status)
         assertContentEquals(weights, f.builder.build(f.now.document).rig.puppet.vertexGroups.single { it.name == group.name }.weights)
     }

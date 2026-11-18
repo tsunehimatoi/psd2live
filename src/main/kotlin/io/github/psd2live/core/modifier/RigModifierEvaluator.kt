@@ -207,7 +207,8 @@ internal class RigModifierEvaluator(
             false
         }
         val reuse = saved?.stack?.instances?.zip(stack.instances)?.takeWhile { (a, b) ->
-            a == b && saved.stack.overrides[a.id].orEmpty() == stack.overrides[b.id].orEmpty() &&
+            saved.stack.pendingWeightEdits[a.id] == stack.pendingWeightEdits[b.id] &&
+                a == b && saved.stack.overrides[a.id].orEmpty() == stack.overrides[b.id].orEmpty() &&
                 saved.stack.appliedNodes[a.id] == stack.appliedNodes[b.id] &&
                 saved.stack.retryRevisions[a.id] == stack.retryRevisions[b.id] &&
                 saved.stack.initializationFailures[a.id] == stack.initializationFailures[b.id] &&
@@ -305,7 +306,14 @@ internal class RigModifierEvaluator(
                     parameter.id to desired
                 }
                 io.github.psd2live.core.RigBuildProfile.count("modifier cache misses")
-                val before = current
+                val bakedWeights = stack.pendingWeightEdits[instance.id].orEmpty().takeIf {
+                    instance.type == "simulation" && instance.id !in stack.appliedNodes
+                }.orEmpty()
+                val before = if (bakedWeights.isEmpty()) current else {
+                    requireNotNull(BakedWeightInput.replayInput(current, instance, bakedWeights)) {
+                        "Simulation inputs changed; use Bake to update the saved simulation"
+                    }
+                }
                 val capturedContext = RigBuildProfile.modifierStage("input", instance.type) { capture(instance) }
                 val authorContext = if (definition.upstreamInputs || definition.plugin is ReadingModifierAlgorithmPlugin) {
                     val providers = definition.providers(instance)
@@ -382,7 +390,13 @@ internal class RigModifierEvaluator(
                 // actual prefix rather than replayed as an algorithm-owned replacement of all parameters.
                 val raw = if (rawSourceRotations && cached == null)
                     RawSourceRotationTransfer.apply(before, evaluated, instance, authorContext) else evaluated
-                val generated = normalizeResult(raw)
+                // Keep the worker's generated defaults while showing the author's current weight groups.
+                val visible = if (bakedWeights.isEmpty()) raw else {
+                    val live = current.authoring.vertexGroups
+                    val keys = live.mapTo(HashSet()) { it.mesh to it.name }
+                    raw.copy(authoring = raw.authoring.copy(vertexGroups = live + raw.authoring.vertexGroups.filterNot { (it.mesh to it.name) in keys }))
+                }
+                val generated = normalizeResult(visible)
                 if (inputKey != null && cached == null) algorithmCache[instance.id] = ModifierInputCache.Entry(instance, inputKey, ModifierInputCache.Patch(before, raw))
                 checkpoint()
                 validateParameters(before, generated, instance, resolved)
@@ -531,7 +545,7 @@ internal class RigModifierEvaluator(
         }
         val baked = prefix.entries.filter { it.status == ModifierStatus.ACTIVE }.mapTo(HashSet()) { it.instance.id }
         val remaining = stack.copy(instances = stack.instances.drop(end), overrides = stack.overrides - baked,
-            appliedNodes = stack.appliedNodes - consumed,
+            appliedNodes = stack.appliedNodes - consumed, pendingWeightEdits = stack.pendingWeightEdits - consumed,
             retiredIds = stack.retiredIds + consumed, appliedCapabilities = (stack.appliedCapabilities + capabilities).distinct())
         val result = evaluate(prefix.rig, remaining, checkpoint = checkpoint)
         require(result.entries.none { entry -> entry.instance.enabled &&
@@ -567,7 +581,8 @@ internal class RigModifierEvaluator(
             patchInputs = snapshot.entries[index].contributions.filter { it.change in setOf(ModifierChange.MODIFIED, ModifierChange.REMOVED) }
                 .map { ModifierWrite(it.kind, it.id) }.distinct())
             .captureMotion(instance).capturePhysics()
-        val candidate = stack.copy(appliedNodes = stack.appliedNodes + (id to node), overrides = stack.overrides - id)
+        val candidate = stack.copy(appliedNodes = stack.appliedNodes + (id to node), overrides = stack.overrides - id,
+            pendingWeightEdits = stack.pendingWeightEdits - id)
         val verified = evaluate(authored, candidate, checkpoint = checkpoint)
         require(verified.rig == complete.rig && verified.entries.all { !it.instance.enabled || it.status == ModifierStatus.ACTIVE }) {
             "Applying the selected modifier would change the retained result"

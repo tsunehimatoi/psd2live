@@ -1,6 +1,7 @@
 package io.github.psd2live.application
 
 import io.github.psd2live.core.*
+import io.github.psd2live.core.modifier.*
 import io.github.psd2live.project.WorkspaceDocument
 import kotlinx.serialization.json.*
 import org.umamo.edit.MeshTopology
@@ -10,8 +11,68 @@ import org.umamo.runtime.model.*
 internal object WorkspaceCanvasWeightEdits {
     val supported = setOf("canvas_glue_edit", "vertex_group_paint")
 
-    fun apply(operation: WorkspaceDocumentOperation, document: WorkspaceDocument, model: RigPreviewModel): WorkspaceDocument =
-        WorkspaceDocumentEdits.journal(document, model, commands(model.rig.puppet, operation))
+    fun apply(operation: WorkspaceDocumentOperation, document: WorkspaceDocument, model: RigPreviewModel): WorkspaceDocument {
+        val changes = commands(model.rig.puppet, operation)
+        if (operation.operation != "vertex_group_paint" || document.rigEdits.modifierStack == null)
+            return WorkspaceDocumentEdits.journal(document, model, changes)
+        return recordPaint(document, model, changes, operation.request["auto_bake"]?.jsonPrimitive?.boolean == true)
+    }
+
+    /** An applied modifier can produce both the mesh and its groups. Writing ahead of that
+     * modifier invalidates its input contract. Record the paint on its output instead. */
+    private fun recordPaint(document: WorkspaceDocument, model: RigPreviewModel, changes: JsonArray, autoBake: Boolean): WorkspaceDocument {
+        if (autoBake) WorkspaceMeshPointEdits.recordWeights(document, model, changes, autoBake = true)?.let { return it }
+        val writes = RigAuthoringJournal.compile(model.rig.puppet, changes).second
+        if (writes.isEmpty()) return document
+        val evaluated = requireNotNull(model.modifierEvaluation)
+        var stack = evaluated.stack
+        val ordinary = mutableListOf<JsonObject>()
+        val pending = stack.pendingWeightEdits.toMutableMap()
+        for (command in writes) {
+            val mesh = command.getValue("target").jsonPrimitive.content.removePrefix("mesh:")
+            val target = ModifierTarget("mesh", mesh)
+            // Prefer the last applied stage which sees this target. Even an identity change to
+            // its weights before that stage can violate an opaque materialized input contract.
+            val name = command.getValue("name").jsonPrimitive.content
+            val owner = stack.instances.indices.lastOrNull { index ->
+                val instance = stack.instances[index]
+                if (evaluated.entries[index].status != ModifierStatus.ACTIVE) return@lastOrNull false
+                val applied = stack.appliedNodes[instance.id]
+                if (applied != null && (target in instance.targets || applied.reads == null)) return@lastOrNull true
+                if (instance.type == "simulation") return@lastOrNull false // automatic groups yield to authored weights
+                val before = if (index == 0) evaluated.authored else evaluated.outputs[index - 1]
+                val after = evaluated.outputs[index]
+                val old = before.meshes.firstOrNull { it.id == mesh }?.geometry
+                val new = after.meshes.firstOrNull { it.id == mesh }?.geometry
+                old?.indices != new?.indices || old?.uvs != new?.uvs ||
+                    before.authoring.vertexGroups.firstOrNull { it.mesh == mesh && it.name == name } !=
+                    after.authoring.vertexGroups.firstOrNull { it.mesh == mesh && it.name == name }
+            } ?: -1
+            if (owner < 0) ordinary += command else {
+                val id = stack.instances[owner].id
+                stack = stack.withOverrides(id, stack.overrides[id].orEmpty() + command)
+            }
+            // The simulation fingerprint includes authoring data, including weights on other
+            // meshes. Later simulations also read the parameters/physics from earlier ones.
+            for (index in owner + 1 until stack.instances.size) {
+                val instance = stack.instances[index]
+                if (!instance.enabled || instance.type != "simulation" || instance.id in stack.appliedNodes) continue
+                if (autoBake) {
+                    pending.remove(instance.id)
+                    continue
+                }
+                val saved = pending[instance.id].orEmpty()
+                if (saved.any { it.mesh == mesh && it.name == name }) continue
+                val input = if (index == 0) evaluated.authored else evaluated.outputs[index - 1]
+                val original = requireNotNull(BakedWeightInput.restore(input.authoring.vertexGroups, saved)) {
+                    "Simulation weight group order changed; bake again before painting"
+                }
+                pending[instance.id] = saved + BakedWeightInput.capture(original, mesh, name)
+            }
+        }
+        val edited = if (ordinary.isEmpty()) document else WorkspaceDocumentEdits.journal(document, model, JsonArray(ordinary))
+        return edited.copy(rigEdits = edited.rigEdits.copy(modifierStack = stack.copy(pendingWeightEdits = pending).toJson()))
+    }
 
     fun commands(model: PuppetModel, operation: WorkspaceDocumentOperation): JsonArray {
         validateOperationSchema(operation.request, WorkspaceCanvasWeightSchemas.request(operation.operation))
@@ -83,13 +144,13 @@ internal object WorkspaceCanvasWeightEdits {
             return CanvasBrushPoint(numbers[0], numbers[1])
         }
         if (action == "brush") {
-            val points = request.getValue("points").jsonArray.map(::point)
             val tip = CanvasBrushTip(request.getValue("radius").jsonPrimitive.float,
                 request["hardness"]?.jsonPrimitive?.float ?: 0.5f,
                 request["shape"]?.jsonPrimitive?.content?.uppercase()?.let(CanvasBrushShape::valueOf) ?: CanvasBrushShape.CIRCLE,
                 request["angle"]?.jsonPrimitive?.float ?: 0f, request["aspect"]?.jsonPrimitive?.float ?: 1f,
                 request["falloff"]?.jsonPrimitive?.content?.uppercase()?.let(CanvasBrushFalloff::valueOf) ?: CanvasBrushFalloff.SMOOTH)
-            val segments = if (points.size == 1) listOf(points[0] to points[0]) else points.zipWithNext()
+            require(tip.angleDeg.isFinite()) { "Brush angle must be finite" }
+            val segments = CanvasWeightStroke.segments(request)
             for ((from, to) in segments) {
                 canvasWeightCheckpoint()
                 val current = canvasBrushWeights(surfaces, from, to, tip, connected)
