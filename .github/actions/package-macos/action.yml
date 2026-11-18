@@ -46,6 +46,9 @@ runs:
         images=(build/PSD2Live-*-macos-*.dmg)
         [[ ${#images[@]} -eq 1 && -s "${images[0]}" ]]
         echo "dmg=${images[0]}" >> "$GITHUB_OUTPUT"
+    - name: Verify bundled algorithm worker
+      shell: bash
+      run: python3 packaging/smoke-test-workers.py build/PSD2Live.app
     - name: Verify mounted package and bundled runtime
       shell: bash
       env:

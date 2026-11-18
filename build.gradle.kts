@@ -408,6 +408,18 @@ tasks.withType<Sync>().matching { it.name == "prepareAppResources" }.configureEa
 	}
 }
 
+// Saved algorithm plugins run in separate JVMs through $JAVA = java.home/bin/java.
+// Compose 1.11.1 strips that executable by default and exposes the switch only on its jlink task.
+// Configure the pinned task directly: freeArgs precede Compose's --strip-native-commands, so a
+// --disable-plugin override there is undone. The packaged-worker smoke test guards this integration.
+@Suppress("INVISIBLE_MEMBER", "INVISIBLE_REFERENCE")
+fun org.jetbrains.compose.desktop.application.tasks.AbstractJLinkTask.retainWorkerJavaLauncher() {
+	stripNativeCommands.set(false)
+}
+tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJLinkTask>().configureEach {
+	retainWorkerJavaLauncher()
+}
+
 compose.desktop {
 	application {
 		mainClass = "io.github.psd2live.MainKt"

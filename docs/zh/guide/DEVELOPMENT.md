@@ -97,6 +97,16 @@ Windows 也可以直接运行根目录的 `run-gui.bat`。不带参数启动 GUI
 - Rust 运行时在 `runtime/` 中用 `cargo test`、`cargo build --release` 构建，见[运行时](../spec/RUNTIME.md)。`./gradlew run` 和打包在没有可用 cargo 时，Linux 上会下载 CI（`runtime-prebuilt.yml`）按同一份源码构建的库，按 `runtime/src`、`Cargo.toml`、`Cargo.lock` 的哈希匹配（`./gradlew printRuntimeHash`）并校验 sha256；找不到或离线则回退到内置求值器。`-Ppsd2live.prebuiltRuntime=false` 关闭下载。改 `runtime/` 反复运行时可加 `-Ppsd2live.fastRuntime=true`，关闭 LTO 以大幅缩短编译，生成的库更慢，不要用于打包。
 - 测试套件只保留快速的单元与契约测试，全量 `./gradlew test` 应在 1 分钟内完成。不要加入在示例 PSD（tml、ds）上跑完整流水线、逐步对比冷重放或渲染整幅画面的测试；这类检查写成下面的开发工具，需要时手动运行。
 
+### 算法插件运行时检查
+
+应用内的算法插件通过 `java.home/bin/java`（Windows 为 `java.exe`）启动独立 JVM，因此打包运行时必须保留 Java 启动程序。
+以下检查使用包内真实的算法 worker，在无系统 JDK、临时用户设置及包含空格和非英文字符的迁移路径下验证启动：
+
+```bash
+python3 packaging/smoke-test-workers.py build/compose/binaries/main/app/PSD2Live
+# macOS 使用 build/PSD2Live.app；Windows 使用对应的 PSD2Live 应用目录。
+```
+
 ### Linux 窗口回归检查
 
 需要真实的图形会话；JDK 21 的 AWT 在 Wayland 会话中通过 XWayland 运行。
