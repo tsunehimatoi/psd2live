@@ -78,7 +78,7 @@ class ModifierGeometryGestureTest {
                     val editor = vm.canvasEditor
                     editor.hierarchyMode = EditHierarchyMode.DEFORM
                     editor.tool = CanvasTool.SELECT
-                    editor.editLevel = 1
+                    editor.setEditLevel(1)
                     val viewport = CanvasViewport(100.0, 200.0, 200.0, 500f, 500f)
                     val target = assertNotNull(editor.target())
                     val badges = editor.deformerCorners(viewport).values
