@@ -75,6 +75,7 @@ jobs:
         shell: bash
         env:
           PSD2LIVE_NATIVE_REQUIRED: '1'
+          PSD2LIVE_PLUGIN_GIT_TEST: ${{ matrix.os == 'ubuntu-latest' && '1' || '0' }}
         run: |
           tasks=(test)
           if [[ "$RUNNER_ARCH" == X64 ]]; then tasks+=(pluginBuildTest); fi

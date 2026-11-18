@@ -223,9 +223,15 @@ tasks.withType<Test>().configureEach {
 }
 
 tasks.test {
+	if (providers.environmentVariable("PSD2LIVE_TOOLS").orNull != "1") {
+		// Short regression runs finish sooner without compiling long-lived optimized JVM code.
+		jvmArgs("-XX:TieredStopAtLevel=1")
+	}
 	mustRunAfter("buildRuntime")
 	useJUnitPlatform { excludeTags("plugin-build") }
 	inputs.property("nativeRequired", providers.environmentVariable("PSD2LIVE_NATIVE_REQUIRED").orElse("0"))
+	inputs.property("gitPluginTest", providers.environmentVariable("PSD2LIVE_PLUGIN_GIT_TEST").orElse("0"))
+	inputs.file("plugins/native-core/plugin.manifest.json")
 	inputs.files(fileTree("plugins/native-core/target/release") { include("psd2live-native-core", "psd2live-native-core.exe") })
 	inputs.files(fileTree("runtime/target/release") { include(System.mapLibraryName("p2l_runtime")) })
 }
