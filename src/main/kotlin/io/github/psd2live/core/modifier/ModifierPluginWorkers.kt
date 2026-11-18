@@ -39,6 +39,21 @@ internal object ModifierPluginWorkers {
     private data class WorkerKey(val storeRoot: Path, val protocol: Int, val command: List<String>, val files: Map<String, String>,
                                  val dependencies: List<ModifierPluginReference>, val executionGeneration: Long = 0L)
 
+    internal fun launchCommand(entry: InstalledModifierPlugin, runtimeDir: Path): List<String> {
+        val args = entry.manifest.commands[ModifierPluginStore.platform] ?: entry.manifest.commands.getValue("jvm")
+        val jarFlag = if (args.first() == "\$JAVA") args.indexOf("-jar") else -1
+        return args.mapIndexed { index, value ->
+            when {
+                value == "\$JAVA" -> Path.of(System.getProperty("java.home"), "bin", if (ModifierPluginStore.platform.startsWith("windows")) "java.exe" else "java").toString()
+                // Windows Java can lose characters in an absolute -jar argument. The child already runs in runtimeDir.
+                jarFlag >= 0 && index == jarFlag + 1 && value in entry.manifest.files -> "./$value"
+                value in entry.manifest.files -> runtimeDir.resolve(value).toString()
+                index == 0 -> ModifierPluginStore.inside(entry.directory, value).toString()
+                else -> value
+            }
+        }
+    }
+
     private fun workerKey(store: ModifierPluginStore, entry: InstalledModifierPlugin, executionGeneration: Long = 0L): WorkerKey {
         val raw = entry.manifest.commands[ModifierPluginStore.platform] ?: entry.manifest.commands.getValue("jvm")
         val normalized = raw.mapIndexed { index, value ->
@@ -272,14 +287,7 @@ internal object ModifierPluginWorkers {
                 }
             }
         } catch (failure: Exception) { resourceFiles.close(); throw failure }
-        private val command = (launchEntry.manifest.commands[ModifierPluginStore.platform] ?: launchEntry.manifest.commands.getValue("jvm")).mapIndexed { index, value ->
-            when {
-                value == "\$JAVA" -> Path.of(System.getProperty("java.home"), "bin", if (ModifierPluginStore.platform.startsWith("windows")) "java.exe" else "java").toString()
-                value in launchEntry.manifest.files -> runtimeDir.resolve(value).toString()
-                index == 0 -> ModifierPluginStore.inside(launchEntry.directory, value).toString()
-                else -> value
-            }
-        }
+        private val command = launchCommand(launchEntry, runtimeDir)
         private val process = try { ProcessBuilder(command).directory(runtimeDir.toFile()).apply {
             environment()["PSD2LIVE_PLUGIN_RESOURCES"] = resources.toString()
             environment()["PSD2LIVE_PLUGIN_PROTOCOL"] = protocol.toString()

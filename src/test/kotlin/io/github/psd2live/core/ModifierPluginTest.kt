@@ -7,11 +7,10 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
 import java.util.prefs.Preferences
-import java.util.jar.JarEntry
-import java.util.jar.JarOutputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
-import javax.tools.ToolProvider
+import io.github.psd2live.testing.writeWorkerJar
+import io.github.psd2live.testing.OpacityWorker
 import kotlin.test.*
 
 class ModifierPluginTest {
@@ -41,41 +40,30 @@ class ModifierPluginTest {
 
     private fun packageAt(directory: Path): Path {
         Files.createDirectories(directory)
-        val source = directory.resolve("Example.java")
-        Files.writeString(source, """
-            import java.io.*;
-            public class Example {
-                public static void main(String[] args) throws Exception {
-                    BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
-                    int sequence = 0;
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        if (line.contains("\"mode\":\"crash\"")) System.exit(7);
-                        if (line.contains("\"mode\":\"wait\"")) { reader.readLine(); return; }
-                        if (line.contains("\"mode\":\"invalid\"")) { System.out.println("{\"protocol\":99}"); continue; }
-                        if (line.contains("\"mode\":\"bad-write\"")) {
-                            System.out.println("{\"protocol\":1,\"id\":" + (++sequence) + ",\"commands\":[{\"op\":\"mesh_opacity\",\"id\":\"body\",\"value\":2}]}");
-                            continue;
-                        }
-                        System.out.println("{\"protocol\":1,\"id\":" + (++sequence) + ",\"commands\":[{\"op\":\"mesh_opacity\",\"id\":\"body\",\"value\":0.5}]}");
-                    }
-                }
-            }
-        """.trimIndent())
-        assertEquals(0, ToolProvider.getSystemJavaCompiler().run(null, null, null, source.toString()))
         val jar = directory.resolve("example.jar")
-        JarOutputStream(Files.newOutputStream(jar)).use { output ->
-            output.putNextEntry(JarEntry("META-INF/MANIFEST.MF")); output.write("Manifest-Version: 1.0\r\nMain-Class: Example\r\n\r\n".toByteArray()); output.closeEntry()
-            output.putNextEntry(JarEntry("Example.class")); output.write(Files.readAllBytes(directory.resolve("Example.class"))); output.closeEntry()
-        }
-        Files.delete(source); Files.delete(directory.resolve("Example.class"))
+        writeWorkerJar(jar, OpacityWorker::class.java)
         val schema = buildJsonObject { put("type", "object"); put("properties", JsonObject(emptyMap())); put("additionalProperties", false) }
         val manifest = ModifierPluginManifest(id = "test-plugin", version = "1", name = "Test",
             commands = mapOf("jvm" to listOf("\$JAVA", "-jar", "example.jar")),
-            files = mapOf("example.jar" to ModifierPluginStore.hash(Files.readAllBytes(jar))),
+            files = mapOf("example.jar" to ModifierPluginStore.hash(jar)),
             algorithms = listOf(ModifierPluginAlgorithm("test-plugin/fade", name = "Fade", configSchema = schema, defaults = JsonObject(emptyMap()))))
         Files.writeString(directory.resolve("plugin.json"), Json.encodeToString(ModifierPluginManifest.serializer(), manifest))
         return directory
+    }
+
+    @Test fun javaWorkerRunsFromAStagingDirectoryOutsideTheWindowsCodePage() = fixture { root, store, _ ->
+        val staged = packageAt(root.resolve("Worker's 模型 🎨"))
+        val installed = store.install(staged.toString())
+        val command = ModifierPluginWorkers.launchCommand(installed, staged)
+        val child = ProcessBuilder(command).directory(staged.toFile()).redirectErrorStream(true).start()
+        try {
+            child.outputStream.bufferedWriter().use { it.write("{}\n") }
+            assertTrue(child.waitFor(15, java.util.concurrent.TimeUnit.SECONDS))
+            val output = child.inputStream.bufferedReader().use { it.readText() }
+            assertEquals(0, child.exitValue(), output)
+            val reply = Json.parseToJsonElement(output.trim()).jsonObject
+            assertEquals("mesh_opacity", reply.getValue("commands").jsonArray.single().jsonObject.getValue("op").jsonPrimitive.content)
+        } finally { child.destroyForcibly() }
     }
 
     @Test fun bundledAliasesMustBeUniqueAndMatchPackageIdentity() = fixture { root, store, _ ->

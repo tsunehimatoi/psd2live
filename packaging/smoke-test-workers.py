@@ -46,7 +46,7 @@ def check_worker(app, directory):
     # A host without rig_objects must get a framed error before the worker reads any model data.
     request = json.dumps(dict(protocol=2, id=37, reset=True, method="evaluate", capabilities=[])).encode()
     frame = struct.pack("<I", len(request)) + request + struct.pack("<I", 0)
-    result = subprocess.run([str(java), "-jar", str(worker)], input=frame, cwd=directory, env=env,
+    result = subprocess.run([str(java), "-jar", worker.name], input=frame, cwd=directory, env=env,
                             capture_output=True, timeout=30)
     assert result.returncode == 0, (
         f"Bundled worker exited {result.returncode}:\n{result.stderr.decode(errors='replace')}"
@@ -55,7 +55,7 @@ def check_worker(app, directory):
     response = json.loads(result.stdout[4:4 + size])
     assert result.stdout[4 + size:] == struct.pack("<I", 0), "Unexpected response blobs or trailing output"
     assert response["protocol"] == 2 and response["id"] == 37 and response["error"], response
-    print(f"{app}: bundled worker responded over protocol 2")
+    print(f"{ascii(str(app))}: bundled worker responded over protocol 2")
 
 
 def main():

@@ -7,10 +7,9 @@ import io.github.psd2live.format.model.*
 import kotlinx.serialization.json.*
 import java.nio.file.Files
 import java.util.UUID
-import java.util.jar.JarEntry
-import java.util.jar.JarOutputStream
 import java.util.prefs.Preferences
-import javax.tools.ToolProvider
+import io.github.psd2live.testing.writeWorkerJar
+import io.github.psd2live.testing.RasterWorker
 import kotlin.test.*
 
 class ModifierRasterWorkerTest {
@@ -32,33 +31,7 @@ class ModifierRasterWorkerTest {
             }
             Files.writeString(pack.resolve("result.json"), wire.toString())
             // The installed executable uses only the JDK: it emits the portable binary-resource protocol.
-            val source = pack.resolve("RasterWorker.java")
-            Files.writeString(source, """
-                import java.io.*;
-                import java.nio.file.*;
-                public class RasterWorker {
-                    public static void main(String[] args) throws Exception {
-                        Path pack = Path.of(RasterWorker.class.getProtectionDomain().getCodeSource().getLocation().toURI()).getParent();
-                        Path resources = Path.of(System.getenv("PSD2LIVE_PLUGIN_RESOURCES"));
-                        String result = Files.readString(pack.resolve("result.json"));
-                        try (var files = Files.list(pack)) {
-                            for (Path file : files.toList()) if (file.getFileName().toString().matches("[0-9a-f]{64}"))
-                                Files.copy(file, resources.resolve(file.getFileName()), StandardCopyOption.REPLACE_EXISTING);
-                        }
-                        var reader = new BufferedReader(new InputStreamReader(System.in));
-                        int sequence = 0;
-                        while (reader.readLine() != null)
-                            System.out.println("{\"protocol\":1,\"id\":" + (++sequence) + ",\"changes\":" + result + "}");
-                    }
-                }
-            """.trimIndent())
-            assertEquals(0, ToolProvider.getSystemJavaCompiler().run(null, null, null, source.toString()))
-            JarOutputStream(Files.newOutputStream(pack.resolve("worker.jar"))).use { jar ->
-                jar.putNextEntry(JarEntry("META-INF/MANIFEST.MF"))
-                jar.write("Manifest-Version: 1.0\r\nMain-Class: RasterWorker\r\n\r\n".toByteArray()); jar.closeEntry()
-                jar.putNextEntry(JarEntry("RasterWorker.class")); jar.write(Files.readAllBytes(pack.resolve("RasterWorker.class"))); jar.closeEntry()
-            }
-            Files.delete(source); Files.delete(pack.resolve("RasterWorker.class"))
+            writeWorkerJar(pack.resolve("worker.jar"), RasterWorker::class.java)
             val files = Files.list(pack).use { stream -> stream.toList().associate { it.fileName.toString() to ModifierPluginStore.hash(it) } }
             val algorithm = ModifierPluginAlgorithm(instance.type, name = "Raster", writes = setOf("mesh", "part", "hierarchy", "textures", "authoring"),
                 configSchema = buildJsonObject { put("type", "object"); put("additionalProperties", false) }, defaults = JsonObject(emptyMap()))
