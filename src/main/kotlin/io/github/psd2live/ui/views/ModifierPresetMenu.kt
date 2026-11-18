@@ -1,7 +1,5 @@
 package io.github.psd2live.ui.views
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -10,12 +8,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.input.pointer.PointerIcon
-import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.input.pointer.PointerButton
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -42,6 +40,7 @@ import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
+import io.github.psd2live.ui.theme.handCursor
 import io.github.psd2live.ui.utils.NativeFilePicker
 import io.github.psd2live.ui.views.texture.FloatingMenuDivider
 import io.github.psd2live.ui.views.texture.FloatingMenuRow
@@ -548,8 +547,9 @@ internal fun ModifierPresetControls(
             modifier = Modifier.fillMaxWidth(),
         )
 
-        // Slider: Modifier count (empty / base / minimal / standard / extended / full)
         val countTiers = ModifierCountTier.entries
+        var previewTier by remember { mutableStateOf<ModifierCountTier?>(null) }
+        val shownTier = previewTier ?: countTier
         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -557,12 +557,12 @@ internal fun ModifierPresetControls(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
-                    text = tr("modifier.preset.count.title"),
+                    text = tr("modifier.preset.richness.title"),
                     style = typography.caption.copy(fontSize = 10.5.sp),
                     color = colors.textMuted,
                 )
                 Text(
-                    text = tr(countTier.labelKey),
+                    text = tr(shownTier.labelKey),
                     style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
                     color = colors.accent,
                 )
@@ -570,11 +570,10 @@ internal fun ModifierPresetControls(
 
             PresetRichnessSlider(
                 count = countTiers.size,
-                selectedIndex = countTiers.indexOf(countTier).coerceAtLeast(0),
+                selectedIndex = countTier.ordinal,
                 enabled = controlsEnabled,
-                onSelectIndex = { idx ->
-                    countTiers.getOrNull(idx)?.let { onSelect(selection.copy(countTier = it)) }
-                },
+                onPreviewIndex = { index -> previewTier = index?.let(countTiers::get) },
+                onSelectIndex = { index -> onSelect(selection.copy(countTier = countTiers[index])) },
             )
 
             Row(
@@ -582,7 +581,7 @@ internal fun ModifierPresetControls(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 countTiers.forEachIndexed { idx, tier ->
-                    val isSelected = tier == countTier
+                    val isSelected = tier == shownTier
                     Text(
                         text = tr(tier.labelKey),
                         style = typography.caption.copy(
@@ -625,47 +624,57 @@ internal fun ModifierPresetControls(
 
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
-private fun PresetRichnessSlider(
+internal fun PresetRichnessSlider(
     count: Int,
     selectedIndex: Int,
     enabled: Boolean,
+    onPreviewIndex: (Int?) -> Unit,
     onSelectIndex: (Int) -> Unit,
 ) {
     val colors = LocalToolColors.current
     val selectIndex by rememberUpdatedState(onSelectIndex)
+    val previewIndex by rememberUpdatedState(onPreviewIndex)
+    val committedIndex by rememberUpdatedState(selectedIndex)
     val maxIdx = (count - 1).coerceAtLeast(1)
-    val targetFraction = if (count <= 1) 1f else selectedIndex.toFloat() / maxIdx.toFloat()
-    val animatedFraction by animateFloatAsState(
-        targetValue = targetFraction,
-        animationSpec = tween(durationMillis = 120),
-        label = "presetRichnessFraction",
-    )
+    var dragFraction by remember { mutableStateOf<Float?>(null) }
 
     Canvas(
         modifier = Modifier
             .fillMaxWidth()
-            .height(20.dp)
-            .pointerHoverIcon(if (enabled) PointerIcon.Hand else PointerIcon.Default)
+            .height(24.dp)
+            .handCursor(enabled)
             .pointerInput(count, enabled) {
                 if (!enabled || count <= 1) return@pointerInput
-                val trackHeight = 16.dp.toPx()
-                val inset = trackHeight / 2f
                 awaitEachGesture {
                     val down = awaitFirstDown()
-                    fun pickIndex(x: Float): Int {
+                    if (currentEvent.button != null && currentEvent.button != PointerButton.Primary) return@awaitEachGesture
+                    val inset = 8.dp.toPx().coerceAtMost(size.height / 2f)
+                    fun updatePreview(x: Float): Int {
                         val usable = (size.width - 2f * inset).coerceAtLeast(1f)
                         val fraction = ((x - inset) / usable).coerceIn(0f, 1f)
-                        return (fraction * (count - 1)).roundToInt().coerceIn(0, count - 1)
+                        dragFraction = fraction
+                        return (fraction * (count - 1)).roundToInt().also { previewIndex(it) }
                     }
-                    selectIndex(pickIndex(down.position.x))
-                    down.consume()
-                    do {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        if (change.pressed) selectIndex(pickIndex(change.position.x))
-                        change.consume()
-                    } while (event.changes.any { it.pressed })
+                    try {
+                        // Rebuilding the preview can disable the controls. Commit once the gesture has ended.
+                        updatePreview(down.position.x)
+                        down.consume()
+                        while (true) {
+                            val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                            if (change.isConsumed) break
+                            val index = updatePreview(change.position.x)
+                            change.consume()
+                            if (!change.pressed) {
+                                if (index != committedIndex) selectIndex(index)
+                                break
+                            }
+                        }
+                    } finally {
+                        dragFraction = null
+                        previewIndex(null)
+                    }
                 }
             },
     ) {
@@ -674,7 +683,8 @@ private fun PresetRichnessSlider(
         val radius = trackHeight / 2f
         val inset = radius
         val usableWidth = (size.width - 2f * inset).coerceAtLeast(1f)
-        val thumbCenterX = inset + usableWidth * animatedFraction
+        val thumbFraction = dragFraction ?: selectedIndex.toFloat() / maxIdx
+        val thumbCenterX = inset + usableWidth * thumbFraction
         val thumbRadius = (trackHeight - 4.dp.toPx()) / 2f
 
         // Inactive pill track
@@ -686,7 +696,7 @@ private fun PresetRichnessSlider(
         )
 
         // Active accent fill
-        val fillWidth = (thumbCenterX + radius * 0.2f).coerceIn(trackHeight, size.width)
+        val fillWidth = (thumbCenterX + radius * 0.2f).coerceIn(minOf(trackHeight, size.width), size.width)
         drawRoundRect(
             color = if (enabled) colors.accent else colors.accent.copy(alpha = 0.5f),
             topLeft = Offset(0f, top),

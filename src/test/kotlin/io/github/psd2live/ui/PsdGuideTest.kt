@@ -1,6 +1,7 @@
 package io.github.psd2live.ui
 
 import io.github.psd2live.application.PsdGuideBindings
+import io.github.psd2live.core.DownloadState
 import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.Side
 import io.github.psd2live.core.StandardParameters
@@ -8,10 +9,26 @@ import io.github.psd2live.core.modifier.RigModifierStack
 import io.github.psd2live.project.ProjectRepository
 import io.github.psd2live.i18n.AppLanguage
 import io.github.psd2live.i18n.I18n
+import io.github.psd2live.i18n.tr
 import io.github.psd2live.tools.output
 import io.github.psd2live.tools.renderPng
 import io.github.psd2live.ui.theme.ToolColors
 import io.github.psd2live.ui.views.PsdGuidePage
+import io.github.psd2live.ui.views.FaceGrid
+import io.github.psd2live.ui.views.GuideRigRenderers
+import io.github.psd2live.ui.views.guideRigFrame
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.ImageComposeScene
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.unit.Density
+import io.github.psd2live.ui.views.GuideRigCanvas
+import io.github.psd2live.ui.views.guidePointer
 import io.github.psd2live.scenario.Characters
 import io.github.psd2live.ui.state.*
 import io.github.psd2live.ui.views.ModifierCountTier
@@ -22,6 +39,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -30,9 +48,7 @@ import kotlinx.serialization.json.float
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.io.TempDir
 import org.umamo.format.moc3.Moc3
-import java.awt.image.BufferedImage
 import java.nio.file.Files
-import javax.imageio.ImageIO
 import java.nio.file.Path
 import kotlin.io.path.extension
 import kotlin.test.*
@@ -57,6 +73,8 @@ class PsdGuideTest {
 
         vm.openRecentFile(second.toString())
         val guide = vm.psdGuide
+        assertEquals(TaskProgress(tr("psdGuide.reading")),
+            taskProgress(vm.state.value, null, DownloadState.Idle, guide = guide.taskProgress))
         settled(guide)
         assertEquals(AppPage.PSD_GUIDE, vm.activePage)
         assertOriginal()
@@ -87,6 +105,9 @@ class PsdGuideTest {
         if (!guide.splitScanned) { guide.scan(); settled(guide) }
         captureGuide(vm, "split")
         val original = assertNotNull(guide.splitItems.singleOrNull())
+        guide.showSplitPreview(original.offer.layerId)
+        captureGuide(vm, "split-focused")
+        guide.showSplitPreview(null)
         guide.split(listOf(original))
         settled(guide)
         assertNull(workspace.snapshot().projectId)
@@ -107,7 +128,7 @@ class PsdGuideTest {
         guide.selectPreset(ModifierPresetSelection(ModifierPresetCategory.MODERN, ModifierSimulationMode.NONE,
             ModifierCountTier.STANDARD, null))
         settled(guide)
-        assertNotNull(guide.presetImage)
+        assertNotNull(guide.preset)
         captureGuide(vm, "preset")
         guide.go(PsdGuideStep.FACE)
         captureGuide(vm, "face")
@@ -115,29 +136,29 @@ class PsdGuideTest {
         val candidate = assertNotNull(guide.preset)
         val turn = assertNotNull(draft.turn(candidate))
         assertEquals(9, guide.batch.size)
+        val previousLoader = Any()
+        val loader = Any()
+        guide.trackStyleProgress(previousLoader, guide.batch, 0)
+        guide.trackStyleProgress(loader, guide.batch, 3)
+        guide.clearStyleProgress(previousLoader)
+        assertEquals(3f / 9f, taskProgress(vm.state.value, null, DownloadState.Idle, guide = guide.taskProgress)?.fraction)
+        guide.trackStyleProgress(loader, guide.batch, 9)
+        assertNull(guide.taskProgress)
         val option = guide.batch.first()
         val previews = coroutineScope {
             guide.batch.map { style -> async { draft.prepareStyle(candidate, turn, style.values) } }.awaitAll()
         }
-        val sample = previews.first()
-        val left = sample.render(turn, turn.x.min, turn.y.default)
-        val right = sample.render(turn, turn.x.max, turn.y.default)
+        verifyTrackingOnCanvas(previews.first(), turn.x.id, turn.x.min)
         if (System.getenv("PSD2LIVE_TOOLS") == "1") {
-            val directory = output("psd-guide")
-            val grid = BufferedImage(left.width * 3, left.height * 3, BufferedImage.TYPE_INT_ARGB)
-            val graphics = grid.createGraphics()
-            try {
-                previews.forEachIndexed { index, preview ->
-                    val frame = preview.render(turn, turn.x.max, turn.y.default)
-                    graphics.drawImage(frame, index % 3 * frame.width, index / 3 * frame.height, null)
+            val frames = previews.mapIndexed { index, preview ->
+                index to guideRigFrame(preview, mapOf(turn.x.id to turn.x.max))
+            }.toMap()
+            GuideRigRenderers().use { renderers ->
+                renderPng(output("psd-guide").resolve("face-grid-live.png"), 1080, 660, frames = 0) {
+                    FaceGrid(guide.batch, frames, emptySet(), option, true, renderers, false, {}, {})
                 }
-            } finally {
-                graphics.dispose()
             }
-            ImageIO.write(grid, "png", directory.resolve("face-grid.png"))
         }
-        assertFalse(left.getRGB(0, 0, left.width, left.height, null, 0, left.width)
-            .contentEquals(right.getRGB(0, 0, right.width, right.height, null, 0, right.width)))
         guide.selectedStyle = option
         guide.applyStyle()
         settled(guide)
@@ -173,6 +194,35 @@ class PsdGuideTest {
         }
     }
 
+    @OptIn(ExperimentalComposeUiApi::class)
+    private suspend fun verifyTrackingOnCanvas(preview: io.github.psd2live.application.WorkspacePsdGuide.Preview,
+                                                axis: org.umamo.runtime.model.ParameterId, padValue: Float) {
+        val pose = mapOf(axis to padValue)
+        var cursor by mutableStateOf<Offset?>(null)
+        GuideRigRenderers().use { renderers ->
+            val scene = ImageComposeScene(320, 220, density = Density(1f), coroutineContext = currentCoroutineContext()) {
+                GuideRigCanvas(guideRigFrame(preview, pose, cursor), renderers,
+                    Modifier.fillMaxSize().guidePointer(true) { cursor = it })
+            }
+            try {
+                fun snapshot(time: Long): ByteArray = scene.render(time).use { image ->
+                    requireNotNull(image.encodeToData()).use { it.bytes }
+                }
+                val base = snapshot(0)
+                scene.sendPointerEvent(PointerEventType.Move, Offset(300f, 110f))
+                val tracked = snapshot(16_000_000)
+                assertNotNull(cursor)
+                assertFalse(base.contentEquals(tracked), "Pointer tracking must move the rendered rig")
+                scene.sendPointerEvent(PointerEventType.Exit, Offset(321f, 110f))
+                val restored = snapshot(32_000_000)
+                assertNull(cursor)
+                assertContentEquals(base, restored, "Leaving the canvas must restore the pad's pose")
+            } finally {
+                scene.close()
+            }
+        }
+    }
+
     private fun editor(body: suspend (PSD2LiveViewModel, DesktopWorkspace) -> Unit) = runBlocking<Unit> {
         withContext(Dispatchers.Main) {
             PSD2LiveViewModel().use { vm ->
@@ -205,6 +255,7 @@ class PsdGuideTest {
     private suspend fun settled(guide: PsdGuideState) {
         withTimeout(50_000) { guide.awaitIdle() }
         assertFalse(guide.busy)
+        assertNull(guide.taskProgress)
         assertNull(guide.error)
     }
 }

@@ -12,7 +12,6 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.*
 import org.umamo.runtime.model.Parameter
-import java.awt.image.BufferedImage
 import java.nio.file.Path
 
 /** A candidate belongs to the import page until the ordinary source-install boundary publishes it. */
@@ -23,12 +22,11 @@ internal class WorkspacePsdGuide(
     val base: Candidate,
 ) {
     data class Candidate(val document: WorkspaceDocument, val model: RigPreviewModel)
-    class StylePreview(private val model: RigPreviewModel, private val analysis: PipelineAnalysis,
-                       private val visible: Set<String>) {
-        suspend fun render(turn: Turn, x: Float, y: Float): BufferedImage = runInterruptible(Dispatchers.Default) {
-            WorkspaceTurnStylePreview.renderFace(model, analysis, mapOf(turn.x.id to x, turn.y.id to y), visible)
-        }
-    }
+    /** Immutable renderer inputs, independent of the currently installed project's views and pose. */
+    class Preview(val model: RigPreviewModel, val bounds: Bounds, val visible: Set<String>)
+
+    fun preview(candidate: Candidate): Preview = Preview(candidate.model, candidate.model.analysis.anchors.character,
+        candidate.document.renderVisibleLayers(candidate.model))
 
     data class Turn(val instance: RigModifierInstance, val x: Parameter, val y: Parameter)
     data class Split(val id: String, val names: List<String>, val sides: List<Side>) {
@@ -122,7 +120,7 @@ internal class WorkspacePsdGuide(
         return styled
     }
 
-    suspend fun prepareStyle(candidate: Candidate, turn: Turn, values: Map<String, Float>): StylePreview =
+    suspend fun prepareStyle(candidate: Candidate, turn: Turn, values: Map<String, Float>): Preview =
         WorkspaceTurnStylePreview.modelSlots.withPermit {
             val model = WorkspaceDocumentCommands.buildTurnStyleStack(candidate.document, candidate.model,
                 turnRequest(turn, values), shareOwner = false)
@@ -130,26 +128,10 @@ internal class WorkspacePsdGuide(
                 val entry = model.modifierEvaluation?.entries?.firstOrNull { it.instance.id == turn.instance.id }
                 require(entry?.status == ModifierStatus.ACTIVE) { entry?.error ?: "Head turn could not be generated" }
                 // Keep the immutable render data; each static style build can release its worker immediately.
-                StylePreview(model.copy(), candidate.model.analysis, candidate.document.renderVisibleLayers(model))
+                Preview(model.copy(), candidate.model.analysis.anchors.face, candidate.document.renderVisibleLayers(model))
             } finally {
                 model.modifierBuildOwner?.takeUnless { it.published }?.close()
             }
         }
 
-    suspend fun modelImage(candidate: Candidate): BufferedImage = runInterruptible(Dispatchers.Default) {
-        val model = candidate.model
-        val bounds = model.analysis.anchors.character
-        val size = 560
-        val scale = minOf(size / bounds.width.coerceAtLeast(1f), size / bounds.height.coerceAtLeast(1f)).toDouble() * .9
-        val source = candidate.document.source
-        val viewport = CanvasViewport(scale, size / 2.0 - bounds.centerX * scale, size / 2.0 - bounds.centerY * scale,
-            source.widthPx.toFloat(), source.heightPx.toFloat())
-        BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB).also { image ->
-            val graphics = image.createGraphics()
-            try {
-                RigCanvasSupport.paintTexturedRig(graphics, model, RigCanvasSupport.evaluateExact(model, emptyMap()), viewport,
-                    visibleLayerIds = candidate.document.renderVisibleLayers(model))
-            } finally { graphics.dispose() }
-        }
-    }
 }

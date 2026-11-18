@@ -4,16 +4,18 @@ import androidx.compose.runtime.*
 import io.github.psd2live.application.*
 import io.github.psd2live.core.LayerClassificationOverride
 import io.github.psd2live.core.MeshComponentSplit
+import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.components.BatchSplitItemState
 import io.github.psd2live.ui.views.ModifierPresetMenuModel
 import io.github.psd2live.ui.views.ModifierPresetSelection
 import io.github.psd2live.ui.views.ModifierPresetSelectionStore
 import io.github.psd2live.ui.views.presetChoice
 import kotlinx.coroutines.*
-import java.awt.image.BufferedImage
 import java.nio.file.Path
 
 internal enum class PsdGuideStep { SPLIT, BINDING, PRESET, FACE }
+
+private val stepsWithoutBinding = PsdGuideStep.entries - PsdGuideStep.BINDING
 
 internal class PsdGuideState(private val scope: CoroutineScope) {
     var path by mutableStateOf<Path?>(null)
@@ -22,8 +24,22 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
         private set
     var reached by mutableStateOf(PsdGuideStep.SPLIT)
         private set
-    var busy by mutableStateOf(false)
-        private set
+    private var bindingVisited by mutableStateOf(false)
+    val steps: List<PsdGuideStep>
+        get() = if (!bindingVisited && bindings?.findings?.none { it.layers.isNotEmpty() } == true)
+            stepsWithoutBinding else PsdGuideStep.entries
+    val previousStep get() = steps.run { getOrNull(indexOf(step) - 1) }
+    val nextStep get() = steps.run { getOrNull(indexOf(step) + 1) }
+    private var workLabel by mutableStateOf<String?>(null)
+    val busy get() = workLabel != null
+
+    private data class StyleProgress(val owner: Any, val completed: Int, val total: Int)
+    private var styleProgress by mutableStateOf<StyleProgress?>(null)
+    val taskProgress: TaskProgress?
+        get() = workLabel?.let { TaskProgress(tr(it)) }
+            ?: styleProgress?.takeIf { step == PsdGuideStep.FACE && it.completed < it.total }?.let {
+                TaskProgress(tr("turnExplorer.progress", it.completed, it.total), it.completed.toFloat() / it.total)
+            }
     var saving by mutableStateOf(false)
         private set
     var error by mutableStateOf<String?>(null)
@@ -46,6 +62,7 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
     var splitScanned by mutableStateOf(false)
         private set
     var splitFocus by mutableStateOf<String?>(null)
+        private set
     var bindingFocus by mutableStateOf<List<String>>(emptyList())
     var bindings by mutableStateOf<PsdGuideBindings.Result?>(null)
         private set
@@ -55,10 +72,9 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
         private set
     var preset by mutableStateOf<WorkspacePsdGuide.Candidate?>(null)
         private set
-    var presetImage by mutableStateOf<BufferedImage?>(null)
-        private set
     private var styled: WorkspacePsdGuide.Candidate? = null
-    val finalCandidate get() = styled ?: preset
+    val finalCandidate get() = if (preparedSelection == selection) styled ?: preset else null
+    private var preparedSelection by mutableStateOf<ModifierPresetSelection?>(null)
     var appliedStyle by mutableStateOf<TurnStyleCandidates.Option?>(null)
         private set
     var batch by mutableStateOf<List<TurnStyleCandidates.Option>>(emptyList())
@@ -103,7 +119,7 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
         job = null
         path = null
         outputDirectory = null
-        busy = false
+        workLabel = null
         saving = false
         error = null
         confirmDiscard = false
@@ -122,6 +138,7 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
         bindings = null
         step = PsdGuideStep.SPLIT
         reached = step
+        bindingVisited = false
         selection = initialPreset()
     }
 
@@ -129,13 +146,16 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
         val path = input.path
         this.path = path
         outputDirectory = input.outputDirectory
-        work {
+        work("psdGuide.reading") {
             val prepared = guide ?: host.preparePsdGuide(path).also {
                 guide = it
                 source = it.base
             }
             if (bindings == null) bindings = prepared.bindings(prepared.base, manual)
-            if (AppSettings.autoDetectMeshSplitsOnImport && !splitScanned) scanNow(prepared, prepared.base)
+            if (AppSettings.autoDetectMeshSplitsOnImport && !splitScanned) {
+                workLabel = "start.splits.scanning"
+                scanNow(prepared, prepared.base)
+            }
         }
     }
 
@@ -146,7 +166,7 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
     fun scan() {
         val guide = guide ?: return
         val source = source ?: return
-        work { scanNow(guide, source) }
+        work("start.splits.scanning") { scanNow(guide, source) }
     }
 
     private suspend fun scanNow(guide: WorkspacePsdGuide, source: WorkspacePsdGuide.Candidate) {
@@ -159,7 +179,11 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
             val layer = source.model.analysis.layers.first { it.source.id.raw == id }
             BatchSplitItemState(PSD2LiveViewModel.MeshSplitOffer(id, layer.source.name, plan, source.model, null, true))
         }
-        splitFocus = splitItems.firstOrNull()?.offer?.layerId
+        splitFocus = null
+    }
+
+    fun showSplitPreview(layerId: String?) {
+        if (!busy && (layerId == null || splitItems.any { it.offer.layerId == layerId })) splitFocus = layerId
     }
 
     fun split(items: List<BatchSplitItemState>) {
@@ -171,7 +195,7 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
             val (names, sides) = item.generatedNamesAndSides()
             WorkspacePsdGuide.Split(item.offer.layerId, names, sides)
         }
-        work {
+        work("psdGuide.working") {
             val candidate = guide.split(source, decisions)
             val report = guide.bindings(candidate, manual)
             val plans = guide.splits(candidate)
@@ -182,7 +206,7 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
 
     fun resetSplits() {
         val guide = guide ?: return
-        work {
+        work("psdGuide.working") {
             val report = guide.bindings(guide.base, manual)
             val plans = guide.splits(guide.base)
             changeSource(guide.base, report)
@@ -199,12 +223,13 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
         manual = report.manual
         bindingFocus = bindingFocus.filter { id -> report.layers.any { it.source.id.raw == id } }
         reached = PsdGuideStep.SPLIT
+        bindingVisited = false
     }
 
     fun classify(id: String, value: LayerClassificationOverride) {
         val guide = guide ?: return
         val source = source ?: return
-        work {
+        work("psdGuide.working") {
             val report = guide.bindings(source, manual + (id to value))
             resetPreset()
             manual = report.manual
@@ -214,12 +239,21 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
     }
 
     fun go(next: PsdGuideStep) {
-        if (busy || bindings == null || next.ordinal > reached.ordinal + 1 ||
-            next == PsdGuideStep.FACE && preset == null) return
+        val route = steps
+        val nextIndex = route.indexOf(next)
+        if (busy || bindings == null || nextIndex < 0 || nextIndex > route.indexOf(reached) + 1 ||
+            next == PsdGuideStep.FACE && finalCandidate == null) return
+        if (next == PsdGuideStep.BINDING) bindingVisited = true
         if (next > reached) reached = next
         step = next
-        if (next == PsdGuideStep.PRESET && preset == null) selectPreset(selection)
+        if (next == PsdGuideStep.PRESET && finalCandidate == null) selectPreset(selection)
         if (next == PsdGuideStep.FACE && batch.isEmpty()) batch = TurnStyleCandidates.randomBatch()
+    }
+
+    fun reviewAutomaticBindings() {
+        if (busy || step != PsdGuideStep.PRESET || bindings?.automatic?.isNotEmpty() != true) return
+        bindingVisited = true
+        go(PsdGuideStep.BINDING)
     }
 
     fun selectPreset(value: ModifierPresetSelection) {
@@ -227,22 +261,33 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
         val source = source ?: return
         val report = bindings ?: return
         val choice = presetChoice(value, WorkspaceModelPresetLibrary.shared.state.value) ?: return
-        if (selection == value && preset != null) return
+        if (busy || value == preparedSelection && value == selection) return
         selection = value
-        resetPreset()
         reached = minOf(reached, PsdGuideStep.PRESET)
-        work {
-            val candidate = guide.preset(source, report, choice.first.id, choice.second)
-            try {
-                presetImage = guide.modelImage(candidate)
+        work("psdGuide.working") {
+            if (value != preparedSelection) {
+                val candidate = guide.preset(source, report, choice.first.id, choice.second)
+                val previous = preset
+                resetStyles()
                 preset = candidate
-            } finally {
-                if (preset !== candidate) candidate.releaseIfUnused()
+                preparedSelection = value
+                previous?.releaseIfUnused()
             }
         }
     }
 
+    fun trackStyleProgress(owner: Any, options: List<TurnStyleCandidates.Option>, completed: Int) {
+        if (step == PsdGuideStep.FACE && batch === options) {
+            styleProgress = StyleProgress(owner, completed, options.size).takeIf { completed < options.size }
+        }
+    }
+
+    fun clearStyleProgress(owner: Any) {
+        if (styleProgress?.owner === owner) styleProgress = null
+    }
+
     fun newStyles(nearby: Boolean) {
+        styleProgress = null
         val anchor = selectedStyle
         if (nearby && anchor != null) {
             batch = TurnStyleCandidates.nearbyBatch(anchor)
@@ -259,7 +304,7 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
         val turn = guide.turn(candidate) ?: return
         val choice = selectedStyle ?: return
         if (choice == appliedStyle) return
-        work {
+        work("turnExplorer.applying") {
             val next = guide.withStyle(candidate, turn, choice.values)
             val previous = styled
             styled = next
@@ -280,7 +325,7 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
         val candidate = finalCandidate ?: return
         if (busy || saving) return
         saving = true
-        work(retryable = false) {
+        work("psdGuide.creating", retryable = false) {
             try {
                 withContext(before()) { host.installPsdGuide(guide, candidate, discardUnsaved = true) }
                 onSuccess()
@@ -291,11 +336,16 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
     }
 
     private fun resetPreset() {
-        keepPresetStyle()
+        resetStyles()
         val previous = preset
         preset = null
+        preparedSelection = null
         previous?.releaseIfUnused()
-        presetImage = null
+    }
+
+    private fun resetStyles() {
+        styleProgress = null
+        keepPresetStyle()
         batch = emptyList()
         selectedStyle = null
         turnPose = null
@@ -307,9 +357,9 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
         if (!owner.published && active.none { it.model.modifierBuildOwner === owner }) owner.close()
     }
 
-    private fun work(retryable: Boolean = true, action: suspend () -> Unit) {
+    private fun work(label: String, retryable: Boolean = true, action: suspend () -> Unit) {
         if (busy) return
-        busy = true
+        workLabel = label
         error = null
         retryAction = null
         val running = scope.launch(start = CoroutineStart.LAZY) {
@@ -320,11 +370,11 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
             } catch (failure: Exception) {
                 if (job === currentCoroutineContext()[Job]) {
                     error = workspaceFailureMessage(failure)
-                    if (retryable) retryAction = { work(action = action) }
+                    if (retryable) retryAction = { work(label, action = action) }
                 }
             } finally {
                 if (job === currentCoroutineContext()[Job]) {
-                    busy = false
+                    workLabel = null
                     job = null
                 }
             }

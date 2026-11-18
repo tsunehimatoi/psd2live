@@ -35,6 +35,7 @@ class MeshComponentSplitLifetimeTest {
         assertFalse(scan.isActive)
         val pieces = plan.pieces(listOf("One", "Two", "Three"))
         assertEquals(listOf(LayerBounds(10, 20, 3, 2), LayerBounds(13, 20, 3, 2), LayerBounds(16, 20, 2, 2)), pieces.map { it.bounds })
+        assertEquals(pieces.map { LayerSpace.of(it).canvasBounds() }, plan.componentBounds)
         pieces.forEach { piece ->
             for (y in 0 until piece.raster.height) for (x in 0 until piece.raster.width) {
                 val local = (y * piece.raster.width + x) * 4

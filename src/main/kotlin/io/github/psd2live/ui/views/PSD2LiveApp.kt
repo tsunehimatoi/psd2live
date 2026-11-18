@@ -175,7 +175,8 @@ private fun FrameWindowScope.PSD2LiveAppContent(
 	val baking by viewModel.simulationBaking.collectAsState()
 	val download by viewModel.modelDownloadState.collectAsState()
 	val projectProgress by viewModel.projectProgress.collectAsState()
-	val task = io.github.psd2live.ui.state.taskProgress(state, baking, download, projectProgress)
+	val guideProgress = if (AppPage.PSD_GUIDE in viewModel.openPages) viewModel.psdGuide.taskProgress else null
+	val task = io.github.psd2live.ui.state.taskProgress(state, baking, download, projectProgress, guideProgress)
 	var tutorial by remember { mutableStateOf(InteractiveTutorialState()) }
 	val tutorialTargets = rememberTutorialTargetRegistry()
 	// The performance overlay draws outside Compose, in the theme's colours.

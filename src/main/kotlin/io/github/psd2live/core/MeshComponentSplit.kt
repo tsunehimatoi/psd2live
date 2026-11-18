@@ -21,10 +21,20 @@ internal object MeshComponentSplit {
         checkpoint: () -> Unit = {},
         val ownerByVertex: IntArray = IntArray(0),
     ) {
+        private val boxes = opaqueBounds(checkpoint)
+
+        /** Opaque component extents in canvas coordinates, in the same order as the split pieces. */
+        val componentBounds: List<Bounds> = LayerSpace.of(source).let { space ->
+            boxes.map { box -> Bounds(
+                space.rasterToCanvasX(box[0].toFloat()), space.rasterToCanvasY(box[1].toFloat()),
+                space.rasterToCanvasX(box[2] + 1f), space.rasterToCanvasY(box[3] + 1f),
+            ) }
+        }
+
         /** Small transparent thumbnails, prepared with the split plan so the dialog stays responsive. */
         val previewImages: List<BufferedImage> = buildPreviewImages(checkpoint)
 
-        private fun buildPreviewImages(checkpoint: () -> Unit): List<BufferedImage> {
+        private fun opaqueBounds(checkpoint: () -> Unit): List<IntArray> {
             val raster = source.raster
             val boxes = Array(components.size) { intArrayOf(raster.width, raster.height, -1, -1) }
             for (pixel in ownerByPixel.indices) {
@@ -38,8 +48,13 @@ internal object MeshComponentSplit {
                 if (x > box[2]) box[2] = x
                 if (y > box[3]) box[3] = y
             }
+            require(boxes.all { it[2] >= it[0] && it[3] >= it[1] }) { "Every mesh island needs source pixels" }
+            return boxes.asList()
+        }
+
+        private fun buildPreviewImages(checkpoint: () -> Unit): List<BufferedImage> {
+            val raster = source.raster
             val images = boxes.map { box ->
-                require(box[2] >= box[0] && box[3] >= box[1]) { "Every mesh island needs source pixels" }
                 val width = box[2] - box[0] + 1
                 val height = box[3] - box[1] + 1
                 val scale = minOf(1f, 96f / width, 64f / height)
@@ -74,19 +89,6 @@ internal object MeshComponentSplit {
             require(ids == null || ids.size == names.size && ids.distinct().size == ids.size && ids.all { it.isNotBlank() })
             val raster = source.raster
             val base = WorkspaceSourceLayer.copyOf(source, source.order) as WorkspaceSourceLayer
-            val boxes = Array(components.size) { intArrayOf(raster.width, raster.height, -1, -1) }
-            for (pixel in ownerByPixel.indices) {
-                if (pixel % 1024 == 0) checkpoint()
-                if ((raster.rgba[pixel * 4 + 3].toInt() and 0xff) == 0) continue
-                val box = boxes[ownerByPixel[pixel]]
-                val x = pixel % raster.width
-                val y = pixel / raster.width
-                if (x < box[0]) box[0] = x
-                if (y < box[1]) box[1] = y
-                if (x > box[2]) box[2] = x
-                if (y > box[3]) box[3] = y
-            }
-            require(boxes.all { it[2] >= it[0] && it[3] >= it[1] }) { "Every mesh island needs source pixels" }
             // Each piece is cropped in the source's own raster grid, so a dense layer's pieces keep its density.
             val space = LayerSpace.of(source)
             return boxes.mapIndexed { index, box ->

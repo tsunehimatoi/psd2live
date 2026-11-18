@@ -15,6 +15,7 @@ internal fun taskProgress(
     baking: PSD2LiveViewModel.SimulationBaking?,
     download: DownloadState,
     project: PSD2LiveViewModel.ProjectProgress? = null,
+    guide: TaskProgress? = null,
 ): TaskProgress? {
     // Baking may run inside another workspace operation; prefer its detailed progress.
     if (baking != null) {
@@ -42,6 +43,6 @@ internal fun taskProgress(
             if (state.isIndeterminateProgress) null else state.progress.coerceIn(0f, 1f),
         )
         state.canvasEditBusy -> TaskProgress(state.statusText)
-        else -> null
+        else -> guide
     }
 }
