@@ -61,6 +61,32 @@ object DepthTurnMotion {
         // moves for each ([FeatureTurn]): a rule per pose giving where a rest point goes.
         val byId = deformers.associateBy { it.id }
         val turns = FeatureTurn
+        val eyes = fittedEyes.mapNotNull { side -> FeatureTurn.Eye.of(marks, side)?.let { side to it } }.toMap()
+        val rightInner = marks["eye.R.inner"]?.x
+        val leftInner = marks["eye.L.inner"]?.x
+        fun bilateral(
+            pose: FaceTurn.Pose,
+            right: ((Float, Float) -> Pair<Float, Float>)?,
+            left: ((Float, Float) -> Pair<Float, Float>)?,
+        ): (Float, Float) -> Pair<Float, Float> {
+            if (rightInner == null || leftInner == null || leftInner - rightInner <= 1e-3f) return pose.field
+            val rightRule = right ?: pose.field
+            val leftRule = left ?: pose.field
+            // Keep the same side's motion over the artwork. The blend lies within the eye gap.
+            return { x, y ->
+                when {
+                    x <= rightInner -> rightRule(x, y)
+                    x >= leftInner -> leftRule(x, y)
+                    else -> {
+                        val t = (x - rightInner) / (leftInner - rightInner)
+                        val weight = t * t * (3f - 2f * t)
+                        val (ax, ay) = rightRule(x, y)
+                        val (bx, by) = leftRule(x, y)
+                        (ax + (bx - ax) * weight) to (ay + (by - ay) * weight)
+                    }
+                }
+            }
+        }
         class Feature(val warp: Deformer.Warp, val parentFrame: Bounds, val rest: FloatArray, val inside: DeformerId?,
             val rule: (FaceTurn.Pose) -> ((Float, Float) -> Pair<Float, Float>)?)
         val features = buildList {
@@ -70,15 +96,35 @@ object DepthTurnMotion {
                 val rest = warp.geometryGrid?.let { org.umamo.runtime.eval.warpControlPointsAt(it) { 0f } } ?: return
                 add(Feature(warp, frame, rest, inside, rule))
             }
+            fun brow(side: String, sign: Float, pose: FaceTurn.Pose) =
+                if (side in fittedBrows) turns.brow(marks, side, sign, turn, pose, eyes[side]) else null
             for (name in listOf("L", "R")) {
                 val token = name
                 val sign = if (name == "L") 1f else -1f
-                if (name in fittedEyes) FeatureTurn.Eye.of(marks, name)?.let { eye ->
-                    feature("DeformEyeShape$token", null) { pose -> turns.eye(eye, turn, pose).eye }
-                    feature("DeformIrisPreserve$token", DeformerId("DeformEyeShape$token")) { pose -> turns.eye(eye, turn, pose).iris }
+                val eye = eyes[name]
+                if (eye != null) {
+                    feature("DeformEyeShape$token", null) { pose -> pose.eye(eye).eye }
+                    feature("DeformIrisPreserve$token", DeformerId("DeformEyeShape$token")) { pose -> pose.eye(eye).iris }
                 }
-                if (name in fittedBrows) feature("DeformBrowShape$token", null) { pose -> turns.brow(marks, name, sign, turn, pose) }
-                if (marks["ear.$name.root"] != null) feature("DeformEarOcclusion$token", null) { pose -> turns.ear(sign, turn, pose) }
+                if (name in fittedBrows) {
+                    feature("DeformBrowShape$token", null) { pose -> brow(name, sign, pose) }
+                }
+                if (marks["ear.$name.root"] != null) {
+                    val attachment = marks["ear.$name.attachment"]
+                    val outer = marks["ear.$name.outer"]
+                    feature("DeformEarOcclusion$token", null) { pose -> turns.ear(sign, turn, pose, attachment, outer) }
+                }
+            }
+            if (eyes.isNotEmpty()) {
+                feature("DeformEyeShapeBoth", null) { pose ->
+                    bilateral(pose, eyes["R"]?.let(pose::eye)?.eye, eyes["L"]?.let(pose::eye)?.eye)
+                }
+                feature("DeformIrisPreserveBoth", DeformerId("DeformEyeShapeBoth")) { pose ->
+                    bilateral(pose, eyes["R"]?.let(pose::eye)?.iris, eyes["L"]?.let(pose::eye)?.iris)
+                }
+            }
+            if (fittedBrows.isNotEmpty()) feature("DeformBrowShapeBoth", null) { pose ->
+                bilateral(pose, brow("R", -1f, pose), brow("L", 1f, pose))
             }
             feature("DeformNoseShapeBoth", null, FeatureTurn::nose)
             feature("DeformMouthShapeBoth", null) { pose -> turns.mouth(marks, turn, pose) }
@@ -107,7 +153,8 @@ object DepthTurnMotion {
             }
             val placed = HashMap<DeformerId, FloatArray>()
             for (f in features.sortedBy { if (it.inside == null) 0 else 1 }) {
-                val rule = (if (yaw == 0f && pitch == 0f) null else f.rule(pose)) ?: { x: Float, y: Float -> x to y }
+                val rule = if (yaw == 0f && pitch == 0f) { x: Float, y: Float -> x to y }
+                else f.rule(pose) ?: pose.field
                 val count = f.rest.size / 2
                 val out = FloatArray(f.rest.size)
                 val outer = f.inside?.let { id -> features.firstOrNull { it.warp.id == id } }
@@ -198,12 +245,14 @@ object DepthTurnMotion {
     }
 
     fun styledShapes(tag: String, positions: FloatArray, frame: Bounds, head: Bounds, container: Container,
-                     turn: FaceTurn, checkpoint: () -> Unit = {}): List<BlendShapeBinding<MeshForm>> {
+                     turn: FaceTurn, hairDepth: HairTurn.LockDepth? = null,
+                     checkpoint: () -> Unit = {}): List<BlendShapeBinding<MeshForm>> {
+        val lockDepth = if (tag == "FRONT_HAIR" || tag == "BACK_HAIR") hairDepth ?: HairTurn.depthProfile(positions) else null
         fun form(yaw: Float, pitch: Float): MeshForm {
             checkpoint()
             val pose = turn.pose(yaw, pitch)
             val moved = when (tag) {
-                "FRONT_HAIR", "BACK_HAIR" -> HairTurn.place(positions, tag == "FRONT_HAIR", turn, pose)
+                "FRONT_HAIR", "BACK_HAIR" -> HairTurn.place(positions, tag == "FRONT_HAIR", turn, pose, lockDepth)
                 else -> FeatureTurn.whole("headwear", turn, pose).let { f ->
                     FloatArray(positions.size).also { out -> for (i in 0 until positions.size / 2) f(positions[i * 2], positions[i * 2 + 1]).let { out[i * 2] = it.first; out[i * 2 + 1] = it.second } }
                 }
@@ -225,6 +274,10 @@ object DepthTurnMotion {
             BlendShapeBinding(ANGLE_Y, pitches, pitches.indexOfFirst { it == 0f }, pitches.map { if (it == 0f) null else form(0f, it) }),
         )
     }
+
+    /** Rear headwear follows the skull behind the face, with no hair-chain or eye-covering behavior. */
+    fun styleTag(tag: String, role: String?): String =
+        if (tag == "HEADWEAR" && role == "REAR_HEADWEAR") "BACK_HAIR" else tag
 
     fun shell(tag: String, role: String?): HeadShell? {
         val shells = HeadShell

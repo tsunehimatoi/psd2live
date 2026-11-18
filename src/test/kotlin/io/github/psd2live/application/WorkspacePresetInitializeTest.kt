@@ -3,11 +3,14 @@ package io.github.psd2live.application
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.recipe.RigRecipe
+import io.github.psd2live.format.compile.FrameSpec
 import io.github.psd2live.project.*
 import io.github.psd2live.scenario.Characters
 import kotlinx.serialization.json.*
 import kotlinx.coroutines.runBlocking
 import org.umamo.format.art.*
+import org.umamo.runtime.model.BlendMode
+import org.umamo.runtime.model.OrgChild
 import kotlin.test.*
 
 class WorkspacePresetInitializeTest {
@@ -37,6 +40,63 @@ class WorkspacePresetInitializeTest {
         assertTrue(hasGloom(full))
         assertEquals(RigIrCompiler.compile(configured.second), RigIrCompiler.compile(full.second))
         assertEquals(source.settings, standard.first.settings)
+    }
+
+    @Test fun scaffoldKeepsAuthorGroupOpacityAndVisibilityWhileBindingMeshes() {
+        val head = Characters.head(physics = false)
+        val layers = head.source.layers.map { it as WorkspaceSourceLayer }
+        val active = layers.single { it.id.raw == "face" }
+        val hidden = active.copy(id = LayerId("hidden-overlay"), name = "overlay-reference", groupPath = "references")
+        val source = WorkspaceSourceArt(head.source.widthPx, head.source.heightPx,
+            layers.map { if (it.id == active.id) it.copy(groupPath = "translucent-overlay") else it } + hidden,
+            head.source.groups + listOf(
+                WorkspaceSourceGroup("translucent-overlay", "Overlay artwork", true, .25f, false, LayerBlend.Normal, true),
+                WorkspaceSourceGroup("references", "References", false, 1f, false, LayerBlend.Normal, true),
+            ))
+        val document = head.copy(source = source, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val choices = WorkspaceInitialPreset(clothing = false, motionBasic = false,
+            frontHair = WorkspaceInitialHair.OFF, backHair = WorkspaceInitialHair.OFF)
+        val preview = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct, choices, richness = "base").second
+        val model = preview.rig.puppet
+        val overlay = model.parts.single { it.name == "Overlay artwork" }
+        val refs = model.parts.single { it.name == "References" }
+        assertTrue(overlay.isIsolated)
+        assertEquals(.25f, overlay.composite.opacity)
+        assertFalse(refs.isVisible)
+        for ((sourceId, part) in listOf(active.id.raw to overlay, hidden.id.raw to refs)) {
+            val original = model.drawables.single { preview.rig.ownLayerIdByDrawableId[it.id.raw] == sourceId }
+            assertNotNull(original.parentDeformerId)
+            assertTrue(org.umamo.runtime.model.OrgChild.Drawable(original.id) in part.children)
+        }
+    }
+
+    @Test fun sourceMultiplyGroupCompositesOnceOverTheLayersBelowIt() {
+        val head = Characters.head(physics = false)
+        val layer = head.source.layers.single { it.id.raw == "face" } as WorkspaceSourceLayer
+        fun patch(id: String, order: Int, group: String, color: IntArray) = layer.copy(
+            id = LayerId(id), name = id, order = order, groupPath = group, bounds = LayerBounds(8, 8, 32, 32),
+            raster = LayerRaster(32, 32, ByteArray(32 * 32 * 4) { color[it % 4].toByte() }),
+        )
+        val file = WorkspaceSourceArt(48, 48, listOf(
+            patch("inner-shadow", 0, "shading", intArrayOf(128, 192, 128, 255)),
+            patch("outer-shadow", 1, "shading", intArrayOf(128, 192, 128, 255)),
+            patch("face", 2, "", intArrayOf(192, 128, 96, 255)),
+        ), listOf(WorkspaceSourceGroup("shading", "Shading", true, 1f, false, LayerBlend.Multiply, false)))
+        val document = head.copy(source = file, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val choices = WorkspaceInitialPreset(clothing = false, motionBasic = false,
+            frontHair = WorkspaceInitialHair.OFF, backHair = WorkspaceInitialHair.OFF)
+        val preview = WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct, choices, richness = "base").second
+        val part = preview.rig.puppet.parts.single { it.name == "Shading" }
+        assertTrue(part.isIsolated)
+        assertEquals(BlendMode.MultiplyPremultiplied, part.composite.blendMode)
+        assertEquals(2, part.children.filterIsInstance<OrgChild.Drawable>().size)
+        IrFrameRenderer.open(RigIrCompiler.compile(preview), false).use {
+            val result = it.render(emptyMap(), 0f, FrameSpec(0f, 0f, 48f, 48f, 48, 48))
+            val pixel = result.argb[24 * 48 + 24]
+            assertEquals(255, pixel ushr 24)
+            assertTrue((pixel ushr 16 and 255) in 95..98 && (pixel ushr 8 and 255) in 95..98 && (pixel and 255) in 47..49,
+                "Expected one group multiply; got ${pixel.toUInt().toString(16)}")
+        }
     }
 
     @Test fun preparingBindingsPreservesSplitArtworkAndAuthoredOverrides() {

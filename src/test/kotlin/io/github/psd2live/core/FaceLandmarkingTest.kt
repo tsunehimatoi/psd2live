@@ -2,14 +2,90 @@ package io.github.psd2live.core
 
 import io.github.psd2live.algorithms.binding.DepthTurnInputs
 import io.github.psd2live.algorithms.binding.DepthTurnMotion
+import io.github.psd2live.core.fit.BrowFit
+import io.github.psd2live.core.fit.EyeFit
+import io.github.psd2live.core.fit.EyeFitting
 import io.github.psd2live.core.fit.TurnStyle
 import io.github.psd2live.core.fit.FaceLandmarking
 import io.github.psd2live.project.WorkspaceSourceLayer
 import org.umamo.format.art.*
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 class FaceLandmarkingTest {
+    @Test fun interiorLidAndBrowLandmarksKeepTheirFittedCoordinates() {
+        val eye = EyeFit(Side.LEFT, 100f, 20f, 1f, 0f, 40f,
+            List(17) { -minOf(it, 16 - it) / 40f }, List(17) { minOf(it, 16 - it) / 40f }, null, null)
+        val eyes = EyeFitting.Result(mapOf(Side.LEFT to eye), emptyMap())
+        val brow = BrowFit(Side.LEFT, 92f, 10f, 1f, 0f, 32f, List(17) { -minOf(it, 16 - it) / 32f })
+        val marks = FaceLandmarking.read(emptyList(), eyes, mapOf(Side.LEFT to brow), null, 50f) { _, _ ->
+            error("Landmarks from the fits are already aligned")
+        }
+        fun position(id: String) = marks[id]?.let { it.x to it.y }
+        assertEquals(110f to 24f, position("eye.L.lower25"))
+        assertEquals(120f to 28f, position("eye.L.lower50"))
+        assertEquals(130f to 24f, position("eye.L.lower75"))
+        assertEquals(120f to 12f, position("eye.L.upper50"))
+        assertEquals(100f to 6f, position("brow.L.center25"))
+        assertEquals(108f to 2f, position("brow.L.center50"))
+        assertEquals(116f to 6f, position("brow.L.center75"))
+        assertEquals(null, position("eye.R.lower50"))
+        assertEquals(null, position("brow.R.center50"))
+    }
+
+    private fun lidStroke(xs: IntRange, baseline: Int, peak: Int): List<Pair<Int, Int>> =
+        xs.map { x -> x to baseline - (3 - kotlin.math.abs(x - peak)).coerceAtLeast(0) }
+
+    private fun lid(id: String, side: Side, ink: List<Pair<Int, Int>>, group: String = "", order: Int = 0): ClassifiedLayer {
+        val left = ink.minOf { it.first }
+        val top = ink.minOf { it.second }
+        val width = ink.maxOf { it.first } - left + 1
+        val height = ink.maxOf { it.second } - top + 1
+        val rgba = ByteArray(width * height * 4)
+        for ((x, y) in ink) rgba[((y - top) * width + x - left) * 4 + 3] = -1
+        val source = WorkspaceSourceLayer(LayerId(id), id, group, SourceLayerKind.Raster, true, order,
+            LayerBounds(left, top, width, height), 1f, false, LayerBlend.Normal, ChannelMask.ALL,
+            LayerRaster(width, height, rgba), null, null, true)
+        val bounds = Bounds(left.toFloat(), top.toFloat(), (left + width).toFloat(), (top + height).toFloat())
+        return ClassifiedLayer(source, LayerSemantic(SemanticTag.EYELASH, side, normalizedName = id, confidence = 1f, role = PartRole.LID),
+            bounds, ink.map { it.first + .5f }.average().toFloat(), ink.map { it.second + .5f }.average().toFloat(), ink.size)
+    }
+
+    private fun lidLandmarks(layers: List<ClassifiedLayer>): Map<String, Pair<Float, Float>> {
+        fun eye(side: Side, inner: Float, outward: Float) = EyeFit(side, inner, 39f, outward, 0f, 32f,
+            List(17) { -minOf(it, 16 - it) / 32f }, List(17) { minOf(it, 16 - it) / 32f }, null, null)
+        val eyes = EyeFitting.Result(mapOf(Side.RIGHT to eye(Side.RIGHT, 45f, -1f), Side.LEFT to eye(Side.LEFT, 55f, 1f)), emptyMap())
+        val marks = FaceLandmarking.read(layers, eyes, emptyMap(), null, 50f) { x, y -> x to y }
+        return listOf("L", "R").flatMap { side -> listOf("lidInner", "lidOuter", "lidTop").map { "eye.$side.$it" } }
+            .associateWith { id -> assertNotNull(marks[id], id).let { it.x to it.y } }
+    }
+
+    @Test fun aPairedLidLayerUsesOnlyTheInkOnEachEyesSide() {
+        val westernLid = lidStroke(18..42, 31, 26)
+        val easternLid = lidStroke(58..82, 25, 70)
+        val both = lid("double eyelid", Side.NONE, westernLid + easternLid)
+        assertEquals(mapOf(
+            "eye.R.lidInner" to (42.5f to 31.5f), "eye.R.lidOuter" to (18.5f to 31.5f), "eye.R.lidTop" to (26.5f to 28.5f),
+            "eye.L.lidInner" to (58.5f to 25.5f), "eye.L.lidOuter" to (82.5f to 25.5f), "eye.L.lidTop" to (70.5f to 22.5f),
+        ), lidLandmarks(listOf(both)))
+    }
+
+    @Test fun aThroughHairLidOverlayCannotReplaceThePrimaryLids() {
+        val right = lid("double eyelid-r", Side.RIGHT, lidStroke(23..39, 32, 29), order = 2)
+        val left = lid("double eyelid-l", Side.LEFT, lidStroke(63..79, 30, 68), order = 1)
+        // The overlay has more ink on both sides and lies above the primary eye artwork.
+        val cover = lid("double eyelid overlay", Side.NONE, lidStroke(16..44, 25, 26) + lidStroke(56..85, 23, 73),
+            group = "body/眼眉透发")
+        val expected = mapOf(
+            "eye.R.lidInner" to (39.5f to 32.5f), "eye.R.lidOuter" to (23.5f to 32.5f), "eye.R.lidTop" to (29.5f to 29.5f),
+            "eye.L.lidInner" to (63.5f to 30.5f), "eye.L.lidOuter" to (79.5f to 30.5f), "eye.L.lidTop" to (68.5f to 27.5f),
+        )
+        assertEquals(expected, lidLandmarks(listOf(right, left)))
+        assertEquals(expected, lidLandmarks(listOf(cover, right, left)))
+    }
+
     @Test fun sparseHairColumnsKeepTheirTipsGapsAndCanvasPositions() {
         val width = 36
         val height = 12
@@ -48,6 +124,23 @@ class FaceLandmarkingTest {
         val bounds = Bounds(left.toFloat(), top.toFloat(), (left + width).toFloat(), (top + height).toFloat())
         return ClassifiedLayer(source, LayerSemantic(SemanticTag.EARS, side, normalizedName = id, confidence = 1f, role = role),
             bounds, bounds.centerX, bounds.centerY, if (alpha > 0) width * height else 0)
+    }
+
+    @Test fun foreheadCoverageUsesOpaqueReachOutsideEachVisibleSkinEdge() {
+        fun part(id: String, tag: SemanticTag, left: Int, top: Int, width: Int, height: Int, alpha: Int = 255): ClassifiedLayer {
+            val base = ear(id, Side.NONE, null, left, top, width, height, alpha)
+            return base.copy(semantic = base.semantic.copy(tag = tag))
+        }
+        val face = part("face", SemanticTag.FACE, 20, 0, 100, 115)
+        val eyes = listOf(part("eye1", SemanticTag.EYEWHITE, 38, 54, 12, 8), part("eye2", SemanticTag.EYEWHITE, 90, 54, 12, 8))
+        val hair = part("hair", SemanticTag.FRONT_HAIR, 12, 0, 121, 54)
+        val emptyOutline = part("transparent hair", SemanticTag.FRONT_HAIR, 0, 0, 160, 54, alpha = 0)
+        fun measure(cover: List<ClassifiedLayer>) =
+            FaceLandmarking.read(listOf(face) + eyes, null, emptyMap(), null, 70f, cover) { x, y -> x to y }.measures
+        val measured = measure(listOf(hair, emptyOutline))
+        assertTrue(requireNotNull(measured["face.upperCover.R"]) in .07f.. .10f)
+        assertTrue(requireNotNull(measured["face.upperCover.L"]) in .12f.. .15f)
+        assertEquals(null, measure(listOf(emptyOutline))["face.upperCover.R"])
     }
 
     @Test fun layeredAnimalEarUsesUnionGeometryAndProducesValidDepthTurnInputs() {
@@ -99,6 +192,23 @@ class FaceLandmarkingTest {
             "ear.L.top" to (60.5f to 20.5f), "ear.L.lobe" to (61.5f to 23.5f),
             "ear.R.root" to (39.5f to 22.5f), "ear.R.outer" to (36.5f to 20.5f),
             "ear.R.top" to (36.5f to 20.5f), "ear.R.lobe" to (37.5f to 23.5f)), regular)
+    }
+
+    @Test fun sideEarAttachmentUsesTheObservedFaceEdgeOnBothSides() {
+        val face = ear("skin", Side.NONE, null, 40, 10, 20, 40).let { layer ->
+            layer.copy(semantic = layer.semantic.copy(tag = SemanticTag.FACE))
+        }
+        val left = ear("left", Side.LEFT, null, 57, 20, 8, 7)
+        val right = ear("right", Side.RIGHT, null, 35, 20, 8, 7)
+        fun read(vararg ears: ClassifiedLayer) = FaceLandmarking.read(listOf(face) + ears, null, emptyMap(), null, 50f) { x, y ->
+            x - 50f to y + 10f
+        }
+        fun position(id: String) = read(left, right)[id]?.let { it.x to it.y }
+        assertEquals(10f to 33.5f, position("ear.L.attachment"))
+        assertEquals(-10f to 33.5f, position("ear.R.attachment"))
+        assertEquals(7.5f to 30.5f, position("ear.L.root"))
+        assertEquals(null, read(ear("detached", Side.LEFT, null, 60, 20, 6, 7))["ear.L.attachment"])
+        assertEquals(null, read(ear("hidden", Side.LEFT, null, 53, 20, 6, 7))["ear.L.attachment"])
     }
 
     @Test fun emptyAndBelowThresholdEarLayersDoNotChangeSingleEarLandmarks() {

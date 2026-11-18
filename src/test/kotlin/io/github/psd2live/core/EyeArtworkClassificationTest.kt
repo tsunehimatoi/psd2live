@@ -18,6 +18,7 @@ import kotlin.math.abs
 import kotlin.math.sin
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class EyeArtworkClassificationTest {
@@ -83,6 +84,19 @@ class EyeArtworkClassificationTest {
 		val part = fit(listOf(main(), lid)).components.single { it.layerId == "lid" }
 		assertEquals(EyePrimitive.SKIN, part.primitive)
 		assertTrue(part.branches.isEmpty())
+	}
+
+	@Test fun tintedLidSkinDoesNotThickenLashInkOrGainAVisibilityTrack() {
+		val tint = layer("lid-tint", PartRole.EYE_DETAIL) { x, y -> x in 35f..100f && abs(y - upper(x)) < 10f }
+		val original = fit(listOf(main()))
+		val tinted = fit(listOf(main(), tint))
+		val part = tinted.components.single { it.layerId == "lid-tint" }
+		assertEquals(original.upper, tinted.upper)
+		assertEquals(EyePrimitive.SKIN, part.primitive)
+		assertTrue(part.branches.isEmpty())
+		assertEquals(EyeRig.EyeMesh.SKIN, EyeModules.meshOf("EYELASH", "EYE_DETAIL"))
+		val rig = EyeRig(eye, .25f, 1f, .6f)
+		assertNull(EyeModules.opacity("EYELASH", "EYE_DETAIL", Side.LEFT, rig, EyeOptions(lidFade = true)))
 	}
 
 	@Test fun observationReductionCannotMergeSeparateSourceStrands() {

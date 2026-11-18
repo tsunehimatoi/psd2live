@@ -26,7 +26,8 @@ data class DepthTurnInputs(
     val shapeName: String = "{meshName} Shape", val turnName: String = "{meshName} Turn",
 ) {
     data class Layer(val tag: String, val role: String?, val frame: Bounds, val farRight: Boolean = false,
-                     val sourceMesh: String? = null, val follow: MouthRig.Follow? = null, val closesFace: Boolean = false)
+                     val sourceMesh: String? = null, val follow: MouthRig.Follow? = null, val closesFace: Boolean = false,
+                     val hairCarrier: String? = null)
 
     init {
         require(radiusX > 0f && radiusY > 0f && shapeName.isNotBlank() && turnName.isNotBlank())
@@ -71,6 +72,7 @@ data class DepthTurnInputs(
                     put("tag", layer.tag); layer.role?.let { put("role", it) }; put("frame", layer.frame.json())
                     put("farRight", layer.farRight); layer.sourceMesh?.let { put("source", it) }
                     layer.follow?.let { put("follow", it.name) }; put("closesFace", layer.closesFace)
+                    layer.hairCarrier?.let { put("hairCarrier", it) }
                 } }
             }
             mouthWarp?.let { warp -> putJsonObject("mouthWarp") {
@@ -120,7 +122,7 @@ data class DepthTurnInputs(
                 Layer(layer.getValue("tag").jsonPrimitive.content, layer["role"]?.jsonPrimitive?.content,
                     layer.getValue("frame").bounds(), layer.getValue("farRight").jsonPrimitive.boolean,
                     layer["source"]?.jsonPrimitive?.content, layer["follow"]?.jsonPrimitive?.content?.let(MouthRig.Follow::valueOf),
-                    layer.getValue("closesFace").jsonPrimitive.boolean)
+                    layer.getValue("closesFace").jsonPrimitive.boolean, layer["hairCarrier"]?.jsonPrimitive?.content)
             }
             fun sides(key: String) = values.getValue(key).jsonArray.mapTo(linkedSetOf()) { it.jsonPrimitive.content }
                 .also { require(it.all { side -> side == "L" || side == "R" }) }

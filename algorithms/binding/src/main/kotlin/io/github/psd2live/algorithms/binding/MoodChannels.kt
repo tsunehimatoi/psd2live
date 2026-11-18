@@ -6,7 +6,8 @@ import org.umamo.runtime.model.*
 object MoodChannels {
     val parameters = setOf(ParameterId("ParamCheek"), ParameterId("ParamGloom"))
 
-    fun apply(grids: ChannelGrids, warmth: Float, darkness: Float, highlight: Boolean, cheek: Boolean, gloom: Boolean): ChannelGrids {
+    fun apply(grids: ChannelGrids, warmth: Float, darkness: Float, highlight: Boolean, cheek: Boolean,
+              gloom: Boolean, restOpacity: Float): ChannelGrids {
         if (!cheek && !gloom) return grids
         var out = grids.gridsByChannel
         val axes = listOfNotNull(
@@ -27,9 +28,9 @@ object MoodChannels {
             visit(0, IntArray(axes.size))
             out = out + (FormChannel.MULTIPLY_COLOR to KeyformGrid(axes, cells))
         }
-        if (gloom && highlight && FormChannel.OPACITY !in out) {
+        if (gloom && highlight && restOpacity > 0f && FormChannel.OPACITY !in out) {
             out = out + (FormChannel.OPACITY to KeyformGrid(listOf(KeyformAxis(ParameterId("ParamGloom"), floatArrayOf(0f, 1f))),
-                (0..1).map { KeyformCell(intArrayOf(it), ChannelValue.Scalar(1f - .85f * it) as ChannelValue) }))
+                (0..1).map { KeyformCell(intArrayOf(it), ChannelValue.Scalar(restOpacity * (1f - .85f * it)) as ChannelValue) }))
         }
         return if (out === grids.gridsByChannel) grids else ChannelGrids(out)
     }

@@ -52,6 +52,6 @@ class MoodBinding(
         /** Applies generated mood to a neutral mesh while respecting channels owned by other bindings. */
         fun applyChannels(mesh: Drawable, influence: Influence, cheek: Boolean, gloom: Boolean): Drawable =
             mesh.copy(channelGrids = MoodChannels.apply(mesh.channelGrids, influence.warmth, influence.darkness,
-                influence.highlight, cheek, gloom))
+                influence.highlight, cheek, gloom, mesh.opacity))
     }
 }

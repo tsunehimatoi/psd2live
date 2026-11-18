@@ -55,6 +55,20 @@ object ScaffoldBinding {
             bind(model, instance, source, checkpoint, writes)
         }
 
+    /** A deformer binding must keep the source visibility or whole-group alpha on the drawing. */
+    private fun sourceGroupMeshes(model: PuppetModel): Set<DrawableId> = buildSet {
+        val parts = model.parts.associateBy { it.id }
+        val visited = HashSet<PartId>()
+        fun preserve(part: Part) {
+            if (!visited.add(part.id)) return
+            for (child in part.children) when (child) {
+                is OrgChild.Drawable -> add(child.id)
+                is OrgChild.Part -> parts[child.id]?.let(::preserve)
+            }
+        }
+        model.parts.filter { it.id.raw.startsWith("source-group:") && (it.isIsolated || !it.isVisible) }.forEach(::preserve)
+    }
+
     private fun bind(
         input: PuppetModel, instance: RigModifierInstance, source: Source, checkpoint: () -> Unit,
         writes: ScaffoldChanges.Writes?,
@@ -66,6 +80,7 @@ object ScaffoldBinding {
         }
         val emittedDeformers = HashSet<DeformerId>()
         val emittedParts = HashSet<PartId>()
+        val sourceGroupMeshes = sourceGroupMeshes(input)
         val sharedTemplate = if (instance.outputAliases.keys.any { it.startsWith("shared/deformer:") })
             source.scaffoldFor(instance, instance.targets.first(), checkpoint) else null
         for (target in instance.targets) {
@@ -139,7 +154,7 @@ object ScaffoldBinding {
                 if (actual.parentDeformerId != destination) BindingFrames.carriedToParent(current, rebound, meshId, checkpoint) else rebound
             }
             writes?.meshes?.add(meshId)
-            if (orgParent != null) {
+            if (orgParent != null && meshId !in sourceGroupMeshes) {
                 val child = OrgChild.Drawable(meshId)
                 if (writes != null) {
                     // Moving the target detaches every existing membership before attaching to the new part.

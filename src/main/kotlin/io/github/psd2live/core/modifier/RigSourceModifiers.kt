@@ -134,7 +134,9 @@ internal class RigModifierSource(
         val layers = layersById
         // Coverage depends only on source pixels and semantics. Expand against the live model in the plugin.
         val sourceMeshes = layersByMesh.keys.map { Drawable(DrawableId(it), it, null, BlendMode.Normal, emptyList(), null, null) }
-        SeeThroughLayers.candidates(materialBase.copy(drawables = sourceMeshes), config.alphaThreshold) { layers[layersByMesh[it.raw]] }
+        SeeThroughLayers.candidates(materialBase.copy(drawables = sourceMeshes), config.alphaThreshold, analysis.source.groups) {
+            layers[layersByMesh[it.raw]]
+        }
     }
 
     fun seeThroughContext(instance: RigModifierInstance): ModifierAlgorithmContext = ModifierAlgorithmContext(buildJsonObject {

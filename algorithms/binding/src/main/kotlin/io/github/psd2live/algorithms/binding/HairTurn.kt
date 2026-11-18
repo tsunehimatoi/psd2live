@@ -10,12 +10,12 @@ package io.github.psd2live.core.fit
  * A sheet moves a point against the face's middle by where it lies: down the head (from the eye line, in the eye line
  * to chin length), linear between the sheet's heights ([TurnStyle.hairKnots]); across (in the face's width, mirrored
  * with the turn, held at [TurnStyle.hairReach]) by a quadratic, so the near and the far side differ; and down its lock
- * ([down]: 0 where its piece starts in its column, 1 where it ends), so a lock's tip leads its root - at each height
+ * ([LockDepth]: 0 where its piece starts in its column, 1 where it ends), so a lock's tip leads its root - at each height
  * `a + b w + c w^2 + e v`, in the face's width.
  */
 object HairTurn {
-	/** [positions] (x, y pairs) of one hair piece, [front] of the face or behind it, placed at [pose]. */
-	fun place(positions: FloatArray, front: Boolean, turn: FaceTurn, pose: FaceTurn.Pose): FloatArray {
+	/** [positions] (x, y pairs) of one hair piece or a projection using the source strand's [depth]. */
+	fun place(positions: FloatArray, front: Boolean, turn: FaceTurn, pose: FaceTurn.Pose, depth: LockDepth? = null): FloatArray {
 		val n = positions.size / 2
 		if (n == 0) return positions.copyOf()
 		val style = turn.style; val knots = style.hairKnots; val terms = TurnStyle.HAIR_TERMS
@@ -23,7 +23,7 @@ object HairTurn {
 		val layer = if (front) "front" else "back"
 		val cx = FloatArray(knots.size * terms) { pose.hair["${layer}_x_$it"] }
 		val cy = FloatArray(knots.size * terms) { pose.hair["${layer}_y_$it"] }
-		val v = down(positions)
+		val lockDepth = depth ?: checkNotNull(depthProfile(positions))
 		return FloatArray(positions.size).also { out ->
 			for (i in 0 until n) {
 				val x = positions[i * 2]; val y = positions[i * 2 + 1]
@@ -32,7 +32,7 @@ object HairTurn {
 				var k = 0
 				while (k < knots.size - 2 && h > knots[k + 1]) k++
 				val t = (h - knots[k]) / (knots[k + 1] - knots[k])
-				val across = floatArrayOf(1f, w, w * w, v[i])
+				val across = floatArrayOf(1f, w, w * w, lockDepth.at(x, y))
 				var dx = 0f; var dy = 0f
 				for ((knot, share) in listOf(k to 1f - t, k + 1 to t)) for (j in 0 until terms) {
 					dx += share * across[j] * cx[knot * terms + j]; dy += share * across[j] * cy[knot * terms + j]
@@ -43,9 +43,22 @@ object HairTurn {
 		}
 	}
 
-	/** Each point's place down its lock: 0 where the piece starts in its column, 1 where it ends. */
-	private fun down(positions: FloatArray): FloatArray {
+	/** The source strand's vertical extent in each column, in aligned head coordinates. */
+	class LockDepth internal constructor(private val left: Float, private val step: Float,
+	                                    private val top: FloatArray, private val bottom: FloatArray) {
+		fun at(x: Float, y: Float): Float {
+			val column = ((x - left) / step - 0.5f).coerceIn(0f, top.lastIndex.toFloat())
+			val lower = column.toInt().coerceAtMost(top.lastIndex - 1)
+			val t = column - lower
+			val start = top[lower] + (top[lower + 1] - top[lower]) * t
+			val end = bottom[lower] + (bottom[lower + 1] - bottom[lower]) * t
+			return ((y - start) / (end - start).coerceAtLeast(1e-3f)).coerceIn(0f, 1f)
+		}
+	}
+
+	fun depthProfile(positions: FloatArray): LockDepth? {
 		val n = positions.size / 2
+		if (n == 0) return null
 		val xs = FloatArray(n) { positions[it * 2] }; val ys = FloatArray(n) { positions[it * 2 + 1] }
 		val bins = 24
 		val lo = xs.min() - 1e-3f; val hi = xs.max() + 1e-3f; val step = (hi - lo) / bins
@@ -56,14 +69,7 @@ object HairTurn {
 		fill(top); fill(bottom)
 		val kernel = floatArrayOf(1f, 2f, 3f, 2f, 1f)
 		fun smooth(a: FloatArray) = FloatArray(bins) { b -> var s = 0f; for (k in -2..2) s += kernel[k + 2] * a[(b + k).coerceIn(0, bins - 1)]; s / 9f }
-		val t = smooth(top); val bo = smooth(bottom)
-		return FloatArray(n) { i ->
-			// Read continuously along x between the columns' middles.
-			val c = ((xs[i] - lo) / step - 0.5f).coerceIn(0f, bins - 1f)
-			val b0 = c.toInt().coerceAtMost(bins - 2); val k = c - b0
-			val ti = t[b0] + (t[b0 + 1] - t[b0]) * k; val bi = bo[b0] + (bo[b0 + 1] - bo[b0]) * k
-			((ys[i] - ti) / (bi - ti).coerceAtLeast(1e-3f)).coerceIn(0f, 1f)
-		}
+		return LockDepth(lo, step, smooth(top), smooth(bottom))
 	}
 
 	private fun percentile(sorted: List<Float>, q: Float): Float {

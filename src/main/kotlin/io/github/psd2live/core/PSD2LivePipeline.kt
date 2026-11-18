@@ -169,7 +169,8 @@ class PSD2LivePipeline {
         val (effectiveAnalysis, fullAtlas, generated) = if (ordinaryMaterials && config.rigEdits == RigEditOverlay.Empty)
             generateWithAtlasEncoding(inputs, config, progress)
         else generatedBase(inputs, config, progress, materialsOnly = ordinaryMaterials)
-        val baseRig = if (ordinaryMaterials) io.github.psd2live.core.modifier.RigOrdinaryMaterials.of(generated, effectiveAnalysis) else generated
+        val baseRig = if (ordinaryMaterials)
+            io.github.psd2live.core.modifier.RigOrdinaryMaterials.of(generated, effectiveAnalysis, config.layerVisibility) else generated
 		// The base packs superseded layers (the originals of a split) too; once no mesh samples them the model
 		// packs only the layers it shows, as exports do.
 		val (atlas, rig) = RigLayerDeletion.compact(fullAtlas, effectiveAnalysis, effectiveAnalysis,
