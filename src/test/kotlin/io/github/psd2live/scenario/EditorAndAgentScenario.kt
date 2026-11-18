@@ -397,6 +397,61 @@ class EditorAndAgentScenario {
 		assertEquals(head, workspace.snapshot().historyHeadNodeId, "unchanged focus must not create edits")
 	}
 
+	@Test fun shiftKeepsALatticePointAndABezierAnchorDragStraight() = editor {
+		workspace.importPsd(Characters.figurePsd(temp).toString(), true)
+		consistent("imported")
+		val warp = vm.state.value.previewModel!!.rig.puppet.deformers.filterIsInstance<org.umamo.runtime.model.Deformer.Warp>().first { it.rows >= 3 && it.columns >= 3 }
+		val canvas = withContext(Dispatchers.Main) {
+			vm.selectDeformer(warp.id.raw)
+			io.github.psd2live.ui.CanvasEditor(vm, vm.state.value.activeWorkspace.id, "shift-test").also {
+				it.hierarchyMode = io.github.psd2live.ui.EditHierarchyMode.DEFORM
+				it.editLevel = 1
+				it.activateTool(io.github.psd2live.ui.CanvasTool.SELECT)
+			}
+		}
+		settle()
+		val puppet = vm.state.value.previewModel!!.rig.puppet
+		val viewport = io.github.psd2live.core.CanvasViewport(4.0, 0.0, 0.0, puppet.canvasWidth, puppet.canvasHeight)
+		fun points() = canvas.target()!!.let { canvas.screen(it.geometry.points, it, viewport) }
+		val drag = androidx.compose.ui.geometry.Offset(30f, 9f)
+
+		// An inner lattice point at the vertex level, clear of the corner badges.
+		val point = warp.columns + 2
+		val before = points()[point]
+		withContext(Dispatchers.Main) {
+			canvas.move(before, viewport, shift = false)
+			canvas.press(before, viewport, shift = false, alt = false)
+			canvas.move(before + drag, viewport, shift = true)
+			canvas.release()
+		}
+		consistent("dragged a lattice point with Shift")
+		val after = points()[point]
+		assertTrue(after.x - before.x > 20f, "the lattice point did not move: $before -> $after")
+		assertEquals(before.y, after.y, 0.5f, "Shift must keep the drag horizontal")
+
+		// A Bezier anchor at the Bezier level.
+		val (anchorKey, anchorBefore) = withContext(Dispatchers.Main) {
+			canvas.setEditLevel(2)
+			canvas.ensureBezierState()
+			val t = canvas.target()!!
+			val (key, anchor) = canvas.bezierState!!.anchors.entries.first()
+			val at = canvas.screen(floatArrayOf(anchor.x, anchor.y), t, viewport)[0]
+			canvas.move(at, viewport, shift = false)
+			canvas.press(at, viewport, shift = false, alt = false)
+			canvas.move(at + drag, viewport, shift = true)
+			canvas.release()
+			key to at
+		}
+		consistent("dragged an anchor with Shift")
+		val anchorAfter = withContext(Dispatchers.Main) {
+			canvas.ensureBezierState()
+			val a = canvas.bezierState!!.anchors.getValue(anchorKey)
+			canvas.screen(floatArrayOf(a.x, a.y), canvas.target()!!, viewport)[0]
+		}
+		assertTrue(anchorAfter.x - anchorBefore.x > 20f, "the anchor did not move: $anchorBefore -> $anchorAfter")
+		assertEquals(anchorBefore.y, anchorAfter.y, 0.5f, "Shift must keep the anchor drag horizontal")
+	}
+
 	@Test fun queuedPresetFieldsKeepGeneratedCheckpointsAndSave() = editor {
 		workspace.importPsd(Characters.figurePsd(temp).toString(), true)
 		consistent("imported")
