@@ -45,7 +45,7 @@ internal object WorkspacePartitionEdits {
     }
 
     fun apply(operation: WorkspaceDocumentOperation, document: WorkspaceDocument, model: RigPreviewModel,
-              work: WorkspaceRasterWork = WorkspaceRasterWork.Direct): WorkspaceDocument {
+              work: WorkspaceRasterWork = WorkspaceRasterWork.Direct, freshSource: Boolean = false): WorkspaceDocument {
         require(operation.operation in supported)
         work.progress(0.05f, "Preparing source partition")
         val request = operation.request
@@ -81,6 +81,22 @@ internal object WorkspacePartitionEdits {
             val plan = requireNotNull(componentPlan)
             require(plan.components.size == names.size) { "Names must match the current mesh island count: ${plan.components.size}" }
             plan.pieces(names, pieceIds, work::checkpoint)
+        }
+        // An unpublished import has no authored rig to migrate. Keep its pixels, without pinning an early binding.
+        if (freshSource) {
+            check(!imported && !migrate)
+            val classification = document.layerOverrides[id] ?: model.analysis.layers.first { it.source.id.raw == id }.semantic.let {
+                LayerClassificationOverride(it.type, it.tag, it.side, it.parameter, it.switchId, it.role)
+            }
+            val layers = document.source.layers.flatMap { if (it.id.raw == id) listOf(it) + pieces else listOf(it) }
+            val sourceArt = WorkspaceSourceArt(document.source.widthPx, document.source.heightPx,
+                layers.mapIndexed { index, layer -> WorkspaceSourceLayer.copyOf(layer, layers.size - index) }, document.source.groups)
+            return document.copy(source = sourceArt, deletedLayerIds = document.deletedLayerIds + id,
+                layerOverrides = document.layerOverrides + pieces.mapIndexed { index, piece ->
+                    piece.id.raw to classification.copy(side = sides[index].takeUnless { it == Side.NONE } ?: classification.side)
+                },
+                layerVisibility = document.layerVisibility + (id to false) +
+                    pieces.associate { it.id.raw to (document.layerVisibility[id] ?: source.visible) })
         }
         work.progress(0.75f, "Preserving partition generation context")
         if (!imported) return materialize(document, model, id, pieces, sides, names, componentPlan, request, work)

@@ -50,10 +50,10 @@ class PSD2LivePipeline {
         modifierBase = null
     }
     /** Carry content-keyed intermediates between isolated candidates, never a mutable document or worker. */
-    internal fun reuseModifierInputs(current: RigPreviewModel?) {
+    internal fun reuseModifierInputs(current: RigPreviewModel?, shareOwner: Boolean = true) {
         if (modifierBuildOwner.isClosed) modifierBuildOwner = ModifierBuildCacheOwner()
         current ?: return
-        current.modifierBuildOwner?.takeUnless { it.isClosed }?.let { modifierBuildOwner = it }
+        if (shareOwner) current.modifierBuildOwner?.takeUnless { it.isClosed }?.let { modifierBuildOwner = it }
         if (modifierBuildOwner.isClosed) modifierBuildOwner = ModifierBuildCacheOwner()
         current.modifierEvaluation?.let { modifierCache.snapshot = it }
         current.modifierBaseSnapshot?.let { modifierBase = it }

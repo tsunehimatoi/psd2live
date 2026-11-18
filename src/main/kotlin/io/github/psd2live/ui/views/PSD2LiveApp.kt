@@ -316,7 +316,9 @@ private fun FrameWindowScope.PSD2LiveAppContent(
 			if (!isBusy) {
 				val selected = NativeFilePicker.choosePsdFile(window, state.inputPath)
 				if (!selected.isNullOrBlank()) {
-					viewModel.withSavedChanges { viewModel.setInputPath(selected); viewModel.analyze(discardUnsaved = true) }
+					val path = Path.of(selected)
+                    if (path.fileName.toString().endsWith(".psd", true)) viewModel.openPsdGuide(path)
+                    else viewModel.withSavedChanges { viewModel.setInputPath(selected); viewModel.analyze(discardUnsaved = true) }
 				}
 			}
 		}

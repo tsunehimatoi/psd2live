@@ -282,6 +282,7 @@ internal val dockJson = Json { ignoreUnknownKeys = true }
 /** The arrangement [page] starts from and "reset layout" restores; every panel of the page is in it. */
 internal fun pageDockLayout(page: AppPage): DockNode = when (page) {
     AppPage.START -> row(.14f, leaf(START_NAV), row(.68f, leaf(START_MAIN), leaf(START_DETAILS)))
+    AppPage.PSD_GUIDE -> leaf(PSD_GUIDE_CONTENT)
     AppPage.HELP -> row(.20f, leaf(HELP_NAV), leaf(HELP_CONTENT))
     AppPage.SETTINGS -> row(.20f, leaf(SETTINGS_NAV), leaf(SETTINGS_CONTENT))
 }

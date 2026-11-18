@@ -280,19 +280,8 @@ internal fun ModifierPresetMenu(
         }
     }
 
-    val categories = remember(entries) { ModifierPresetMenuModel.availableCategories(entries) }
-    val customEntries = remember(entries) { entries.filter { ModifierPresetMenuModel.isCustom(it) } }
-    val activeEntry = remember(category, simulation, countTier, customId, entries) {
-        ModifierPresetMenuModel.resolvePresetEntry(category, simulation, countTier, customId, entries)
-    }
     val model = state.previewModel
-    val paramEstimate = remember(activeEntry, countTier, model) {
-        ModifierPresetMenuModel.estimateParameters(activeEntry, countTier, model)
-    }
-    val hint = activeEntry?.nameKey?.let { key ->
-        val hintKey = "$key.hint"
-        tr(hintKey).takeUnless { it == hintKey }
-    }
+    val choice = presetChoice(ModifierPresetSelection(category, simulation, countTier, customId), entries)
 
     val scope = rememberCoroutineScope()
     var naming by remember { mutableStateOf(false) }
@@ -331,12 +320,6 @@ internal fun ModifierPresetMenu(
         }
     }
 
-    fun categoryLabel(cat: ModifierPresetCategory): String = when (cat) {
-        ModifierPresetCategory.MODERN -> tr("modifier.preset.type.modern")
-        ModifierPresetCategory.LEGACY -> tr("modifier.preset.type.legacy")
-        ModifierPresetCategory.CUSTOM -> tr("modifier.preset.type.custom")
-    }
-
     PressMenu(
         expanded = true,
         press = Offset.Zero,
@@ -347,144 +330,12 @@ internal fun ModifierPresetMenu(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            // Dropdown 1: Preset type + reset button
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                CompactSelect(
-                    options = categories,
-                    selected = category,
-                    label = ::categoryLabel,
-                    onSelect = { next ->
-                        category = next
-                        if (next == ModifierPresetCategory.CUSTOM && customId == null) {
-                            customId = customEntries.firstOrNull()?.id
-                        }
-                    },
-                    enabled = controlsEnabled,
-                    height = 22.dp,
-                    modifier = Modifier.weight(1f),
-                )
-                val canReset = controlsEnabled && (
-                    category != ModifierPresetCategory.MODERN ||
-                        simulation != ModifierSimulationMode.CLOTHING_SIM ||
-                        countTier != ModifierCountTier.STANDARD
-                    )
-                CompactIconButton(
-                    onClick = {
-                        category = ModifierPresetCategory.MODERN
-                        simulation = ModifierSimulationMode.CLOTHING_SIM
-                        countTier = ModifierCountTier.STANDARD
-                    },
-                    enabled = canReset,
-                    tooltip = tr("modifier.preset.reset"),
-                    size = 22.dp,
-                ) {
-                    IconReset(tint = if (canReset) colors.textMuted else colors.textDisabled)
-                }
-            }
-
-            // Dropdown 2: Simulation mode (or custom preset selector)
-            if (category == ModifierPresetCategory.CUSTOM) {
-                val selectedCustom = customEntries.firstOrNull { it.id == customId } ?: customEntries.firstOrNull()
-                if (selectedCustom != null) {
-                    CompactSelect(
-                        options = customEntries,
-                        selected = selectedCustom,
-                        label = { it.nameKey?.let { k -> tr(k) } ?: it.name },
-                        onSelect = { customId = it.id },
-                        enabled = controlsEnabled,
-                        height = 22.dp,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            } else {
-                val simEnabled = controlsEnabled && countTier != ModifierCountTier.EMPTY
-                CompactSelect(
-                    options = ModifierSimulationMode.entries,
-                    selected = simulation,
-                    label = { tr(it.labelKey) },
-                    onSelect = { simulation = it },
-                    enabled = simEnabled,
-                    height = 22.dp,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-
-                // Slider: Modifier count (empty / base / minimal / standard / extended / full)
-                val countTiers = ModifierCountTier.entries
-                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Text(
-                            text = tr("modifier.preset.count.title"),
-                            style = typography.caption.copy(fontSize = 10.5.sp),
-                            color = colors.textMuted,
-                        )
-                        Text(
-                            text = tr(countTier.labelKey),
-                            style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
-                            color = colors.accent,
-                        )
-                    }
-
-                    PresetRichnessSlider(
-                        count = countTiers.size,
-                        selectedIndex = countTiers.indexOf(countTier).coerceAtLeast(0),
-                        enabled = controlsEnabled,
-                        onSelectIndex = { idx ->
-                            countTiers.getOrNull(idx)?.let { countTier = it }
-                        },
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        countTiers.forEachIndexed { idx, tier ->
-                            val isSelected = tier == countTier
-                            Text(
-                                text = tr(tier.labelKey),
-                                style = typography.caption.copy(
-                                    fontSize = 9.5.sp,
-                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                                ),
-                                color = if (isSelected) colors.textPrimary else colors.textMuted,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                textAlign = when (idx) {
-                                    0 -> TextAlign.Start
-                                    countTiers.lastIndex -> TextAlign.End
-                                    else -> TextAlign.Center
-                                },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clickable(enabled = controlsEnabled) { countTier = tier },
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Parameter counts (ordinary vs physics)
-            Text(
-                text = tr("modifier.preset.params", paramEstimate.ordinary, paramEstimate.physics),
-                style = typography.caption.copy(fontSize = 10.5.sp, fontWeight = FontWeight.Medium),
-                color = colors.textPrimary,
-            )
-
-            if (!hint.isNullOrBlank()) {
-                Text(
-                    text = hint,
-                    style = typography.caption.copy(fontSize = 10.sp),
-                    color = colors.textMuted,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            ModifierPresetControls(ModifierPresetSelection(category, simulation, countTier, customId), entries,
+                model, controlsEnabled) { next ->
+                category = next.category
+                simulation = next.simulation
+                countTier = next.countTier
+                customId = next.customId
             }
 
             dialog.error?.let { err ->
@@ -494,11 +345,10 @@ internal fun ModifierPresetMenu(
                 Text(text = tr("modifier.library.failed", err), style = typography.caption, color = colors.error)
             }
 
-            val applyRichness = if (countTier == ModifierCountTier.EMPTY) "standard" else countTier.id
             CompactButton(
                 text = if (dialog.committing) tr("modifier.adding") else tr("modifier.preset.apply"),
-                onClick = { activeEntry?.let { vm.switchModifierPreset(it.id, if (category == ModifierPresetCategory.CUSTOM) it.richness else applyRichness) } },
-                enabled = controlsEnabled && activeEntry != null,
+                onClick = { choice?.let { (entry, richness) -> vm.switchModifierPreset(entry.id, richness) } },
+                enabled = controlsEnabled && choice != null,
                 isPrimary = true,
                 height = 22.dp,
                 modifier = Modifier.fillMaxWidth(),
@@ -565,7 +415,7 @@ internal fun ModifierPresetMenu(
             FloatingMenuRow(
                 label = tr("modifier.library.export"),
                 onClick = {
-                    val id = activeEntry?.id ?: return@FloatingMenuRow
+                    val id = choice?.first?.id ?: return@FloatingMenuRow
                     runLibraryTask {
                         val raw = library.exportJson(id, if (category == ModifierPresetCategory.CUSTOM) null else if (countTier == ModifierCountTier.EMPTY) "standard" else countTier.id)
                         val path = withContext(Dispatchers.IO) {
@@ -577,23 +427,202 @@ internal fun ModifierPresetMenu(
                         withContext(Dispatchers.IO) { Files.writeString(Path.of(path), raw) }
                     }
                 },
-                enabled = controlsEnabled && activeEntry != null,
+                enabled = controlsEnabled && choice != null,
                 bar = false,
             )
             FloatingMenuRow(
                 label = tr("modifier.library.delete"),
                 onClick = {
-                    val id = activeEntry?.id ?: return@FloatingMenuRow
+                    val id = choice?.first?.id ?: return@FloatingMenuRow
                     runLibraryTask {
                         withContext(Dispatchers.IO) { library.delete(id) }
                     }
                 },
-                enabled = controlsEnabled && activeEntry != null,
+                enabled = controlsEnabled && choice != null,
                 danger = true,
                 bar = false,
             )
         }
     }
+}
+
+
+internal fun presetChoice(selection: ModifierPresetSelection, entries: List<WorkspaceModelPresetEntry>): Pair<WorkspaceModelPresetEntry, String>? {
+    val (category, simulation, tier, customId) = selection
+    val entry = ModifierPresetMenuModel.resolvePresetEntry(category, simulation, tier, customId, entries) ?: return null
+    val richness = when {
+        category == ModifierPresetCategory.CUSTOM -> entry.richness
+        tier == ModifierCountTier.EMPTY -> ModifierCountTier.STANDARD.id
+        else -> tier.id
+    }
+    return entry to richness
+}
+
+@Composable
+internal fun ModifierPresetControls(
+    selection: ModifierPresetSelection,
+    entries: List<WorkspaceModelPresetEntry>,
+    model: RigPreviewModel?,
+    controlsEnabled: Boolean,
+    onSelect: (ModifierPresetSelection) -> Unit,
+) {
+    val (category, simulation, countTier, customId) = selection
+    val colors = LocalToolColors.current
+    val typography = LocalToolTypography.current
+    val categories = remember(entries) { ModifierPresetMenuModel.availableCategories(entries) }
+    val customEntries = remember(entries) { entries.filter { ModifierPresetMenuModel.isCustom(it) } }
+    val activeEntry = remember(category, simulation, countTier, customId, entries) {
+        ModifierPresetMenuModel.resolvePresetEntry(category, simulation, countTier, customId, entries)
+    }
+    val paramEstimate = remember(activeEntry, countTier, model) {
+        ModifierPresetMenuModel.estimateParameters(activeEntry, countTier, model)
+    }
+    val hint = activeEntry?.nameKey?.let { key ->
+        val hintKey = "$key.hint"
+        tr(hintKey).takeUnless { it == hintKey }
+    }
+
+    fun categoryLabel(cat: ModifierPresetCategory): String = when (cat) {
+        ModifierPresetCategory.MODERN -> tr("modifier.preset.type.modern")
+        ModifierPresetCategory.LEGACY -> tr("modifier.preset.type.legacy")
+        ModifierPresetCategory.CUSTOM -> tr("modifier.preset.type.custom")
+    }
+
+    // Dropdown 1: Preset type + reset button
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        CompactSelect(
+            options = categories,
+            selected = category,
+            label = ::categoryLabel,
+            onSelect = { next ->
+                onSelect(selection.copy(category = next, customId = customId ?: customEntries.firstOrNull()?.id))
+            },
+            enabled = controlsEnabled,
+            height = 22.dp,
+            modifier = Modifier.weight(1f),
+        )
+        val canReset = controlsEnabled && (
+            category != ModifierPresetCategory.MODERN ||
+                simulation != ModifierSimulationMode.CLOTHING_SIM ||
+                countTier != ModifierCountTier.STANDARD
+            )
+        CompactIconButton(
+            onClick = {
+                onSelect(ModifierPresetMenuModel.initialSelection(null, entries))
+            },
+            enabled = canReset,
+            tooltip = tr("modifier.preset.reset"),
+            size = 22.dp,
+        ) {
+            IconReset(tint = if (canReset) colors.textMuted else colors.textDisabled)
+        }
+    }
+
+    // Dropdown 2: Simulation mode (or custom preset selector)
+    if (category == ModifierPresetCategory.CUSTOM) {
+        val selectedCustom = customEntries.firstOrNull { it.id == customId } ?: customEntries.firstOrNull()
+        if (selectedCustom != null) {
+            CompactSelect(
+                options = customEntries,
+                selected = selectedCustom,
+                label = { it.nameKey?.let { k -> tr(k) } ?: it.name },
+                onSelect = { onSelect(selection.copy(customId = it.id)) },
+                enabled = controlsEnabled,
+                height = 22.dp,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    } else {
+        val simEnabled = controlsEnabled && countTier != ModifierCountTier.EMPTY
+        CompactSelect(
+            options = ModifierSimulationMode.entries,
+            selected = simulation,
+            label = { tr(it.labelKey) },
+            onSelect = { onSelect(selection.copy(simulation = it)) },
+            enabled = simEnabled,
+            height = 22.dp,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        // Slider: Modifier count (empty / base / minimal / standard / extended / full)
+        val countTiers = ModifierCountTier.entries
+        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = tr("modifier.preset.count.title"),
+                    style = typography.caption.copy(fontSize = 10.5.sp),
+                    color = colors.textMuted,
+                )
+                Text(
+                    text = tr(countTier.labelKey),
+                    style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
+                    color = colors.accent,
+                )
+            }
+
+            PresetRichnessSlider(
+                count = countTiers.size,
+                selectedIndex = countTiers.indexOf(countTier).coerceAtLeast(0),
+                enabled = controlsEnabled,
+                onSelectIndex = { idx ->
+                    countTiers.getOrNull(idx)?.let { onSelect(selection.copy(countTier = it)) }
+                },
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                countTiers.forEachIndexed { idx, tier ->
+                    val isSelected = tier == countTier
+                    Text(
+                        text = tr(tier.labelKey),
+                        style = typography.caption.copy(
+                            fontSize = 9.5.sp,
+                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                        ),
+                        color = if (isSelected) colors.textPrimary else colors.textMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = when (idx) {
+                            0 -> TextAlign.Start
+                            countTiers.lastIndex -> TextAlign.End
+                            else -> TextAlign.Center
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable(enabled = controlsEnabled) { onSelect(selection.copy(countTier = tier)) },
+                    )
+                }
+            }
+        }
+    }
+
+    // Parameter counts (ordinary vs physics)
+    Text(
+        text = tr("modifier.preset.params", paramEstimate.ordinary, paramEstimate.physics),
+        style = typography.caption.copy(fontSize = 10.5.sp, fontWeight = FontWeight.Medium),
+        color = colors.textPrimary,
+    )
+
+    if (!hint.isNullOrBlank()) {
+        Text(
+            text = hint,
+            style = typography.caption.copy(fontSize = 10.sp),
+            color = colors.textMuted,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+
 }
 
 @Composable
