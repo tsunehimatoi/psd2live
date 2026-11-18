@@ -6,6 +6,25 @@ import kotlinx.serialization.json.*
 import kotlin.test.*
 
 class RigModifierStackTest {
+    @Test fun upstreamKeyOverridesCannotChangeParameterDefinitions() {
+        val parameter = Parameter("P", "P", 0f, 1f, 0f)
+        var replacement = parameter.copy(keys = Floats.values(0f, .5f, 1f))
+        val definition = RigModifierDefinition("key-edit", 1, composableKinds = setOf("parameter"),
+            plugin = ModifierAlgorithmPlugin { input, _, _ -> input })
+        val engine = RigModifierEvaluator(RigModifierRegistry(listOf(definition)), applyOverrides = { rig, _, _ ->
+            ModifierOverrideResult(rig.copy(parameters = listOf(replacement)), parameterOverrides = mapOf("P" to replacement))
+        })
+        val input = authored.copy(parameters = listOf(parameter))
+        val stack = RigModifierStack(listOf(entry("edit", "key-edit"))).withOverrides("edit",
+            listOf(buildJsonObject { put("op", "parameter_keys") }))
+        assertEquals(listOf(replacement), engine.evaluate(input, stack).rig.parameters)
+        for (invalid in listOf(replacement.copy(min = -1f), replacement.copy(max = 2f),
+            replacement.copy(default = .5f), replacement.copy(blend = true), replacement.copy(repeat = true))) {
+            replacement = invalid
+            assertFailsWith<IllegalArgumentException> { engine.evaluate(input, stack) }
+        }
+    }
+
     private val target = ModifierTarget("part", "body")
     private val other = ModifierTarget("part", "other")
     private val authored = RigIR(Canvas(100f, 100f), emptyList(), parts = listOf(Part("body", "Body", emptyList()), Part("other", "Other", emptyList())))

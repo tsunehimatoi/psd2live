@@ -141,7 +141,7 @@ internal object GeneratedOverrides {
 				if (generator.startsWith("modifier:")) {
 					put("merge_mode", GeometryEditIntent.mode(command))
 					put("geometry_binding", geometryBinding(model, kind, id))
-					if (keyed !== model) put("insert_keys", true)
+					if (keyed !== model) recordKeyInsertion(model, kind, id, key)
 				}
 				put("key", JsonObject(key.mapValues { JsonPrimitive(it.value) }))
 				put("base", JsonArray(base.map(::JsonPrimitive)))
@@ -232,7 +232,7 @@ internal object GeneratedOverrides {
 			put("key", JsonObject(key.mapValues { JsonPrimitive(it.value) }))
 			put("base", JsonArray(base.map(::JsonPrimitive)))
 			put("points", JsonArray(points.map(::JsonPrimitive)))
-            if (insertKeys) put("insert_keys", true)
+            if (insertKeys) recordKeyInsertion(shown, kind, id, key)
             if (generator.startsWith("modifier:")) {
                 put("merge_mode", mode); put("geometry_binding", geometryBinding(shown, kind, id))
             }
@@ -321,13 +321,16 @@ internal object GeneratedOverrides {
                     if (target == null) {
                         val provider = DocumentGenerators.owner(graph, "object:parameter:$parameter")
                             ?.takeIf { it.id.startsWith("modifier:") } ?: return@flatMap listOf(command)
-                        if (command["action"]?.jsonPrimitive?.content != "add") {
-                            val later = graph.order.drop(graph.order.indexOf(provider) + 1)
-                                .firstOrNull { node -> node.id.startsWith("modifier:") &&
-                                    node.writes.any { DocumentGenerators.writesParameterKey(it, parameter) } }
-                            require(later == null) { "$parameter has tracks in ${later?.id}; edit those tracks individually" }
-                        }
-                        return@flatMap listOf(JsonObject(command + ("generator" to JsonPrimitive(provider.id))))
+                        // Global key edits must see every track. Applying them at the parameter's
+                        // provider can invalidate the source grids that later modifiers still need.
+                        val contributors = listOf(provider) + graph.order.drop(graph.order.indexOf(provider) + 1)
+                            .filter { node -> node.id.startsWith("modifier:") &&
+                                node.writes.any { DocumentGenerators.writesParameterKey(it, parameter) } }
+                        val generator = contributors.last()
+                        val dependencies = if (contributors.size == 1) emptyMap() else mapOf(
+                            "providers" to JsonArray(contributors.dropLast(1).map { JsonPrimitive(it.id.removePrefix("modifier:")) }),
+                        )
+                        return@flatMap listOf(JsonObject(command + dependencies + ("generator" to JsonPrimitive(generator.id))))
                     }
 					val kind = targetKind(target) ?: return@flatMap listOf(command)
 					// A delete without a channel removes the key from geometry and every channel track; one naming a track only that.
@@ -460,12 +463,17 @@ internal object GeneratedOverrides {
 		return Outcome(model.withReplacedChannelGrids(owner, ChannelGrids(grids.gridsByChannel + (channel to next))), issues)
 	}
 
-    /** Insert only into already-bound axes, using the runtime's interpolation-preserving grid operation. */
-    internal fun withGeometryKeys(source: PuppetModel, kind: String, id: String, key: Map<String, Float>): PuppetModel {
-        val axes = if (kind == "warp") warp(source, id)?.geometryGrid?.axes
-            else if (kind == "rotation") (source.deformers.firstOrNull { it.id.raw == id } as? Deformer.Rotation)?.geometryGrid?.axes
-            else source.drawables.firstOrNull { it.id.raw == id }?.geometryGrid?.axes
-        var result = source
+    private fun JsonObjectBuilder.recordKeyInsertion(source: PuppetModel, kind: String, id: String, key: Map<String, Float>) {
+        put("insert_keys", true)
+        val axes = GeometryKeyforms.axes(source, kind, id).orEmpty().map { it.parameterId.raw }
+        if (key.keys.any { it !in axes }) put("source_axes", JsonArray(axes.map(::JsonPrimitive)))
+    }
+
+    internal fun withGeometryKeys(source: PuppetModel, kind: String, id: String, key: Map<String, Float>, bindMissingAxes: Boolean = true): PuppetModel {
+        var result = if (bindMissingAxes && kind in setOf("mesh", "warp"))
+            GeometryKeyforms.bindMissingAxes(source, kind, id, key) else source
+        val axes = if (kind == "rotation") (result.deformers.firstOrNull { it.id.raw == id } as? Deformer.Rotation)?.geometryGrid?.axes
+            else GeometryKeyforms.axes(result, kind, id)
         for (axis in axes.orEmpty()) {
             val value = key[axis.parameterId.raw] ?: continue
             if (axis.keys.any { abs(it - value) < org.umamo.runtime.eval.EPS_KEY }) continue
@@ -549,8 +557,15 @@ internal object GeneratedOverrides {
         if (preserveChildren && (kind != "warp" || command["children_binding"] != childrenBinding(model, id) ||
                 command["geometry_binding"]?.jsonPrimitive?.content != geometryBinding(model, kind, id)))
             return orphaned(GeneratedOverrideOrphanReason.SHAPE_MISMATCH)
-		val keyed = if (command["insert_keys"]?.jsonPrimitive?.booleanOrNull == true) {
-			try { withGeometryKeys(model, kind, id, key) } catch (_: IllegalArgumentException) {
+		val sourceAxes = command["source_axes"]?.jsonArray
+        val keyed = if (command["insert_keys"]?.jsonPrimitive?.booleanOrNull == true) {
+            // Only recreate axes the artist introduced. A disappearing generator-owned axis or mesh orphans the edit.
+            if (sourceAxes != null) {
+                val currentAxes = GeometryKeyforms.axes(model, kind, id)?.map { it.parameterId.raw }
+                if (currentAxes == null || sourceAxes.any { it.jsonPrimitive.content !in currentAxes })
+                    return orphaned(GeneratedOverrideOrphanReason.MISSING_KEYFORM)
+            }
+			try { withGeometryKeys(model, kind, id, key, bindMissingAxes = sourceAxes != null) } catch (_: IllegalArgumentException) {
 				return orphaned(GeneratedOverrideOrphanReason.MISSING_KEYFORM)
 			}
 		} else model

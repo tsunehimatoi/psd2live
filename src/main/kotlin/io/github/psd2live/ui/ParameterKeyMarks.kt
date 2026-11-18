@@ -205,19 +205,10 @@ fun nearestKeyPose(
 	defaults: Map<ParameterId, Float>,
 ): Map<ParameterId, Float> = io.github.psd2live.core.nearestKeyPose(axes, pose, defaults)
 
-/**
- * Keyform axes that the given geometry kind/id writes when deformed: geometry grid plus channel tracks.
- */
+/** Geometry gestures snap to sculptable poses independently of drawable opacity and color tracks. */
 fun PuppetModel.keyformAxesFor(kind: String, id: String): List<KeyformAxis> =
 	when (kind) {
-		"mesh" -> {
-			val drawable = drawables.firstOrNull { it.id.raw == id } ?: return emptyList()
-			(drawable.geometryGrid?.axes.orEmpty()) + drawable.channelGrids.allAxes()
-		}
-		"warp" -> {
-			val warp = deformers.firstOrNull { it.id.raw == id } as? Deformer.Warp ?: return emptyList()
-			(warp.geometryGrid?.axes.orEmpty()) + warp.channelGrids.allAxes()
-		}
+		"mesh", "warp" -> io.github.psd2live.core.GeometryKeyforms.editingAxes(this, kind, id)
 		"rotation" -> {
 			val rotation = deformers.firstOrNull { it.id.raw == id } as? Deformer.Rotation ?: return emptyList()
 			(rotation.geometryGrid?.axes.orEmpty()) + rotation.channelGrids.allAxes()
