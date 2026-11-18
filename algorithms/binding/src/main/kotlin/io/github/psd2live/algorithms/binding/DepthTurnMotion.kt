@@ -80,7 +80,7 @@ object DepthTurnMotion {
                 if (name in fittedBrows) feature("DeformBrowShape$token", null) { pose -> turns.brow(marks, name, sign, turn, pose) }
                 if (marks["ear.$name.root"] != null) feature("DeformEarOcclusion$token", null) { pose -> turns.ear(sign, turn, pose) }
             }
-            feature("DeformNoseShapeBoth", null) { pose -> pose.field }
+            feature("DeformNoseShapeBoth", null, FeatureTurn::nose)
             feature("DeformMouthShapeBoth", null) { pose -> turns.mouth(marks, turn, pose) }
         }
         val featureCells = features.associate { it.warp.id to ArrayList<KeyformCell<WarpLatticeForm>>() }

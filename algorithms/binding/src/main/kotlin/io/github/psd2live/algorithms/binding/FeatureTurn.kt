@@ -111,7 +111,9 @@ object FeatureTurn {
 		if (points.size < 2) return null
 		val m = pose.moves; val sx = pose.sx; val f = turn.unit
 		val box = Box.of(points)
-		val c1x = box.cx + pose.slide.first + m["mouth_lead"] * sx * f; val c1y = box.cy + pose.slide.second + m["mouth_dy"] * f
+		val correction = pose.lowerFacePlacement?.mouth
+		val c1x = box.cx + pose.slide.first + m["mouth_lead"] * sx * f + (correction?.first ?: 0f)
+		val c1y = box.cy + pose.slide.second + m["mouth_dy"] * f + (correction?.second ?: 0f)
 		fittedMouth(marks, turn, pose, box, c1x, c1y)?.let { return it }
 		val a00 = 1f + m["mA00"]; val a01 = m["mA01"] * sx; val a10 = m["mA10"] * sx; val a11 = 1f + m["mA11"]
 		val curve = m["mouth_curve"] * f
@@ -135,13 +137,15 @@ object FeatureTurn {
 		val openingRatio = opening / box.w
 		if (openingRatio <= .05f || abs(a.x - b.x) <= .001f) return null
 
-		val level = if (pose.pitch == 0f) pose else turn.pose(pose.yaw, 0f)
+		val level = pose.level
 		val pureYaw = turn.style.defaultYaw(pose.yaw / FaceTurn.TURN_END, strength)
 		val moves = pose.moves
 		val fit = MouthTurnFit.shape(box.w / turn.unit, openingRatio, pose.yaw, strength)
-		val chinShift = level.field(chin.x, chin.y).first - chin.x
-		val originalShift = level.slide.first + pureYaw["mouth_lead"] * pose.sx * turn.unit
-		val xCenter = centerX + chinShift - originalShift
+		val xCenter = if (pose.lowerFacePlacement != null) centerX else {
+			val chinShift = level.field(chin.x, chin.y).first - chin.x
+			val originalShift = level.slide.first + pureYaw["mouth_lead"] * pose.sx * turn.unit
+			centerX + chinShift - originalShift
+		}
 		val width = (fit.width + moves["mA00"] - pureYaw["mA00"]).coerceAtLeast(.3f)
 		val height = (fit.height + moves["mA11"] - pureYaw["mA11"]).coerceAtLeast(.4f)
 		val pitchShear = ((moves["mA01"] - pureYaw["mA01"]) * pose.sx).coerceIn(-.22f, .22f)
@@ -157,6 +161,17 @@ object FeatureTurn {
 			val lipOffset = (fit.upper + (fit.lower - fit.upper) * v).coerceIn(-.24f, .24f)
 			val lipShift = lipOffset * pose.sx * width * box.w * middleWeight
 			(xCenter + width * dx + pitchShear * dy + lipShift) to (centerY + tilt * dx + height * dy + curve * middleWeight)
+		}
+	}
+
+	/** A separately drawn nose's tip follows the fitted path and its bridge joins the face field. */
+	fun nose(pose: FaceTurn.Pose): (Float, Float) -> Pair<Float, Float> {
+		val placement = pose.lowerFacePlacement ?: return pose.field
+		val (dx, dy) = placement.nose
+		return { x, y ->
+			val (nx, ny) = pose.field(x, y)
+			val weight = placement.noseWeight(y)
+			(nx + dx * weight) to (ny + dy * weight)
 		}
 	}
 

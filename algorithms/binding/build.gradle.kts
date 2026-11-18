@@ -9,7 +9,7 @@ plugins {
 }
 
 group = "io.github.psd2live.algorithms"
-version = "1.0.65"
+version = "1.0.66"
 
 kotlin { jvmToolchain(21) }
 

@@ -40,16 +40,42 @@ class FaceTurnTest {
 
 	private fun mirror(f: (Float, Float) -> Pair<Float, Float>): (Float, Float) -> Pair<Float, Float> = { x, y -> f(-x, y).let { -it.first to it.second } }
 
-	private fun openMouthFace(height: Float = 32f): FaceLandmarks {
+	private fun openMouthFace(height: Float = 32f, mouthY: Float = 100f): FaceLandmarks {
 		val base = face()
 		val points = base.points.filterNot { it.part == "mouth" } + listOf(
-			Landmark("mouth.cornerA", "mouth", -28f, 100f),
-			Landmark("mouth.cornerB", "mouth", 28f, 100f),
-			Landmark("mouth.upperMid", "mouth", 0f, 100f - height / 2f),
-			Landmark("mouth.lowerMid", "mouth", 0f, 100f + height / 2f),
+			Landmark("mouth.cornerA", "mouth", -28f, mouthY),
+			Landmark("mouth.cornerB", "mouth", 28f, mouthY),
+			Landmark("mouth.upperMid", "mouth", 0f, mouthY - height / 2f),
+			Landmark("mouth.lowerMid", "mouth", 0f, mouthY + height / 2f),
 			Landmark("face.chin", "face", 0f, 180f),
 		)
 		return FaceLandmarks(points, base.contour, base.measures)
+	}
+
+	private fun drawnNoseFace(eyeOffset: Float = 0f, mouthY: Float = 100f, noseTipY: Float = 55f, noseTopY: Float = -22f): FaceLandmarks {
+		val base = openMouthFace(mouthY = mouthY)
+		val points = base.points.map { point ->
+			when {
+				point.id.startsWith("eye.L.") -> point.copy(x = point.x + eyeOffset)
+				point.id.startsWith("eye.R.") -> point.copy(x = point.x - eyeOffset)
+				else -> point
+			}
+		} + listOf(
+			Landmark("nose.tip", "nose", 0f, noseTipY),
+			Landmark("nose.top", "nose", 0f, noseTopY),
+			Landmark("nose.sideA", "nose", -12f, noseTipY - 4f),
+			Landmark("nose.sideB", "nose", 12f, noseTipY - 4f),
+		)
+		return FaceLandmarks(points, base.contour, base.measures + ("nose.drawn" to 1f))
+	}
+
+	private fun mouthCornerCenter(marks: FaceLandmarks, turn: FaceTurn, yaw: Float, pitch: Float): Pair<Float, Float> {
+		val rule = mouth(turn, marks, yaw, pitch)
+		val a = assertNotNull(marks["mouth.cornerA"])
+		val b = assertNotNull(marks["mouth.cornerB"])
+		val left = rule(a.x, a.y)
+		val right = rule(b.x, b.y)
+		return (left.first + right.first) / 2f to (left.second + right.second) / 2f
 	}
 
 	private fun mouth(turn: FaceTurn, marks: FaceLandmarks, yaw: Float, pitch: Float) =
@@ -202,6 +228,105 @@ class FaceTurnTest {
 		}
 		assertTrue(abs(upperOffset(14f) - upperOffset(32f)) > .003f,
 			"shallow and tall openings receive distinct lip movement")
+	}
+
+	@Test fun defaultLowerFaceYawKeepsTheNoseAheadOfTheMouthAndChin() {
+		val marks = drawnNoseFace()
+		val turn = FaceTurn(marks)
+		val withoutNose = FaceTurn(openMouthFace())
+		val chin = assertNotNull(marks["face.chin"])
+		val tip = assertNotNull(marks["nose.tip"])
+		val bridge = assertNotNull(marks["nose.top"])
+		for (yaw in listOf(-45f, -22.5f, 22.5f, 45f)) {
+			val sign = if (yaw > 0f) 1f else -1f
+			val pose = turn.pose(yaw, 0f)
+			val nose = FeatureTurn.nose(pose)
+			val movedChin = pose.field(chin.x, chin.y)
+			assertEquals(withoutNose.pose(yaw, 0f).field(chin.x, chin.y), movedChin)
+			assertEquals(pose.field(bridge.x, bridge.y), nose(bridge.x, bridge.y))
+			val noseShift = sign * (nose(tip.x, tip.y).first - tip.x)
+			val mouthShift = sign * mouthCornerCenter(marks, turn, yaw, 0f).first
+			val chinShift = sign * (movedChin.first - chin.x)
+			assertTrue(noseShift > mouthShift && mouthShift > chinShift,
+				"at $yaw the nose, mouth and chin travel $noseShift, $mouthShift and $chinShift")
+		}
+	}
+
+	@Test fun lowerFaceYawUsesTheDrawnEyeSpacing() {
+		fun positions(eyeOffset: Float): Pair<Float, Float> {
+			val marks = drawnNoseFace(eyeOffset = eyeOffset)
+			val turn = FaceTurn(marks)
+			val tip = assertNotNull(marks["nose.tip"])
+			return FeatureTurn.nose(turn.pose(45f, 0f))(tip.x, tip.y).first to mouthCornerCenter(marks, turn, 45f, 0f).first
+		}
+		val (closeNose, closeMouth) = positions(-10f)
+		val (wideNose, wideMouth) = positions(10f)
+		assertEquals(closeNose, wideNose, 1e-4f, "moving the eyes sideways does not change the face width or nose clearance")
+		assertTrue(wideNose - wideMouth > closeNose - closeMouth + 2f,
+			"wider eye spacing increases the measured nose-to-mouth lead")
+	}
+
+	@Test fun aShortDrawnNoseMovesItsHighlightAndTipTogether() {
+		val marks = drawnNoseFace(noseTopY = 33f)
+		val pose = FaceTurn(marks).pose(45f, 0f)
+		val tip = assertNotNull(marks["nose.tip"])
+		val highlight = assertNotNull(marks["nose.top"])
+		val nose = FeatureTurn.nose(pose)
+		fun correction(point: Landmark) = nose(point.x, point.y).first - pose.field(point.x, point.y).first
+		assertTrue(correction(tip) > 0f)
+		assertEquals(correction(tip), correction(highlight), 1e-5f)
+	}
+
+	@Test fun defaultLowerFacePitchMovesTheNoseAndMouthWithTheChin() {
+		val marks = drawnNoseFace()
+		val turn = FaceTurn(marks)
+		val tip = assertNotNull(marks["nose.tip"])
+		val chin = assertNotNull(marks["face.chin"])
+		for (pitch in listOf(-30f, 30f)) {
+			val direction = if (pitch > 0f) -1f else 1f
+			val pose = turn.pose(0f, pitch)
+			val noseShift = direction * (FeatureTurn.nose(pose)(tip.x, tip.y).second - tip.y)
+			val mouthShift = direction * (mouthCornerCenter(marks, turn, 0f, pitch).second - 100f)
+			val chinShift = direction * (pose.field(chin.x, chin.y).second - chin.y)
+			assertTrue(noseShift > mouthShift && mouthShift > chinShift,
+				"at $pitch the nose, mouth and chin travel $noseShift, $mouthShift and $chinShift")
+		}
+	}
+
+	@Test fun lookingDownKeepsRoomAboveAndBelowTheDeformedOpening() {
+		val narrowNoseGap = drawnNoseFace(noseTipY = 83f)
+		val narrowChinGap = drawnNoseFace(mouthY = 160f)
+		for (marks in listOf(narrowNoseGap, narrowChinGap)) {
+			val turn = FaceTurn(marks)
+			val pose = turn.pose(0f, -30f)
+			val tip = assertNotNull(marks["nose.tip"])
+			val upper = assertNotNull(marks["mouth.upperMid"])
+			val lower = assertNotNull(marks["mouth.lowerMid"])
+			val chin = assertNotNull(marks["face.chin"])
+			val rule = mouth(turn, marks, 0f, -30f)
+			val noseGap = rule(upper.x, upper.y).second - FeatureTurn.nose(pose)(tip.x, tip.y).second
+			val chinGap = pose.field(chin.x, chin.y).second - rule(lower.x, lower.y).second
+			assertTrue(noseGap > 0f, "the nose remains above the deformed upper lip: $noseGap")
+			assertTrue(chinGap > 0f, "the deformed lower lip remains above the chin: $chinGap")
+		}
+	}
+
+	@Test fun inferredNosesAndNamedStylesKeepTheirPreviousLowerFaceMotion() {
+		val drawn = drawnNoseFace()
+		val inferred = FaceLandmarks(drawn.points, drawn.contour, drawn.measures + ("nose.drawn" to 0f))
+		val knownMouth = openMouthFace()
+		val defaultMouth = FaceTurn(knownMouth)
+		val tip = assertNotNull(drawn["nose.tip"])
+		val fallback = FaceTurn(inferred)
+		val named = FaceTurn(drawn, TurnStyle.Setting(preset = "soft"))
+		for ((yaw, pitch) in listOf(45f to 0f, 0f to -30f, -45f to 30f)) {
+			for (turn in listOf(fallback, named)) {
+				val pose = turn.pose(yaw, pitch)
+				assertEquals(pose.field(tip.x, tip.y), FeatureTurn.nose(pose)(tip.x, tip.y))
+			}
+			assertEquals(mouthCornerCenter(knownMouth, defaultMouth, yaw, pitch), mouthCornerCenter(inferred, fallback, yaw, pitch))
+			assertOriginalMouth(drawn, named, yaw, pitch)
+		}
 	}
 
 	@Test fun eachMoveKeepsItsOwnTiming() {
