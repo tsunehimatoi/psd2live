@@ -213,6 +213,7 @@ The **Model** menu in the title bar holds commands that act on the whole model. 
 | Item | Purpose |
 |---|---|
 | Reanalyze PSD | Re-reads the source PSD with the current settings and generates ({key:REANALYZE}) |
+| Reload PSD | Re-reads the images of the project's PSD, keeping the rig and history (see [[psd-re-import]]) |
 | Replace the model with a CMO3… | Replaces objects in the current model with those in the CMO3 by ID, adds new objects, and keeps what the file does not have |
 | Split Layers by Mesh… | Splits parts drawn on one layer but separate from each other (such as the left and right legs) into independent layers |
 | Texture Upscale… | Upscales layer pixels 2× / 4× ({key:TEXTURE_UPSCALE}, see [[texture-upscale]]) |
@@ -723,7 +724,13 @@ The chosen preset is remembered, and PSDs imported later from the menu, recent f
 *> For users coming from Cubism: parts are built automatically from the recognized parts, not from the PSD folders. To open an existing Cubism model project, use [[cmo3-import]].
 
 @@ psd-re-import | Re-import PSDs
-After the artwork changes, you can put only the new pixels into the existing project, and the edits you made to the model are all kept. PSD2Live does not match up the layers of a whole PSD; it replaces layer by layer:
+After the artwork changes, you can put only the new pixels into the existing project, and the edits you made to the model are all kept. Reload the whole PSD at once, or replace single layers.
+## Reloading the whole PSD
+1. Save the PSD in your painting program at the same path. Keep the canvas size and the names of the existing layers.
+2. Choose **Model → Reload PSD**. If the project does not know its PSD yet, or the file has moved, a file picker opens and the project remembers your choice.
+3. Changed images go into their layers and added layers wait for **Regenerate**; transparency, visibility and folder changes are taken too. Meshes that would clip the new pixels are rebuilt and keep their rig data: check their poses. A layer you deleted or split in the project stays that way while its PSD image does not change; if the image changed, the reload is refused.
+4. The reload is one step you can undo; nothing is saved automatically.
+!> A changed canvas size, or an existing layer removed or renamed, is refused and the project stays as it was. To start over from such a PSD, use **Reanalyze PSD** below.
 ## Replacing a layer's pixels
 1. In the Materials panel **Import** the modified PSD; it becomes a new material folder.
 2. Select the layer to update on the canvas or in the layer list.

@@ -347,6 +347,14 @@ private fun FrameWindowScope.PSD2LiveAppContent(
 				viewModel.withSavedChanges { viewModel.analyze(discardUnsaved = true, checkImportedMeshSplits = false) }
 			}
 		}
+        val onReloadPsdAction = {
+			if (hasInput && !isBusy) {
+                val linked = state.externalPsdPath?.let { runCatching { Path.of(it) }.getOrNull() }
+                    ?.takeIf { Files.isRegularFile(it) }
+                val selected = linked ?: NativeFilePicker.choosePsdFile(window, state.externalPsdPath ?: state.inputPath)?.let(Path::of)
+                if (selected != null) viewModel.reloadPsd(selected)
+			}
+		}
 
 		val onGenerateAction = {
 			if (canGenerate) {
@@ -458,6 +466,7 @@ private fun FrameWindowScope.PSD2LiveAppContent(
 				ShortcutAction.SAVE_PROJECT -> { viewModel.requestProjectSave(false); true }
 				ShortcutAction.SAVE_PROJECT_AS -> { viewModel.requestProjectSave(true); true }
 				ShortcutAction.REANALYZE -> { onReanalyzeAction(); true }
+				ShortcutAction.RELOAD_PSD -> { onReloadPsdAction(); true }
 				// Falls through when there is no source PSD, as the old Shift-gated branch did.
 				ShortcutAction.REEXPORT_PSD ->
 					if (hasInput && !isBusy) { viewModel.openExportPsdDialog(); true } else false
@@ -629,6 +638,7 @@ private fun FrameWindowScope.PSD2LiveAppContent(
                         onSaveProjectAs = { viewModel.requestProjectSave(true) },
                         projectTitle = (state.projectFile ?: tr("project.untitled")) + if (state.projectDirty) " *" else "",
 						onReanalyze = onReanalyzeAction,
+						onReloadPsd = onReloadPsdAction,
 						onReexportPsd = { if (hasInput && !isBusy) viewModel.openExportPsdDialog() },
 						onOpenFolder = ::openFolder,
 						onShowExport = { if (hasInput && !isBusy) viewModel.openExportDialog() },

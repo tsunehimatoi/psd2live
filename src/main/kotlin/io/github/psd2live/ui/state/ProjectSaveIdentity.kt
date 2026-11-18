@@ -18,12 +18,13 @@ internal object WorkspaceDurableProjection {
                     workspace.canvases.associate { canvas -> canvas.id to listOf(
                         canvas.editSession.presentation.canvasVisibility(), canvas.previewSession.presentation.canvasVisibility()) })
             },
+            externalPsdPath = state.externalPsdPath,
         )
 
     /** Compare inputs without building workspace maps or serializing presentation-only state. */
     fun unchanged(before: PSD2LiveState, after: PSD2LiveState): Boolean {
         if (before.analysis?.source != after.analysis?.source || before.rawConfig() != after.rawConfig() ||
-            before.outputPath != after.outputPath || before.parameterSnapshots != after.parameterSnapshots ||
+            before.outputPath != after.outputPath || before.externalPsdPath != after.externalPsdPath || before.parameterSnapshots != after.parameterSnapshots ||
             before.historyAnnotations != after.historyAnnotations || before.projectAuxiliaryVersion != after.projectAuxiliaryVersion ||
             before.workspaces.size != after.workspaces.size) return false
         if (before.activeWorkspaceId == after.activeWorkspaceId && before.workspaces === after.workspaces && before.parameterValues === after.parameterValues &&

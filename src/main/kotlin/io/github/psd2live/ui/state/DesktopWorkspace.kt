@@ -51,6 +51,10 @@ class DesktopWorkspace private constructor(
     /** Names the project whose unsaved edits only the store holds, so a killed app can offer them back. */
     internal val sessionRecovery: SessionRecovery get() = host.sessionRecovery
 
+    /** The editor remembers the external PSD it reloaded from, so the next reload and the saved project find it. */
+    override suspend fun reloadPsd(state: String, path: String) =
+        host.reloadPsd(state, path).also { viewModel.rememberExternalPsd(Path.of(path).toAbsolutePath().normalize().toString()) }
+
     /** The committed HEAD, read without the runtime lock. */
     internal fun currentHistoryHead(): String? = host.currentHistoryHead()
     internal fun attachCurrentWorkspace() = host.attachCurrentWorkspace()

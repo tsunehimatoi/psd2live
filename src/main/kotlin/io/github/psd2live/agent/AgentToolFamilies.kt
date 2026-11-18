@@ -43,7 +43,7 @@ internal val AGENT_TOOL_FAMILIES = listOf(
     AgentToolFamily("source_paint", "Paint one gesture on a source layer in canvas units: brush, pencil, eraser, bucket, shape or clear."),
     AgentToolFamily("snapshot", "Save, rename, delete, apply, read or list named parameter poses. Does not change rig history."),
     AgentToolFamily("history", "List the branching history, move HEAD to a node, or add an explicit checkpoint.") { it.startsWith("annotation") },
-    AgentToolFamily("project", "Open, import, create, save or export the project. Switching projects rejects unsaved changes unless discard_unsaved is true."),
+    AgentToolFamily("project", "Open, import, reload the PSD of, create, save or export the project. Switching projects rejects unsaved changes unless discard_unsaved is true."),
     AgentToolFamily("job", "Read, wait for, cancel or list process-local background jobs."),
 )
 

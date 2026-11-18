@@ -177,6 +177,8 @@ fun AppTitleBar(
     onSaveProjectAs: () -> Unit,
     projectTitle: String,
 	onReanalyze: () -> Unit,
+	/** Model > Reload PSD: refreshes the linked PSD's images, keeping the rig. */
+	onReloadPsd: () -> Unit = {},
 	onReexportPsd: () -> Unit,
 	onOpenFolder: (String) -> Unit = {},
 	onShowExport: () -> Unit,
@@ -689,6 +691,13 @@ fun AppTitleBar(
 						enabled = hasInput && !isBusy,
 						onHover = { activeSubmenu = null },
 						onClick = { activeMenu = null; activeSubmenu = null; onReanalyze() },
+					)
+					AppMenuItem(
+						text = tr("menu.file.reloadPsd"),
+						shortcut = keymap.labelFor(ShortcutAction.RELOAD_PSD),
+						enabled = hasInput && !isBusy,
+						onHover = { activeSubmenu = null },
+						onClick = { activeMenu = null; activeSubmenu = null; onReloadPsd() },
 					)
 					AppMenuItem(
 						text = tr("cmo3.replace"),
