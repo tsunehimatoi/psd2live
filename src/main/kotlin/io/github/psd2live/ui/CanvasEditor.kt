@@ -5010,7 +5010,7 @@ internal class CanvasEditor(
         }.getOrNull()
         // Refused before it is sent, so the notice names the op instead of the reducer's failure.
         if (prejudged && outcome == null && action in MANUAL_TOPOLOGY) {
-            error = tr("editor.topologyRefused.$action")
+            error = tr(CanvasTopology.refusalKey(requireNotNull(mesh), action, selected))
             return
         }
         commitBatch(listOf(buildJsonObject { put("op", "canvas_topology"); put("id", t.id); put("action", action); put("vertices", JsonArray(selected.map(::JsonPrimitive)))

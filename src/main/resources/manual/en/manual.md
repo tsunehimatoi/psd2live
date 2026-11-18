@@ -987,6 +987,8 @@ Where the automatic mesh is not right in a few places, change the topology direc
 When several art meshes are selected, clicking a vertex of one mesh makes it the primary mesh; a mesh-points line and edge and face selection act only on the primary mesh.
 !> Deleting outline points changes the boundary, so check under several parameter poses after changing it. Do everyday shape pulling in Deform mode, and use Edit mode only to change topology.
 
+To join a detached tip, select an outline vertex on the tip, then {kbd:Shift}+click a facing outline vertex on another island in the same ArtMesh. **Connect** adds two triangles across the gap when there is room. **Merge** collapses the selected vertices into one. Both operations carry the existing keyforms and vertex weights onto the edited mesh.
+
 @@ mesh-duplication | Mesh duplication
 Copy one ArtMesh's vertices and triangles onto other ArtMeshes, for variants of one shape such as an open and a closed eye or several expressions. Each target takes the same topology where the source sits on the canvas and samples its own texture; the target's keyforms, blend shapes, paths, vertex groups and glue migrate onto the new mesh.
 ## Use
