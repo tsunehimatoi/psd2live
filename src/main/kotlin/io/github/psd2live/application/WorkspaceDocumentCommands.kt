@@ -148,7 +148,8 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
                 }, rasterWork.cancellable(context) { fraction, message ->
                     batch?.painting(index, fraction, message) ?: context[WorkspaceJobContext]?.progress(0.05f + 0.75f * fraction, message)
                 }, resources, draftInputs) }
-                draft.copy(document = if (operation.operation in WorkspaceModifierEdits.supported || operation.operation == "modifier_rebind") previews.normalizeMeshEdits(candidate, model)
+                draft.copy(document = if (operation.operation in WorkspaceModifierEdits.supported || operation.operation == "modifier_rebind" ||
+                    WorkspaceMeshPointEdits.simulationInputsUnchanged(document, candidate)) previews.normalizeMeshEdits(candidate, model)
                     else normalizeCandidate(candidate, model))
             }
         }
@@ -204,7 +205,8 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
                                  validate: (WorkspaceDocument, RigPreviewModel, WorkspaceDocument, RigPreviewModel) -> Unit = { _, _, _, _ -> }): WorkspaceCommit<RigPreviewModel> = WorkspaceEditObservation.observe(state, summary, taskId) {
         val prepared = runtime.prepareDraft(projectId, state, listOf(WorkspaceDraftEdit { draft, model ->
             val candidate = runInterruptible(Dispatchers.Default) { mutation(draft.document, model) }
-            draft.copy(document = normalizeCandidate(candidate, model))
+            draft.copy(document = if (WorkspaceMeshPointEdits.simulationInputsUnchanged(draft.document, candidate))
+                previews.normalizeMeshEdits(candidate, model) else normalizeCandidate(candidate, model))
         }))
         // The candidate's own build, checked before anything is published.
         WorkspaceModifierEdits.validateAppliedContent(prepared.before.model, prepared.model)

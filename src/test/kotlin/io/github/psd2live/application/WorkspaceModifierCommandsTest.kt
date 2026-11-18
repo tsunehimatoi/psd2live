@@ -243,6 +243,47 @@ class WorkspaceModifierCommandsTest {
         assertEquals(RigIrCompiler.compile(f.now.model), RigIrCompiler.compile(f.builder.build(f.now.document)))
     }
 
+    @Test fun mergedMeshKeepsPaintedWeightsAndRebakesWithTheNewVertexCount(): Unit = runBlocking {
+        val f = fixture()
+        val initial = f.now.model.rig.puppet
+        val target = initial.drawables.single()
+        val mesh = requireNotNull(target.mesh)
+        val group = org.umamo.runtime.model.VertexGroup("Pin", target.id, org.umamo.runtime.model.VertexGroupKind.PIN,
+            FloatArray(mesh.vertexCount) { (it % 4) * 0.2f })
+        val source = RigSimEdit("template", "Cloth", SimKind.CLOTH, listOf(target.id.raw), inputs = listOf(PhysicsInput("ParamInput")))
+        val config = JsonObject(source.toJson() + ("automatic_weights" to JsonArray(listOf(VertexGroupJournal.encode(group)))))
+        f.edit("modifier_add", add(f, "simulation", config, "cloth"))
+        val before = f.now
+        val oldBake = assertNotNull(RigSimEdit.fromJson(stack(f).instances.single().config).bake)
+        val edge = org.umamo.edit.MeshTopology.uniqueEdges(mesh.indices).first()
+        val merge = buildJsonObject {
+            put("op", "canvas_topology"); put("action", "merge"); put("id", target.id.raw)
+            putJsonArray("vertices") { add(edge.endpointLow); add(edge.endpointHigh) }
+        }
+        val expected = RigAuthoringJournal.apply(before.model.rig.puppet, merge)
+        f.commands.executeJournal(before.projectId, before.state, "Merge cloth vertices", JsonArray(listOf(merge)), MutationAuthor.USER)
+        assertEquals(expected.vertexGroups, f.now.model.rig.puppet.vertexGroups)
+        assertEquals(oldBake, RigSimEdit.fromJson(stack(f).instances.single { it.id == "cloth" }.config).bake)
+        val count = mesh.vertexCount - 1
+        val surface = CanvasWeightAuthoring.surfaces(f.now.model.rig.puppet, listOf(target.id), emptyMap(), false).single()
+        val point = surface.points.first()
+        f.edit("vertex_group_paint", buildJsonObject { putJsonObject("edit") {
+            put("action", "brush"); put("mode", "set"); put("kind", "pin"); put("name", group.name)
+            putJsonArray("targets") { add(target.id.raw) }; put("strength", 1f); put("radius", 5)
+            putJsonArray("points") { addJsonArray { add(point.x); add(point.y) } }
+        } })
+        val weights = f.now.model.rig.puppet.vertexGroups.single { it.name == group.name }.weights
+        assertEquals(count, weights.size)
+        assertEquals(1f, weights.first())
+        f.edit("simulation_bake", id("cloth"))
+        val simulation = stack(f).instances.single { it.id == "cloth" }
+        val baked = assertNotNull(RigSimEdit.fromJson(simulation.config).bake)
+        assertEquals(count, baked.vertexCounts.getValue(target.id.raw))
+        assertEquals(count, simulation.config.getValue("automatic_weights").jsonArray.single().jsonObject.getValue("weights").jsonArray.size)
+        assertEquals(ModifierStatus.ACTIVE, f.now.model.modifierEvaluation!!.entries.single { it.instance.id == "cloth" }.status)
+        assertContentEquals(weights, f.builder.build(f.now.document).rig.puppet.vertexGroups.single { it.name == group.name }.weights)
+    }
+
     @Test fun explicitSimulationRebakeRunsTheBakerAndClearingDiscardsTheStoredBake(): Unit = runBlocking {
         val f = fixture()
         val source = RigSimEdit("template", "Cloth", SimKind.CLOTH, listOf(f.target.id),

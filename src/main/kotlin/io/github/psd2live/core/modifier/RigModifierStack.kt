@@ -50,6 +50,14 @@ internal data class RigModifierStack(
         require(overrides.keys.all { id -> id in retiredIds || instances.any { it.id == id } }) { "Override has no modifier owner" }
     }
 
+    /** A solver building its inputs must not replay overrides owned by a later editing stage. */
+    fun prefix(end: Int): RigModifierStack {
+        val kept = instances.take(end)
+        val owners = kept.mapTo(hashSetOf()) { it.id }
+        return copy(instances = kept, overrides = overrides.filterKeys { it in owners || it in retiredIds },
+            appliedNodes = appliedNodes.filterKeys { it in owners })
+    }
+
     fun add(type: String, version: Int, targets: List<ModifierTarget>, config: JsonObject = JsonObject(emptyMap()),
             presetGroup: String? = null, id: String? = null, outputAliases: Map<String, String> = emptyMap(), plugin: ModifierPluginReference? = null): RigModifierStack {
         var sequence = nextId

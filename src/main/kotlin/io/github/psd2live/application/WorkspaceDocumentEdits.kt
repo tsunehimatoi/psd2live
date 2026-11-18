@@ -291,6 +291,8 @@ internal object WorkspaceDocumentEdits {
 
     fun journal(document: WorkspaceDocument, model: RigPreviewModel, edits: JsonArray): WorkspaceDocument {
         refuseCopies(model, edits)
+        WorkspaceMeshPointEdits.record(document, model, edits)?.let { return it }
+        WorkspaceMeshPointEdits.recordWeights(document, model, edits)?.let { return it }
         // Recorded on the shown rig, they replay on the authored one, before the generators.
         val stage = GeometryEditStages.stage(edits)
         val selected = GeometryEditStages.resolve(model, stage)

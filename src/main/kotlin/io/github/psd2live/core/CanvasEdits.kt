@@ -85,6 +85,13 @@ internal fun layerSelectionRange(orderedLayerIds: List<String>, anchor: String?,
 internal object CanvasEdits {
     fun apply(model: PuppetModel, edit: JsonObject): PuppetModel {
         val id = edit.getValue("id").jsonPrimitive.content
+        edit["mesh_baseline"]?.let { baseline ->
+            val target = model.drawables.singleOrNull { it.id.raw == id }
+            require(target?.mesh?.let(RasterMeshJournal::fingerprint) == baseline.jsonPrimitive.content &&
+                target?.parentDeformerId?.raw == edit.getValue("mesh_parent").jsonPrimitive.contentOrNull) {
+                "The source topology or parent of $id changed since its mesh point edit"
+            }
+        }
         return when (edit.getValue("op").jsonPrimitive.content) {
             "canvas_create_rotation" -> {
                 require(model.deformers.none { it.id.raw == id })

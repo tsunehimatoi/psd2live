@@ -16,6 +16,7 @@ internal object WorkspaceGeometrySafety {
         val old = before.rigEdits.authoringJournal
         val next = after.rigEdits.authoringJournal
         // Existing records belong to history; only a newly authored suffix triggers this policy.
+        if (WorkspaceMeshPointEdits.appended(before, after)) return true
         return next.size > old.size && next.take(old.size) == old &&
             next.drop(old.size).any { it.jsonObject["op"]?.jsonPrimitive?.content in journalOperations }
     }

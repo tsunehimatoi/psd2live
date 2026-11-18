@@ -42,7 +42,7 @@ internal object WorkspaceModifierSimulation {
             }
             // Only a captured, already evaluated prefix may skip rebuilding its simulation inputs.
             if (index < validatedPrefix && source.bake != null && instance.inputFingerprint != null) continue
-            val prefix = next.copy(instances = next.instances.take(index))
+            val prefix = next.prefix(index)
             val overlay = document.rigEdits.copy(modifierStack = prefix.toJson())
             work.progress(0f, "Evaluating simulation inputs: ${instance.id}")
             val model = pipeline.buildPreview(document.source, document.config().copy(rigEdits = overlay), previousAtlas = evaluated?.modifierAuthorAtlas ?: evaluated?.atlas)
