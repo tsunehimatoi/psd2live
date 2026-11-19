@@ -1175,8 +1175,12 @@ internal class RigModifierSource(
         val measured = RigFittedMouthModuleSource.measure(this, native, context, precedingWithFitted, targetLayers)
         // Archived packages have a strict older input schema; retain their captured contract.
         val pinned = instance.plugin
-        if (pinned != null && pinned.id.startsWith("builtin.") && BuiltinModifierPlugins.entry(pinned.id)?.reference != pinned)
-            return measured
+        if (pinned != null && pinned.id.startsWith("builtin.") && BuiltinModifierPlugins.entry(pinned.id)?.reference != pinned) {
+            // A repackaged worker may have the current payload and contract under a different release or display name.
+            val bundled = BundledAlgorithmArtifacts.find(instance.type, instance.version)?.manifest
+            val saved = ModifierPluginStore.shared.findRunnable(pinned)?.manifest
+            if (bundled == null || saved == null || saved.copy(name = bundled.name, version = bundled.version) != bundled) return measured
+        }
         val ordinary = sourceScaffoldContext(scaffold)
         return ModifierAlgorithmContext(JsonObject(measured.values + mapOf(
             ModifierParameterI18n.CONTEXT_KEY to partParameterContext(instance, "fitted").values.getValue(ModifierParameterI18n.CONTEXT_KEY),
@@ -2002,6 +2006,7 @@ internal object RigSourceModifiers {
                 require("scaffold" in instance.config) { "Specify mouth's scaffold" }
                 val mode = instance.config["mode"]?.jsonPrimitive?.content ?: "fitted"
                 require(mode == "fitted" || mode == "legacy") { "Invalid mouth mode: $mode" }
+                ClosedMouthVisibility.fromConfig(instance.config)
                 require(instance.targets.all { it.kind == "mesh" && source?.hasMesh(it.id) == true }) {
                     "Mouth targets must have captured source layers"
                 }

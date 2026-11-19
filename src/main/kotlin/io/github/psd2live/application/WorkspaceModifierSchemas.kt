@@ -77,6 +77,7 @@ internal object WorkspaceModifierSchemas {
                 else s.obj(spec.module!!.physicsGroups.associateWith { physics }, emptySet())) else emptyMap()) +
             (if (spec.strength) mapOf("strength" to s.number(0, 4)) else emptyMap()) +
             (if (spec.mouthOutline) mapOf("color" to s.integer(0, 0xffffff)) else emptyMap()) +
+            (if (spec.type == "mouth/fitted") mapOf("closedMouthVisibility" to s.array(s.vector(2), 2, 128)) else emptyMap()) +
             (if (spec.knobs.isNotEmpty()) mapOf("values" to s.obj(spec.knobs.associate { it.id to s.number(it.range.start, it.range.endInclusive) }, emptySet())) else emptyMap()), setOf("scaffold") + (if (spec.module?.base != null) setOf("base") else emptySet()) + (if (spec.related.isNotEmpty()) setOf("dependencies") else emptySet())) }
             ?: error("No modifier configuration schema: $type")
     }

@@ -165,6 +165,9 @@ internal class RigModifierEvaluator(
     private val physicsOrder: List<String> = emptyList(),
     private val resolveRasters: ModifierRasterResolver = RigModifierRasterAssets::resolve,
     private val rawSourceRotations: Boolean = false,
+    /** Host settings must not change the input contract of archived algorithms. */
+    private val algorithmInstance: (RigModifierInstance) -> RigModifierInstance = { it },
+    private val customizeGenerated: (RigIR, RigIR, RigModifierInstance) -> RigIR = { _, generated, _ -> generated },
     private val applyOverrides: (RigIR, RigModifierInstance, List<JsonObject>) -> ModifierOverrideResult = { rig, _, edits ->
         require(edits.isEmpty()) { "This evaluator has no override replayer" }; ModifierOverrideResult(rig)
     },
@@ -329,6 +332,7 @@ internal class RigModifierEvaluator(
                 val inputKey = if (definition.plugin is ReadingModifierAlgorithmPlugin) null else
                     definition.cacheReads?.let { ModifierInputCache.input(before, it) to authorContext }
                 val cached = algorithmCache[instance.id]?.takeIf { it.instance == instance && it.input == inputKey }
+                val invocation = algorithmInstance(instance)
                 val evaluated = if (cached != null) {
                     io.github.psd2live.core.RigBuildProfile.count("modifier dependency cache hits")
                     cached.patch.apply(before)
@@ -369,21 +373,21 @@ internal class RigModifierEvaluator(
                                             capture(next).withUpstream(emptyList())
                                         else null
                                     } catch (_: IllegalArgumentException) { null }
-                                    if (nextContext != null) ahead.start(index + 1, next, nextPlugin, before, nextContext)
+                                    if (nextContext != null && algorithmInstance(next) == next) ahead.start(index + 1, next, nextPlugin, before, nextContext)
                                 }
                                 val view = ModifierEvaluationInput(before, authorContext)
-                                val changes = plugin.changes(view, instance, checkpoint)
+                                val changes = plugin.changes(view, invocation, checkpoint)
                                 changes.requireWrites(requireNotNull(definition.changeWrites) { "${instance.type}: missing change write contract" })
                                 changes.applyWithResources(before, checkpoint, resolveRasters).also {
                                     readCache[instance.id] = ModifierInputCache.ReadEntry(instance, plugin, authorContext, view.reads(), changes)
                                 }
                             }
                         }
-                        is ChangingModifierAlgorithmPlugin -> plugin.changes(before, instance, authorContext, checkpoint).also {
+                        is ChangingModifierAlgorithmPlugin -> plugin.changes(before, invocation, authorContext, checkpoint).also {
                             it.requireWrites(requireNotNull(definition.changeWrites) { "${instance.type}: missing change write contract" })
                         }.applyWithResources(before, checkpoint, resolveRasters)
-                        is ContextualModifierAlgorithmPlugin -> plugin.evaluate(before, instance, authorContext, checkpoint)
-                        else -> plugin.evaluate(before, instance, checkpoint)
+                        is ContextualModifierAlgorithmPlugin -> plugin.evaluate(before, invocation, authorContext, checkpoint)
+                        else -> plugin.evaluate(before, invocation, checkpoint)
                     }
                 }
                 // Both caches retain raw changes. Derived parameter order must be recomputed from the
@@ -396,7 +400,8 @@ internal class RigModifierEvaluator(
                     val keys = live.mapTo(HashSet()) { it.mesh to it.name }
                     raw.copy(authoring = raw.authoring.copy(vertexGroups = live + raw.authoring.vertexGroups.filterNot { (it.mesh to it.name) in keys }))
                 }
-                val generated = normalizeResult(visible)
+                // Applied nodes already include the host customization.
+                val generated = normalizeResult(if (instance.id in stack.appliedNodes) visible else customizeGenerated(before, visible, instance))
                 if (inputKey != null && cached == null) algorithmCache[instance.id] = ModifierInputCache.Entry(instance, inputKey, ModifierInputCache.Patch(before, raw))
                 checkpoint()
                 validateParameters(before, generated, instance, resolved)

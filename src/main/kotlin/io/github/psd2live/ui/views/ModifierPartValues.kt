@@ -57,6 +57,7 @@ internal fun ModifierPartValues(instance: RigModifierInstance, state: PSD2LiveSt
                 }
             }
             key(baseType) { ModifierBindingValues(instance.copy(type = baseType, plugin = null), enabled, vm, ::edit) }
+            if (baseType == "mouth/fitted") ClosedMouthVisibilitySection(instance, state, enabled, vm, commit = ::commit)
         }
 
         for ((flag, type) in ModifierPartConfig.features[instance.type].orEmpty()) key(instance.id, type) {

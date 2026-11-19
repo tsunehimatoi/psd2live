@@ -94,6 +94,7 @@ internal fun ParameterKeyAxis(
     onMove: (Float, Float) -> Unit,
     onDelete: (Float) -> Unit,
     onRange: (Float, Float, Float) -> Unit,
+    rangeEditable: Boolean = true,
 ) {
     val colors = LocalToolColors.current
     val typography = LocalToolTypography.current
@@ -134,7 +135,7 @@ internal fun ParameterKeyAxis(
         Box(Modifier.fillMaxWidth().height(16.dp)) {
             if (widthPx > 0) {
                 val width = widthPx.toFloat()
-                AxisEndNumber(min, tr("parameters.minimum"), enabled, editingEnd == "min", {
+                AxisEndNumber(min, tr("parameters.minimum"), enabled && rangeEditable, editingEnd == "min", {
                     editEnd("min")
                 }, {
                     editingEnd = null
@@ -144,13 +145,13 @@ internal fun ParameterKeyAxis(
                         range(next, neutral, max)
                     }
                 }, Modifier.align(Alignment.CenterStart))
-                AxisEndNumber(default, tr("parameters.default"), enabled, editingEnd == "default", {
+                if (rangeEditable) AxisEndNumber(default, tr("parameters.default"), enabled && rangeEditable, editingEnd == "default", {
                     editEnd("default")
                 }, {
                     editingEnd = null
                     if (it.isFinite() && it in min..max) range(min, it, max)
                 }, Modifier.offset { IntOffset(xOf(default, width).roundToInt() - with(density) { 22.dp.roundToPx() }, 0) }.width(44.dp))
-                AxisEndNumber(max, tr("parameters.maximum"), enabled, editingEnd == "max", {
+                AxisEndNumber(max, tr("parameters.maximum"), enabled && rangeEditable, editingEnd == "max", {
                     editEnd("max")
                 }, {
                     editingEnd = null
@@ -287,6 +288,8 @@ internal fun ParameterKeyAxis(
                     val shown = if (dragging?.first == key) dragging!!.second else key
                     val active = selected == key || dragging?.first == key
                     val x = xOf(shown, width)
+                    val selectedX = (dragging?.second ?: selected)?.let { xOf(it, width) }
+                    if (!active && selectedX != null && abs(x - selectedX) < gap) continue
                     if (!active && x - lastLabel < gap) continue
                     if (!active) lastLabel = x
                     AxisEndNumber(

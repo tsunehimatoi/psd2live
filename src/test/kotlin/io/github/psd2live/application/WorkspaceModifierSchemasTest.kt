@@ -14,6 +14,16 @@ import kotlin.test.*
 class WorkspaceModifierSchemasTest {
     @TempDir lateinit var temp: Path
 
+    @Test fun fittedVisibilityConfigurationIsAcceptedByBothPublicModifierSchemas() {
+        for (type in listOf("mouth", "mouth/fitted")) {
+            val config = JsonObject(configuration(type) + ("closedMouthVisibility" to
+                Json.parseToJsonElement("[[0,1],[0.05,0],[1,0]]")))
+            validateOperationSchema(buildJsonObject {
+                put("id", "mouth"); put("type", type); put("state", "state"); put("config", config)
+            }, WorkspaceModifierSchemas.request("modifier_update"))
+        }
+    }
+
     private fun configuration(type: String): JsonObject = when (type) {
         "rig.scaffold" -> JsonObject(emptyMap())
         "eye", "brow", "mouth", "face" -> buildJsonObject { put("scaffold", "structure"); put("mode", "fitted") }

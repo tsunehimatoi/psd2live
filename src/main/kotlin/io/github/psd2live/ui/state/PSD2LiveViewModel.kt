@@ -1723,7 +1723,8 @@ class PSD2LiveViewModel : AutoCloseable {
     internal fun switchModifierPreset(group: String, richness: String = "standard") =
         modifiers.switchModifierPreset(group, richness)
     internal fun confirmModifierAddition() = modifiers.confirmModifierAddition()
-    internal fun modifierEditState(): String? = modifiers.modifierEditState()
+    internal fun modifierEditOrigin(): ModifierEditOrigin? = modifiers.modifierEditOrigin()
+    internal fun modifierEditState(origin: ModifierEditOrigin? = null): String? = modifiers.modifierEditState(origin)
     internal fun openTurnStylePreview(): io.github.psd2live.application.WorkspaceTurnStylePreview? {
         val workspace = workspaceBackend as? DesktopWorkspace ?: return null
         val current = _state.value

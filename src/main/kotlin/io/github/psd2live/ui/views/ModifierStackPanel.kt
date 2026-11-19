@@ -657,6 +657,9 @@ private fun ModifierSourceValues(
                     put("id", instance.id); put("type", instance.type); put("config", config)
                 })
             }
+            if (instance.type == "mouth/fitted") ClosedMouthVisibilitySection(instance, state, enabled, vm) { config, expected, done ->
+                vm.editModifier("modifier_update", buildJsonObject { put("id", instance.id); put("type", instance.type); put("config", config) }, expected, done)
+            }
         }
     }
 }
