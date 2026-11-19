@@ -375,11 +375,21 @@ private fun SettingsPromptsSection(
 
 	Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
 		for (prompt in AppPrompt.entries) {
-			CompactCheckbox(
-				checked = prompt !in mutedPrompts,
-				onCheckedChange = { onPromptEnabledChange(prompt, it) },
-				label = tr(prompt.labelKey),
-			)
+			Column(Modifier.fillMaxWidth()) {
+				CompactCheckbox(
+					checked = prompt !in mutedPrompts,
+					onCheckedChange = { onPromptEnabledChange(prompt, it) },
+					label = tr(prompt.labelKey),
+				)
+				prompt.detailKey?.let { detailKey ->
+					Text(
+						text = tr(detailKey),
+						style = typography.caption.copy(fontSize = 10.5.sp, lineHeight = 14.sp),
+						color = colors.textMuted,
+						modifier = Modifier.padding(start = 24.dp),
+					)
+				}
+			}
 		}
 	}
 	Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

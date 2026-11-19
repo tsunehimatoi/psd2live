@@ -1,11 +1,14 @@
 package io.github.psd2live.ui
 
 import io.github.psd2live.application.PsdGuideBindings
+import io.github.psd2live.application.WorkspacePsdGuide
 import io.github.psd2live.core.DownloadState
+import io.github.psd2live.core.MeshComponentSplit
 import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.Side
 import io.github.psd2live.core.StandardParameters
 import io.github.psd2live.core.modifier.RigModifierStack
+import io.github.psd2live.document.WorkspaceSourceLayer
 import io.github.psd2live.project.ProjectRepository
 import io.github.psd2live.i18n.AppLanguage
 import io.github.psd2live.i18n.I18n
@@ -47,6 +50,12 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.float
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.io.TempDir
+import org.umamo.format.art.ChannelMask
+import org.umamo.format.art.LayerBlend
+import org.umamo.format.art.LayerBounds
+import org.umamo.format.art.LayerId
+import org.umamo.format.art.LayerRaster
+import org.umamo.format.art.SourceLayerKind
 import org.umamo.format.moc3.Moc3
 import java.nio.file.Files
 import java.nio.file.Path
@@ -194,6 +203,134 @@ class PsdGuideTest {
         }
     }
 
+    @Test fun defaultSplitMatchesHorizontalVerticalAndMultiPartNamingRules() {
+        fun planFor(vararg centers: Pair<Float, Float>): MeshComponentSplit.Plan {
+            val width = centers.size
+            val rgba = ByteArray(width * 4) { index -> if (index % 4 == 3) (-1).toByte() else 0 }
+            val source = WorkspaceSourceLayer(
+                id = LayerId("layer"),
+                name = "layer",
+                groupPath = "",
+                kind = SourceLayerKind.Raster,
+                visible = true,
+                order = 0,
+                bounds = LayerBounds(0, 0, width, 1),
+                opacity = 1f,
+                clipped = false,
+                blend = LayerBlend.Normal,
+                channelMask = ChannelMask.ALL,
+                raster = LayerRaster(width, 1, rgba),
+                sourceAssetId = null,
+                sourceSpatialReferenceId = null,
+                derived = false,
+            )
+            val components = centers.map { (x, y) -> MeshComponentSplit.Component(x, y) }
+            return MeshComponentSplit.Plan(components, IntArray(width) { it }, source)
+        }
+
+        val horizontal = WorkspacePsdGuide.defaultSplit("eyes-id", "eyes", planFor(90f to 20f, 10f to 25f))
+        assertEquals("eyes-id", horizontal.id)
+        assertEquals(listOf("eyes-l", "eyes-r"), horizontal.names)
+        assertEquals(listOf(Side.LEFT, Side.RIGHT), horizontal.sides)
+
+        val vertical = WorkspacePsdGuide.defaultSplit("mouth-id", "mouth", planFor(50f to 80f, 52f to 10f))
+        assertEquals("mouth-id", vertical.id)
+        assertEquals(listOf("mouth-b", "mouth-t"), vertical.names)
+        assertEquals(listOf(Side.NONE, Side.NONE), vertical.sides)
+
+        val threePart = WorkspacePsdGuide.defaultSplit("hair-id", "hair", planFor(90f to 10f, 10f to 20f, 50f to 30f))
+        assertEquals("hair-id", threePart.id)
+        assertEquals(listOf("hair-1", "hair-2", "hair-3"), threePart.names)
+        assertEquals(listOf(Side.NONE, Side.NONE, Side.NONE), threePart.sides)
+    }
+
+    @Test fun skipPsdGuideOnceAppliesDefaultsAndKeepsGuideEnabled() = editor { vm, workspace ->
+        val path = Characters.eyesPsd(temp)
+        vm.openExternalFile(path.toString())
+        val guide = vm.psdGuide
+        settled(guide)
+        assertEquals(AppPage.PSD_GUIDE, vm.activePage)
+        val eyesLayerId = assertNotNull(guide.source).model.analysis.layers.single { it.source.name == "eyes" }.source.id.raw
+
+        vm.skipPsdGuideOnce()
+        settled(guide)
+        assertFalse(guide.saving)
+        assertNull(vm.activePage)
+        assertFalse(AppPage.PSD_GUIDE in vm.openPages)
+        assertTrue(vm.state.value.showPsdImportGuide)
+        assertEquals(WorkspacePreset.EDIT, vm.state.value.activeWorkspace.preset)
+        assertEquals(1, workspace.host.history().nodes.size)
+        val layers = assertNotNull(vm.state.value.analysis).source.layers
+        val splitLayers = layers.filter { it.name.startsWith("eyes-") }
+        assertEquals(setOf("eyes-r", "eyes-l"), splitLayers.map { it.name }.toSet())
+        assertEquals(
+            mapOf("eyes-r" to Side.RIGHT, "eyes-l" to Side.LEFT),
+            splitLayers.associate { it.name to vm.state.value.layerOverrides[it.id.raw]?.side },
+        )
+        assertTrue(eyesLayerId in vm.state.value.deletedLayerIds)
+        val stack = RigModifierStack.fromJson(assertNotNull(vm.state.value.rigEdits.modifierStack))
+        assertTrue(stack.instances.isNotEmpty())
+        assertTrue(stack.instances.all { it.presetGroup == "modern" })
+    }
+
+    @Test fun disablePsdGuideAndImportBypassesGuideOnSubsequentOpens() = editor { vm, workspace ->
+        val previousShowGuide = AppSettings.showPsdImportGuide
+        try {
+            val first = Characters.eyesPsd(Files.createDirectory(temp.resolve("first"))).toAbsolutePath().normalize()
+            val second = Characters.eyesPsd(Files.createDirectory(temp.resolve("second"))).toAbsolutePath().normalize()
+            vm.confirmUnsavedChanges = { 1 }
+
+            vm.openExternalFile(first.toString())
+            val guide = vm.psdGuide
+            settled(guide)
+            assertEquals(AppPage.PSD_GUIDE, vm.activePage)
+
+            vm.disablePsdGuideAndImport()
+            settled(guide)
+            assertFalse(guide.saving)
+            assertFalse(vm.state.value.showPsdImportGuide)
+            assertTrue(AppPrompt.PSD_IMPORT_GUIDE in vm.state.value.mutedPrompts)
+            assertFalse(AppSettings.showPsdImportGuide)
+            assertNull(vm.activePage)
+            assertFalse(AppPage.PSD_GUIDE in vm.openPages)
+            assertEquals(WorkspacePreset.EDIT, vm.state.value.activeWorkspace.preset)
+            assertEquals(1, workspace.host.history().nodes.size)
+            assertEquals(first.toString(), vm.state.value.inputPath)
+            val firstSplitLayers = assertNotNull(vm.state.value.analysis).source.layers.filter { it.name.startsWith("eyes-") }
+            assertEquals(setOf("eyes-r", "eyes-l"), firstSplitLayers.map { it.name }.toSet())
+            val firstStack = RigModifierStack.fromJson(assertNotNull(vm.state.value.rigEdits.modifierStack))
+            assertTrue(firstStack.instances.isNotEmpty())
+            assertTrue(firstStack.instances.all { it.presetGroup == "modern" })
+
+            vm.openExternalFile(second.toString())
+            settled(guide)
+            assertFalse(guide.saving)
+            assertNull(guide.path)
+            assertNull(vm.activePage)
+            assertFalse(AppPage.PSD_GUIDE in vm.openPages)
+            assertEquals(second.toString(), vm.state.value.inputPath)
+            assertEquals(1, workspace.host.history().nodes.size)
+            val secondSplitLayers = assertNotNull(vm.state.value.analysis).source.layers.filter { it.name.startsWith("eyes-") }
+            assertEquals(setOf("eyes-r", "eyes-l"), secondSplitLayers.map { it.name }.toSet())
+            val secondStack = RigModifierStack.fromJson(assertNotNull(vm.state.value.rigEdits.modifierStack))
+            assertTrue(secondStack.instances.isNotEmpty())
+            assertTrue(secondStack.instances.all { it.presetGroup == "modern" })
+
+            vm.openRecentFile(first.toString())
+            settled(guide)
+            assertFalse(guide.saving)
+            assertNull(guide.path)
+            assertNull(vm.activePage)
+            assertFalse(AppPage.PSD_GUIDE in vm.openPages)
+            assertEquals(first.toString(), vm.state.value.inputPath)
+            assertEquals(1, workspace.host.history().nodes.size)
+            val recentSplitLayers = assertNotNull(vm.state.value.analysis).source.layers.filter { it.name.startsWith("eyes-") }
+            assertEquals(setOf("eyes-r", "eyes-l"), recentSplitLayers.map { it.name }.toSet())
+        } finally {
+            AppSettings.setPromptEnabled(AppPrompt.PSD_IMPORT_GUIDE, previousShowGuide)
+        }
+    }
+
     @OptIn(ExperimentalComposeUiApi::class)
     private suspend fun verifyTrackingOnCanvas(preview: io.github.psd2live.application.WorkspacePsdGuide.Preview,
                                                 axis: org.umamo.runtime.model.ParameterId, padValue: Float) {
@@ -226,7 +363,14 @@ class PsdGuideTest {
     private fun editor(body: suspend (PSD2LiveViewModel, DesktopWorkspace) -> Unit) = runBlocking<Unit> {
         withContext(Dispatchers.Main) {
             PSD2LiveViewModel().use { vm ->
-                vm.setStateForTest(vm.state.value.copy(atlasSize = 512, exportCmo3 = false, exportMoc3 = true))
+                vm.setStateForTest(
+                    vm.state.value.copy(
+                        atlasSize = 512,
+                        exportCmo3 = false,
+                        exportMoc3 = true,
+                        mutedPrompts = vm.state.value.mutedPrompts - AppPrompt.PSD_IMPORT_GUIDE - AppPrompt.MESH_SPLITS_ON_IMPORT,
+                    ),
+                )
                 DesktopWorkspace(vm, temp.resolve("store")).use { workspace ->
                     vm.attachWorkspace(workspace)
                     body(vm, workspace)

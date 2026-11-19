@@ -673,6 +673,7 @@ data class PSD2LiveState(
 
 	internal val canCheckMeshSplits: Boolean
 		get() = previewModel?.let { it.config.rigEdits.importedCmo3 == null } == true
+	val showPsdImportGuide: Boolean get() = AppPrompt.PSD_IMPORT_GUIDE !in mutedPrompts
 	val autoDetectMeshSplitsOnImport: Boolean get() = AppPrompt.MESH_SPLITS_ON_IMPORT !in mutedPrompts
 
 	val activeWorkspace: EditorWorkspace

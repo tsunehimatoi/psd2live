@@ -282,18 +282,25 @@ internal val dockJson = Json { ignoreUnknownKeys = true }
 /** The arrangement [page] starts from and "reset layout" restores; every panel of the page is in it. */
 internal fun pageDockLayout(page: AppPage): DockNode = when (page) {
     AppPage.START -> row(.14f, leaf(START_NAV), row(.68f, leaf(START_MAIN), leaf(START_DETAILS)))
-    AppPage.PSD_GUIDE -> leaf(PSD_GUIDE_CONTENT)
+    AppPage.PSD_GUIDE -> row(.66f, leaf(PSD_GUIDE_CONTENT), leaf(PSD_GUIDE_CONTROLS))
     AppPage.HELP -> row(.20f, leaf(HELP_NAV), leaf(HELP_CONTENT))
     AppPage.SETTINGS -> row(.20f, leaf(SETTINGS_NAV), leaf(SETTINGS_CONTENT))
 }
 
 /**
  * The dock tree [page] is arranged by: its saved layout when that still decodes and names only the page's own panels,
- * each once, otherwise its default. A panel the page gained since joins the first group as a tab.
+ * each once, otherwise its default. A panel the page gained since joins the first group as a tab, except on
+ * [AppPage.PSD_GUIDE] where missing panels reset to the dedicated split layout so controls never collapse into tabs.
  */
 internal fun pageDockRoot(page: AppPage, arrangement: PageArrangement): DockNode {
     val saved = arrangement.layoutJson?.let { raw -> runCatching { dockJson.decodeFromString<DockNode>(raw) }.getOrNull() }
-        ?.takeIf { node -> node.allModules().let { modules -> modules.all { it in page.modules } && modules.size == modules.toSet().size } }
+        ?.takeIf { node ->
+            node.allModules().let { modules ->
+                modules.all { it in page.modules } &&
+                    modules.size == modules.toSet().size &&
+                    (page != AppPage.PSD_GUIDE || modules.size == page.modules.size)
+            }
+        }
     val root = saved ?: pageDockLayout(page)
     return page.modules.filter { it !in root.allModules() }.fold(root) { node, module ->
         dockModule(node, module, node.firstLeaf().id, DockSide.CENTER)

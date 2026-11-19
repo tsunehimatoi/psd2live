@@ -7539,8 +7539,13 @@ class PSD2LiveViewModel : AutoCloseable {
     internal val psdGuide by lazy { PsdGuideState(scope) }
 
     internal fun openPsdGuide(path: Path, outputDirectory: Path? = null) {
+        val target = path.toAbsolutePath().normalize()
+        if (!_state.value.showPsdImportGuide && AppPage.PSD_GUIDE !in openPages) {
+            importPsdWithDefaults(target, outputDirectory)
+            return
+        }
         val host = (workspaceBackend as? DesktopWorkspace)?.host ?: return
-        psdGuide.request(path.toAbsolutePath().normalize(), outputDirectory, host)
+        psdGuide.request(target, outputDirectory, host)
         showPage(AppPage.PSD_GUIDE, PSD_GUIDE_CONTENT)
     }
 
@@ -7550,9 +7555,52 @@ class PSD2LiveViewModel : AutoCloseable {
         if (_state.value.analysis == null) showStartPage() else showWorkspace()
     }
 
-    internal fun createPsdGuideProject() {
+    internal fun skipPsdGuideOnce() = finishPsdGuideWithDefaults(disableGuide = false)
+
+    internal fun disablePsdGuideAndImport() = finishPsdGuideWithDefaults(disableGuide = true)
+
+    private fun finishPsdGuideWithDefaults(disableGuide: Boolean) {
         val workspace = workspaceBackend as? DesktopWorkspace ?: return
-        if (psdGuide.busy || _state.value.isBusy || _state.value.projectSaving) return
+        if (psdGuide.busy || psdGuide.saving || _state.value.isBusy || _state.value.projectSaving) return
+        val draft = psdGuide.guide ?: return
+        withSavedChanges {
+            if (psdGuide.busy || psdGuide.saving || psdGuide.guide !== draft) return@withSavedChanges
+            if (disableGuide) setPromptEnabled(AppPrompt.PSD_IMPORT_GUIDE, false)
+            flushEditorFields()
+            endSwing()
+            previewRebuildJob?.cancel()
+            psdGuide.installDefaults(
+                host = workspace.host,
+                autoSplit = _state.value.autoDetectMeshSplitsOnImport,
+                before = { preparePsdGuideExecution(workspace) },
+                onSuccess = { completePsdGuideInstall(draft.path, psdGuide.outputDirectory) },
+            )
+        }
+    }
+
+    private fun importPsdWithDefaults(target: Path, outputDirectory: Path?) {
+        val workspace = workspaceBackend as? DesktopWorkspace ?: return
+        if (psdGuide.busy || psdGuide.saving || _state.value.isBusy || _state.value.projectSaving) return
+        withSavedChanges {
+            if (psdGuide.busy || psdGuide.saving || _state.value.isBusy || _state.value.projectSaving) return@withSavedChanges
+            flushEditorFields()
+            endSwing()
+            previewRebuildJob?.cancel()
+            psdGuide.importWithDefaults(
+                path = target,
+                outputDirectory = outputDirectory,
+                host = workspace.host,
+                autoSplit = _state.value.autoDetectMeshSplitsOnImport,
+                before = { preparePsdGuideExecution(workspace) },
+                onSuccess = { completePsdGuideInstall(target, outputDirectory) },
+                onError = ::setErrorMessage,
+            )
+        }
+    }
+
+    internal fun createPsdGuideProject(onCompleted: (() -> Unit)? = null) {
+        val workspace = workspaceBackend as? DesktopWorkspace ?: return
+        if (psdGuide.busy || psdGuide.saving || _state.value.isBusy || _state.value.projectSaving) return
         val draft = psdGuide.guide ?: return
         val candidate = psdGuide.finalCandidate ?: return
         withSavedChanges {
@@ -7560,20 +7608,33 @@ class PSD2LiveViewModel : AutoCloseable {
             flushEditorFields()
             endSwing()
             previewRebuildJob?.cancel()
-            psdGuide.install(workspace.host, before = {
-                awaitProjectDrafts(workspace, true)
-                _state.first { !it.workspaceEditBusy }
-                val expected = workspace.snapshot()
-                io.github.psd2live.application.WorkspaceExecution(expected.projectId, expected.state, MutationAuthor.USER)
-            }) {
-                psdGuide.outputDirectory?.let { setOutputPath(it.toAbsolutePath().toString()) }
-                setInputPath(draft.path.toString())
-                psdGuide.clear()
-                openPages = openPages - AppPage.PSD_GUIDE
-                leaveStartPage()
-                openWorkspacePreset(WorkspacePreset.EDIT)
-            }
+            psdGuide.install(
+                workspace.host,
+                before = { preparePsdGuideExecution(workspace) },
+                onSuccess = {
+                    completePsdGuideInstall(draft.path, psdGuide.outputDirectory)
+                    onCompleted?.invoke()
+                },
+            )
         }
+    }
+
+    private suspend fun preparePsdGuideExecution(
+        workspace: DesktopWorkspace,
+    ): io.github.psd2live.application.WorkspaceExecution {
+        awaitProjectDrafts(workspace, true)
+        _state.first { !it.workspaceEditBusy }
+        val expected = workspace.snapshot()
+        return io.github.psd2live.application.WorkspaceExecution(expected.projectId, expected.state, MutationAuthor.USER)
+    }
+
+    private fun completePsdGuideInstall(inputPath: Path, outputDirectory: Path?) {
+        outputDirectory?.let { setOutputPath(it.toAbsolutePath().toString()) }
+        setInputPath(inputPath.toString())
+        psdGuide.clear()
+        openPages = openPages - AppPage.PSD_GUIDE
+        leaveStartPage()
+        openWorkspacePreset(WorkspacePreset.EDIT)
     }
 
     /** Both adapters invoke the same application source capability; only this entry owns GUI confirmation. */
