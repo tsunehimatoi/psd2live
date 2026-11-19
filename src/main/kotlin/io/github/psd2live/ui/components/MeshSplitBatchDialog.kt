@@ -1,13 +1,25 @@
 package io.github.psd2live.ui.components
 
 import io.github.psd2live.ui.utils.toImageBitmapFast
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Text
@@ -29,8 +41,14 @@ import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.state.AppPrompt
 import io.github.psd2live.ui.state.AppSettings
 import io.github.psd2live.ui.state.PSD2LiveViewModel
+import io.github.psd2live.ui.theme.Corners
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
+import io.github.psd2live.ui.theme.Motion
+import io.github.psd2live.ui.theme.Spacing
+import io.github.psd2live.ui.theme.handCursor
+import io.github.psd2live.ui.utils.toImageBitmapFast
+import io.github.psd2live.ui.views.texture.glideItem
 
 internal enum class SplitNamesMode { LR, TB, NUMBER, CUSTOM }
 
@@ -46,6 +64,27 @@ internal class BatchSplitItemState(
         kotlin.math.abs(components[0].centerY - components[1].centerY)
     var mode by mutableStateOf(if (count == 2) { if (horizontal) SplitNamesMode.LR else SplitNamesMode.TB } else SplitNamesMode.NUMBER)
     var customNames by mutableStateOf(List(count) { "${offer.layerName}-${it + 1}" })
+    var customSides by mutableStateOf(initialSides())
+
+    private fun initialSides(): List<Side> {
+        val sides = MutableList(count) { Side.NONE }
+        if (count == 2 && horizontal) {
+            components.indices.sortedBy { components[it].centerX }.forEachIndexed { position, component ->
+                sides[component] = if (position == 0) Side.RIGHT else Side.LEFT
+            }
+        }
+        return sides
+    }
+
+    fun cycleCustomSide(index: Int) {
+        if (index !in 0 until count) return
+        val next = when (customSides.getOrElse(index) { Side.NONE }) {
+            Side.NONE -> Side.LEFT
+            Side.LEFT -> Side.RIGHT
+            Side.RIGHT -> Side.NONE
+        }
+        customSides = customSides.toMutableList().also { it[index] = next }
+    }
 
     fun generatedNamesAndSides(): Pair<List<String>, List<Side>> {
         val order = when (mode) {
@@ -63,17 +102,29 @@ internal class BatchSplitItemState(
         order.forEachIndexed { position, component ->
             generated[component] = if (mode == SplitNamesMode.CUSTOM) customNames[component].trim()
                 else "${offer.layerName}-${suffixes[position]}"
-            if (mode == SplitNamesMode.LR) sides[component] = if (position == 0) Side.RIGHT else Side.LEFT
+            sides[component] = when (mode) {
+                SplitNamesMode.LR -> if (position == 0) Side.RIGHT else Side.LEFT
+                SplitNamesMode.CUSTOM -> customSides.getOrElse(component) { Side.NONE }
+                else -> Side.NONE
+            }
         }
         return generated to sides
     }
 
-    val isValid: Boolean
+    val invalidIndices: Set<Int>
         get() {
-            if (!isSelected) return true
+            if (!isSelected) return emptySet()
             val (names, _) = generatedNamesAndSides()
-            return names.all { it.isNotBlank() } && names.distinct().size == count
+            val counts = names.groupingBy { it }.eachCount()
+            return buildSet {
+                names.forEachIndexed { index, name ->
+                    if (name.isBlank() || (counts[name] ?: 0) > 1) add(index)
+                }
+            }
         }
+
+    val isValid: Boolean
+        get() = invalidIndices.isEmpty()
 }
 
 /**
@@ -151,40 +202,117 @@ internal fun MeshSplitBatchDialog(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun SplitHeader(items: List<BatchSplitItemState>, enabled: Boolean = true) {
+internal fun SplitHeader(
+    items: List<BatchSplitItemState>,
+    enabled: Boolean = true,
+    showTitle: Boolean = true,
+) {
     val colors = LocalToolColors.current
     val typography = LocalToolTypography.current
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        SectionLabel(tr("start.splits"))
-        Text(
-            tr("editor.meshSplit.selectedCount", items.count { it.isSelected }, items.size),
-            style = typography.caption,
-            color = colors.textMuted,
-        )
-        Spacer(Modifier.weight(1f))
-        CompactButton(tr("editor.meshSplit.selectAll"), { items.forEach { it.isSelected = true } }, enabled = enabled, height = 22.dp)
-        CompactButton(tr("editor.meshSplit.deselectAll"), { items.forEach { it.isSelected = false } }, enabled = enabled, height = 22.dp)
+    val selectedCount = tr("editor.meshSplit.selectedCount", items.count { it.isSelected }, items.size)
+    val singleRowMinWidth = if (showTitle) 480.dp else 280.dp
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        if (maxWidth >= singleRowMinWidth) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (showTitle) SectionLabel(tr("start.splits"))
+                Text(
+                    selectedCount,
+                    style = typography.caption,
+                    color = colors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                CompactButton(tr("editor.meshSplit.selectAll"), { items.forEach { it.isSelected = true } }, enabled = enabled, height = 22.dp)
+                CompactButton(tr("editor.meshSplit.deselectAll"), { items.forEach { it.isSelected = false } }, enabled = enabled, height = 22.dp)
+            }
+        } else {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
+                FlowRow(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    if (showTitle) SectionLabel(tr("start.splits"))
+                    Text(
+                        selectedCount,
+                        style = typography.caption,
+                        color = colors.textMuted,
+                    )
+                }
+                FlowRow(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.Gap),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.Gap),
+                ) {
+                    CompactButton(tr("editor.meshSplit.selectAll"), { items.forEach { it.isSelected = true } }, enabled = enabled, height = 22.dp)
+                    CompactButton(tr("editor.meshSplit.deselectAll"), { items.forEach { it.isSelected = false } }, enabled = enabled, height = 22.dp)
+                }
+            }
+        }
     }
 }
 
 /** A layer that can be split: its check, name, how the pieces are named, and each piece with its name. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun SplitCard(item: BatchSplitItemState, previews: List<androidx.compose.ui.graphics.ImageBitmap>,
-                       enabled: Boolean = true, onFocus: (() -> Unit)? = null, focused: Boolean = false) {
+internal fun SplitCard(
+    item: BatchSplitItemState,
+    previews: List<androidx.compose.ui.graphics.ImageBitmap>,
+    enabled: Boolean = true,
+    onFocus: (() -> Unit)? = null,
+    focused: Boolean = false,
+) {
     val colors = LocalToolColors.current
     val typography = LocalToolTypography.current
     val count = item.count
     val (generatedNames, _) = item.generatedNamesAndSides()
-    Column(
-        Modifier.fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .background(if (item.isSelected) colors.panelBackground else colors.inputBackground.copy(alpha = 0.5f))
-            .border(
-                BorderStroke(1.dp, if (focused || item.isSelected && onFocus == null) colors.accent.copy(alpha = 0.5f) else colors.divider),
-                RoundedCornerShape(6.dp),
+    val cardShape = RoundedCornerShape(Corners.Panel)
+    val thumbShape = RoundedCornerShape(Corners.Control)
+    val invalid = item.isSelected && !item.isValid
+    val cardClickModifier = onFocus?.let { focus ->
+        Modifier
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                enabled = enabled,
+                onClick = focus,
             )
+            .handCursor(enabled)
+    } ?: Modifier
+
+    val cardBackground by animateColorAsState(
+        targetValue = when {
+            invalid -> colors.error.copy(alpha = 0.08f)
+            focused -> colors.selection.copy(alpha = 0.25f)
+            !item.isSelected -> colors.inputBackground.copy(alpha = 0.45f)
+            else -> colors.panelBackground
+        },
+        animationSpec = tween(Motion.Instant),
+    )
+    val borderColor by animateColorAsState(
+        targetValue = when {
+            invalid -> colors.error
+            focused -> colors.accent
+            item.isSelected && onFocus == null -> colors.accent.copy(alpha = 0.5f)
+            else -> colors.divider
+        },
+        animationSpec = tween(Motion.Instant),
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(cardShape)
+            .background(cardBackground, cardShape)
+            .border(BorderStroke(1.dp, borderColor), cardShape)
+            .then(cardClickModifier)
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -194,59 +322,88 @@ internal fun SplitCard(item: BatchSplitItemState, previews: List<androidx.compos
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             CompactCheckbox(checked = item.isSelected, enabled = enabled, onCheckedChange = { item.isSelected = it; onFocus?.invoke() })
-            Text(
-                item.offer.layerName,
-                style = typography.body.copy(fontWeight = FontWeight.SemiBold),
-                color = if (item.isSelected) colors.textPrimary else colors.textMuted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false).then(
-                    onFocus?.let { Modifier.clickable(enabled = enabled, onClick = it) } ?: Modifier),
-            )
-            Text(tr("editor.meshSplit.componentsCount", count), style = typography.caption, color = colors.textMuted)
-            Spacer(Modifier.weight(1f))
+            Row(
+                Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    item.offer.layerName,
+                    style = typography.body.copy(fontWeight = FontWeight.SemiBold),
+                    color = if (item.isSelected) colors.textPrimary else colors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                Text(
+                    tr("editor.meshSplit.componentsCount", count),
+                    style = typography.caption,
+                    color = colors.textMuted,
+                    maxLines = 1,
+                )
+            }
             if (item.isSelected && onFocus == null) SplitNamingModes(item, enabled, null)
         }
-        if (item.isSelected && onFocus != null) SplitNamingModes(item, enabled, onFocus)
 
-        if (item.isSelected) {
-            FlowRow(
-                Modifier.fillMaxWidth().padding(start = 28.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                item.components.indices.forEach { index ->
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        if (index < previews.size) Box(
-                            Modifier.size(54.dp, 40.dp).clip(RoundedCornerShape(4.dp))
-                                .background(colors.inputBackground)
-                                .border(BorderStroke(1.dp, colors.divider), RoundedCornerShape(4.dp)),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Image(
-                                    bitmap = previews[index],
-                                    contentDescription = tr("editor.meshSplit.preview", index + 1),
-                                    modifier = Modifier.fillMaxSize().padding(2.dp),
-                                    contentScale = ContentScale.Fit,
-                            )
-                        }
-                        if (item.mode == SplitNamesMode.CUSTOM) {
-                            CompactTextField(
-                                value = item.customNames.getOrElse(index) { "" },
-                                enabled = enabled,
-                                onValueChange = { value ->
-                                    item.customNames = item.customNames.toMutableList().also {
-                                        if (index < it.size) it[index] = value
-                                    }
-                                },
-                                modifier = Modifier.width(100.dp),
-                            )
-                        } else {
-                            Text(
-                                generatedNames.getOrElse(index) { "" },
-                                style = typography.caption.copy(fontSize = 11.sp),
-                                color = colors.textPrimary,
-                            )
+        AnimatedVisibility(
+            visible = item.isSelected,
+            enter = expandVertically(tween(Motion.Fold, easing = FastOutSlowInEasing)) +
+                fadeIn(tween(Motion.Fade, easing = LinearOutSlowInEasing)),
+            exit = shrinkVertically(tween(Motion.Instant, easing = FastOutLinearInEasing)) +
+                fadeOut(tween(Motion.Instant, easing = FastOutLinearInEasing)),
+        ) {
+            val partPalette = listOf(colors.accent, colors.highlight, colors.warning)
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (onFocus != null) SplitNamingModes(item, enabled, onFocus)
+
+                FlowRow(
+                    Modifier.fillMaxWidth().padding(start = 22.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    item.components.indices.forEach { index ->
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (index < previews.size) {
+                                Box(
+                                    Modifier.size(54.dp, 40.dp).clip(thumbShape)
+                                        .background(colors.inputBackground)
+                                        .border(BorderStroke(1.dp, colors.divider), thumbShape),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Image(
+                                        bitmap = previews[index],
+                                        contentDescription = tr("editor.meshSplit.preview", index + 1),
+                                        modifier = Modifier.fillMaxSize().padding(2.dp),
+                                        contentScale = ContentScale.Fit,
+                                    )
+                                }
+                            } else if (onFocus != null) {
+                                Box(
+                                    Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(partPalette[index % partPalette.size]),
+                                )
+                            }
+                            if (item.mode == SplitNamesMode.CUSTOM) {
+                                CompactTextField(
+                                    value = item.customNames.getOrElse(index) { "" },
+                                    enabled = enabled,
+                                    onValueChange = { value ->
+                                        item.customNames = item.customNames.toMutableList().also {
+                                            if (index < it.size) it[index] = value
+                                        }
+                                        onFocus?.invoke()
+                                    },
+                                    modifier = Modifier.width(100.dp),
+                                )
+                            } else {
+                                Text(
+                                    generatedNames.getOrElse(index) { "" },
+                                    style = typography.caption.copy(fontSize = 11.sp),
+                                    color = colors.textPrimary,
+                                )
+                            }
                         }
                     }
                 }
@@ -268,7 +425,7 @@ private fun SplitNamingModes(item: BatchSplitItemState, enabled: Boolean, onFocu
         SplitNamesMode.NUMBER to "1…$count",
         SplitNamesMode.CUSTOM to tr("editor.meshSplit.custom"),
     )
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.Gap), verticalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
         choices.forEach { (choice, label) ->
             CompactToggleChip(text = label, selected = item.mode == choice,
                 onToggle = { item.mode = choice; onFocus?.invoke() }, enabled = enabled, showCheckWhenSelected = false)

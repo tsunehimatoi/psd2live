@@ -11,8 +11,23 @@ internal object TurnStyleCandidates {
     private val knobs get() = RigModules.FACE_DEPTH_TURN.knobs
     private const val PRESET = "style"
 
+    fun defaultValues(): Map<String, Float> = knobs.associate { it.id to it.default }
+
+    fun initialBatch(
+        defaultValues: Map<String, Float> = defaultValues(),
+        random: Random = Random.Default,
+    ): List<Option> {
+        val baseDefaults = defaultValues() + defaultValues
+        val presets = (0..defaultsPresetMax()).shuffled(random)
+        return List(9) { index ->
+            if (index == 0) return@List Option(baseDefaults)
+            val base = defaultValues() + (PRESET to presets[index % presets.size].toFloat())
+            Option(perturb(base, random.nextDouble(0.11, 0.23).toFloat(), random))
+        }
+    }
+
     fun randomBatch(random: Random = Random.Default): List<Option> {
-        val defaults = knobs.associate { it.id to it.default }
+        val defaults = defaultValues()
         val presets = (0..defaultsPresetMax()).shuffled(random)
         return List(9) { index ->
             val base = defaults + (PRESET to presets[index % presets.size].toFloat())
@@ -20,16 +35,25 @@ internal object TurnStyleCandidates {
         }
     }
 
-    fun nearbyBatch(anchor: Option, random: Random = Random.Default): List<Option> {
-        val corners = (List(3) { Distance.MEDIUM } + Distance.FAR).shuffled(random).iterator()
+    fun nearbyBatch(
+        anchor: Option,
+        random: Random = Random.Default,
+        anchorIndex: Int = 4,
+    ): List<Option> {
+        val keep = anchorIndex.coerceIn(0, 8)
+        val distances = (
+            List(4) { Distance.NEAR } +
+                List(3) { Distance.MEDIUM } +
+                listOf(Distance.FAR)
+            ).shuffled(random).iterator()
         return List(9) { index ->
-            if (index == 4) return@List anchor.copy(distance = Distance.ANCHOR)
-            val distance = if (index % 2 == 1) Distance.NEAR else corners.next()
+            if (index == keep) return@List anchor.copy(distance = Distance.ANCHOR)
+            val distance = distances.next()
             val radius = when (distance) {
                 Distance.NEAR -> random.nextDouble(0.04, 0.07)
                 Distance.MEDIUM -> random.nextDouble(0.10, 0.15)
                 Distance.FAR -> random.nextDouble(0.21, 0.28)
-                Distance.ANCHOR -> error("The center already holds the anchor")
+                Distance.ANCHOR -> error("The anchor slot already holds the anchor")
             }
             Option(perturb(anchor.values, radius.toFloat(), random), distance)
         }

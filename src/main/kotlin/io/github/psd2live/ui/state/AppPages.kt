@@ -8,7 +8,7 @@ package io.github.psd2live.ui.state
  */
 internal enum class AppPage(val modules: List<String>) {
 	START(listOf(START_NAV, START_MAIN, START_DETAILS)),
-	PSD_GUIDE(listOf(PSD_GUIDE_CONTENT)),
+	PSD_GUIDE(listOf(PSD_GUIDE_CONTENT, PSD_GUIDE_CONTROLS, PSD_GUIDE_ACTIONS)),
 	HELP(listOf(HELP_NAV, HELP_CONTENT)),
 	SETTINGS(listOf(SETTINGS_NAV, SETTINGS_CONTENT)),
 }
@@ -18,6 +18,8 @@ internal const val START_MAIN = "start.main"
 internal const val START_DETAILS = "start.details"
 
 internal const val PSD_GUIDE_CONTENT = "psdGuide.content"
+internal const val PSD_GUIDE_CONTROLS = "psdGuide.controls"
+internal const val PSD_GUIDE_ACTIONS = "psdGuide.actions"
 
 internal const val HELP_NAV = "help.nav"
 internal const val HELP_CONTENT = "help.content"

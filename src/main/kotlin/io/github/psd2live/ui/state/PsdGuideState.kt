@@ -63,6 +63,10 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
         private set
     var splitFocus by mutableStateOf<String?>(null)
         private set
+    var splitHoveredComponent by mutableStateOf<Pair<String, Int>?>(null)
+    private var appliedSplits: List<WorkspacePsdGuide.Split> = emptyList()
+    val splitDraftValid get() = splitItems.all { it.isValid }
+    val selectedSplitCount get() = splitItems.count { it.isSelected }
     var bindingFocus by mutableStateOf<List<String>>(emptyList())
     var bindings by mutableStateOf<PsdGuideBindings.Result?>(null)
         private set
@@ -81,6 +85,12 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
         private set
     var selectedStyle by mutableStateOf<TurnStyleCandidates.Option?>(null)
     var turnPose by mutableStateOf<Pair<Float, Float>?>(null)
+    var faceFlipGeneration by mutableStateOf(0)
+        private set
+    var faceFlipKeepIndex by mutableStateOf<Int?>(null)
+        private set
+    var faceReadyIndices by mutableStateOf<Set<Int>>(emptySet())
+    var faceError by mutableStateOf<String?>(null)
 
     fun request(path: Path, outputDirectory: Path?, host: WorkspaceHost<PSD2LiveState>) {
         if (saving) return
@@ -117,6 +127,10 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
         if (running == null) owners.filterNot { it.published }.forEach { it.close() }
         else running.invokeOnCompletion { owners.filterNot { it.published }.forEach { it.close() } }
         job = null
+        resetFields()
+    }
+
+    private fun resetFields() {
         path = null
         outputDirectory = null
         workLabel = null
@@ -133,6 +147,8 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
         splitItems = emptyList()
         splitScanned = false
         splitFocus = null
+        splitHoveredComponent = null
+        appliedSplits = emptyList()
         bindingFocus = emptyList()
         manual = emptyMap()
         bindings = null
@@ -180,10 +196,20 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
             BatchSplitItemState(PSD2LiveViewModel.MeshSplitOffer(id, layer.source.name, plan, source.model, null, true))
         }
         splitFocus = null
+        splitHoveredComponent = null
     }
 
+    private fun currentSplitDecisions(): List<WorkspacePsdGuide.Split> =
+        splitItems.filter { it.isSelected }.map { item ->
+            val (names, sides) = item.generatedNamesAndSides()
+            WorkspacePsdGuide.Split(item.offer.layerId, names, sides)
+        }
+
     fun showSplitPreview(layerId: String?) {
-        if (!busy && (layerId == null || splitItems.any { it.offer.layerId == layerId })) splitFocus = layerId
+        if (!busy && (layerId == null || splitItems.any { it.offer.layerId == layerId })) {
+            splitFocus = layerId
+            splitHoveredComponent = null
+        }
     }
 
     fun split(items: List<BatchSplitItemState>) {
@@ -199,6 +225,7 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
             val candidate = guide.split(source, decisions)
             val report = guide.bindings(candidate, manual)
             val plans = guide.splits(candidate)
+            appliedSplits = decisions
             changeSource(candidate, report)
             setSplitItems(candidate, plans)
         }
@@ -209,6 +236,7 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
         work("psdGuide.working") {
             val report = guide.bindings(guide.base, manual)
             val plans = guide.splits(guide.base)
+            appliedSplits = emptyList()
             changeSource(guide.base, report)
             setSplitItems(guide.base, plans)
         }
@@ -247,7 +275,52 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
         if (next > reached) reached = next
         step = next
         if (next == PsdGuideStep.PRESET && finalCandidate == null) selectPreset(selection)
-        if (next == PsdGuideStep.FACE && batch.isEmpty()) batch = TurnStyleCandidates.randomBatch()
+        if (next == PsdGuideStep.FACE && batch.isEmpty()) {
+            val defaultValues = preset?.let { candidate ->
+                guide?.turn(candidate)?.let { turn -> guide?.turnValues(turn) }
+            } ?: TurnStyleCandidates.defaultValues()
+            batch = TurnStyleCandidates.initialBatch(defaultValues)
+            selectedStyle = batch.firstOrNull()
+            faceFlipGeneration = 0
+            faceFlipKeepIndex = null
+        }
+    }
+
+    /**
+     * Advances from [PsdGuideStep.SPLIT] by applying any pending draft split selections first,
+     * keeping [splitItems] intact so returning to step 1 preserves all user choices.
+     */
+    fun advanceFromSplit(requested: PsdGuideStep? = null) {
+        if (busy || bindings == null || step != PsdGuideStep.SPLIT) return
+        if (!splitDraftValid) return
+        val guide = guide ?: return
+        val decisions = if (splitScanned) currentSplitDecisions() else emptyList()
+        if (!splitScanned || decisions == appliedSplits) {
+            val target = requested?.takeIf { it in steps } ?: nextStep ?: return
+            go(target)
+            return
+        }
+        work("psdGuide.working") {
+            val candidate = if (decisions.isEmpty()) guide.base else guide.split(guide.base, decisions)
+            val report = guide.bindings(candidate, manual)
+            appliedSplits = decisions
+            changeSource(candidate, report)
+            val target = requested?.takeIf { it in steps } ?: nextStep ?: PsdGuideStep.PRESET
+            if (target == PsdGuideStep.BINDING) bindingVisited = true
+            if (target > reached) reached = target
+            step = target
+            if (target == PsdGuideStep.PRESET && finalCandidate == null) {
+                val choice = presetChoice(selection, WorkspaceModelPresetLibrary.shared.state.value)
+                if (choice != null) {
+                    val built = guide.preset(candidate, report, choice.first.id, choice.second)
+                    val previous = preset
+                    resetStyles()
+                    preset = built
+                    preparedSelection = selection
+                    previous?.releaseIfUnused()
+                }
+            }
+        }
     }
 
     fun reviewAutomaticBindings() {
@@ -290,12 +363,44 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
         styleProgress = null
         val anchor = selectedStyle
         if (nearby && anchor != null) {
-            batch = TurnStyleCandidates.nearbyBatch(anchor)
-            selectedStyle = batch[4]
+            val anchorIndex = batch.indexOf(anchor).takeIf { it >= 0 }
+                ?: batch.indexOfFirst { it.values == anchor.values }.takeIf { it >= 0 }
+                ?: 0
+            batch = TurnStyleCandidates.nearbyBatch(anchor, anchorIndex = anchorIndex)
+            selectedStyle = batch[anchorIndex]
+            faceFlipKeepIndex = anchorIndex
         } else {
             batch = TurnStyleCandidates.randomBatch()
             selectedStyle = null
+            faceFlipKeepIndex = null
         }
+        faceFlipGeneration += 1
+    }
+
+    fun updateFaceStyleValue(knobId: String, value: Float) {
+        if (busy || batch.isEmpty()) return
+        val index = selectedStyle?.let { sel ->
+            batch.indexOf(sel).takeIf { it >= 0 } ?: batch.indexOfFirst { it.values == sel.values }
+        }?.takeIf { it >= 0 } ?: 0
+        val current = batch[index]
+        val nextValues = current.values + (knobId to value)
+        if (nextValues == current.values) return
+        val updated = TurnStyleCandidates.Option(nextValues, current.distance)
+        batch = batch.toMutableList().also { it[index] = updated }
+        selectedStyle = updated
+    }
+
+    fun updateFaceStylePreset(presetIndex: Int) {
+        if (busy || batch.isEmpty()) return
+        val index = selectedStyle?.let { sel ->
+            batch.indexOf(sel).takeIf { it >= 0 } ?: batch.indexOfFirst { it.values == sel.values }
+        }?.takeIf { it >= 0 } ?: 0
+        val current = batch[index]
+        val nextValues = TurnStyleCandidates.defaultValues() + ("style" to presetIndex.toFloat())
+        if (nextValues == current.values) return
+        val updated = TurnStyleCandidates.Option(nextValues, current.distance)
+        batch = batch.toMutableList().also { it[index] = updated }
+        selectedStyle = updated
     }
 
     fun applyStyle() {
@@ -335,6 +440,108 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
         }
     }
 
+    fun installDefaults(
+        host: WorkspaceHost<PSD2LiveState>,
+        autoSplit: Boolean,
+        before: suspend () -> WorkspaceExecution,
+        onSuccess: () -> Unit,
+    ) {
+        val draft = guide ?: return
+        val current = source ?: draft.base
+        if (busy || saving) return
+        saving = true
+        work("psdGuide.working", retryable = false) {
+            try {
+                val candidate = prepareDefaultCandidate(draft, current, autoSplit)
+                workLabel = "psdGuide.creating"
+                withContext(before()) { host.installPsdGuide(draft, candidate, discardUnsaved = true) }
+                onSuccess()
+            } finally {
+                saving = false
+            }
+        }
+    }
+
+    fun importWithDefaults(
+        path: Path,
+        outputDirectory: Path?,
+        host: WorkspaceHost<PSD2LiveState>,
+        autoSplit: Boolean,
+        before: suspend () -> WorkspaceExecution,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit,
+    ) {
+        if (busy || saving || this.path != null) return
+        this.path = path
+        this.outputDirectory = outputDirectory
+        saving = true
+        work("psdGuide.reading", retryable = false) {
+            var succeeded = false
+            try {
+                val draft = host.preparePsdGuide(path).also { guide = it; source = it.base }
+                val candidate = prepareDefaultCandidate(draft, draft.base, autoSplit)
+                workLabel = "psdGuide.creating"
+                withContext(before()) { host.installPsdGuide(draft, candidate, discardUnsaved = true) }
+                succeeded = true
+                onSuccess()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                onError(workspaceFailureMessage(failure))
+            } finally {
+                saving = false
+                if (!succeeded) {
+                    val owners = listOfNotNull(styled, preset, source, guide?.base)
+                        .mapNotNull { it.model.modifierBuildOwner }.distinct()
+                    resetFields()
+                    owners.filterNot { it.published }.forEach { it.close() }
+                }
+            }
+        }
+    }
+
+    private suspend fun prepareDefaultCandidate(
+        draft: WorkspacePsdGuide,
+        base: WorkspacePsdGuide.Candidate,
+        autoSplit: Boolean,
+    ): WorkspacePsdGuide.Candidate {
+        var current = base
+        if (current === draft.base && (autoSplit || splitScanned)) {
+            val decisions = if (splitScanned) {
+                splitItems.map { WorkspacePsdGuide.defaultSplit(it.offer.layerId, it.offer.layerName, it.offer.plan) }
+            } else {
+                workLabel = "start.splits.scanning"
+                draft.defaultSplits(current)
+            }
+            if (decisions.isNotEmpty()) {
+                workLabel = "psdGuide.working"
+                val splitCandidate = draft.split(current, decisions)
+                val prevSource = source
+                source = splitCandidate
+                prevSource?.releaseIfUnused()
+                splitItems = emptyList()
+                splitScanned = true
+                splitFocus = null
+                current = splitCandidate
+            }
+        }
+        workLabel = "psdGuide.working"
+        val report = draft.bindings(current, manual)
+        bindings = report
+        manual = report.manual
+        val entries = WorkspaceModelPresetLibrary.shared.state.value
+        val defaultSelection = ModifierPresetMenuModel.initialSelection(null, entries)
+        val choice = presetChoice(defaultSelection, entries) ?: error("No default preset available")
+        val built = draft.preset(current, report, choice.first.id, choice.second)
+        val prevPreset = preset
+        resetStyles()
+        preset = built
+        preparedSelection = defaultSelection
+        selection = defaultSelection
+        prevPreset?.releaseIfUnused()
+        return built
+    }
+
     private fun resetPreset() {
         resetStyles()
         val previous = preset
@@ -349,6 +556,10 @@ internal class PsdGuideState(private val scope: CoroutineScope) {
         batch = emptyList()
         selectedStyle = null
         turnPose = null
+        faceFlipGeneration = 0
+        faceFlipKeepIndex = null
+        faceReadyIndices = emptySet()
+        faceError = null
     }
 
     private fun WorkspacePsdGuide.Candidate.releaseIfUnused() {

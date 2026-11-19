@@ -1,18 +1,19 @@
 package io.github.psd2live.ui.views
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.clipRect
@@ -36,12 +37,12 @@ import io.github.psd2live.ui.components.IconPhysics
 import io.github.psd2live.ui.components.IconPlay
 import io.github.psd2live.ui.state.FramePacer
 import io.github.psd2live.ui.state.frameIntervalNanos
-import io.github.psd2live.ui.theme.Corners
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.Motion
 import io.github.psd2live.ui.theme.Spacing
 import io.github.psd2live.ui.views.texture.BarChip
 import io.github.psd2live.ui.views.texture.FloatingBar
+import io.github.psd2live.ui.views.texture.canvasChrome
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
@@ -138,7 +139,7 @@ internal fun LiveGuidePreview(preview: WorkspacePsdGuide.Preview?, modifier: Mod
     val physicsClock = remember(model, physicsOn) { WorkspacePreviewPhysics() }
     val physicsLock = remember(physicsClock) { Mutex() }
     var clock by remember(model) { mutableStateOf(PreviewAnimationClock()) }
-    var frame by remember(preview) { mutableStateOf<GuideRigFrame?>(null) }
+    var frame by remember(preview) { mutableStateOf(preview?.let(::guideRigFrame)) }
 
     LaunchedEffect(preview, trackingActive, idleOn, physicsOn) {
         if (preview == null || model == null) return@LaunchedEffect
@@ -166,16 +167,30 @@ internal fun LiveGuidePreview(preview: WorkspacePsdGuide.Preview?, modifier: Mod
         } while (isActive && (idleOn || trackingActive || physicsOn && !physicsClock.settled))
     }
 
-    Box(modifier.fillMaxSize().clip(RoundedCornerShape(Corners.Panel)).background(colors.inputBackground)
-        .guidePointer(tracking && model != null) { pointer = it }) {
+    GuideCanvasFrame(modifier.fillMaxSize().guidePointer(tracking && model != null) { pointer = it }) {
+        Canvas(Modifier.fillMaxSize()) {
+            drawGuideChecker(light = colors.checkerLight, dark = colors.checkerDark)
+        }
         GuideRigCanvas(frame, renderers, Modifier.fillMaxSize())
-        if (model != null) FloatingBar(Modifier.align(Alignment.TopStart).padding(Spacing.Margin)) {
-            GuideTrackingChip(tracking) { tracking = !tracking; pointer = null }
-            if (motionAvailable) BarChip(null, idleOn, { idle = !idle }, tooltip = tr("preview.idle.on")) { color ->
-                if (idleOn) IconPause(Modifier.size(14.dp), color) else IconPlay(Modifier.size(14.dp), color)
+        if (model != null) {
+            FloatingBar(Modifier.align(Alignment.TopStart).padding(Spacing.Margin).canvasChrome()) {
+                GuideTrackingChip(tracking) { tracking = !tracking; pointer = null }
+                if (motionAvailable) BarChip(null, idleOn, { idle = !idle },
+                    tooltip = tr(if (idleOn) "preview.idle.on" else "preview.idle.off")) { color ->
+                    if (idleOn) IconPause(Modifier.size(14.dp), color) else IconPlay(Modifier.size(14.dp), color)
+                }
+                if (physicsAvailable) BarChip(null, physicsOn, { physics = !physics },
+                    tooltip = tr(if (physicsOn) "preview.physics.on" else "preview.physics.off")) { color ->
+                    IconPhysics(active = physicsOn, modifier = Modifier.size(14.dp), tint = color)
+                }
             }
-            if (physicsAvailable) BarChip(null, physicsOn, { physics = !physics }, tooltip = tr("preview.physics.on")) { color ->
-                IconPhysics(active = physicsOn, modifier = Modifier.size(14.dp), tint = color)
+            AnimatedVisibility(
+                visible = tracking && pointer == null,
+                modifier = Modifier.align(Alignment.BottomStart).padding(Spacing.Margin),
+                enter = fadeIn(tween(Motion.Fade, easing = LinearOutSlowInEasing)),
+                exit = fadeOut(tween(Motion.Instant, easing = FastOutLinearInEasing)),
+            ) {
+                GuideStatusCapsule(tr("psdGuide.preview.trackingHint"))
             }
         }
     }

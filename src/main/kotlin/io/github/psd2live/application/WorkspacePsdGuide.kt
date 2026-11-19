@@ -50,6 +50,11 @@ internal class WorkspacePsdGuide(
         }
     }
 
+    suspend fun defaultSplits(candidate: Candidate): List<Split> {
+        val namesById = candidate.model.analysis.layers.associate { it.source.id.raw to it.source.name }
+        return splits(candidate).map { (id, plan) -> defaultSplit(id, namesById.getValue(id), plan) }
+    }
+
     suspend fun split(candidate: Candidate, decisions: List<Split>): Candidate {
         val context = currentCoroutineContext()
         val document = runInterruptible(Dispatchers.Default) {
@@ -86,6 +91,20 @@ internal class WorkspacePsdGuide(
             ?: return null
         val parameters = candidate.model.rig.puppet.parameters.associateBy { it.id }
         return Turn(instance, parameters[StandardParameters.ANGLE_X] ?: return null, parameters[StandardParameters.ANGLE_Y] ?: return null)
+    }
+
+    fun turnValues(turn: Turn): Map<String, Float> {
+        val instance = turn.instance
+        val config = instance.config
+        val sourceConfig = if (instance.type == "face" && config["mode"]?.jsonPrimitive?.contentOrNull == "legacy") {
+            config["subConfigs"]?.jsonObject?.get("face.depth-turn")?.jsonObject ?: JsonObject(emptyMap())
+        } else {
+            config
+        }
+        val stored = sourceConfig["values"]?.jsonObject.orEmpty()
+        return io.github.psd2live.core.recipe.RigModules.FACE_DEPTH_TURN.knobs.associate { knob ->
+            knob.id to (stored[knob.id]?.jsonPrimitive?.floatOrNull ?: knob.default)
+        }
     }
 
     private fun turnRequest(turn: Turn, values: Map<String, Float>): JsonObject {
@@ -134,4 +153,37 @@ internal class WorkspacePsdGuide(
             }
         }
 
+    companion object {
+        fun defaultSplit(layerId: String, layerName: String, plan: MeshComponentSplit.Plan): Split {
+            val components = plan.components
+            val count = components.size
+            val horizontal = count == 2 &&
+                kotlin.math.abs(components[0].centerX - components[1].centerX) >=
+                kotlin.math.abs(components[0].centerY - components[1].centerY)
+            val names = MutableList(count) { "" }
+            val sides = MutableList(count) { Side.NONE }
+            when {
+                count == 2 && horizontal -> {
+                    val suffixes = listOf("r", "l")
+                    val lrSides = listOf(Side.RIGHT, Side.LEFT)
+                    components.indices.sortedBy { components[it].centerX }.forEachIndexed { position, component ->
+                        names[component] = "$layerName-${suffixes[position]}"
+                        sides[component] = lrSides[position]
+                    }
+                }
+                count == 2 && !horizontal -> {
+                    val suffixes = listOf("t", "b")
+                    components.indices.sortedBy { components[it].centerY }.forEachIndexed { position, component ->
+                        names[component] = "$layerName-${suffixes[position]}"
+                    }
+                }
+                else -> {
+                    for (i in 0 until count) {
+                        names[i] = "$layerName-${i + 1}"
+                    }
+                }
+            }
+            return Split(layerId, names, sides)
+        }
+    }
 }

@@ -40,6 +40,16 @@ class PageDockLayoutTest {
 		assertEquals(AppPage.SETTINGS.modules.sorted(), root.allModules().sorted())
 	}
 
+	@Test fun legacySinglePanelPsdGuideLayoutUpgradesToSplitModules() {
+		val legacy = DockNode(id = "leaf:legacy", modules = listOf(io.github.psd2live.ui.state.PSD_GUIDE_CONTENT))
+		val root = pageDockRoot(AppPage.PSD_GUIDE, PageArrangement(dockJson.encodeToString(DockNode.serializer(), legacy)))
+		assertTrue(root.horizontal)
+		assertEquals(listOf(io.github.psd2live.ui.state.PSD_GUIDE_CONTENT), root.first?.modules)
+		assertEquals(false, root.second?.horizontal)
+		assertEquals(listOf(io.github.psd2live.ui.state.PSD_GUIDE_CONTROLS), root.second?.first?.modules)
+		assertEquals(listOf(io.github.psd2live.ui.state.PSD_GUIDE_ACTIONS), root.second?.second?.modules)
+	}
+
 	@Test fun theArrangementSurvivesThePreferences() {
 		val arrangement = PageArrangement(dockJson.encodeToString(DockNode.serializer(), pageDockLayout(AppPage.START)), setOf(START_MAIN, "unknown"))
 		AppSettings.setPageArrangement(AppPage.START, arrangement)

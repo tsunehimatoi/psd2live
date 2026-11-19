@@ -343,6 +343,11 @@ object AppSettings {
 
 	private const val KEY_RECENT_FILES = "recent_files"
 
+	/** Shows the step-by-step import guide when opening a PSD. */
+	var showPsdImportGuide: Boolean
+		get() = promptEnabled(AppPrompt.PSD_IMPORT_GUIDE)
+		set(value) = setPromptEnabled(AppPrompt.PSD_IMPORT_GUIDE, value)
+
 	/** Offers mesh splits after a new PSD or additional layer import. */
 	var autoDetectMeshSplitsOnImport: Boolean
 		get() = promptEnabled(AppPrompt.MESH_SPLITS_ON_IMPORT)
@@ -595,9 +600,11 @@ object AppSettings {
  * A prompt the user can turn off from the prompt itself ("Don't show again") and back on in Settings › Prompts.
  * [key] is its preference; [labelKey] names it in Settings, phrased as what is shown when it is on.
  */
-enum class AppPrompt(internal val key: String, val labelKey: String) {
+enum class AppPrompt(internal val key: String, val labelKey: String, val detailKey: String? = null) {
+	/** The step-by-step guide shown when opening a PSD. */
+	PSD_IMPORT_GUIDE("show_psd_import_guide", "psdGuide.setting.enabled", "psdGuide.setting.detail"),
 	/** The splits offered after a layer import. */
-	MESH_SPLITS_ON_IMPORT("auto_detect_mesh_splits_on_import", "editor.meshSplit.promptOnImport"),
+	MESH_SPLITS_ON_IMPORT("auto_detect_mesh_splits_on_import", "editor.meshSplit.promptOnImport", "editor.meshSplit.promptOnImport.detail"),
 	/** The dialog that reports a finished export and offers its folder. */
-	EXPORT_SUCCESS("prompt_export_success", "prompt.exportSuccess"),
+	EXPORT_SUCCESS("prompt_export_success", "prompt.exportSuccess", null),
 }
