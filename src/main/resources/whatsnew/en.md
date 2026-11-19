@@ -1,3 +1,13 @@
+## v3.8.3 · 2026-11-19
+
+### Improvements and fixes
+
+- **PSD import guide** — Preview and split disconnected meshes, review layer bindings, select a modifier preset, and compare head-turn styles before creating a project. Choose which workspace to open when creation finishes.
+- **Head and mouth rigging** — Head turns fit the drawn features and hair more closely. Edit generated mouth-open keyforms on the canvas and adjust the closed-mouth artwork's opacity curve independently.
+- **Simulation and weights** — Paint vertex weights and bake physics simulation directly into keyforms.
+- **VTube Studio export** — Export a model-selection icon and use the project's motion and expression names. Write `ScreenButton: -1` for unassigned hotkeys to address an Expression Editor issue with older exports. ([#90](https://github.com/tsunehimatoi/psd2live/issues/90))
+- **Desktop compatibility** — Fix packaged launcher and worker issues on Linux, encoding for Windows paths containing Chinese characters, and working-directory handling in the packaged macOS CLI.
+
 ## v3.8.2 · 2026-11-18
 
 ### Improvements and fixes
