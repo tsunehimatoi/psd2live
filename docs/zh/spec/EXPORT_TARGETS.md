@@ -41,7 +41,7 @@ MIT 模块不依赖任何 GPL 模块，由 Gradle 依赖关系在编译期保证
 | `moc3` | 结构化绑定 | `.moc3`、model3、physics3、motion3、exp3、pose3、cdi3、userdata3、贴图 | 按目标运行时版本剥离不支持的功能；Cubism 5.3 的混合模式在更早的版本改为最接近的旧模式（滤色与加算类为加算，乘算类为乘算，其余为普通，Alpha 混合改为 over），每个受影响的网格与隔离部件按 ID 记一条 `blend_mode` 损失（默认 `approximated`，可由导出选项改写），注明改成的模式（`cmo3`、`vtube-studio` 按同一目标版本相同处理）；多网格的[点击区域](#点击区域)拆成同名多项 |
 | `cmo3` | 结构化绑定 | Cubism Editor 工程；有动作片段时另写同名 `.can3`（Cubism Animator 工程）；参数循环写入 `isRepeat`（Cubism 5.3 目标，更早的目标去掉并列入损失报告） | 生成器意图不保留；动作片段中眨眼、口型效果曲线不写入（见 [Cubism Animator](#cubism-animator)）；表情与姿势不写入（记为 `structure` / `dropped`） |
 | `dragonbones` | 结构化绑定 | `_ske.json`、每页 `_tex_<i>.json` 与贴图 | 与 Spine 相同的参数动画与片段烘焙；关键点取整到帧；透明度以整百分比记录；运行时以 16 位偏移寻址每个动画的变形数据，超出时按更大容差精简并报告（骨架模型的整身片段误差较大）；遮罩、屏幕色、物理未写入 |
-| `vtube-studio` | 结构化绑定 | `moc3` 的全部文件 + `.vtube.json` | 同 `moc3`；面部跟踪映射标准参数（头、身体、眼、视线、眉、嘴、呼吸），每个动作片段一个热键、每个表情一个 `ToggleExpression` 热键；其余设置由 VTube Studio 取默认值。用 Rig 模块生成的模型（带模块参数）映射另行调过：身体随头转动并加大平滑，略晚一拍；眼睛开合有死区与饱和并夹紧（可睁大到 2 的眼睛不会被普通睁眼撑大）；嘴开合过驱，嘴形中间有死区；嘴角笑容带笑眼；面捕的歪嘴、鼓腮接到对应参数 |
+| `vtube-studio` | 结构化绑定 | `moc3` 的全部文件、`.vtube.json`、模型选择图标 PNG | 同 `moc3`；面部跟踪映射标准参数（头、身体、眼、视线、眉、嘴、呼吸），每个动作片段一个热键、每个表情一个 `ToggleExpression` 热键。用 Rig 模块生成的模型（带模块参数）映射另行调过：身体随头转动并加大平滑，略晚一拍；眼睛开合有死区与饱和并夹紧；嘴开合过驱，嘴形中间有死区；嘴角笑容带笑眼；面捕的歪嘴、鼓腮接到对应参数 |
 | `spine` | 结构化绑定 | 骨骼 JSON 或 `.skel`、`.atlas`、贴图页 | 旋转变形器成为骨骼链，网格挂在最近的旋转骨骼上；每个参数成为一段 1 秒动画（时间即参数归一化值），键入骨骼变换与骨骼空间内的变形，交叉项按 Spine 骨骼运算测量并报告；动作片段按帧采样后精简关键帧；无 Warp、混合形、Glue（已烘焙）；遮罩转为按轮廓多边形裁剪（反相遮罩丢弃）；驱动骨骼旋转的摆锤转为物理约束（近似），其余物理与屏幕色未写入 |
 | `p2lrt` | 结构化绑定 | `.p2lrt`（PSD2Live 运行时） | 编辑器附带数据（来源图层、图块、编辑路径）不写入；GPU 绘制由宿主完成，运行时的 `p2l_render`（ABI 1.3 起）可在 CPU 上画出遮罩与全部合成模式 |
 | `web` | 结构化绑定 | `index.html`、`p2l.js`、`p2l_runtime.wasm`、`.p2lrt` | 按运行时头文件的合成规则绘制全部颜色与 Alpha 混合模式（需要读取下层的模式复制网格下方像素后在着色器中合成）和隔离组（子网格先画入图层，再按组的不透明度、乘算/屏幕色、遮罩与混合模式合成）；遮罩（含组遮罩）以模板缓冲近似，纹素不透明度 ≥ 0.5 视为覆盖；无法创建图层帧缓冲时隔离组按直通绘制；需通过 http 访问 |
@@ -58,6 +58,14 @@ MIT 模块不依赖任何 GPL 模块，由 Gradle 依赖关系在编译期保证
 | `webp` | 光栅 | 动态 WebP（ffmpeg） | 有损压缩 |
 
 光栅类和 `psd-pose` 通过宿主提供的 `FrameRenderer` 渲染。编辑器的实现（`IrFrameRenderer`）用引擎的 CPU 求值器得到几何，用 `IrColors` 按通道与混合形求出乘算/屏幕色及部件的绘制顺序与分组合成值，再由 `:format-compile` 的 `SoftwareRasterizer`（MIT）逐像素绘制：预乘浮点缓冲、双线性采样、按纹理 alpha 的遮罩（含反相），颜色混合与 alpha 合成按 `p2l_runtime.h` 的合成规则（与编辑器一致）：Cubism 的叠加/乘算不看 alpha 模式并保持目标 alpha，普通配 over 为预乘 source-over，其余组合取 W3C 混合函数、按 alpha 模式的重叠加权并用其 Porter-Duff 系数（over、atop、out、conjoint/disjoint over）。绘制顺序按渲染树：各组内按绘制顺序排序，组按其部件在该姿势下的绘制顺序参与排序；隔离部件的分组先画进清空的图层，再取分组的乘算/屏幕色、以不透明度与遮罩覆盖缩放 alpha，按分组的混合模式合成。帧之间推进摆锤物理。
+
+### VTube Studio 模型包
+
+将整个导出目录放入 VTube Studio 的 `Live2DModels`，打开或重启 VTube Studio。`<名称>.vtube.json` 保存面捕映射与热键，`FileReferences.Model` 指向同目录中的 `<名称>.model3.json`。后者引用 `.moc3`、贴图和已导出的物理、动作、表情等资源。VTube Studio 推荐使用 512 × 512 的 PNG 或 JPG 作为模型选择图标。[官方导入说明](https://github.com/DenchiSoft/VTubeStudio/wiki/Loading-your-own-Models)
+
+导出器以模型默认姿势生成透明背景的 `<名称>.icon.png`，按可见内容等比缩放居中，并在 `FileReferences.Icon` 中填写相对文件名。画面全透明时跳过图标。
+
+动作和表情热键引用实际写出的文件，并采用工程中的名称。生成的热键等待用户分配触发方式，三个键盘字段留空，`Triggers.ScreenButton` 写 `-1`。该值与 VTube Studio 随附模型的未分配值一致，修复旧导出写 `0` 时可能打不开表情编辑器的问题。VTube Studio 官方说明记录了配置文件的用途，字段取值以实际保存的配置为参考。[官方配置说明](https://github.com/DenchiSoft/VTubeStudio/wiki/VTube-Studio-Model-File) · [问题 #90](https://github.com/tsunehimatoi/psd2live/issues/90)
 
 ### 设置
 

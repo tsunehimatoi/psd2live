@@ -1887,10 +1887,13 @@ The same model can be exported directly for VTube Studio, the web, Unity and so 
 ## Runtimes and players
 | Menu item | Output | Main limits |
 |---|---|---|
-| VTube Studio… | The full set of moc3 files + `.vtube.json` | Face tracking maps only standard parameters; one hotkey per motion and one toggle hotkey per expression |
+| VTube Studio… | The full set of moc3 files, `.vtube.json`, and a model selection icon | Face tracking maps standard parameters. Motion and expression hotkeys are ready to assign. |
 | PSD2Live runtime rig… | `.p2lrt` | Without the data the editor attaches; optional compression, stripping names and so on |
 | Web player… | `index.html`, the player script, the WebAssembly runtime and `.p2lrt` | Must be accessed over http |
 | Unity prefab… | `.p2lunity`, textures and an install script | Needs Unity 6.0 or later; parameters are baked into Blend Shapes and combinations are approximated additively; masks and physics are not written |
+
+Place the entire VTube Studio export folder in `Live2DModels` and restart VTube Studio. The model list shows an icon rendered from the default pose. Assign keyboard shortcuts and on-screen buttons in the hotkey settings.
+
 ## Layered PSD
 - **PSD at a pose…**: poses the model by a motion's moment or by given parameter values, one layer per visible mesh; deformers and parameters are not kept.
 - **Source PSD…** (with generated layers): exports the project's source layers, optionally at 1× or an upscaled ratio, and can include the automatically split layers, so you can go back to your drawing software for fine touch-ups (also available with {key:REEXPORT_PSD}).
