@@ -6,7 +6,7 @@ import kotlinx.serialization.json.*
 import java.security.MessageDigest
 
 /**
- * A model folder VTube Studio loads: the Cubism runtime files plus `<name>.vtube.json`, which maps face
+ * A model folder VTube Studio loads: the Cubism runtime files, a model-selection icon and `<name>.vtube.json`, which maps face
  * tracking to the rig's standard parameters (head, body, eyes, gaze, brows, mouth, breathing) and adds a
  * hotkey for each clip and one toggling each expression. VTube Studio fills every setting the file leaves out with its defaults. Takes
  * the moc3 settings.
@@ -20,7 +20,7 @@ import java.security.MessageDigest
 public object VTubeStudioTarget : ExportTarget {
 	override val id: String = "vtube-studio"
 	override val family: TargetFamily = TargetFamily.RIG
-	override val description: String = "VTube Studio model (moc3 + vtube.json)"
+	override val description: String = "VTube Studio model folder"
 	override val capabilities: CapabilityProfile = Moc3Target.capabilities
 	override val settings: List<TargetSetting> get() = Moc3Target.settings + listOf(
 		TargetSetting.Choice("vts_mouth", "standard", listOf("standard", "voice", "voice_hybrid", "vbridger")),
@@ -144,7 +144,8 @@ public object VTubeStudioTarget : ExportTarget {
 		.take(16).joinToString("") { "%02x".format(it) }
 
 	/** [expressionFiles] are each expression's name and exp3 file, in the manifest's order. */
-	public fun config(ir: RigIR, baseName: String, motionFiles: List<String>, expressionFiles: List<Pair<String, String>> = emptyList(), options: ExportOptions = ExportOptions(baseName)): String {
+	public fun config(ir: RigIR, baseName: String, motionFiles: List<String>, expressionFiles: List<Pair<String, String>> = emptyList(),
+	                  options: ExportOptions = ExportOptions(baseName), iconFile: String = ""): String {
 		val parameters = ir.parameters.associateBy { it.id }
 		val chosen = selected(ir, options)
 		val settings = chosen.mapNotNull { m ->
@@ -161,11 +162,19 @@ public object VTubeStudioTarget : ExportTarget {
 		fun hotkey(file: String, name: String, action: String) = buildJsonObject {
 			put("HotkeyID", id("$baseName/hotkey/$file")); put("Name", name)
 			put("Action", action); put("File", file); put("Folder", "")
-			putJsonObject("Triggers") { put("Trigger1", ""); put("Trigger2", ""); put("Trigger3", ""); put("ScreenButton", 0) }
+			putJsonObject("Triggers") {
+				put("Trigger1", ""); put("Trigger2", ""); put("Trigger3", "")
+				// VTube Studio stores -1 for a hotkey with no on-screen button (#90).
+				put("ScreenButton", -1)
+			}
 			put("IsGlobal", false); put("IsActive", true); put("Minimized", false)
 			put("StopsOnLastFrame", false); put("DeactivateAfterKeyTypedAfterMillis", -1)
 		}
-		val hotkeys = motionFiles.map { file -> hotkey(file, file.removePrefix("$baseName.").removeSuffix(".motion3.json"), "TriggerAnimation") } +
+		val motionNames = ir.clips.associate { "$baseName.${it.file}.motion3.json" to it.name }
+		val hotkeys = motionFiles.map { file ->
+			val name = motionNames[file]?.takeIf(String::isNotBlank) ?: file.removePrefix("$baseName.").removeSuffix(".motion3.json")
+			hotkey(file, name, "TriggerAnimation")
+		} +
 			expressionFiles.map { (name, file) -> hotkey(file, name, "ToggleExpression") }
 		val json = buildJsonObject {
 			put("Version", 1)
@@ -174,7 +183,7 @@ public object VTubeStudioTarget : ExportTarget {
 			putJsonObject("FileReferences") {
 				// A module rig's idle carries on when the tracker loses the face, so the model never freezes.
 				val lost = if (parameters.keys.any { it in moduleMarkers }) motionFiles.firstOrNull { it == "$baseName.idle.motion3.json" }.orEmpty() else ""
-				put("Icon", ""); put("Model", "$baseName.model3.json"); put("IdleAnimation", ""); put("IdleAnimationWhenTrackingLost", lost)
+				put("Icon", iconFile); put("Model", "$baseName.model3.json"); put("IdleAnimation", ""); put("IdleAnimationWhenTrackingLost", lost)
 			}
 			put("ParameterSettings", JsonArray(settings))
 			put("Hotkeys", JsonArray(hotkeys))
@@ -187,7 +196,9 @@ public object VTubeStudioTarget : ExportTarget {
 		val motions = bundle.files.map { it.name }.filter { it.endsWith(".motion3.json") }
 		val written = bundle.files.mapTo(HashSet()) { it.name }
 		val expressions = ir.advanced.expressions.map { it.name to "${options.baseName}.${it.id}.exp3.json" }.filter { it.second in written }
-		val config = config(ir, options.baseName, motions, expressions, options)
+		val icon = vtubeStudioIcon(ir, bundle.report.notices)
+		val iconFile = "${options.baseName}.icon.png"
+		val config = config(ir, options.baseName, motions, expressions, options, iconFile = if (icon != null) iconFile else "")
 		val mapped = selected(ir, options).map { it.parameter }.toSet()
 		val losses = CapabilityScan.scan(ir, capabilities, options) + Moc3Target.losses(ir, options, bundle.report.notices) + Moc3Target.hitAreaLosses(ir) +
 			Moc3Target.clampedMotions(ir, bundle.report.notices) +
@@ -197,6 +208,7 @@ public object VTubeStudioTarget : ExportTarget {
 			override val losses: List<LossEntry> = losses
 			override fun write(sink: OutputSink) {
 				bundle.files.forEach { sink.write(it.name, it.bytes) }
+				if (icon != null) sink.write(iconFile, icon)
 				sink.write("${options.baseName}.vtube.json", config.encodeToByteArray())
 			}
 		}

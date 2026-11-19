@@ -1,9 +1,12 @@
 package io.github.psd2live.targets.cubism
 
+import io.github.psd2live.format.compile.Compiler
 import io.github.psd2live.format.compile.ExportOptions
+import io.github.psd2live.format.compile.PngEncoder
 import io.github.psd2live.format.compile.TargetSetting
 import io.github.psd2live.format.model.*
 import kotlinx.serialization.json.*
+import javax.imageio.ImageIO
 import kotlin.test.*
 
 class VTubeStudioTargetTest {
@@ -52,5 +55,66 @@ class VTubeStudioTargetTest {
     @Test fun choiceDefinitionsRejectInvalidDefaults() {
         assertFailsWith<IllegalArgumentException> { TargetSetting.Choice("mode", "missing", listOf("one")) }
         assertFailsWith<IllegalArgumentException> { TargetSetting.Choice("mode", "one", listOf("one", "one")) }
+    }
+
+    @Test fun exportWiresIconAndUnassignedMotionAndExpressionHotkeys() {
+        val ir = drawableRig()
+        val files = export(ir)
+        val config = Json.parseToJsonElement(files.getValue("hero.vtube.json").decodeToString()).jsonObject
+        val references = config.getValue("FileReferences").jsonObject
+        assertEquals("hero.model3.json", references.getValue("Model").jsonPrimitive.content)
+        assertTrue(references.values.map { it.jsonPrimitive.content }.filter(String::isNotEmpty).all { it in files })
+        assertEquals("hero.idle.motion3.json", references.getValue("IdleAnimationWhenTrackingLost").jsonPrimitive.content)
+        val hotkeys = config.getValue("Hotkeys").jsonArray.map { it.jsonObject }
+        assertEquals(listOf("TriggerAnimation", "ToggleExpression"), hotkeys.map { it.getValue("Action").jsonPrimitive.content })
+        assertEquals(listOf("Rest", "Excited"), hotkeys.map { it.getValue("Name").jsonPrimitive.content })
+        val hotkeyFiles = hotkeys.map { it.getValue("File").jsonPrimitive.content }
+        assertEquals(listOf("hero.idle.motion3.json", "hero.excited.exp3.json"), hotkeyFiles)
+        assertTrue(hotkeyFiles.all { it in files })
+        for (hotkey in hotkeys) {
+            val triggers = hotkey.getValue("Triggers").jsonObject
+            assertEquals(-1, triggers.getValue("ScreenButton").jsonPrimitive.int)
+            for (key in listOf("Trigger1", "Trigger2", "Trigger3")) assertEquals("", triggers.getValue(key).jsonPrimitive.content)
+        }
+        val iconFile = references.getValue("Icon").jsonPrimitive.content
+        val icon = ImageIO.read(files.getValue(iconFile).inputStream())
+        assertEquals(512, icon.width)
+        assertEquals(512, icon.height)
+        assertEquals(0, icon.getRGB(0, 0) ushr 24)
+        assertEquals(0xFFFF0000.toInt(), icon.getRGB(256, 256))
+        assertEquals(0, icon.getRGB(40, 256) ushr 24)
+        assertEquals(0xFFFF0000.toInt(), icon.getRGB(256, 30))
+        assertContentEquals(files.getValue(iconFile), export(ir).getValue(iconFile))
+    }
+
+    @Test fun exportOmitsIconWhenAllArtworkIsAnExcludedGuide() {
+        val ir = drawableRig()
+        val guide = Part("PartGuide", "Guide", listOf(ChildRef.MeshRef("ArtMeshBox")), sketch = true)
+        val guideRig = ir.copy(parts = listOf(guide), rootChildren = listOf(ChildRef.PartRef(guide.id)))
+        val files = export(guideRig)
+        val references = Json.parseToJsonElement(files.getValue("hero.vtube.json").decodeToString()).jsonObject.getValue("FileReferences").jsonObject
+        assertEquals("", references.getValue("Icon").jsonPrimitive.content)
+        assertFalse(files.keys.any { it.endsWith(".icon.png") })
+        assertTrue("hero.icon.png" in export(guideRig, mapOf("guide_parts" to "true")))
+    }
+
+    private fun drawableRig(): RigIR {
+        val png = PngEncoder.encode(2, 2, IntArray(4) { 0xFFFF0000.toInt() })
+        val idle = Clip("idle", "Rest", "Idle", "idle", 1f, 30f, loop = true,
+            curves = listOf(Curve("ParamA", 0f, 0f, listOf(CurveSegment.Linear(1f, 0f)))))
+        val expression = ExpressionIR("excited", "Excited", 0.2f, 0.2f, listOf(ExpressionParameter("ParamA", ExpressionBlend.ADD, 0.5f)))
+        return rig("ParamA").copy(
+            canvas = Canvas(200f, 150f),
+            meshes = listOf(Mesh("ArtMeshBox", "Box", null, geometry = MeshGeometry(
+                Floats.values(20f, 25f, 40f, 25f, 40f, 65f, 20f, 65f),
+                Floats.values(0f, 0f, 1f, 0f, 1f, 1f, 0f, 1f), Ints.values(0, 1, 2, 0, 2, 3),
+            ), offsets = null, page = 0)),
+            textures = Textures(pages = listOf(TexturePage(2, 2, Bytes.wrap(png)))),
+            clips = listOf(idle), advanced = AdvancedIR(expressions = listOf(expression)),
+        )
+    }
+
+    private fun export(ir: RigIR, settings: Map<String, String> = emptyMap()): Map<String, ByteArray> = buildMap {
+        Compiler.export(VTubeStudioTarget, ir, ExportOptions("hero", settings = settings)) { file, bytes -> put(file, bytes) }
     }
 }
