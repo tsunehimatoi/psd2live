@@ -85,6 +85,13 @@ internal fun layerSelectionRange(orderedLayerIds: List<String>, anchor: String?,
 internal object CanvasEdits {
     fun apply(model: PuppetModel, edit: JsonObject): PuppetModel {
         val id = edit.getValue("id").jsonPrimitive.content
+        edit["mesh_baseline"]?.let { baseline ->
+            val target = model.drawables.singleOrNull { it.id.raw == id }
+            require(target?.mesh?.let(RasterMeshJournal::fingerprint) == baseline.jsonPrimitive.content &&
+                target?.parentDeformerId?.raw == edit.getValue("mesh_parent").jsonPrimitive.contentOrNull) {
+                "The source topology or parent of $id changed since its mesh point edit"
+            }
+        }
         return when (edit.getValue("op").jsonPrimitive.content) {
             "canvas_create_rotation" -> {
                 require(model.deformers.none { it.id.raw == id })
@@ -447,7 +454,9 @@ internal object CanvasEdits {
                     MeshElement.Edge.of(values[0].jsonPrimitive.int, values[1].jsonPrimitive.int)
                 }?.toSet().orEmpty()
                 val result = (CanvasTopology.build(mesh, action, selected, anchors, edges) { CanvasTopology.shapes(model, drawable.id) }
-                    ?: throw RigRefusal(RigRefusal.Code.TOPOLOGY_REFUSED, "The $action operation does not apply to this selection", "mesh:$id")).edit
+                    ?: throw RigRefusal(RigRefusal.Code.TOPOLOGY_REFUSED,
+                        if (action in setOf("connect", "delete")) io.github.psd2live.i18n.tr(CanvasTopology.refusalKey(mesh, action, selected))
+                        else "The $action operation does not apply to this selection", "mesh:$id")).edit
                 var next = model.withMeshTopologyEdit(drawable.id, result)
                 // Path anchors carry triangle indices. Rebind them before the old topology disappears.
                 val paths = model.deformPaths.filter { it.drawableId == drawable.id }.associate { path ->

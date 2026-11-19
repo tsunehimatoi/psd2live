@@ -91,6 +91,7 @@ interface WorkspaceQueries : WorkspaceStatePort {
     /** The physics rate the model declares. */
     fun physicsFps(): Int
     fun listSimulations(): List<RigSimEdit>
+    fun simulationBakeStale(sim: RigSimEdit): Boolean = currentPuppet()?.let { io.github.psd2live.core.sim.SimBake.stale(it, sim) } ?: false
     /** Runs simulation [id] on the current rig and reports how it moves; read-only. */
     fun reportSimulation(id: String, hold: Float, release: Float, wind: Pair<Float, Float>?,
                          progress: (Float) -> Unit = noSamplingProgress, cancelled: () -> Boolean = noSamplingCancellation): JsonObject

@@ -76,8 +76,11 @@ internal object WorkspaceSimulationEdits {
 
     private fun modifier(operation: WorkspaceDocumentOperation, document: WorkspaceDocument, preview: RigPreviewModel,
                          owner: RigModifierInstance, work: WorkspaceSimulationWork): WorkspaceSimulationCandidate {
-        val stack = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack))
+        val saved = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack))
         val source = RigSimEdit.fromJson(owner.config)
+        val moved = if (operation.operation == "simulation_bake") WorkspaceMeshPointEdits.simulationInput(preview,
+            (source.targets + source.colliders.map { it.mesh }).toSet()) else null
+        val stack = moved ?: saved
         val next = when (operation.operation) {
             "simulation_delete" -> stack.remove(owner.id)
             "simulation_clear_bake" -> stack.update(owner.id) { it.withoutBake() }
@@ -98,7 +101,7 @@ internal object WorkspaceSimulationEdits {
                 override fun progress(fraction: Float, message: String) { checkpoint(); progress(fraction) }
             }
             WorkspaceModifierSimulation.prepare(document, next, observer,
-                validatedPrefix = WorkspaceModifierSimulation.unchangedPrefix(stack, next), evaluated = preview)
+                validatedPrefix = WorkspaceModifierSimulation.unchangedPrefix(saved, next), evaluated = preview)
         }
         val bake = prepared.instances.firstOrNull { it.id == owner.id }?.let { RigSimEdit.fromJson(it.config).bake }
         return WorkspaceSimulationCandidate(document.copy(rigEdits = document.rigEdits.copy(modifierStack = prepared.toJson())),

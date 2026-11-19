@@ -42,12 +42,24 @@ internal data class RigModifierStack(
     val retryRevisions: Map<String, Long> = emptyMap(),
     /** Materialized ordinary stages stay at their original evaluation positions. */
     val appliedNodes: Map<String, AppliedModifierNode> = emptyMap(),
+    /** Authored weights changed; retain saved bakes and enabled state until an explicit Bake. */
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val pendingWeightEdits: Map<String, List<BakedWeightInput>> = emptyMap(),
 ) {
     init {
         require(nextId > 0) { "Invalid modifier ID sequence" }
         require(instances.map { it.id }.distinct().size == instances.size) { "Duplicate modifier instance ID" }
         require(instances.none { it.id in retiredIds }) { "A retired modifier ID cannot be reused" }
         require(overrides.keys.all { id -> id in retiredIds || instances.any { it.id == id } }) { "Override has no modifier owner" }
+    }
+
+    /** A solver building its inputs must not replay overrides owned by a later editing stage. */
+    fun prefix(end: Int): RigModifierStack {
+        val kept = instances.take(end)
+        val owners = kept.mapTo(hashSetOf()) { it.id }
+        return copy(instances = kept, overrides = overrides.filterKeys { it in owners || it in retiredIds },
+            appliedNodes = appliedNodes.filterKeys { it in owners })
     }
 
     fun add(type: String, version: Int, targets: List<ModifierTarget>, config: JsonObject = JsonObject(emptyMap()),
@@ -71,6 +83,7 @@ internal data class RigModifierStack(
             "Updating a modifier cannot change its identity or algorithm version"
         }
         return copy(instances = instances.toMutableList().apply { set(index, updated) },
+            pendingWeightEdits = if (updated.config != instances[index].config) pendingWeightEdits - id else pendingWeightEdits,
             initializationFailures = if (updated.enabled && updated != instances[index]) initializationFailures - id else initializationFailures)
     }
 
@@ -79,13 +92,13 @@ internal data class RigModifierStack(
         require(id !in appliedNodes) { "Applied content has no running algorithm to replace" }
         val idx = index(id)
         val updated = instances[idx].copy(plugin = plugin, version = version)
-        return copy(instances = instances.toMutableList().apply { set(idx, updated) })
+        return copy(instances = instances.toMutableList().apply { set(idx, updated) }, pendingWeightEdits = pendingWeightEdits - id)
     }
 
     fun remove(id: String): RigModifierStack {
         require(id !in appliedNodes) { "Applied content is ordinary authored content; delete its objects or undo application" }
         index(id)
-        return copy(instances = instances.filterNot { it.id == id }, retiredIds = retiredIds + id)
+        return copy(instances = instances.filterNot { it.id == id }, retiredIds = retiredIds + id, pendingWeightEdits = pendingWeightEdits - id)
     }
 
     /** The index in the resulting list. Validation against providers happens before a candidate is published. */

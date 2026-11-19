@@ -88,7 +88,7 @@ internal fun WorkspaceQueries.inspect(a: JsonObject): JsonObject {
                 put("simulations", JsonArray(queries.listSimulations().map { sim -> JsonObject(sim.copy(bake = null).toJson() - "bake" + buildJsonObject {
                     sim.bake?.let { bake ->
                         put("bake", bake.summary())
-                        if (puppet != null) put("bake_stale", io.github.psd2live.core.sim.SimBake.stale(puppet, sim))
+                        if (puppet != null) put("bake_stale", queries.simulationBakeStale(sim))
                     }
                 }) }))
                 // Glue keys are what glue_roles take.

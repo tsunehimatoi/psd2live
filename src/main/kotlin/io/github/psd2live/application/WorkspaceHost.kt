@@ -1354,6 +1354,7 @@ internal class WorkspaceHost<V>(
     override fun staleRegenerations() = captureQueries().staleRegenerations()
 
     override fun listSimulations() = captureQueries().listSimulations()
+    override fun simulationBakeStale(sim: io.github.psd2live.core.sim.RigSimEdit) = captureQueries().simulationBakeStale(sim)
 
     private suspend fun simulationCommand(operation: WorkspaceDocumentOperation, expectedState: String, summary: String,
                                           author: MutationAuthor = MutationAuthor.AGENT, taskId: String? = null,
