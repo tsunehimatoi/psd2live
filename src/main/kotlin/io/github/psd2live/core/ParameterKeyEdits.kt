@@ -12,6 +12,9 @@ import kotlin.math.abs
 
 /** A point edit addresses exactly one owner/track/axis and preserves every other axis and track. */
 internal object ParameterKeyEdits {
+    internal fun pointValues(model: PuppetModel, id: ParameterId): List<Float> =
+        model.parameters.single { it.id == id }.keys ?: model.boundPointValues(id)
+
     fun apply(model: PuppetModel, edit: JsonObject): PuppetModel {
         if (edit["target"] == null) return applyParameterPoints(model, edit)
         val ref = RigAuthoringJournal.target(model, edit.getValue("target").jsonPrimitive.content)
@@ -106,7 +109,7 @@ internal object ParameterKeyEdits {
         require(values.isNotEmpty() && values.all { it.isFinite() && it in parameter.min..parameter.max }) {
             "Keys must be finite and within the parameter range"
         }
-        val baseline = parameter.keys ?: model.boundPointValues(parameter.id)
+        val baseline = pointValues(model, parameter.id)
         fun same(a: Float, b: Float) = abs(a - b) < EPS_KEY
         return when (action) {
             "add" -> model.withParameterKeys(parameter.id, (baseline + values).distinct().sorted())

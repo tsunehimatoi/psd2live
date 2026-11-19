@@ -411,7 +411,10 @@ internal class RigModifierEvaluator(
                     if (physicsOrder.isEmpty()) output else output.copy(physics = output.physics.copy(
                         groups = io.github.psd2live.core.PhysicsCatalog.ordered(output.physics.groups, physicsOrder) { it.id }))
                 }
-                require(overridden.parameterOverrides.keys.none { it in existing }) {
+                // Global deformation stops may be owned by a later writer, while ranges remain upstream-owned.
+                require(overridden.parameterOverrides.all { (id, parameter) ->
+                    existing[id]?.let { parameter.copy(keys = it.keys) == it } ?: true
+                }) {
                     "${instance.id} cannot override the range of a parameter provided upstream"
                 }
                 validateParameters(generated, current, instance, overridden.parameterOverrides)

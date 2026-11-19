@@ -29,6 +29,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -2332,6 +2334,15 @@ fun CanvasViewportComposable(
 				)
 			}
 		}
+        editor.error?.let { message ->
+            Row(Modifier.align(Alignment.TopCenter).padding(8.dp).widthIn(max = 600.dp)
+                .background(colors.windowBackground, RoundedCornerShape(4.dp))
+                .border(1.dp, colors.warning, RoundedCornerShape(4.dp)).padding(8.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text(message, color = colors.textPrimary, modifier = Modifier.weight(1f).padding(end = 8.dp))
+                io.github.psd2live.ui.components.CompactButton(tr("dialog.close"), onClick = { editor.error = null })
+            }
+        }
         // Overlay: Empty hint or Stats Badge
 		if (previewModel == null) {
 			EmptyCanvasHint(

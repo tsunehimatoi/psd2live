@@ -1,6 +1,7 @@
 package io.github.psd2live.scenario
 
 import io.github.psd2live.core.*
+import io.github.psd2live.core.modifier.RigModifierStack
 import io.github.psd2live.core.recipe.BaseChoice
 import io.github.psd2live.core.recipe.RigRecipe
 import io.github.psd2live.project.*
@@ -99,6 +100,20 @@ internal object Characters {
 	} + Part("mouth", 8, SemanticTag.MOUTH, Side.NONE, ellipse(210, 100, 14, 7)) +
         listOfNotNull(Part("nose", 9, SemanticTag.NOSE, Side.NONE, ellipse(210, 79, 5, 4)).takeIf { withNose }),
 		PipelineConfig(atlasSize = 512, generatePhysics = false, exportMoc3 = false, recipe = RigRecipe.Modern))
+
+    /** Separate open/closed drawings, for preset and shared-key editing regressions. */
+    fun closedMouthed(): WorkspaceDocument {
+        val base = mouthed()
+        val open = base.source.layers.single { it.id.raw == "mouth" } as WorkspaceSourceLayer
+        val closed = open.copy(id = LayerId("closed-mouth"), name = "mouth_close", order = open.order + 1)
+        return base.copy(
+            source = WorkspaceSourceArt(base.source.widthPx, base.source.heightPx, base.source.layers + closed, base.source.groups),
+            layerOverrides = base.layerOverrides + mapOf(
+                open.id.raw to LayerClassificationOverride(LayerType.PRESET, SemanticTag.MOUTH_OPEN, Side.NONE),
+                closed.id.raw to LayerClassificationOverride(LayerType.PRESET, SemanticTag.MOUTH_CLOSE, Side.NONE)),
+            rigEdits = base.rigEdits.copy(modifierStack = RigModifierStack().toJson()),
+        )
+    }
 
 	/**
 	 * A 64² head: back hair and a face. The smallest document the hair generators and simulation presets act on; its
