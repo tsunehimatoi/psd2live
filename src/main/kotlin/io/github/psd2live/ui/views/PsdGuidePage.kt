@@ -14,8 +14,12 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -38,9 +42,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.LinearProgressIndicator
+import androidx.compose.material.Surface
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -65,8 +71,12 @@ import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.components.CompactButton
 import io.github.psd2live.ui.components.IconCheck
 import io.github.psd2live.ui.components.ModalDialogFrame
+import io.github.psd2live.ui.state.AppPage
+import io.github.psd2live.ui.state.HelpTab
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.state.PsdGuideStep
+import io.github.psd2live.ui.state.SettingsTopic
+import io.github.psd2live.ui.tutorial.TutorialId
 import io.github.psd2live.ui.theme.Corners
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
@@ -84,14 +94,15 @@ internal fun psdGuideControlsTitle(viewModel: PSD2LiveViewModel): String =
     tr(viewModel.psdGuide.step.label)
 
 /**
- * Combined three-module view used by headless screenshot tests; in the app the three panels live as
- * independent dock modules ([PSD_GUIDE_CONTENT], [PSD_GUIDE_CONTROLS], and [PSD_GUIDE_ACTIONS]) inside [PageDock].
+ * Combined two-module view used by headless screenshot tests; in the app the two panels live as
+ * independent dock modules ([PSD_GUIDE_CONTENT] and [PSD_GUIDE_CONTROLS]) inside [PageDock].
  */
 @Composable
 internal fun PsdGuidePage(viewModel: PSD2LiveViewModel) {
     val state = viewModel.psdGuide
     if (state.path == null) return
     val colors = LocalToolColors.current
+    val typography = LocalToolTypography.current
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
@@ -121,23 +132,26 @@ internal fun PsdGuidePage(viewModel: PSD2LiveViewModel) {
                     .width(dividerWidth)
                     .fillMaxHeight(),
             )
-            Column(
-                modifier = Modifier.width(sidebarWidth).fillMaxHeight(),
-                verticalArrangement = Arrangement.spacedBy(Spacing.Gap),
-            ) {
-                GuideInspectorModule(
-                    title = psdGuideControlsTitle(viewModel),
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    scrollable = false,
+            GuideModuleFrame(Modifier.width(sidebarWidth).fillMaxHeight()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(26.dp)
+                        .background(colors.panelElevated)
+                        .padding(horizontal = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    PsdGuideControlsPanel(viewModel, includeOuterPadding = false)
+                    Text(
+                        text = psdGuideControlsTitle(viewModel),
+                        style = typography.caption.copy(fontWeight = FontWeight.SemiBold),
+                        color = colors.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
-                GuideInspectorModule(
-                    title = tr("dock.module.psdGuide.actions"),
-                    modifier = Modifier.fillMaxWidth().height(92.dp),
-                    scrollable = false,
-                ) {
-                    PsdGuideActionsPanel(viewModel, includeOuterPadding = false)
+                Box(Modifier.fillMaxWidth().height(0.5.dp).background(colors.divider))
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    PsdGuideControlsPanel(viewModel)
                 }
             }
         }
@@ -165,7 +179,6 @@ internal fun PsdGuideContentPanel(viewModel: PSD2LiveViewModel) {
     val stepShift = with(LocalDensity.current) { 14.dp.roundToPx() }
     val next = state.nextStep
     val steps = state.steps
-    val stepIdx = steps.indexOf(step).coerceAtLeast(0)
     val fileName = path.fileName.toString()
     val metaText = source?.model?.analysis?.let { analysis ->
         tr(
@@ -202,7 +215,6 @@ internal fun PsdGuideContentPanel(viewModel: PSD2LiveViewModel) {
                 reachedStep = state.reached,
                 nextStep = next,
                 canAdvance = canAdvance,
-                stepIdx = stepIdx,
                 ready = ready,
                 stepCounts = stepCounts,
                 onSelectStep = navigateToStep,
@@ -301,13 +313,82 @@ internal fun PsdGuideContentPanel(viewModel: PSD2LiveViewModel) {
 }
 
 /**
- * Bottom-right dock module ([PSD_GUIDE_ACTIONS]): independent workflow action bar.
+ * Right dock module ([PSD_GUIDE_CONTROLS]): step controls on top with an integrated, content-sized
+ * workflow action footer pinned at the bottom.
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun PsdGuideActionsPanel(
+internal fun PsdGuideControlsPanel(
     viewModel: PSD2LiveViewModel,
-    includeOuterPadding: Boolean = true,
+    actions: PageActions? = null,
+) {
+    val state = viewModel.psdGuide
+    val source = state.source
+    val step = state.step
+    val colors = LocalToolColors.current
+
+    Column(Modifier.fillMaxSize().background(colors.panelBackground)) {
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            if (source == null) {
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    GuideNote(state.taskProgress?.text ?: tr("psdGuide.reading"))
+                }
+            } else {
+                when (step) {
+                    PsdGuideStep.SPLIT -> Column(
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        SplitGuideControls(state)
+                    }
+                    PsdGuideStep.BINDING -> Column(
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        BindingGuideControls(state)
+                    }
+                    PsdGuideStep.PRESET, PsdGuideStep.FACE -> {
+                        val scroll = rememberScrollState()
+                        Box(Modifier.fillMaxSize()) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(scroll)
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                if (step == PsdGuideStep.PRESET) {
+                                    PresetGuideControls(state, source)
+                                } else {
+                                    FaceGuideControls(state)
+                                }
+                            }
+                            if (scroll.canScrollForward || scroll.canScrollBackward) {
+                                VerticalScrollbar(
+                                    adapter = rememberScrollbarAdapter(scroll),
+                                    modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(6.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (state.path != null) {
+            Box(Modifier.fillMaxWidth().height(0.5.dp).background(colors.divider))
+            PsdGuideActionsSection(viewModel, actions)
+        }
+    }
+}
+
+/** Integrated bottom action section inside [PsdGuideControlsPanel], sized naturally to the active step. */
+@Composable
+private fun PsdGuideActionsSection(
+    viewModel: PSD2LiveViewModel,
+    actions: PageActions? = null,
 ) {
     val state = viewModel.psdGuide
     if (state.path == null) return
@@ -315,6 +396,8 @@ internal fun PsdGuideActionsPanel(
     val typography = LocalToolTypography.current
     val step = state.step
     val source = state.source
+    val steps = state.steps
+    val stepIdx = steps.indexOf(step).coerceAtLeast(0)
     val ready = !state.busy && state.bindings != null
     val canAdvance = ready && when (step) {
         PsdGuideStep.SPLIT -> state.splitDraftValid
@@ -323,7 +406,32 @@ internal fun PsdGuideActionsPanel(
     }
     val previous = state.previousStep
     val next = state.nextStep
-    val statusText = if (source != null && state.busy) state.taskProgress?.text else null
+    val isLastStep = next == null
+    val canFinish = ready && !state.saving && state.finalCandidate != null
+    val busyStatus = if (source != null && state.busy) state.taskProgress?.text else null
+
+    val statusDotColor = when {
+        busyStatus != null -> colors.accent
+        step == PsdGuideStep.SPLIT && !state.splitDraftValid -> colors.error
+        step == PsdGuideStep.BINDING && state.bindings?.findings.orEmpty().isNotEmpty() -> colors.warning
+        step == PsdGuideStep.FACE && state.appliedStyle != null -> colors.highlight
+        else -> colors.highlight
+    }
+    val summaryText = busyStatus ?: when (step) {
+        PsdGuideStep.SPLIT -> when {
+            !state.splitScanned -> tr("psdGuide.actions.ready")
+            !state.splitDraftValid -> tr("psdGuide.split.invalidNames")
+            state.splitItems.isEmpty() -> tr("psdGuide.split.none")
+            else -> tr("editor.meshSplit.selectedCount", state.selectedSplitCount, state.splitItems.size)
+        }
+        PsdGuideStep.BINDING -> {
+            val count = state.bindings?.findings.orEmpty().size
+            if (count > 0) tr("psdGuide.binding.tab.todo", count) else tr("psdGuide.binding.clean")
+        }
+        PsdGuideStep.PRESET -> tr("psdGuide.actions.ready")
+        PsdGuideStep.FACE -> tr(if (state.appliedStyle != null) "psdGuide.face.appliedBadge" else "psdGuide.actions.ready")
+    }
+
     val navigateToStep: (PsdGuideStep) -> Unit = { target ->
         if (step == PsdGuideStep.SPLIT && target != PsdGuideStep.SPLIT) {
             state.advanceFromSplit(target)
@@ -332,112 +440,264 @@ internal fun PsdGuideActionsPanel(
         }
     }
 
-    val paddingMod = if (includeOuterPadding) Modifier.padding(horizontal = 10.dp, vertical = 8.dp) else Modifier
-    Box(
+    val onCollaborateWithAgent: () -> Unit = {
+        viewModel.createPsdGuideProject {
+            viewModel.openSettings(SettingsTopic.MCP)
+        }
+    }
+    val onOpenDocs: () -> Unit = {
+        viewModel.createPsdGuideProject {
+            val openCatalog = actions?.onOpenTutorialCatalog
+            if (openCatalog != null) {
+                openCatalog()
+            } else {
+                viewModel.setHelpTab(HelpTab.TUTORIALS)
+                viewModel.showPage(AppPage.HELP)
+            }
+        }
+    }
+    val onOpenWalkthrough: () -> Unit = {
+        viewModel.createPsdGuideProject {
+            val startTutorial = actions?.onStartTutorial
+            if (startTutorial != null) {
+                startTutorial(TutorialId.BASIC)
+            } else {
+                viewModel.setHelpTab(HelpTab.TUTORIALS)
+                viewModel.showPage(AppPage.HELP)
+            }
+        }
+    }
+
+    Column(
         modifier = Modifier
-            .fillMaxSize()
-            .background(colors.panelBackground)
-            .then(paddingMod),
-        contentAlignment = Alignment.Center,
+            .fillMaxWidth()
+            .background(colors.panelElevated)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Column(
+        // Status & segmented progress strip.
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (!statusText.isNullOrBlank()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    GuideSpinner(Modifier.size(11.dp), strokeWidth = 1.5.dp, color = colors.accent)
-                    Text(
-                        text = statusText,
-                        style = typography.caption,
-                        color = colors.textMuted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+            if (busyStatus != null) {
+                GuideSpinner(Modifier.size(11.dp), strokeWidth = 1.5.dp, color = colors.accent)
+            } else {
+                Box(Modifier.size(6.dp).clip(CircleShape).background(statusDotColor))
+            }
+            Text(
+                text = summaryText,
+                style = typography.caption,
+                color = colors.textMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                steps.indices.forEach { idx ->
+                    val active = idx <= stepIdx
+                    Box(
+                        Modifier
+                            .width(12.dp)
+                            .height(3.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(if (active) colors.accent else colors.divider),
                     )
                 }
+                Spacer(Modifier.width(3.dp))
+                Text(
+                    text = "${stepIdx + 1}/${steps.size}",
+                    style = typography.monoSmall,
+                    color = colors.textMuted,
+                    maxLines = 1,
+                )
             }
-            GuideFooterBar(
-                step = step,
-                saving = state.saving,
-                ready = ready,
-                canAdvance = canAdvance,
-                hasFinalCandidate = state.finalCandidate != null,
-                previous = previous,
-                next = next,
-                onDiscard = state::requestClose,
-                onDisableGuide = viewModel::disablePsdGuideAndImport,
-                onSkipOnce = viewModel::skipPsdGuideOnce,
-                onGo = navigateToStep,
-                onCreate = viewModel::createPsdGuideProject,
+        }
+
+        if (isLastStep) {
+            val cardShape = RoundedCornerShape(Corners.Control)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(cardShape)
+                    .background(colors.panelBackground, cardShape)
+                    .border(0.5.dp, colors.divider, cardShape)
+                    .padding(3.dp),
+            ) {
+                MenuGlide(Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        GuideFinishOptionRow(
+                            title = tr("psdGuide.finish.agent"),
+                            subtitle = tr("psdGuide.finish.agent.desc"),
+                            dotColor = colors.accent,
+                            enabled = canFinish,
+                            onClick = onCollaborateWithAgent,
+                        )
+                        GuideFinishOptionRow(
+                            title = tr("psdGuide.finish.docs"),
+                            subtitle = tr("psdGuide.finish.docs.desc"),
+                            dotColor = colors.highlight,
+                            enabled = canFinish,
+                            onClick = onOpenDocs,
+                        )
+                        GuideFinishOptionRow(
+                            title = tr("psdGuide.finish.walkthrough"),
+                            subtitle = tr("psdGuide.finish.walkthrough.desc"),
+                            dotColor = colors.warning,
+                            enabled = canFinish,
+                            onClick = onOpenWalkthrough,
+                        )
+                    }
+                }
+            }
+        } else if (step == PsdGuideStep.SPLIT) {
+            val stripShape = RoundedCornerShape(Corners.Control)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(stripShape)
+                    .background(colors.panelBackground, stripShape)
+                    .border(0.5.dp, colors.divider, stripShape)
+                    .padding(horizontal = 8.dp, vertical = 5.dp),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.Gap),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = tr("psdGuide.actions.skipHint"),
+                    style = typography.captionSmall,
+                    color = colors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                CompactButton(
+                    text = tr("psdGuide.disableGuide"),
+                    onClick = viewModel::disablePsdGuideAndImport,
+                    enabled = ready && !state.saving,
+                    height = 22.dp,
+                )
+                CompactButton(
+                    text = tr("psdGuide.skipOnce"),
+                    onClick = viewModel::skipPsdGuideOnce,
+                    enabled = ready && !state.saving,
+                    height = 22.dp,
+                )
+            }
+        }
+
+        // Primary navigation row.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(Spacing.Gap),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CompactButton(
+                text = tr("psdGuide.discard.action"),
+                onClick = state::requestClose,
+                enabled = !state.saving,
             )
+            Spacer(Modifier.weight(1f))
+            if (previous != null) {
+                CompactButton(
+                    text = tr("psdGuide.back"),
+                    onClick = { navigateToStep(previous) },
+                    enabled = ready && !state.saving,
+                )
+            }
+            if (next != null) {
+                CompactButton(
+                    text = tr(if (step == PsdGuideStep.SPLIT) "psdGuide.continue" else "psdGuide.next"),
+                    onClick = { navigateToStep(next) },
+                    enabled = canAdvance && !state.saving,
+                    isPrimary = true,
+                )
+            } else {
+                CompactButton(
+                    text = tr("psdGuide.finish.done"),
+                    onClick = { viewModel.createPsdGuideProject() },
+                    enabled = canFinish,
+                    isPrimary = true,
+                )
+            }
         }
     }
 }
 
-/**
- * Top-right dock module ([PSD_GUIDE_CONTROLS]): independent inspector panel for the active guide step.
- */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-internal fun PsdGuideControlsPanel(
-    viewModel: PSD2LiveViewModel,
-    includeOuterPadding: Boolean = true,
+private fun GuideFinishOptionRow(
+    title: String,
+    subtitle: String,
+    dotColor: Color,
+    enabled: Boolean,
+    onClick: () -> Unit,
 ) {
-    val state = viewModel.psdGuide
-    val source = state.source
-    val step = state.step
     val colors = LocalToolColors.current
-    val paddingMod = if (includeOuterPadding) Modifier.padding(horizontal = 10.dp, vertical = 8.dp) else Modifier
-
-    if (source == null) {
-        Column(
-            modifier = Modifier.fillMaxSize().background(colors.panelBackground).then(paddingMod),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            GuideNote(state.taskProgress?.text ?: tr("psdGuide.reading"))
-        }
-        return
-    }
-
-    when (step) {
-        PsdGuideStep.SPLIT -> Column(
-            modifier = Modifier.fillMaxSize().background(colors.panelBackground).then(paddingMod),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            SplitGuideControls(state)
-        }
-        PsdGuideStep.BINDING -> Column(
-            modifier = Modifier.fillMaxSize().background(colors.panelBackground).then(paddingMod),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            BindingGuideControls(state)
-        }
-        PsdGuideStep.PRESET, PsdGuideStep.FACE -> {
-            val scroll = rememberScrollState()
-            Box(Modifier.fillMaxSize().background(colors.panelBackground)) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(scroll)
-                        .then(paddingMod),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    if (step == PsdGuideStep.PRESET) {
-                        PresetGuideControls(state, source)
-                    } else {
-                        FaceGuideControls(state)
-                    }
-                }
-                if (scroll.canScrollForward || scroll.canScrollBackward) {
-                    VerticalScrollbar(
-                        adapter = rememberScrollbarAdapter(scroll),
-                        modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(6.dp),
-                    )
-                }
+    val typography = LocalToolTypography.current
+    val shape = RoundedCornerShape(Corners.Control)
+    TooltipArea(
+        tooltip = {
+            Surface(
+                color = colors.panelElevated,
+                shape = RoundedCornerShape(Corners.Control),
+                border = BorderStroke(1.dp, colors.border),
+                elevation = 4.dp,
+            ) {
+                Text(
+                    text = subtitle,
+                    style = typography.captionSmall,
+                    color = colors.textPrimary,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp).widthIn(max = 240.dp),
+                )
             }
+        },
+        delayMillis = 350,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(24.dp)
+                .glideItem(enabled)
+                .clip(shape)
+                .background(Color.Transparent, shape)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    enabled = enabled,
+                    onClick = onClick,
+                )
+                .handCursor(enabled)
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box(
+                Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(if (enabled) dotColor else colors.textDisabled),
+            )
+            Text(
+                text = title,
+                style = typography.caption.copy(fontWeight = FontWeight.Medium),
+                color = if (enabled) colors.textPrimary else colors.textDisabled,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "→",
+                style = typography.monoSmall,
+                color = if (enabled) colors.textMuted else colors.textDisabled,
+                maxLines = 1,
+            )
         }
     }
 }
@@ -451,7 +711,6 @@ private fun GuideTopHeaderBar(
     reachedStep: PsdGuideStep,
     nextStep: PsdGuideStep?,
     canAdvance: Boolean,
-    stepIdx: Int,
     ready: Boolean,
     stepCounts: Map<PsdGuideStep, StepCountBadge>,
     onSelectStep: (PsdGuideStep) -> Unit,
@@ -459,7 +718,7 @@ private fun GuideTopHeaderBar(
     val colors = LocalToolColors.current
     Column(Modifier.fillMaxWidth().background(colors.panelElevated)) {
         BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)) {
-            val singleRow = maxWidth >= 560.dp
+            val singleRow = maxWidth >= 500.dp
             if (singleRow) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -479,22 +738,13 @@ private fun GuideTopHeaderBar(
                             onSelect = onSelectStep,
                         )
                     }
-                    Box(Modifier.width(1.dp).height(14.dp).background(colors.divider))
-                    GuideStepProgress(stepIdx, steps.size)
                 }
             } else {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        GuideHeaderFileMeta(fileName, metaText, Modifier.weight(1f))
-                        GuideStepProgress(stepIdx, steps.size)
-                    }
+                    GuideHeaderFileMeta(fileName, metaText, Modifier.fillMaxWidth())
                     Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
                         GuidePipelineStepper(
                             steps = steps,
@@ -545,18 +795,6 @@ private fun GuideHeaderFileMeta(
             )
         }
     }
-}
-
-@Composable
-private fun GuideStepProgress(stepIdx: Int, total: Int) {
-    val colors = LocalToolColors.current
-    val typography = LocalToolTypography.current
-    Text(
-        text = tr("psdGuide.step.progress", stepIdx + 1, total),
-        style = typography.caption,
-        color = colors.textMuted,
-        maxLines = 1,
-    )
 }
 
 @Composable
@@ -722,116 +960,5 @@ private fun GuideLoadingState(label: String) {
             color = colors.textPrimary,
             textAlign = TextAlign.Center,
         )
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun GuideFooterBar(
-    step: PsdGuideStep,
-    saving: Boolean,
-    ready: Boolean,
-    canAdvance: Boolean,
-    hasFinalCandidate: Boolean,
-    previous: PsdGuideStep?,
-    next: PsdGuideStep?,
-    onDiscard: () -> Unit,
-    onDisableGuide: () -> Unit,
-    onSkipOnce: () -> Unit,
-    onGo: (PsdGuideStep) -> Unit,
-    onCreate: () -> Unit,
-) {
-    val typography = LocalToolTypography.current
-    val measurer = rememberTextMeasurer()
-    val density = LocalDensity.current
-    val normalStyle = typography.body.copy(fontSize = 11.sp, fontWeight = FontWeight.Normal)
-    val primaryStyle = typography.body.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium)
-
-    val discardLabel = tr("psdGuide.discard.action")
-    val disableLabel = tr("psdGuide.disableGuide")
-    val skipLabel = tr("psdGuide.skipOnce")
-    val continueLabel = tr("psdGuide.continue")
-    val backLabel = tr("psdGuide.back")
-    val nextLabel = tr("psdGuide.next")
-    val createLabel = tr("psdGuide.create")
-
-    fun measureButtonDp(label: String, primary: Boolean = false): Dp {
-        val style = if (primary) primaryStyle else normalStyle
-        val textPx = measurer.measure(label, style, maxLines = 1, softWrap = false).size.width
-        return with(density) { textPx.toDp() } + 16.dp
-    }
-
-    val isStep1 = step == PsdGuideStep.SPLIT
-    val actionWidthsDp = buildList {
-        add(measureButtonDp(discardLabel))
-        if (isStep1) {
-            add(measureButtonDp(disableLabel))
-            add(measureButtonDp(skipLabel))
-            add(measureButtonDp(continueLabel, primary = true))
-        } else {
-            if (previous != null) add(measureButtonDp(backLabel))
-            add(measureButtonDp(if (next != null) nextLabel else createLabel, primary = true))
-        }
-    }
-
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val actionGap = Spacing.Gap
-        val neededSingleRow = actionWidthsDp.fold(0.dp) { acc, w -> acc + w } +
-            actionGap * (actionWidthsDp.size - 1).coerceAtLeast(0)
-        val fitsSingleRow = neededSingleRow + 8.dp <= maxWidth
-
-        val rightActions: @Composable () -> Unit = {
-            if (isStep1) {
-                CompactButton(disableLabel, onDisableGuide, enabled = ready && !saving)
-                CompactButton(skipLabel, onSkipOnce, enabled = ready && !saving)
-                CompactButton(continueLabel, { next?.let(onGo) }, enabled = canAdvance && next != null, isPrimary = true)
-            } else {
-                if (previous != null) {
-                    CompactButton(backLabel, { onGo(previous) }, enabled = ready && !saving)
-                }
-                if (next != null) {
-                    CompactButton(nextLabel, { onGo(next) }, enabled = canAdvance && !saving, isPrimary = true)
-                } else {
-                    CompactButton(
-                        text = createLabel,
-                        onClick = onCreate,
-                        enabled = ready && !saving && hasFinalCandidate,
-                        isPrimary = true,
-                    )
-                }
-            }
-        }
-
-        if (fitsSingleRow) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(actionGap),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                CompactButton(discardLabel, onDiscard, enabled = !saving)
-                Spacer(Modifier.weight(1f))
-                rightActions()
-            }
-        } else {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(Spacing.Gap),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Start,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    CompactButton(discardLabel, onDiscard, enabled = !saving)
-                }
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.Gap, Alignment.End),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.Gap),
-                ) {
-                    rightActions()
-                }
-            }
-        }
     }
 }

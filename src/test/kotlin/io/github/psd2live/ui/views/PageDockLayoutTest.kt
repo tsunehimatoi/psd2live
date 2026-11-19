@@ -45,9 +45,7 @@ class PageDockLayoutTest {
 		val root = pageDockRoot(AppPage.PSD_GUIDE, PageArrangement(dockJson.encodeToString(DockNode.serializer(), legacy)))
 		assertTrue(root.horizontal)
 		assertEquals(listOf(io.github.psd2live.ui.state.PSD_GUIDE_CONTENT), root.first?.modules)
-		assertEquals(false, root.second?.horizontal)
-		assertEquals(listOf(io.github.psd2live.ui.state.PSD_GUIDE_CONTROLS), root.second?.first?.modules)
-		assertEquals(listOf(io.github.psd2live.ui.state.PSD_GUIDE_ACTIONS), root.second?.second?.modules)
+		assertEquals(listOf(io.github.psd2live.ui.state.PSD_GUIDE_CONTROLS), root.second?.modules)
 	}
 
 	@Test fun theArrangementSurvivesThePreferences() {

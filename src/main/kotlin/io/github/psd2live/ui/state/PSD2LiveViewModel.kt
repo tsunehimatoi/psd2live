@@ -7597,7 +7597,7 @@ class PSD2LiveViewModel : AutoCloseable {
         }
     }
 
-    internal fun createPsdGuideProject() {
+    internal fun createPsdGuideProject(onCompleted: (() -> Unit)? = null) {
         val workspace = workspaceBackend as? DesktopWorkspace ?: return
         if (psdGuide.busy || psdGuide.saving || _state.value.isBusy || _state.value.projectSaving) return
         val draft = psdGuide.guide ?: return
@@ -7610,7 +7610,10 @@ class PSD2LiveViewModel : AutoCloseable {
             psdGuide.install(
                 workspace.host,
                 before = { preparePsdGuideExecution(workspace) },
-                onSuccess = { completePsdGuideInstall(draft.path, psdGuide.outputDirectory) },
+                onSuccess = {
+                    completePsdGuideInstall(draft.path, psdGuide.outputDirectory)
+                    onCompleted?.invoke()
+                },
             )
         }
     }
