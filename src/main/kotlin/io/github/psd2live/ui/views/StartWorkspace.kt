@@ -38,7 +38,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -77,7 +76,6 @@ import io.github.psd2live.AppVersion
 import io.github.psd2live.application.WorkspaceInitialModifiers
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.components.CompactButton
-import io.github.psd2live.ui.components.CompactCheckbox
 import io.github.psd2live.ui.components.CompactDropdown
 import io.github.psd2live.ui.components.CompactSlider
 import io.github.psd2live.ui.components.CompactTextField
@@ -91,15 +89,12 @@ import io.github.psd2live.ui.components.IconPlay
 import io.github.psd2live.ui.components.document
 import io.github.psd2live.ui.state.AppPage
 import io.github.psd2live.ui.state.AppSettings
-import io.github.psd2live.ui.state.HairMode
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.state.RecentFile
 import io.github.psd2live.ui.state.RecentFileDetails
 import io.github.psd2live.ui.state.RecentFileKind
 import io.github.psd2live.ui.state.ShortcutAction
-import io.github.psd2live.ui.state.StartPresetChoices
-import io.github.psd2live.ui.state.StartQuickPreset
 import io.github.psd2live.ui.state.StartSection
 import io.github.psd2live.ui.state.WorkspacePreset
 import io.github.psd2live.ui.state.rememberExistingRecentFiles
@@ -111,12 +106,9 @@ import io.github.psd2live.ui.theme.Motion
 import io.github.psd2live.ui.theme.handCursor
 import io.github.psd2live.ui.theme.selectOrOpen
 import io.github.psd2live.ui.views.texture.AccentButton
-import io.github.psd2live.ui.views.texture.AccentSplitButton
 import io.github.psd2live.ui.views.texture.FloatingMenu
 import io.github.psd2live.ui.views.texture.FloatingMenuDivider
-import io.github.psd2live.ui.views.texture.FloatingMenuRadio
 import io.github.psd2live.ui.views.texture.FloatingMenuRow
-import io.github.psd2live.ui.views.texture.FloatingMenuSection
 import io.github.psd2live.ui.views.texture.MenuGlide
 import io.github.psd2live.ui.views.texture.glideItem
 import io.github.psd2live.ui.views.tooloptions.GlidingColumn
@@ -163,7 +155,6 @@ internal class StartSelection {
 	var showProjects by mutableStateOf(true)
 	var showPsds by mutableStateOf(true)
 	var recentGrid by mutableStateOf(true)
-	val open = mutableStateMapOf<String, Boolean>()
 }
 
 /**
@@ -222,27 +213,21 @@ private fun startPrimary(section: StartSection, files: StartFiles, model: StartP
 }
 
 internal fun startSectionTitle(section: StartSection) = when (section) {
-	StartSection.GENERATE -> tr("start.nav.generate")
+	StartSection.GENERATE -> tr("psdGuide.title")
 	StartSection.LAYOUT -> tr("start.nav.layout")
 	StartSection.CMO3 -> tr("start.nav.cmo3")
 	StartSection.RECENT -> tr("start.nav.recent")
 	StartSection.UPDATES -> tr("start.nav.updates")
 }
 
-/** The details panel's title, which follows the section: the presets a PSD import applies, or the picked file. */
+/** The details panel follows the selected section or file. */
 internal fun startDetailsTitle(section: StartSection) = when (section) {
-	StartSection.GENERATE -> tr("start.generate.presets")
+	StartSection.GENERATE -> tr("start.details.file")
 	StartSection.LAYOUT -> tr("start.details.layout")
 	StartSection.CMO3 -> tr("start.details.cmo3")
 	StartSection.RECENT -> tr("start.details.file")
 	StartSection.UPDATES -> tr("start.details.versions")
 }
-
-/** The quick set [choices] match, or null for a custom set. */
-private fun matchedPreset(choices: StartPresetChoices) = StartQuickPreset.entries.firstOrNull { it.choices == choices }
-
-/** The name of the preset set [choices] are: a quick set's, or "Custom". */
-internal fun startPresetName(choices: StartPresetChoices) = matchedPreset(choices)?.let { tr(it.key) } ?: tr("start.quick.custom")
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Panels
@@ -289,7 +274,7 @@ internal fun StartNavPanel(state: PSD2LiveState, viewModel: PSD2LiveViewModel, a
 
 				PageNavGroup(tr("start.nav.group.new"))
 				PageNavItem(
-					label = tr("start.nav.generate"),
+					label = tr("psdGuide.title"),
 					selected = section == StartSection.GENERATE,
 					onClick = { viewModel.setStartSection(StartSection.GENERATE) },
 					trailingContent = psdShortcut?.takeIf { it.isNotBlank() }?.let { { KeycapBadge(it) } },
@@ -332,7 +317,7 @@ internal fun StartNavPanel(state: PSD2LiveState, viewModel: PSD2LiveViewModel, a
 				) { PageIcon(AppPage.SETTINGS, it, Modifier.size(13.dp)) }
 			}
 		}
-		StartEnvironmentFooter(state, viewModel)
+		StartEnvironmentFooter(state)
 	}
 }
 
@@ -379,7 +364,7 @@ private fun ActiveSessionStrip(state: PSD2LiveState, viewModel: PSD2LiveViewMode
 
 /** Compact environment readout at the bottom of the navigation rail. */
 @Composable
-private fun StartEnvironmentFooter(state: PSD2LiveState, viewModel: PSD2LiveViewModel) {
+private fun StartEnvironmentFooter(state: PSD2LiveState) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
 	Column(
@@ -390,10 +375,6 @@ private fun StartEnvironmentFooter(state: PSD2LiveState, viewModel: PSD2LiveView
 		verticalArrangement = Arrangement.spacedBy(2.dp),
 	) {
 		Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-			Text(tr("start.env.preset"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.weight(1f))
-			Text(startPresetName(viewModel.startChoices), style = typography.monoSmall.copy(fontSize = 10.sp), color = colors.textPrimary)
-		}
-		Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
 			Text(tr("start.env.atlas"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.weight(1f))
 			Text("${state.atlasSize}px", style = typography.monoSmall.copy(fontSize = 10.sp), color = colors.textPrimary)
 		}
@@ -402,7 +383,7 @@ private fun StartEnvironmentFooter(state: PSD2LiveState, viewModel: PSD2LiveView
 
 /**
  * The main workbench: in RECENT mode, a flat top command bar over the full-bleed recent table/grid (or input-routing
- * table when empty); in GENERATE/LAYOUT/CMO3 modes, a 3-node pipeline bar over the dedicated viewport.
+ * table when empty). PSD, Layout and CMO3 each have a dedicated viewport.
  */
 @Composable
 internal fun StartMainPanel(state: PSD2LiveState, viewModel: PSD2LiveViewModel, actions: PageActions) {
@@ -428,13 +409,8 @@ internal fun StartMainPanel(state: PSD2LiveState, viewModel: PSD2LiveViewModel, 
 		Box(Modifier.weight(1f).fillMaxWidth()) {
 			when (section) {
 				StartSection.GENERATE -> Column(Modifier.fillMaxSize()) {
-					PipelineStepsBar(
-						steps = listOf("01" to tr("start.pipeline.psd.1"), "02" to tr("start.pipeline.psd.2"), "03" to tr("start.pipeline.psd.3")),
-						activeIndex = if (files.selectedPsd == null) 0 else 1,
-					)
 					GenerateViewport(
 						file = files.selectedPsd,
-						choices = viewModel.startChoices,
 						enabled = enabled && actions.onOpenPsd != null,
 						dragging = actions.filesDragging,
 						shortcut = state.keymap.labelFor(ShortcutAction.OPEN_PSD),
@@ -470,7 +446,6 @@ internal fun StartMainPanel(state: PSD2LiveState, viewModel: PSD2LiveViewModel, 
 				}
 				StartSection.RECENT -> Column(Modifier.fillMaxSize()) {
 					StartActionToolbar(
-						presetName = startPresetName(viewModel.startChoices),
 						psdShortcut = state.keymap.labelFor(ShortcutAction.OPEN_PSD),
 						openShortcut = state.keymap.labelFor(ShortcutAction.OPEN_PROJECT),
 						enabled = enabled,
@@ -494,18 +469,12 @@ internal fun StartMainPanel(state: PSD2LiveState, viewModel: PSD2LiveViewModel, 
 				StartSection.UPDATES -> WhatsNewPanel(state.currentLanguage, model.updates, enabled, actions.onStartTutorial)
 			}
 			// A file carried over the window lands wherever it is dropped; outside the viewport the page says so.
-			if (actions.filesDragging && section != StartSection.GENERATE) DropHighlight(tr("start.drop.overlay", startPresetName(viewModel.startChoices)))
+			if (actions.filesDragging && section != StartSection.GENERATE) DropHighlight(tr("psdGuide.start.drop"))
 		}
-		if (section != StartSection.UPDATES) StartActionBar(section, viewModel, model.layout, files, enabled, state, actions, primary)
+		if (section != StartSection.UPDATES) StartActionBar(section, model.layout, files, enabled, actions, primary)
 	}
 }
 
-/**
- * Context-linked right inspector:
- * - In GENERATE: segmented preset bar + live parameter groups.
- * - In RECENT: selected file properties; when the selected file is a PSD, embeds PresetInspector inline so presets
- *   can be adjusted and generated in place without switching tabs.
- */
 @Composable
 internal fun StartDetailsPanel(state: PSD2LiveState, viewModel: PSD2LiveViewModel, actions: PageActions) {
 	val model = actions.start
@@ -517,21 +486,15 @@ internal fun StartDetailsPanel(state: PSD2LiveState, viewModel: PSD2LiveViewMode
 	}
 	Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
 		when (viewModel.startSection) {
-			StartSection.GENERATE -> {
-				ImportMeshSplitOption(state.autoDetectMeshSplitsOnImport, enabled, viewModel)
-				PresetInspector(viewModel.startChoices, model.selection, enabled, viewModel::setStartChoices)
-			}
+			StartSection.GENERATE -> if (files.selectedPsd == null) InspectorNote(tr("psdGuide.start.details"))
+                else RecentInspector(files.selectedPsd, enabled, viewModel, actions.onRevealFile)
 			StartSection.LAYOUT -> LayoutDetails()
 			StartSection.CMO3 -> Cmo3Details(enabled && state.previewModel != null, actions.onReplaceCmo3)
 			StartSection.RECENT -> RecentInspector(
 				file = files.selectedRecent,
-				checkMeshSplits = state.autoDetectMeshSplitsOnImport,
-				choices = viewModel.startChoices,
-				selection = model.selection,
 				enabled = enabled,
 				viewModel = viewModel,
 				onRevealFile = actions.onRevealFile,
-				onChoicesChange = viewModel::setStartChoices,
 			)
 			StartSection.UPDATES -> {}
 		}
@@ -545,7 +508,6 @@ internal fun StartDetailsPanel(state: PSD2LiveState, viewModel: PSD2LiveViewMode
 /** Flat edge-to-edge CCD command toolbar across the top of the Recent workbench. */
 @Composable
 private fun StartActionToolbar(
-	presetName: String,
 	psdShortcut: String?,
 	openShortcut: String?,
 	enabled: Boolean,
@@ -564,8 +526,7 @@ private fun StartActionToolbar(
 		horizontalArrangement = Arrangement.spacedBy(2.dp),
 	) {
 		ToolbarActionItem(
-			label = tr("start.nav.generate"),
-			badge = presetName,
+			label = tr("psdGuide.title"),
 			shortcut = psdShortcut,
 			accented = true,
 			enabled = enabled,
@@ -574,7 +535,6 @@ private fun StartActionToolbar(
 		ToolbarDivider()
 		ToolbarActionItem(
 			label = tr("start.nav.layout"),
-			badge = null,
 			shortcut = null,
 			accented = false,
 			enabled = enabled,
@@ -583,7 +543,6 @@ private fun StartActionToolbar(
 		ToolbarDivider()
 		ToolbarActionItem(
 			label = tr("start.nav.cmo3"),
-			badge = null,
 			shortcut = null,
 			accented = false,
 			enabled = enabled,
@@ -592,7 +551,6 @@ private fun StartActionToolbar(
 		ToolbarDivider()
 		ToolbarActionItem(
 			label = tr("start.nav.openProject"),
-			badge = null,
 			shortcut = openShortcut,
 			accented = false,
 			enabled = enabled,
@@ -609,7 +567,6 @@ private fun ToolbarDivider() {
 @Composable
 private fun ToolbarActionItem(
 	label: String,
-	badge: String?,
 	shortcut: String?,
 	accented: Boolean,
 	enabled: Boolean,
@@ -639,8 +596,7 @@ private fun ToolbarActionItem(
 		icon(if (accented || (hovered && enabled)) colors.accent else colors.textMuted)
 		Text(label, style = typography.body.copy(fontSize = 11.sp, fontWeight = if (accented) FontWeight.Medium else FontWeight.Normal),
 			color = if (!enabled) colors.textDisabled else colors.textPrimary, maxLines = 1)
-		badge?.let { StatusBadge(it, colors.accent, colors.accent.copy(alpha = 0.14f)) }
-		shortcut?.takeIf { it.isNotBlank() && badge == null }?.let { KeycapBadge(it) }
+		shortcut?.takeIf { it.isNotBlank() }?.let { KeycapBadge(it) }
 	}
 }
 
@@ -656,7 +612,6 @@ private fun ToolbarActionItem(
 @Composable
 private fun GenerateViewport(
 	file: RecentFile?,
-	choices: StartPresetChoices,
 	enabled: Boolean,
 	dragging: Boolean,
 	shortcut: String?,
@@ -699,7 +654,7 @@ private fun GenerateViewport(
 			}
 			else -> Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
 				IconDocument(Modifier.size(28.dp), if (hovered && enabled) colors.accent else colors.textMuted)
-				Text(tr("start.generate.drop", startPresetName(choices)),
+				Text(tr("psdGuide.start.hint"),
 					style = typography.body.copy(fontSize = 13.sp, fontWeight = FontWeight.Medium), color = colors.textPrimary)
 				Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
 					Text(tr("start.generate.browse"), style = typography.caption.copy(fontSize = 11.sp),
@@ -723,19 +678,18 @@ private fun GenerateViewport(
 					Text("${details.canvasWidth}×${details.canvasHeight}", style = typography.monoSmall.copy(fontSize = 10.sp), color = colors.textMuted)
 				}
 				details?.let { Text(formatBytes(it.sizeBytes), style = typography.monoSmall.copy(fontSize = 10.sp), color = colors.textMuted) }
-				StatusBadge(startPresetName(choices), colors.accent, colors.accent.copy(alpha = 0.16f))
 			}
 			Row(Modifier.align(Alignment.TopEnd).padding(10.dp)) {
 				CompactButton(tr("start.viewport.clear"), onClear, height = 22.dp)
 			}
 		}
 		Text(
-			tr(if (file != null) "start.viewport.hint.file" else "start.viewport.hint"),
+			tr(if (file != null) "psdGuide.start.details" else "start.viewport.hint"),
 			style = typography.caption.copy(fontSize = 10.5.sp),
 			color = colors.textMuted,
 			modifier = Modifier.align(Alignment.BottomStart).padding(horizontal = 12.dp, vertical = 8.dp),
 		)
-		if (dragging) DropHighlight(tr("start.drop.overlay", startPresetName(choices)))
+		if (dragging) DropHighlight(tr("psdGuide.start.drop"))
 	}
 }
 
@@ -1158,7 +1112,7 @@ private fun EmptyInputRoutingTable(
 		) {
 			Text(tr("canvas.start.recent.empty"), style = typography.caption.copy(fontSize = 10.5.sp), color = colors.textMuted)
 		}
-		InputRouteRow("01", tr("start.empty.psd"), tr("start.launcher.generate.desc"), tr("start.nav.generate"), enabled, onGenerate)
+		InputRouteRow("01", tr("start.empty.psd"), tr("psdGuide.start.details"), tr("psdGuide.title"), enabled, onGenerate)
 		InputRouteRow("02", tr("start.empty.layout"), tr("start.launcher.layout.desc"), tr("start.nav.layout"), enabled, onLayout)
 		InputRouteRow("03", tr("start.empty.cmo3"), tr("start.launcher.cmo3.desc"), tr("start.nav.cmo3"), enabled, onCmo3)
 		InputRouteRow("→", tr("canvas.start.quickStart"), tr("start.guide.subtitle"), tr("start.guide.tutorial"), true, onOpenTutorial)
@@ -1373,7 +1327,7 @@ private fun RecentFileMenuHost(file: RecentFile, enabled: Boolean, onSelect: () 
 		PressMenu(menuAt != null, menuAt ?: Offset.Zero, onDismissRequest = close) {
 			GlidingColumn(Modifier.width(200.dp), 4, highlights = { i -> i == 1 || (i != 2 && enabled) }) { i ->
 				when (i) {
-					0 -> FloatingMenuRow(tr(if (file.kind == RecentFileKind.PSD) "start.action.recent.generate" else "start.action.recent.open"),
+					0 -> FloatingMenuRow(tr(if (file.kind == RecentFileKind.PSD) "psdGuide.start.open" else "start.action.recent.open"),
 						{ close(); actions.open(file) }, enabled = enabled)
 					1 -> FloatingMenuRow(tr("start.recent.reveal"), { close(); actions.reveal(file) })
 					2 -> FloatingMenuDivider()
@@ -1404,133 +1358,11 @@ private fun formatBytes(bytes: Long): String = when {
  * The presets a PSD import applies: a segmented preset strip at top, then live collapsible parameter rows directly below.
  */
 @Composable
-private fun PresetInspector(choices: StartPresetChoices, selection: StartSelection, enabled: Boolean, onChange: (StartPresetChoices) -> Unit) {
-	PresetSegmentedBar(choices, enabled, onChange)
-	choices.modifiers?.let { mode ->
-		InspectorNote(tr(if (mode == WorkspaceInitialModifiers.EMPTY)
-			"modifier.start.empty.detail" else "modifier.start.recommended.detail"))
-		return
-	}
-	fun group(key: String, title: String, summary: String, content: @Composable ColumnScope.() -> Unit): @Composable () -> Unit = {
-		val open = selection.open[key] ?: true
-		PanelSectionRow(title, open, { selection.open[key] = !open }, icon = null, trailing = {
-			Text(summary, fontSize = 10.sp, color = LocalToolColors.current.textMuted, maxLines = 1)
-		})
-		if (open) Column(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(3.dp), content = content)
-	}
-	group("rig", tr("settings.group.rigging"), "%.2f× / %.2f×".format(choices.headStrength, choices.bodyStrength)) {
-		StrengthRow(tr("settings.headStrength"), choices.headStrength, enabled) { onChange(choices.copy(headStrength = it)) }
-		StrengthRow(tr("settings.bodyStrength"), choices.bodyStrength, enabled) { onChange(choices.copy(bodyStrength = it)) }
-		CheckRow(tr("model.deformer.featureDisplacement"), choices.featureDisplacement, enabled) { onChange(choices.copy(featureDisplacement = it)) }
-		CheckRow(tr("mouth.outline"), choices.mouthOutline, enabled) { onChange(choices.copy(mouthOutline = it)) }
-	}()
-	group("motions", tr("settings.group.motions"), onOff(choices.motionBasic || choices.motionSkeleton)) {
-		CheckRow(tr("settings.motion.basic"), choices.motionBasic, enabled) { onChange(choices.copy(motionBasic = it)) }
-		CheckRow(tr("settings.motion.skeleton"), choices.motionSkeleton, enabled) { onChange(choices.copy(motionSkeleton = it)) }
-	}()
-	group("simulation", tr("settings.group.simulation"), hairLabel(choices.frontHair, choices.backHair)) {
-		HairRow(tr("presets.frontHair"), choices.frontHair, enabled) { onChange(choices.copy(frontHair = it)) }
-		HairRow(tr("presets.backHair"), choices.backHair, enabled) { onChange(choices.copy(backHair = it)) }
-		CheckRow(tr("presets.clothing"), choices.clothing, enabled) { onChange(choices.copy(clothing = it)) }
-		CheckRow(tr("export.physics.eyeJelly"), choices.eyeJelly, enabled) { onChange(choices.copy(eyeJelly = it)) }
-	}()
-	InspectorNote(tr("modifier.start.shortcut.detail"))
-}
-
-/** Flat hairline-bordered segmented preset bar; shows "Custom" badge when parameters diverge from quick presets. */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun PresetSegmentedBar(choices: StartPresetChoices, enabled: Boolean, onPick: (StartPresetChoices) -> Unit) {
-	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
-	val matched = matchedPreset(choices)
-	Column(
-		Modifier.fillMaxWidth()
-			.drawBehind { drawLine(colors.divider, Offset(0f, size.height), Offset(size.width, size.height), 0.5.dp.toPx()) }
-			.padding(horizontal = 8.dp, vertical = 8.dp),
-		verticalArrangement = Arrangement.spacedBy(5.dp),
-	) {
-		Row(verticalAlignment = Alignment.CenterVertically) {
-			Text(tr("start.quick"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.weight(1f))
-			if (matched == null) StatusBadge(tr("start.quick.custom"), colors.warning, colors.warning.copy(alpha = 0.14f))
-		}
-		FlowRow(
-			Modifier.fillMaxWidth().border(0.5.dp, colors.divider),
-			horizontalArrangement = Arrangement.spacedBy(0.dp),
-			verticalArrangement = Arrangement.spacedBy(0.dp),
-		) {
-			StartQuickPreset.entries.forEach { preset ->
-				val selected = preset == matched
-				Box(
-					Modifier.background(if (selected) colors.selection else colors.controlBackground)
-						.drawBehind { drawLine(colors.divider, Offset(size.width, 0f), Offset(size.width, size.height), 0.5.dp.toPx()) }
-						.clickable(enabled = enabled) { onPick(preset.choices) }
-						.handCursor(enabled)
-						.padding(horizontal = 8.dp, vertical = 4.dp),
-				) {
-					Text(
-						tr(preset.key),
-						style = typography.body.copy(fontSize = 10.5.sp, fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal),
-						color = if (selected) colors.selectionText else colors.textPrimary,
-					)
-				}
-			}
-		}
-	}
-}
-
-private fun hairLabel(front: HairMode, back: HairMode): String {
-	val mode = when {
-		front == HairMode.SIMULATION || back == HairMode.SIMULATION -> HairMode.SIMULATION
-		front == HairMode.CLASSIC || back == HairMode.CLASSIC -> HairMode.CLASSIC
-		else -> HairMode.OFF
-	}
-	return tr(mode.key)
-}
-
-private fun onOff(on: Boolean) = tr(if (on) "start.on" else "start.off")
-
-@Composable
-private fun StrengthRow(label: String, value: Float, enabled: Boolean, onChange: (Float) -> Unit) {
-	InspectorFormRow(label, Modifier.height(22.dp).padding(end = 8.dp)) {
-		Row(verticalAlignment = Alignment.CenterVertically) {
-			CompactSlider(value = value, onValueChange = { onChange((it * 20f).roundToInt() / 20f) }, valueRange = 0f..4f,
-				enabled = enabled, height = 14.dp, modifier = Modifier.weight(1f))
-			Text("%.2f×".format(value), style = LocalToolTypography.current.monoSmall, color = LocalToolColors.current.textPrimary,
-				modifier = Modifier.width(40.dp).padding(start = 6.dp))
-		}
-	}
-}
-
-@Composable
-private fun CheckRow(label: String, checked: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
-	InspectorFormRow(label, Modifier.height(22.dp).padding(end = 8.dp)) {
-		CompactCheckbox(checked, onChange, enabled = enabled)
-	}
-}
-
-@Composable
-private fun HairRow(label: String, mode: HairMode, enabled: Boolean, onChange: (HairMode) -> Unit) {
-	InspectorFormRow(label, Modifier.height(24.dp).padding(end = 8.dp)) {
-		CompactDropdown(items = HairMode.entries, selectedItem = mode, onItemSelected = onChange, itemLabel = { tr(it.key) },
-			enabled = enabled, height = 20.dp, modifier = Modifier.width(120.dp))
-	}
-}
-
-/**
- * Contextual inspector for the Recent view: shows file thumbnail & metadata, and when a PSD is selected, embeds
- * PresetInspector directly below so the user can configure presets and generate without switching tabs.
- */
-@Composable
 private fun RecentInspector(
 	file: RecentFile?,
-	checkMeshSplits: Boolean,
-	choices: StartPresetChoices,
-	selection: StartSelection,
 	enabled: Boolean,
 	viewModel: PSD2LiveViewModel,
 	onRevealFile: (String) -> Unit,
-	onChoicesChange: (StartPresetChoices) -> Unit,
 ) {
 	if (file == null) {
 		InspectorNote(tr("start.recent.pick"))
@@ -1561,18 +1393,7 @@ private fun RecentInspector(
 				CompactButton(tr("start.recent.forget"), { viewModel.forgetRecentFile(file.path) }, enabled = enabled, height = 22.dp)
 			}
 		}
-		if (file.kind == RecentFileKind.PSD) {
-			Box(Modifier.fillMaxWidth().height(0.5.dp).background(colors.divider))
-			ImportMeshSplitOption(checkMeshSplits, enabled, viewModel)
-			PresetInspector(choices, selection, enabled, onChoicesChange)
-		}
 	}
-}
-
-@Composable
-private fun ImportMeshSplitOption(checked: Boolean, enabled: Boolean, viewModel: PSD2LiveViewModel) {
-	CheckRow(tr("editor.meshSplit.promptOnImport"), checked, enabled, viewModel::setAutoDetectMeshSplitsOnImport)
-	InspectorNote(tr("editor.meshSplit.promptOnImport.detail"))
 }
 
 @Composable
@@ -1589,21 +1410,18 @@ private fun InspectorNote(text: String) {
 @Composable
 private fun StartActionBar(
 	section: StartSection,
-	viewModel: PSD2LiveViewModel,
 	layout: LayoutDraft,
 	files: StartFiles,
 	enabled: Boolean,
-	state: PSD2LiveState,
 	actions: PageActions,
 	primary: () -> Unit,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
-	val preset = startPresetName(viewModel.startChoices)
 	val selectedPsd = files.selectedPsd
 	val selectedRecent = files.selectedRecent
 	val hint = when (section) {
-		StartSection.GENERATE -> selectedPsd?.let { tr("start.action.generate.file", it.name, preset) } ?: tr("start.action.generate.hint", preset)
+		StartSection.GENERATE -> selectedPsd?.path ?: tr("psdGuide.start.hint")
 		StartSection.LAYOUT -> if (layout.valid) tr("start.action.layout.hint", layout.w!!, layout.h!!) else tr("start.layout.invalid")
 		StartSection.CMO3 -> tr("start.action.cmo3.hint")
 		StartSection.RECENT -> selectedRecent?.path ?: tr("start.recent.pick")
@@ -1621,7 +1439,10 @@ private fun StartActionBar(
 			overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
 		KeycapBadge("Enter")
 		when (section) {
-			StartSection.GENERATE -> GenerateButton(state, viewModel, selectedPsd != null, enabled && (selectedPsd != null || actions.onOpenPsd != null), primary)
+			StartSection.GENERATE -> AccentButton(
+                tr(if (selectedPsd != null) "psdGuide.start.open" else "psdGuide.start.browse"),
+                primary, enabled = enabled && (selectedPsd != null || actions.onOpenPsd != null), emphasis = true
+            ) { IconDocument(Modifier.size(12.dp), it) }
 			StartSection.LAYOUT -> AccentButton(tr("start.action.layout"), primary, enabled = enabled && layout.valid, emphasis = true) {
 				WorkspacePresetIcon(WorkspacePreset.LAYOUT, it, Modifier.size(12.dp))
 			}
@@ -1629,41 +1450,10 @@ private fun StartActionBar(
 				IconDocument(Modifier.size(12.dp), it)
 			}
 			StartSection.RECENT -> AccentButton(
-				tr(if (selectedRecent?.kind == RecentFileKind.PSD) "start.action.recent.generate" else "start.action.recent.open"),
+				tr(if (selectedRecent?.kind == RecentFileKind.PSD) "psdGuide.start.open" else "start.action.recent.open"),
 				primary, enabled = enabled && selectedRecent != null, emphasis = true,
 			) { IconFolder(modifier = Modifier.size(12.dp), tint = it) }
 			StartSection.UPDATES -> {}
-		}
-	}
-}
-
-/** Generate: the body generates the previewed PSD or asks for one; the menu switches presets or applies them to the open model. */
-@Composable
-private fun GenerateButton(state: PSD2LiveState, viewModel: PSD2LiveViewModel, hasFile: Boolean, enabled: Boolean, onGenerate: () -> Unit) {
-	var menu by remember { mutableStateOf(false) }
-	val matched = matchedPreset(viewModel.startChoices)
-	Box {
-		AccentSplitButton(
-			label = tr(if (hasFile) "start.action.recent.generate" else "start.action.generate"),
-			icon = { IconDocument(Modifier.size(12.dp), it) },
-			onClick = onGenerate,
-			open = menu,
-			onMenu = { menu = !menu },
-			enabled = enabled,
-			menuTooltip = tr("start.action.generate.menu"),
-			emphasis = true,
-		)
-		FloatingMenu(expanded = menu, onDismiss = { menu = false }, width = 240.dp, alignment = Alignment.BottomEnd, rise = true) {
-			FloatingMenuSection(tr("start.quick"))
-			StartQuickPreset.entries.forEach { preset ->
-				FloatingMenuRadio(tr(preset.key), preset == matched, { viewModel.setStartChoices(preset.choices) })
-			}
-			if (matched == null) FloatingMenuRadio(tr("start.quick.custom"), true, {})
-			FloatingMenuDivider()
-			FloatingMenuRow(tr("start.action.applyCurrent"), {
-				menu = false
-				viewModel.applyStartChoicesToCurrent()
-			}, enabled = viewModel.startPresetsApplyToCurrent(state))
 		}
 	}
 }

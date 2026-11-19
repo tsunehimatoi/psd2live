@@ -309,6 +309,31 @@ internal class WorkspaceHost<V>(
         result.mutation("Imported PSD ${input.fileName}")
     }
 
+    internal suspend fun preparePsdGuide(path: Path): WorkspacePsdGuide {
+        val root = workspaceStore.root
+        val config = sourceConfig(runtime.state.value, presentation.current())
+        val owned = runInterruptible(Dispatchers.IO) { io.github.psd2live.project.OwnedProjectSource.capture(root, path) }
+        val document = sourceImporter.prepareGuidedPsd(owned.path, path.fileName.toString(), config)
+        val preview = WorkspacePreviewBuilder(deferRuntimeBundles = true).build(document)
+        return WorkspacePsdGuide(path, root, owned, WorkspacePsdGuide.Candidate(document, preview))
+    }
+
+    internal suspend fun installPsdGuide(guide: WorkspacePsdGuide, candidate: WorkspacePsdGuide.Candidate,
+                                         discardUnsaved: Boolean) = editMutex.withLock {
+        val (state, current) = captureSourceImport(discardUnsaved)
+        if (guide.storeRoot != workspaceStore.root) throw WorkspaceConflict(guide.storeRoot.toString(), workspaceStore.root.toString())
+        val preview = previewBuilder.build(candidate.document)
+        try {
+            val result = sourceImporter.installGuidedPsd(state.state, candidate.document, preview, guide.owned.auxiliary,
+                discardUnsaved) { document, model, id ->
+                presentation.sourceInstalled(current, document, model, guide.path, id)
+            }
+            finishSourceImport(result)
+        } finally {
+            preview.modifierBuildOwner?.takeUnless { it.published }?.close()
+        }
+    }
+
     override suspend fun importLayout(path: String, discardUnsaved: Boolean): WorkspaceMutationResult = editMutex.withLock {
         val (state, current) = captureSourceImport(discardUnsaved)
         val input = Path.of(path)

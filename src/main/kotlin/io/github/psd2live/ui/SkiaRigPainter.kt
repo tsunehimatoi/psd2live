@@ -18,6 +18,7 @@ import org.umamo.render.glsl.skslCompositeBlender
 import org.umamo.render.puppet.packedAlphaModeOf
 import org.umamo.render.puppet.packedColorModeOf
 import org.umamo.runtime.model.DrawableId
+import org.umamo.format.art.LayerRaster
 
 
 /**
@@ -203,9 +204,11 @@ internal class SkiaRigPainter(private val atlas: PackedAtlas) : AutoCloseable {
  * atlas. A mesh maps to its layer's raster through the layer's atlas placement, so the UVs need no rebuild; a
  * mesh whose layer has no placement on the page it samples keeps the atlas. Images are made on first use.
  */
-internal class SourcePixelImages(private val model: RigPreviewModel) : AutoCloseable {
-    class Source(val placement: io.github.psd2live.core.AtlasPlacement, val image: Image, val shader: Shader)
+internal class SourcePixelImages(private val model: RigPreviewModel, sharedTextures: SourcePixelTextures? = null) : AutoCloseable {
+    class Source(val placement: io.github.psd2live.core.AtlasPlacement, val shader: Shader)
 
+    private val textures = sharedTextures ?: SourcePixelTextures()
+    private val ownsTextures = sharedTextures == null
     private val rasters = model.analysis.layers.associate { it.source.id.raw to it.source.textureLayer.raster }
     private val byLayer = HashMap<String, Source?>()
 
@@ -214,15 +217,30 @@ internal class SourcePixelImages(private val model: RigPreviewModel) : AutoClose
         val placement = model.atlas.placementByLayerId[layerId]?.takeIf { it.page == page && it.scaleX > 0f && it.scaleY > 0f } ?: return null
         return byLayer.getOrPut(layerId) {
             val raster = rasters[layerId]?.takeIf { it.width > 0 && it.height > 0 } ?: return@getOrPut null
-            val image = Image.makeRaster(ImageInfo(raster.width, raster.height, ColorType.RGBA_8888, ColorAlphaType.UNPREMUL),
-                raster.rgba, raster.width * 4)
-            Source(placement, image, image.makeShader(FilterTileMode.CLAMP, FilterTileMode.CLAMP, SamplingMode.LINEAR, null))
+            Source(placement, textures.shader(raster))
         }
     }
 
     override fun close() {
-        byLayer.values.forEach { source -> source?.shader?.close(); source?.image?.close() }
         byLayer.clear()
+        if (ownsTextures) textures.close()
+    }
+}
+
+/** Drawables from several live previews can share the same source rasters even with different UV placements. */
+internal class SourcePixelTextures : AutoCloseable {
+    private class Texture(val image: Image, val shader: Shader)
+    private val textures = HashMap<LayerRaster, Texture>()
+
+    fun shader(raster: LayerRaster): Shader = textures.getOrPut(raster) {
+        val image = Image.makeRaster(ImageInfo(raster.width, raster.height, ColorType.RGBA_8888, ColorAlphaType.UNPREMUL),
+            raster.rgba, raster.width * 4)
+        Texture(image, image.makeShader(FilterTileMode.CLAMP, FilterTileMode.CLAMP, SamplingMode.LINEAR, null))
+    }.shader
+
+    override fun close() {
+        textures.values.forEach { source -> source.shader.close(); source.image.close() }
+        textures.clear()
     }
 }
 

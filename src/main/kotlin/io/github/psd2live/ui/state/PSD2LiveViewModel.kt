@@ -1468,6 +1468,13 @@ class PSD2LiveViewModel : AutoCloseable {
 
     /** Closes [page]'s tab, showing the workspace if it was the page shown. */
     internal fun closePage(page: AppPage) {
+        if (page == AppPage.PSD_GUIDE) {
+            if (!psdGuide.saving) {
+                showPage(page, PSD_GUIDE_CONTENT)
+                psdGuide.requestClose()
+            }
+            return
+        }
         openPages = openPages - page
         if (activePage == page) activePage = null
         if (page == AppPage.SETTINGS) endSettingsPage()
@@ -3468,6 +3475,11 @@ class PSD2LiveViewModel : AutoCloseable {
 		val target = runCatching { Path.of(path).toAbsolutePath().normalize() }.getOrNull()
 		val kind = target?.takeIf(Files::isRegularFile)?.let { classifyRecentPath(it.toString()) }
 		if (target == null || kind == null) { openRecentFile(path); return }
+		if (kind == RecentFileKind.PSD) {
+			openPsdGuide(target)
+			psdGuide.awaitIdle()
+			return
+		}
 		val permission = kotlinx.coroutines.CompletableDeferred<Boolean>()
 		withSavedChangesOrCancel({ permission.complete(false) }) { permission.complete(true) }
 		if (!permission.await()) return
@@ -3478,11 +3490,7 @@ class PSD2LiveViewModel : AutoCloseable {
 					openProjectNow(target, discardUnsaved = true)
 					if (_state.value.projectOpenGeneration != generation) leaveStartPage()
 				}
-				RecentFileKind.PSD -> {
-					setInputPath(target.toString())
-					analyze(discardUnsaved = true)
-					activeWorkJob?.join()
-				}
+				RecentFileKind.PSD -> Unit
 			}
 		} catch (failure: Exception) {
 			if (failure is kotlinx.coroutines.CancellationException) throw failure
@@ -3502,10 +3510,7 @@ class PSD2LiveViewModel : AutoCloseable {
 		}
 		when (classifyRecentPath(target.toString())) {
 			RecentFileKind.PROJECT -> openProject(target)
-			RecentFileKind.PSD -> withSavedChanges {
-				setInputPath(target.toString())
-				analyze()
-			}
+			RecentFileKind.PSD -> openPsdGuide(target)
 			null -> {
 				AppSettings.forgetRecentFile(path)
 				updateState { it.copy(recentFiles = AppSettings.recentFiles()) }
@@ -6441,8 +6446,9 @@ class PSD2LiveViewModel : AutoCloseable {
 		when (action) {
 			is io.github.psd2live.ui.utils.DesktopDropTarget.DroppedAction.OpenProject -> openProject(action.file.toPath())
 			is io.github.psd2live.ui.utils.DesktopDropTarget.DroppedAction.OpenPsd -> {
-				action.outputDir?.let { setOutputPath(it.absolutePath) }
-				withSavedChanges {
+				if (action.file.extension.equals("psd", true)) openPsdGuide(action.file.toPath(), action.outputDir?.toPath())
+				else withSavedChanges {
+					action.outputDir?.let { setOutputPath(it.absolutePath) }
 					setInputPath(action.file.absolutePath)
 					analyze(discardUnsaved = true)
 				}
@@ -7529,6 +7535,46 @@ class PSD2LiveViewModel : AutoCloseable {
             io.github.psd2live.application.WorkspaceInitialModifiers.EMPTY) }
     }
 
+    internal val psdGuide by lazy { PsdGuideState(scope) }
+
+    internal fun openPsdGuide(path: Path, outputDirectory: Path? = null) {
+        val host = (workspaceBackend as? DesktopWorkspace)?.host ?: return
+        psdGuide.request(path.toAbsolutePath().normalize(), outputDirectory, host)
+        showPage(AppPage.PSD_GUIDE, PSD_GUIDE_CONTENT)
+    }
+
+    internal fun discardPsdGuide() {
+        if (!psdGuide.discard((workspaceBackend as? DesktopWorkspace)?.host)) return
+        openPages = openPages - AppPage.PSD_GUIDE
+        if (_state.value.analysis == null) showStartPage() else showWorkspace()
+    }
+
+    internal fun createPsdGuideProject() {
+        val workspace = workspaceBackend as? DesktopWorkspace ?: return
+        if (psdGuide.busy || _state.value.isBusy || _state.value.projectSaving) return
+        val draft = psdGuide.guide ?: return
+        val candidate = psdGuide.finalCandidate ?: return
+        withSavedChanges {
+            if (psdGuide.guide !== draft || psdGuide.finalCandidate !== candidate) return@withSavedChanges
+            flushEditorFields()
+            endSwing()
+            previewRebuildJob?.cancel()
+            psdGuide.install(workspace.host, before = {
+                awaitProjectDrafts(workspace, true)
+                _state.first { !it.workspaceEditBusy }
+                val expected = workspace.snapshot()
+                io.github.psd2live.application.WorkspaceExecution(expected.projectId, expected.state, MutationAuthor.USER)
+            }) {
+                psdGuide.outputDirectory?.let { setOutputPath(it.toAbsolutePath().toString()) }
+                setInputPath(draft.path.toString())
+                psdGuide.clear()
+                openPages = openPages - AppPage.PSD_GUIDE
+                leaveStartPage()
+                openWorkspacePreset(WorkspacePreset.EDIT)
+            }
+        }
+    }
+
     /** Both adapters invoke the same application source capability; only this entry owns GUI confirmation. */
     fun importCmo3(path: Path, mode: io.github.psd2live.core.Cmo3ImportMode) {
         if (_state.value.isBusy || _state.value.projectSaving) return
@@ -8484,6 +8530,7 @@ class PSD2LiveViewModel : AutoCloseable {
 
 	override fun close() {
         if (!isClosed.compareAndSet(false, true)) return
+        psdGuide.clear()
         projectLifecycle.close()
         modifiers.close()
         materials.close()

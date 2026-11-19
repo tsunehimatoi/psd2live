@@ -142,7 +142,7 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
             it
         }
         val model = when (operation.operation) {
-            "modifier_update" -> buildTurnStyleStack(before, operation.request)
+            "modifier_update" -> buildTurnStyleStack(before.document, before.model, operation.request)
             "settings_update" -> {
                 val builder = WorkspacePreviewBuilder(deferRuntimeBundles = true)
                 val document = runInterruptible(Dispatchers.Default) {
@@ -163,34 +163,6 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
             return render(model)
         } finally {
             model.modifierBuildOwner?.takeUnless { it.published }?.close()
-        }
-    }
-
-    private suspend fun buildTurnStyleStack(before: WorkspaceCapture<RigPreviewModel>, request: JsonObject): RigPreviewModel {
-        val context = currentCoroutineContext()
-        return runInterruptible(Dispatchers.Default) {
-            val current = before.model
-            val overlay = before.document.rigEdits
-            val stack = WorkspaceModifierEdits.updateConfiguration(
-                RigModifierStack.fromJson(requireNotNull(overlay.modifierStack)), request, current)
-            // Applied patches are authored geometry. Only live playback stages are omitted from the render stack.
-            val skipped = stack.instances.filter { it.type in playbackModifierTypes && it.id !in stack.appliedNodes }
-                .mapTo(HashSet()) { it.id }
-            val staticStack = if (skipped.isEmpty()) stack else stack.copy(
-                instances = stack.instances.filterNot { it.id in skipped },
-                overrides = stack.overrides - skipped,
-                initializationFailures = stack.initializationFailures - skipped,
-                retryRevisions = stack.retryRevisions - skipped,
-                organization = null,
-            )
-            val pipeline = PSD2LivePipeline().apply {
-                deferRuntimeBundles = true
-                reuseModifierInputs(current)
-            }
-            val config = current.config.copy(rigEdits = overlay.copy(modifierStack = staticStack.toJson()))
-            val model = pipeline.buildPreview(before.document.source, config,
-                ProgressListener { _, _ -> context.ensureActive() }, current.atlas)
-            WorkspaceReferenceMeshes.sketched(model, before.document)
         }
     }
 
@@ -305,6 +277,33 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
         }
 
     companion object {
+        internal suspend fun buildTurnStyleStack(document: WorkspaceDocument, current: RigPreviewModel, request: JsonObject, shareOwner: Boolean = true): RigPreviewModel {
+            val context = currentCoroutineContext()
+            return runInterruptible(Dispatchers.Default) {
+                val overlay = document.rigEdits
+                val stack = WorkspaceModifierEdits.updateConfiguration(
+                    RigModifierStack.fromJson(requireNotNull(overlay.modifierStack)), request, current)
+                // Applied patches are authored geometry. Only live playback stages are omitted from the render stack.
+                val skipped = stack.instances.filter { it.type in playbackModifierTypes && it.id !in stack.appliedNodes }
+                    .mapTo(HashSet()) { it.id }
+                val staticStack = if (skipped.isEmpty()) stack else stack.copy(
+                    instances = stack.instances.filterNot { it.id in skipped },
+                    overrides = stack.overrides - skipped,
+                    initializationFailures = stack.initializationFailures - skipped,
+                    retryRevisions = stack.retryRevisions - skipped,
+                    organization = null,
+                )
+                val pipeline = PSD2LivePipeline().apply {
+                    deferRuntimeBundles = true
+                    reuseModifierInputs(current, shareOwner)
+                }
+                val config = current.config.copy(rigEdits = overlay.copy(modifierStack = staticStack.toJson()))
+                val model = pipeline.buildPreview(document.source, config,
+                    ProgressListener { _, _ -> context.ensureActive() }, current.atlas)
+                WorkspaceReferenceMeshes.sketched(model, document)
+            }
+        }
+
         private val playbackModifierTypes by lazy {
             val aliases = setOf("simulation", "physics", "motion")
             aliases + aliases.flatMap { type ->

@@ -48,6 +48,7 @@ internal fun PageModuleContent(id: String, state: PSD2LiveState, viewModel: PSD2
 		START_NAV -> StartNavPanel(state, viewModel, actions)
 		START_MAIN -> StartMainPanel(state, viewModel, actions)
 		START_DETAILS -> StartDetailsPanel(state, viewModel, actions)
+		PSD_GUIDE_CONTENT -> PsdGuidePage(viewModel)
 		HELP_NAV -> HelpNav(viewModel.helpTab, viewModel.helpPage, viewModel::setHelpTab, viewModel::showHelpPage)
 		HELP_CONTENT -> HelpPanel(viewModel.helpTab, viewModel.helpPage, state.keymap, onOpenPage = viewModel::showHelpPage,
 			onStartInteractiveTutorial = actions.onStartTutorialPath, operationDocs = viewModel.operationDocs)
@@ -61,6 +62,7 @@ internal fun pageModuleTitle(id: String, viewModel: PSD2LiveViewModel): String =
 	START_NAV -> pageTitle(AppPage.START)
 	START_MAIN -> startSectionTitle(viewModel.startSection)
 	START_DETAILS -> startDetailsTitle(viewModel.startSection)
+	PSD_GUIDE_CONTENT -> pageTitle(AppPage.PSD_GUIDE)
 	HELP_NAV -> pageTitle(AppPage.HELP)
 	HELP_CONTENT -> helpContentTitle(viewModel)
 	SETTINGS_NAV -> pageTitle(AppPage.SETTINGS)
@@ -77,6 +79,7 @@ private fun helpContentTitle(viewModel: PSD2LiveViewModel): String =
 /** A page's name, for its tab. */
 internal fun pageTitle(page: AppPage): String = tr(when (page) {
 	AppPage.START -> "start.page.tab"
+	AppPage.PSD_GUIDE -> "psdGuide.title"
 	AppPage.HELP -> "page.help"
 	AppPage.SETTINGS -> "page.settings"
 })
@@ -85,7 +88,7 @@ internal fun pageTitle(page: AppPage): String = tr(when (page) {
 @Composable
 internal fun PageIcon(page: AppPage, tint: Color, modifier: Modifier = Modifier.size(12.dp)) {
 	when (page) {
-		AppPage.START -> StartIcon(modifier, tint)
+		AppPage.START, AppPage.PSD_GUIDE -> StartIcon(modifier, tint)
 		AppPage.HELP -> IconInfo(modifier = modifier, tint = tint)
 		AppPage.SETTINGS -> GridIcon(modifier, tint) {
 			// A cog as one closed outline: six broad teeth on a round body, the axle hole open. Broad teeth and

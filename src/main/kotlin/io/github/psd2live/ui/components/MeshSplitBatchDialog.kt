@@ -3,6 +3,7 @@ package io.github.psd2live.ui.components
 import io.github.psd2live.ui.utils.toImageBitmapFast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -151,7 +152,7 @@ internal fun MeshSplitBatchDialog(
 }
 
 @Composable
-private fun SplitHeader(items: List<BatchSplitItemState>) {
+internal fun SplitHeader(items: List<BatchSplitItemState>, enabled: Boolean = true) {
     val colors = LocalToolColors.current
     val typography = LocalToolTypography.current
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -162,15 +163,16 @@ private fun SplitHeader(items: List<BatchSplitItemState>) {
             color = colors.textMuted,
         )
         Spacer(Modifier.weight(1f))
-        CompactButton(tr("editor.meshSplit.selectAll"), { items.forEach { it.isSelected = true } }, height = 22.dp)
-        CompactButton(tr("editor.meshSplit.deselectAll"), { items.forEach { it.isSelected = false } }, height = 22.dp)
+        CompactButton(tr("editor.meshSplit.selectAll"), { items.forEach { it.isSelected = true } }, enabled = enabled, height = 22.dp)
+        CompactButton(tr("editor.meshSplit.deselectAll"), { items.forEach { it.isSelected = false } }, enabled = enabled, height = 22.dp)
     }
 }
 
 /** A layer that can be split: its check, name, how the pieces are named, and each piece with its name. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SplitCard(item: BatchSplitItemState, previews: List<androidx.compose.ui.graphics.ImageBitmap>) {
+internal fun SplitCard(item: BatchSplitItemState, previews: List<androidx.compose.ui.graphics.ImageBitmap>,
+                       enabled: Boolean = true, onFocus: (() -> Unit)? = null, focused: Boolean = false) {
     val colors = LocalToolColors.current
     val typography = LocalToolTypography.current
     val count = item.count
@@ -180,7 +182,7 @@ private fun SplitCard(item: BatchSplitItemState, previews: List<androidx.compose
             .clip(RoundedCornerShape(6.dp))
             .background(if (item.isSelected) colors.panelBackground else colors.inputBackground.copy(alpha = 0.5f))
             .border(
-                BorderStroke(1.dp, if (item.isSelected) colors.accent.copy(alpha = 0.5f) else colors.divider),
+                BorderStroke(1.dp, if (focused || item.isSelected && onFocus == null) colors.accent.copy(alpha = 0.5f) else colors.divider),
                 RoundedCornerShape(6.dp),
             )
             .padding(10.dp),
@@ -191,39 +193,21 @@ private fun SplitCard(item: BatchSplitItemState, previews: List<androidx.compose
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            CompactCheckbox(checked = item.isSelected, onCheckedChange = { item.isSelected = it })
+            CompactCheckbox(checked = item.isSelected, enabled = enabled, onCheckedChange = { item.isSelected = it; onFocus?.invoke() })
             Text(
                 item.offer.layerName,
                 style = typography.body.copy(fontWeight = FontWeight.SemiBold),
                 color = if (item.isSelected) colors.textPrimary else colors.textMuted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
+                modifier = Modifier.weight(1f, fill = false).then(
+                    onFocus?.let { Modifier.clickable(enabled = enabled, onClick = it) } ?: Modifier),
             )
             Text(tr("editor.meshSplit.componentsCount", count), style = typography.caption, color = colors.textMuted)
             Spacer(Modifier.weight(1f))
-            if (item.isSelected) {
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    val choices = if (count == 2) listOf(
-                        SplitNamesMode.LR to "L / R",
-                        SplitNamesMode.TB to "T / B",
-                        SplitNamesMode.NUMBER to "1 / 2",
-                        SplitNamesMode.CUSTOM to tr("editor.meshSplit.custom"),
-                    ) else listOf(
-                        SplitNamesMode.NUMBER to "1…$count",
-                        SplitNamesMode.CUSTOM to tr("editor.meshSplit.custom"),
-                    )
-                    choices.forEach { (choice, label) ->
-                        CompactToggleChip(
-                            text = label,
-                            selected = item.mode == choice,
-                            onToggle = { item.mode = choice },
-                            showCheckWhenSelected = false,
-                        )
-                    }
-                }
-            }
+            if (item.isSelected && onFocus == null) SplitNamingModes(item, enabled, null)
         }
+        if (item.isSelected && onFocus != null) SplitNamingModes(item, enabled, onFocus)
 
         if (item.isSelected) {
             FlowRow(
@@ -233,24 +217,23 @@ private fun SplitCard(item: BatchSplitItemState, previews: List<androidx.compose
             ) {
                 item.components.indices.forEach { index ->
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Box(
+                        if (index < previews.size) Box(
                             Modifier.size(54.dp, 40.dp).clip(RoundedCornerShape(4.dp))
                                 .background(colors.inputBackground)
                                 .border(BorderStroke(1.dp, colors.divider), RoundedCornerShape(4.dp)),
                             contentAlignment = Alignment.Center,
                         ) {
-                            if (index < previews.size) {
-                                Image(
+                            Image(
                                     bitmap = previews[index],
                                     contentDescription = tr("editor.meshSplit.preview", index + 1),
                                     modifier = Modifier.fillMaxSize().padding(2.dp),
                                     contentScale = ContentScale.Fit,
-                                )
-                            }
+                            )
                         }
                         if (item.mode == SplitNamesMode.CUSTOM) {
                             CompactTextField(
                                 value = item.customNames.getOrElse(index) { "" },
+                                enabled = enabled,
                                 onValueChange = { value ->
                                     item.customNames = item.customNames.toMutableList().also {
                                         if (index < it.size) it[index] = value
@@ -268,6 +251,27 @@ private fun SplitCard(item: BatchSplitItemState, previews: List<androidx.compose
                     }
                 }
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SplitNamingModes(item: BatchSplitItemState, enabled: Boolean, onFocus: (() -> Unit)?) {
+    val count = item.count
+    val choices = if (count == 2) listOf(
+        SplitNamesMode.LR to "L / R",
+        SplitNamesMode.TB to "T / B",
+        SplitNamesMode.NUMBER to "1 / 2",
+        SplitNamesMode.CUSTOM to tr("editor.meshSplit.custom"),
+    ) else listOf(
+        SplitNamesMode.NUMBER to "1…$count",
+        SplitNamesMode.CUSTOM to tr("editor.meshSplit.custom"),
+    )
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        choices.forEach { (choice, label) ->
+            CompactToggleChip(text = label, selected = item.mode == choice,
+                onToggle = { item.mode = choice; onFocus?.invoke() }, enabled = enabled, showCheckWhenSelected = false)
         }
     }
 }
