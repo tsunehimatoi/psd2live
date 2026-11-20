@@ -42,18 +42,21 @@ internal val BRUSH_ANGLE = SliderOption("brush.angle", "editor.angle", OptionUni
     { it.brushAngle }, { e, v -> e.brushAngle = v.mod(360f) }, step = 15f, role = OptionRole.ANGLE)
 
 internal val BRUSH_FALLOFF = ChoiceOption("brush.falloff", "editor.falloff", { BrushFalloff.entries }, { _, f -> tr(f.labelKey) },
-    { it.brushFalloff }, { e, f -> e.brushFalloff = f }, inline = false)
+    { it.brushFalloff }, { e, f -> e.brushFalloff = f }, inline = false,
+    description = { _, f -> tr("${f.labelKey}.desc") })
 
 internal val BRUSH_CONNECTED = ToggleOption("brush.connected", "editor.connectedOnly", { it.connectedOnly }, { e, on -> e.connectedOnly = on })
 internal val GEOMETRY_EDIT_STAGE = ChoiceOption("deformation.stage", "editor.deformation.stage", { it.geometryEditStages() },
     { editor, stage -> editor.geometryEditStageLabel(stage) }, { it.geometryEditStage }, { editor, stage -> editor.changeGeometryEditStage(stage) },
-    inline = false)
+    inline = false, description = { editor, stage -> editor.geometryEditStageDescription(stage) })
 internal val GEOMETRY_CORRECTION_MODE = ChoiceOption("deformation.correctionMode", "editor.deformation.correctionMode", { listOf("delta", "absolute") },
     { _, mode -> tr("editor.deformation.correctionMode.$mode") },
-    { it.geometryCorrectionMode }, { e, mode -> e.geometryCorrectionMode = mode }, inline = false)
+    { it.geometryCorrectionMode }, { e, mode -> e.geometryCorrectionMode = mode }, inline = false,
+    description = { _, mode -> tr("editor.deformation.correctionMode.$mode.desc") })
 internal val DEFORMATION_KEY_POLICY = ChoiceOption("deformation.keyPolicy", "editor.deformation.keyPolicy", { listOf(false, true) },
     { _, snap -> tr(if (snap) "editor.deformation.keyPolicy.nearest" else "editor.deformation.keyPolicy.current") },
-    { it.snapDeformationToKeys }, { e, snap -> e.snapDeformationToKeys = snap }, inline = false)
+    { it.snapDeformationToKeys }, { e, snap -> e.snapDeformationToKeys = snap }, inline = false,
+    description = { _, snap -> tr(if (snap) "editor.deformation.keyPolicy.nearest.desc" else "editor.deformation.keyPolicy.current.desc") })
 
 internal val TEMPORARY_WARP_DIVISIONS = ChoiceOption("tempWarp.divisions", "editor.tempWarp.divisions", { (1..4).toList() },
     { _, n -> "$n×$n" }, { it.temporaryWarpDivisions }, { e, n -> e.changeTemporaryWarpDivisions(n) })

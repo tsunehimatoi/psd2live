@@ -908,7 +908,7 @@ internal fun MaterialLinkChip(name: String, shared: Int, onOpen: () -> Unit, onU
 				LinkGlyph(colors.accent)
 			}
 		}
-		io.github.psd2live.ui.views.texture.FloatingMenu(expanded = open, onDismiss = { open = false }, width = 200.dp) {
+		io.github.psd2live.ui.views.texture.FloatingMenu(expanded = open, onDismiss = { open = false }) {
 			FloatingMenuSection(name)
 			FloatingMenuRow(tr("materials.menu.edit"), { open = false; onOpen() })
 			FloatingMenuRow(tr("materials.link.unlink"), { open = false; onUnlink() })

@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -342,12 +343,13 @@ internal fun AccentButton(label: String?, onClick: () -> Unit, enabled: Boolean 
  * A menu dropping from a bar control, in the mode menu's style: frosted, scaling in from its anchor's corner.
  * Put it in the anchor's Box; [alignment] TopStart drops it under the anchor's left edge, TopEnd under its right.
  * [rise] opens it above the anchor instead, for controls at the bottom of a canvas (align the Box BottomStart).
+ * When [width] is unspecified, the menu is at least as wide as its anchor control and expands to fit its content.
  */
 @Composable
 internal fun FloatingMenu(
 	expanded: Boolean,
 	onDismiss: () -> Unit,
-	width: Dp = 220.dp,
+	width: Dp = Dp.Unspecified,
 	alignment: Alignment = Alignment.TopStart,
 	rise: Boolean = false,
 	content: @Composable ColumnScope.() -> Unit,
@@ -358,26 +360,120 @@ internal fun FloatingMenu(
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
 	val density = LocalDensity.current
+	var anchorWidthPx by remember { mutableStateOf(0) }
+	val gapPx = with(density) { 4.dp.roundToPx() }
+	val marginPx = with(density) { 4.dp.roundToPx() }
+	val alignEnd = alignment == Alignment.TopEnd || alignment == Alignment.BottomEnd
+	val positionProvider = remember(gapPx, marginPx, alignEnd, rise) {
+		object : androidx.compose.ui.window.PopupPositionProvider {
+			override fun calculatePosition(
+				anchorBounds: androidx.compose.ui.unit.IntRect,
+				windowSize: androidx.compose.ui.unit.IntSize,
+				layoutDirection: androidx.compose.ui.unit.LayoutDirection,
+				popupContentSize: androidx.compose.ui.unit.IntSize,
+			): IntOffset {
+				if (anchorWidthPx != anchorBounds.width) anchorWidthPx = anchorBounds.width
+				val rawX = if (alignEnd) anchorBounds.right - popupContentSize.width else anchorBounds.left
+				val x = rawX.coerceIn(marginPx, maxOf(marginPx, windowSize.width - popupContentSize.width - marginPx))
+				val aboveY = anchorBounds.top - gapPx - popupContentSize.height
+				val belowY = anchorBounds.bottom + gapPx
+				val rawY = if (rise) {
+					if (aboveY >= marginPx || aboveY >= windowSize.height - belowY - popupContentSize.height) aboveY else belowY
+				} else {
+					if (belowY + popupContentSize.height <= windowSize.height - marginPx || belowY + popupContentSize.height <= windowSize.height) belowY else aboveY
+				}
+				val y = rawY.coerceIn(marginPx, maxOf(marginPx, windowSize.height - popupContentSize.height - marginPx))
+				return IntOffset(x, y)
+			}
+		}
+	}
+	val anchorMinWidth = with(density) { anchorWidthPx.toDp() }
+	val minOuterWidth = if (width != Dp.Unspecified) maxOf(width, anchorMinWidth) else anchorMinWidth
+	val minInnerWidth = (minOuterWidth - 8.dp).coerceAtLeast(0.dp)
 	val body: @Composable () -> Unit = {
 		CompositionLocalProvider(LocalDensity provides density, LocalToolColors provides colors, LocalToolTypography provides typography) {
 			Box(
 				Modifier
-					.menuAppearance(visibility, TransformOrigin(if (alignment == Alignment.TopEnd || alignment == Alignment.BottomEnd) 0.88f else 0.12f, if (rise) 1f else 0f), rise)
-					.width(width)
+					.menuAppearance(visibility, TransformOrigin(if (alignEnd) 0.88f else 0.12f, if (rise) 1f else 0f), rise)
+					.then(if (width != Dp.Unspecified) Modifier.width(minOuterWidth) else Modifier.defaultMinSize(minWidth = anchorMinWidth))
 					.heightIn(max = 360.dp)
 					.menuPanel()
 					.padding(4.dp)
 					.verticalScroll(rememberScrollState()),
-			) { MenuGlide { Column(verticalArrangement = Arrangement.spacedBy(1.dp), content = content) } }
+			) {
+				MenuGlide {
+					Column(
+						Modifier.width(IntrinsicSize.Max).defaultMinSize(minWidth = minInnerWidth),
+						verticalArrangement = Arrangement.spacedBy(1.dp),
+						content = content,
+					)
+				}
+			}
 		}
 	}
 	Popup(
-		alignment = alignment,
-		offset = with(density) { IntOffset(0, (if (rise) -28 else 28).dp.roundToPx()) },
+		popupPositionProvider = positionProvider,
 		onDismissRequest = onDismiss,
 		properties = PopupProperties(focusable = true),
 		content = body,
 	)
+}
+
+/**
+ * A small side popover shown to the right (or left, when near the window's right edge) of a hovered dropdown row to
+ * explain an abbreviated option without covering sibling rows in the open list.
+ */
+@Composable
+internal fun MenuItemSideTip(description: String?, visible: Boolean) {
+	if (!visible || description.isNullOrBlank()) return
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	val density = LocalDensity.current
+	val gapPx = with(density) { 10.dp.roundToPx() }
+	val marginPx = with(density) { 8.dp.roundToPx() }
+	val provider = remember(gapPx, marginPx) {
+		object : androidx.compose.ui.window.PopupPositionProvider {
+			override fun calculatePosition(
+				anchorBounds: androidx.compose.ui.unit.IntRect,
+				windowSize: androidx.compose.ui.unit.IntSize,
+				layoutDirection: androidx.compose.ui.unit.LayoutDirection,
+				popupContentSize: androidx.compose.ui.unit.IntSize,
+			): IntOffset {
+				val right = anchorBounds.right + gapPx
+				val left = anchorBounds.left - gapPx - popupContentSize.width
+				val opensLeft = right + popupContentSize.width > windowSize.width - marginPx &&
+					(left >= marginPx || anchorBounds.left > windowSize.width - anchorBounds.right)
+				val x = (if (opensLeft) left else right)
+					.coerceIn(marginPx, maxOf(marginPx, windowSize.width - popupContentSize.width - marginPx))
+				val y = anchorBounds.top
+					.coerceIn(marginPx, maxOf(marginPx, windowSize.height - popupContentSize.height - marginPx))
+				return IntOffset(x, y)
+			}
+		}
+	}
+	Popup(
+		popupPositionProvider = provider,
+		properties = PopupProperties(focusable = false),
+	) {
+		CompositionLocalProvider(
+			LocalDensity provides density,
+			LocalToolColors provides colors,
+			LocalToolTypography provides typography,
+		) {
+			Box(
+				Modifier
+					.widthIn(max = 220.dp)
+					.menuPanel()
+					.padding(horizontal = 8.dp, vertical = 5.dp),
+			) {
+				Text(
+					text = description,
+					style = typography.captionSmall.copy(fontSize = 10.5.sp, lineHeight = 14.5.sp),
+					color = colors.textPrimary,
+				)
+			}
+		}
+	}
 }
 
 /**
@@ -562,6 +658,7 @@ internal fun FloatingMenuRow(
 	selected: Boolean = false,
 	enabled: Boolean = true,
 	hint: String? = null,
+	description: String? = null,
 	trailing: String? = null,
 	bar: Boolean = true,
 	danger: Boolean = false,
@@ -596,6 +693,7 @@ internal fun FloatingMenuRow(
 			.padding(horizontal = 6.dp, vertical = 3.dp),
 		verticalAlignment = Alignment.CenterVertically,
 	) {
+		MenuItemSideTip(description, hovered && enabled)
 		Box(Modifier.width(2.dp).height(14.dp * edge).clip(CircleShape).background(colors.accent.copy(alpha = edge)))
 		Spacer(Modifier.width(5.dp))
 		if (icon != null) {
@@ -939,8 +1037,8 @@ internal fun <T> GlidingSegments(
 /** One choice of a group in a [FloatingMenu]: a radio mark at the end, filled while [selected]. */
 @Composable
 internal fun FloatingMenuRadio(label: String, selected: Boolean, onSelect: () -> Unit, enabled: Boolean = true, hint: String? = null,
-                               icon: (@Composable (Color) -> Unit)? = null) {
-	FloatingMenuRow(label, onSelect, selected = selected, enabled = enabled, hint = hint, bar = false, icon = icon,
+                               description: String? = null, icon: (@Composable (Color) -> Unit)? = null) {
+	FloatingMenuRow(label, onSelect, selected = selected, enabled = enabled, hint = hint, description = description, bar = false, icon = icon,
 		control = { RadioMark(selected, enabled) })
 }
 

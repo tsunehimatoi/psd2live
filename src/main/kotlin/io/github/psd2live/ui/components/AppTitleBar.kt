@@ -3,11 +3,13 @@ package io.github.psd2live.ui.components
 import io.github.psd2live.ui.views.texture.LocalMenuGlide
 import io.github.psd2live.ui.views.texture.glideRow
 import io.github.psd2live.ui.views.texture.MenuGlide
+import io.github.psd2live.ui.views.texture.MenuItemSideTip
 import io.github.psd2live.ui.views.texture.menuPanel
 import io.github.psd2live.ui.views.texture.menuAppearance
 import io.github.psd2live.ui.theme.Corners
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -1054,6 +1056,7 @@ private fun AppSeamlessDropdownMenu(
     visibility.targetState = expanded
     if (!visibility.currentState && !visibility.targetState) return
     val density = LocalDensity.current
+    var anchorWidthPx by remember { mutableStateOf(0) }
     val gapPx = with(density) { 2.dp.roundToPx() }
     val shiftPx = with(density) { (MenuRowInset - MenuTitleInset).roundToPx() }
     val positionProvider = remember(tutorialOverlay != null, gapPx, shiftPx, alignEnd) {
@@ -1063,13 +1066,17 @@ private fun AppSeamlessDropdownMenu(
                 windowSize: androidx.compose.ui.unit.IntSize,
                 layoutDirection: androidx.compose.ui.unit.LayoutDirection,
                 popupContentSize: androidx.compose.ui.unit.IntSize,
-            ): IntOffset = if (tutorialOverlay != null) IntOffset.Zero
+            ): IntOffset {
+                if (anchorWidthPx != anchorBounds.width) anchorWidthPx = anchorBounds.width
+                return if (tutorialOverlay != null) IntOffset.Zero
                 else IntOffset(
                     if (alignEnd) anchorBounds.right - popupContentSize.width else (anchorBounds.left - shiftPx).coerceAtLeast(0),
                     anchorBounds.bottom + gapPx,
                 )
+            }
         }
     }
+    val minInnerWidth = with(density) { (anchorWidthPx - 8.dp.roundToPx()).coerceAtLeast(0).toDp() }
     Popup(
         popupPositionProvider = positionProvider,
         onDismissRequest = onDismissRequest,
@@ -1083,7 +1090,10 @@ private fun AppSeamlessDropdownMenu(
                     .padding(4.dp),
             ) {
                 MenuGlide {
-                    Column(modifier.width(IntrinsicSize.Max), verticalArrangement = Arrangement.spacedBy(1.dp)) { content() }
+                    Column(
+                        modifier.width(IntrinsicSize.Max).defaultMinSize(minWidth = minInnerWidth),
+                        verticalArrangement = Arrangement.spacedBy(1.dp),
+                    ) { content() }
                 }
             }
             // Draw after the menu, in the same popup. No cross-popup z-order or coordinate conversion.
@@ -1111,6 +1121,7 @@ fun AppDropdownMenu(
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
 	val density = LocalDensity.current
+	var anchorWidthPx by remember { mutableStateOf(0) }
 	val gapPx = with(density) { 2.dp.roundToPx() }
 	val shiftX = with(density) { offset.x.roundToPx() }
 	val shiftY = with(density) { offset.y.roundToPx() }
@@ -1122,6 +1133,7 @@ fun AppDropdownMenu(
 				layoutDirection: androidx.compose.ui.unit.LayoutDirection,
 				popupContentSize: androidx.compose.ui.unit.IntSize,
 			): IntOffset {
+				if (anchorWidthPx != anchorBounds.width) anchorWidthPx = anchorBounds.width
 				val x = (anchorBounds.left + shiftX).coerceAtMost(windowSize.width - popupContentSize.width).coerceAtLeast(0)
 				val below = anchorBounds.bottom + gapPx + shiftY
 				val y = if (below + popupContentSize.height <= windowSize.height) below
@@ -1130,6 +1142,7 @@ fun AppDropdownMenu(
 			}
 		}
 	}
+	val minInnerWidth = with(density) { (anchorWidthPx - 8.dp.roundToPx()).coerceAtLeast(0).toDp() }
 	Popup(
 		popupPositionProvider = positionProvider,
 		onDismissRequest = onDismissRequest,
@@ -1147,7 +1160,11 @@ fun AppDropdownMenu(
 					.padding(4.dp),
 			) {
 				MenuGlide {
-					Column(modifier.width(IntrinsicSize.Max), verticalArrangement = Arrangement.spacedBy(1.dp), content = content)
+					Column(
+						modifier.width(IntrinsicSize.Max).defaultMinSize(minWidth = minInnerWidth),
+						verticalArrangement = Arrangement.spacedBy(1.dp),
+						content = content,
+					)
 				}
 			}
 		}
@@ -1186,6 +1203,7 @@ fun AppMenuItem(
 	isChecked: Boolean? = null,
 	enabled: Boolean = true,
 	highlighted: Boolean = false,
+	description: String? = null,
 	icon: (@Composable (tint: Color) -> Unit)? = null,
 	indentCheckSpace: Boolean = false,
 	/**
@@ -1228,12 +1246,12 @@ fun AppMenuItem(
 			.clickable(interactionSource = interaction, indication = null, enabled = enabled, onClick = onClick)
 			.padding(horizontal = 8.dp),
 		verticalAlignment = Alignment.CenterVertically,
-		horizontalArrangement = Arrangement.SpaceBetween,
 	) {
+		MenuItemSideTip(description, isHovered && enabled)
 		Row(
 			verticalAlignment = Alignment.CenterVertically,
 			horizontalArrangement = Arrangement.spacedBy(6.dp),
-			modifier = Modifier.weight(1f, fill = false),
+			modifier = Modifier.weight(1f),
 		) {
 			if (isChild) {
 				Canvas(

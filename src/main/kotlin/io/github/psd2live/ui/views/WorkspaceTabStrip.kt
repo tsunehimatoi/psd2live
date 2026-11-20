@@ -639,7 +639,6 @@ internal fun TabStripDropdown(
 	AppDropdownMenu(
 		expanded = expanded,
 		onDismissRequest = onDismissRequest,
-		modifier = Modifier.widthIn(min = 210.dp, max = 280.dp),
 		content = content,
 	)
 }

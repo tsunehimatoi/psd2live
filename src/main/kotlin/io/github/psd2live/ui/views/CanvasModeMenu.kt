@@ -23,8 +23,10 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -78,6 +80,7 @@ import androidx.compose.ui.input.key.isShiftPressed
 import io.github.psd2live.ui.state.CanvasMode
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
+import io.github.psd2live.ui.views.texture.MenuItemSideTip
 import io.github.psd2live.ui.views.texture.menuAppearance
 import io.github.psd2live.ui.views.texture.menuArrival
 import io.github.psd2live.ui.views.texture.menuPanel
@@ -101,6 +104,8 @@ internal enum class CanvasModeChoice(val mode: EditHierarchyMode?) {
     val shortcut: ShortcutAction get() = ShortcutAction.valueOf("MODE_$name")
 
     val label: String get() = mode?.let(::modeLabel) ?: tr("editor.mode.preview")
+
+    val description: String get() = tr("editor.mode.${name.lowercase()}.desc")
 
     companion object {
         fun of(canvasMode: CanvasMode, mode: EditHierarchyMode): CanvasModeChoice =
@@ -131,7 +136,6 @@ internal fun CanvasModeIcon(choice: CanvasModeChoice, color: Color, size: Dp = 1
 
 private val MenuItemHeight = 28.dp
 private val MenuItemGap = 1.dp
-private val MenuWidth = 212.dp
 
 /** Every mode uses the same row spacing. */
 private fun menuRowTop(index: Int): Dp = (MenuItemHeight + MenuItemGap) * index
@@ -245,11 +249,29 @@ private fun CanvasModeMenuPopup(
     val colors = LocalToolColors.current
     val typography = LocalToolTypography.current
     val density = LocalDensity.current
-    val offset = with(density) { IntOffset(0, 28.dp.roundToPx()) }
+    var anchorWidthPx by remember { mutableStateOf(0) }
+    val gapPx = with(density) { 4.dp.roundToPx() }
+    val marginPx = with(density) { 4.dp.roundToPx() }
+    val positionProvider = remember(gapPx, marginPx) {
+        object : androidx.compose.ui.window.PopupPositionProvider {
+            override fun calculatePosition(
+                anchorBounds: androidx.compose.ui.unit.IntRect,
+                windowSize: androidx.compose.ui.unit.IntSize,
+                layoutDirection: androidx.compose.ui.unit.LayoutDirection,
+                popupContentSize: androidx.compose.ui.unit.IntSize,
+            ): IntOffset {
+                if (anchorWidthPx != anchorBounds.width) anchorWidthPx = anchorBounds.width
+                val x = anchorBounds.left.coerceIn(marginPx, maxOf(marginPx, windowSize.width - popupContentSize.width - marginPx))
+                val y = (anchorBounds.bottom + gapPx).coerceIn(marginPx, maxOf(marginPx, windowSize.height - popupContentSize.height - marginPx))
+                return IntOffset(x, y)
+            }
+        }
+    }
+    val anchorMinWidth = with(density) { anchorWidthPx.toDp() }
+    val minInnerWidth = (anchorMinWidth - 8.dp).coerceAtLeast(0.dp)
 
     Popup(
-        alignment = Alignment.TopStart,
-        offset = offset,
+        popupPositionProvider = positionProvider,
         onDismissRequest = onDismiss,
         properties = PopupProperties(focusable = true),
     ) {
@@ -277,7 +299,8 @@ private fun CanvasModeMenuPopup(
             Box(
                 modifier = Modifier
                     .menuAppearance(visibility, TransformOrigin(0.12f, 0f), rise = false)
-                    .width(MenuWidth)
+                    .width(IntrinsicSize.Max)
+                    .defaultMinSize(minWidth = anchorMinWidth)
                     .menuPanel()
                     .focusRequester(focusRequester)
                     .focusable()
@@ -324,7 +347,7 @@ private fun CanvasModeMenuPopup(
                         .clip(RoundedCornerShape(5.dp))
                         .background(colors.controlHover.copy(alpha = 0.75f))
                 )
-                Column {
+                Column(Modifier.width(IntrinsicSize.Max).defaultMinSize(minWidth = minInnerWidth)) {
                     choices.forEachIndexed { index, choice ->
                         ModeMenuRow(
                             choice = choice,
@@ -381,6 +404,7 @@ private fun ModeMenuRow(
             .padding(horizontal = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        MenuItemSideTip(choice.description, hovered)
         // The current mode is marked by a bar at the row's edge; the moving highlight is the focus.
         val bar by animateFloatAsState(if (selected) 1f else 0f, tween(Motion.Instant, easing = FastOutSlowInEasing))
         Box(
@@ -402,6 +426,7 @@ private fun ModeMenuRow(
                 maxLines = 1,
             )
         }
+        Spacer(Modifier.width(12.dp))
         if (waiting) {
             Box(Modifier.size(5.dp).clip(CircleShape).background(colors.warning))
             Spacer(Modifier.width(6.dp))

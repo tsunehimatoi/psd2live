@@ -939,7 +939,6 @@ private fun StatusBar(
 			AppDropdownMenu(
 				expanded = showZoomMenu,
 				onDismissRequest = { showZoomMenu = false },
-				modifier = Modifier.widthIn(min = 210.dp, max = 280.dp),
 			) {
 				AppMenuHeader(tr("menu.view.category.zoom"))
 				AppMenuItem(

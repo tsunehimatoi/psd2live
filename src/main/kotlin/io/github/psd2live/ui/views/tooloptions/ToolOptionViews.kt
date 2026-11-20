@@ -233,6 +233,7 @@ private fun <T> BarChoice(editor: CanvasEditor, option: ChoiceOption<T>, focus: 
             choices.forEach { choice ->
                 FloatingMenuRadio(option.label(editor, choice), selected = choice == current,
                     onSelect = { option.set(editor, choice); open = false; focus() },
+                    description = option.description?.invoke(editor, choice),
                     icon = if (choiceHasIcon(choice)) { tint -> ChoiceIcon(choice, tint) } else null)
             }
         }
@@ -445,6 +446,7 @@ private fun <T> MenuChoiceRow(editor: CanvasEditor, option: ChoiceOption<T>) {
 private fun <T> MenuChoiceRadio(editor: CanvasEditor, option: ChoiceOption<T>, index: Int) {
     val choice = option.choices(editor).getOrNull(index) ?: return
     FloatingMenuRadio(option.label(editor, choice), selected = choice == option.get(editor), onSelect = { option.set(editor, choice) },
+        description = option.description?.invoke(editor, choice),
         icon = if (choiceHasIcon(choice)) { tint -> ChoiceIcon(choice, tint) } else null)
 }
 
@@ -453,6 +455,7 @@ private fun <T> MenuChoiceRadios(editor: CanvasEditor, option: ChoiceOption<T>) 
     val current = option.get(editor)
     option.choices(editor).forEach { choice ->
         FloatingMenuRadio(option.label(editor, choice), selected = choice == current, onSelect = { option.set(editor, choice) },
+            description = option.description?.invoke(editor, choice),
             icon = if (choiceHasIcon(choice)) { tint -> ChoiceIcon(choice, tint) } else null)
     }
 }

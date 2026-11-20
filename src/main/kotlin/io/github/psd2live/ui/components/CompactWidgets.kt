@@ -895,6 +895,7 @@ fun <T> CompactSelect(
 	modifier: Modifier = Modifier,
 	enabled: Boolean = true,
 	optionEnabled: (T) -> Boolean = { true },
+	optionDescription: ((T) -> String?)? = null,
 	height: Dp = 24.dp,
 ) {
 	val colors = LocalToolColors.current
@@ -936,10 +937,16 @@ fun <T> CompactSelect(
 		}
 		AppDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
 			for (option in options) {
-				AppMenuItem(text = label(option), isChecked = option == selected, enabled = optionEnabled(option), onClick = {
-					open = false
-					if (option != selected) onSelect(option)
-				})
+				AppMenuItem(
+					text = label(option),
+					isChecked = option == selected,
+					enabled = optionEnabled(option),
+					description = optionDescription?.invoke(option),
+					onClick = {
+						open = false
+						if (option != selected) onSelect(option)
+					},
+				)
 			}
 		}
 	}
@@ -1589,6 +1596,7 @@ fun <T> CompactDropdown(
 	modifier: Modifier = Modifier,
 	itemLabel: (T) -> String = { it.toString() },
 	itemEnabled: (T) -> Boolean = { true },
+	itemDescription: ((T) -> String?)? = null,
 	enabled: Boolean = true,
 	height: Dp = 24.dp,
 ) {
@@ -1630,6 +1638,7 @@ fun <T> CompactDropdown(
 					text = itemLabel(item),
 					isChecked = item == selectedItem,
 					enabled = isItemEnabled,
+					description = itemDescription?.invoke(item),
 					onClick = {
 						onItemSelected(item)
 						expanded = false

@@ -107,7 +107,7 @@ internal fun BoxScope.CanvasPreviewToolbar(
 						fontWeight = FontWeight.Medium, maxLines = 1)
 				},
 			)
-			FloatingMenu(expanded = fpsMenu, onDismiss = { fpsMenu = false }, width = 150.dp) {
+			FloatingMenu(expanded = fpsMenu, onDismiss = { fpsMenu = false }) {
 				for (choice in (RigEditOverlay.FPS_CHOICES + fps).distinct()) {
 					FloatingMenuRadio(fpsLabel(choice), selected = choice == fps, onSelect = { fpsMenu = false; onSelectFps(choice) })
 				}

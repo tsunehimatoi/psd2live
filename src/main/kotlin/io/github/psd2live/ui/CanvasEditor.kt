@@ -1618,6 +1618,11 @@ internal class CanvasEditor(
         val name = entry?.instance?.config?.get("name")?.jsonPrimitive?.contentOrNull ?: entry?.instance?.type ?: stage
         tr("editor.deformation.stage.after", name, stage.removePrefix("modifier:"))
     }
+    fun geometryEditStageDescription(stage: String): String = if (!stage.startsWith("modifier:")) tr("editor.deformation.stage.$stage.desc") else {
+        val entry = state.previewModel?.modifierEvaluation?.entries?.firstOrNull { it.instance.id == stage.removePrefix("modifier:") }
+        val name = entry?.instance?.config?.get("name")?.jsonPrimitive?.contentOrNull ?: entry?.instance?.type ?: stage
+        tr("editor.deformation.stage.after.desc", name, stage.removePrefix("modifier:"))
+    }
     fun changeGeometryEditStage(stage: String) {
         if (busy || dragging) return
         try {

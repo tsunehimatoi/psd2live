@@ -129,6 +129,8 @@ internal class ChoiceOption<T>(
     val variant: Boolean = false,
     /** Whether a row of it in the menu carries its name; off for choices that name themselves. */
     val captioned: Boolean = true,
+    /** Optional side-popover description explaining each choice when hovered in a dropdown list. */
+    val description: ((CanvasEditor, T) -> String?)? = null,
 ) : ToolOption
 
 /** On or off. */
