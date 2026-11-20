@@ -1427,6 +1427,7 @@ class PSD2LiveViewModel : AutoCloseable {
 
     /** Back to the active workspace; the start page folds away, other pages keep their tabs. */
     fun leaveStartPage() {
+        if (activePage == AppPage.START && startSection == StartSection.SETTINGS) endSettingsPage()
         openPages = openPages - AppPage.START
         showWorkspace()
     }
@@ -1434,36 +1435,36 @@ class PSD2LiveViewModel : AutoCloseable {
     /** Opens [page] as a tab and shows it, with [module] brought forward when given. */
     internal fun showPage(page: AppPage, module: String? = null) {
         if (page !in openPages) openPages = AppPage.entries.filter { it in openPages || it == page }
-        if (activePage == AppPage.SETTINGS && page != AppPage.SETTINGS) endSettingsPage()
+        if (activePage == AppPage.START && startSection == StartSection.SETTINGS && page != AppPage.START) endSettingsPage()
         activePage = page
         if (module != null && module in page.modules) requestedPageModule = module
     }
 
-    /** Shows the help page on [tab], its content panel brought forward. */
+    /** Shows the help section on [tab] inside the start hub. */
     internal fun showHelp(tab: HelpTab) {
         helpTab = tab
-        showPage(AppPage.HELP, HELP_CONTENT)
+        showStartPage(StartSection.HELP)
     }
 
     internal fun setHelpTab(tab: HelpTab) {
         helpTab = tab
     }
 
-    /** Shows the manual or tutorial page [id] on the help page; a page that does not open is ignored. */
+    /** Shows the manual or tutorial page [id] in the help section; a page that does not open is ignored. */
     internal fun showHelpPage(id: String) {
         val page = Manual.page(id)?.takeIf { it.opens } ?: return
         helpPage = page.id
         helpTab = if (page.root == Manual.Root.MANUAL) HelpTab.MANUAL else HelpTab.TUTORIALS
-        showPage(AppPage.HELP, HELP_CONTENT)
+        showStartPage(StartSection.HELP)
     }
 
     internal fun setSettingsTopic(topic: SettingsTopic) {
         settingsTopic = topic
     }
 
-    /** Shows [page], or goes back to the workspace when it already shows: what its shortcut does. */
-    internal fun togglePage(page: AppPage, module: String? = null) {
-        if (activePage == page && module == null) showWorkspace() else showPage(page, module)
+    /** Shows [section] on the start hub, or goes back to the workspace when it already shows: what its shortcut does. */
+    internal fun toggleStartSection(section: StartSection) {
+        if (activePage == AppPage.START && startSection == section) showWorkspace() else showStartPage(section)
     }
 
     /** Closes [page]'s tab, showing the workspace if it was the page shown. */
@@ -1475,14 +1476,14 @@ class PSD2LiveViewModel : AutoCloseable {
             }
             return
         }
+        if (page == AppPage.START && activePage == AppPage.START && startSection == StartSection.SETTINGS) endSettingsPage()
         openPages = openPages - page
         if (activePage == page) activePage = null
-        if (page == AppPage.SETTINGS) endSettingsPage()
     }
 
     /** Back to the active workspace, every page keeping its tab. */
     internal fun showWorkspace() {
-        if (activePage == AppPage.SETTINGS) endSettingsPage()
+        if (activePage == AppPage.START && startSection == StartSection.SETTINGS) endSettingsPage()
         activePage = null
     }
 
@@ -1511,6 +1512,7 @@ class PSD2LiveViewModel : AutoCloseable {
     }
 
     internal fun setStartSection(section: StartSection) {
+        if (startSection == StartSection.SETTINGS && section != StartSection.SETTINGS) endSettingsPage()
         startSection = section
     }
 
@@ -4941,12 +4943,12 @@ class PSD2LiveViewModel : AutoCloseable {
 		updateState { it.copy(mutedPrompts = emptySet()) }
 	}
 
-	fun openSettings() = showPage(AppPage.SETTINGS)
+	fun openSettings() = showStartPage(StartSection.SETTINGS)
 
-	/** Opens the settings page on [topic]. */
+	/** Opens the settings section on [topic]. */
 	internal fun openSettings(topic: SettingsTopic) {
 		settingsTopic = topic
-		showPage(AppPage.SETTINGS, SETTINGS_CONTENT)
+		showStartPage(StartSection.SETTINGS)
 	}
 
 	/** Leaving the settings page: a shortcut being recorded is dropped and the canvas takes the keys again. */

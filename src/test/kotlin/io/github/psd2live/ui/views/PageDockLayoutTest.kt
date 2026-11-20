@@ -2,9 +2,9 @@ package io.github.psd2live.ui.views
 
 import io.github.psd2live.ui.state.AppPage
 import io.github.psd2live.ui.state.AppSettings
-import io.github.psd2live.ui.state.HELP_NAV
+import io.github.psd2live.ui.state.PSD_GUIDE_CONTENT
 import io.github.psd2live.ui.state.PageArrangement
-import io.github.psd2live.ui.state.SETTINGS_CONTENT
+import io.github.psd2live.ui.state.START_DETAILS
 import io.github.psd2live.ui.state.START_MAIN
 import io.github.psd2live.ui.state.pageOfModule
 import kotlin.test.Test
@@ -21,23 +21,23 @@ class PageDockLayoutTest {
 	}
 
 	@Test fun aSavedLayoutComesBackAsArranged() {
-		val moved = dockModule(pageDockLayout(AppPage.HELP), HELP_NAV, null, DockSide.BOTTOM)
-		val root = pageDockRoot(AppPage.HELP, PageArrangement(dockJson.encodeToString(DockNode.serializer(), moved)))
+		val moved = dockModule(pageDockLayout(AppPage.START), START_DETAILS, null, DockSide.BOTTOM)
+		val root = pageDockRoot(AppPage.START, PageArrangement(dockJson.encodeToString(DockNode.serializer(), moved)))
 		assertEquals(moved, root)
 	}
 
 	@Test fun aLayoutNamingOtherPanelsFallsBackToTheDefault() {
-		val foreign = dockModule(pageDockLayout(AppPage.HELP), START_MAIN, null, DockSide.RIGHT)
-		val root = pageDockRoot(AppPage.HELP, PageArrangement(dockJson.encodeToString(DockNode.serializer(), foreign)))
-		assertEquals(AppPage.HELP.modules.sorted(), root.allModules().sorted())
-		assertEquals(pageDockLayout(AppPage.HELP).allModules(), root.allModules())
-		assertEquals(pageDockLayout(AppPage.HELP).allModules(), pageDockRoot(AppPage.HELP, PageArrangement("not json")).allModules())
+		val foreign = dockModule(pageDockLayout(AppPage.START), PSD_GUIDE_CONTENT, null, DockSide.RIGHT)
+		val root = pageDockRoot(AppPage.START, PageArrangement(dockJson.encodeToString(DockNode.serializer(), foreign)))
+		assertEquals(AppPage.START.modules.sorted(), root.allModules().sorted())
+		assertEquals(pageDockLayout(AppPage.START).allModules(), root.allModules())
+		assertEquals(pageDockLayout(AppPage.START).allModules(), pageDockRoot(AppPage.START, PageArrangement("not json")).allModules())
 	}
 
 	@Test fun aPanelThePageGainedJoinsASavedLayout() {
-		val without = pageDockLayout(AppPage.SETTINGS).remove(SETTINGS_CONTENT)!!
-		val root = pageDockRoot(AppPage.SETTINGS, PageArrangement(dockJson.encodeToString(DockNode.serializer(), without)))
-		assertEquals(AppPage.SETTINGS.modules.sorted(), root.allModules().sorted())
+		val without = pageDockLayout(AppPage.START).remove(START_DETAILS)!!
+		val root = pageDockRoot(AppPage.START, PageArrangement(dockJson.encodeToString(DockNode.serializer(), without)))
+		assertEquals(AppPage.START.modules.sorted(), root.allModules().sorted())
 	}
 
 	@Test fun legacySinglePanelPsdGuideLayoutUpgradesToSplitModules() {

@@ -66,6 +66,7 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import io.github.psd2live.ui.state.RecentFileKind
 import io.github.psd2live.ui.state.rememberExistingRecentFiles
+import io.github.psd2live.ui.views.SettingsIcon
 import io.github.psd2live.ui.tutorial.LocalTutorialTargets
 import io.github.psd2live.ui.tutorial.TutorialId
 import io.github.psd2live.ui.tutorial.TutorialOverlay
@@ -1714,8 +1715,7 @@ private fun TitleBarSettingsButton(shown: Boolean, onClick: () -> Unit) {
 				.clickable(onClick = onClick),
 			contentAlignment = Alignment.Center,
 		) {
-			PageIcon(
-				AppPage.SETTINGS,
+			SettingsIcon(
 				tint = if (shown) colors.selectionText else colors.textPrimary.copy(alpha = if (isHovered) 1f else 0.85f),
 				modifier = Modifier.size(14.dp),
 			)

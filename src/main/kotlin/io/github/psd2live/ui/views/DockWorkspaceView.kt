@@ -2,6 +2,10 @@ package io.github.psd2live.ui.views
 
 import io.github.psd2live.ui.theme.Spacing
 import io.github.psd2live.ui.theme.Corners
+import io.github.psd2live.ui.theme.Motion
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import io.github.psd2live.ui.views.physics.PhysicsPanelView
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -379,7 +383,11 @@ internal fun DockWorkspaceView(
             Spacer(Modifier.height(Spacing.Margin - 2.dp))
             if (page != null) key(page) {
                 val pageSession = pageSessions.getOrPut(page) { DockSession(pageDockRoot(page, viewModel.pageArrangement(page))) }
-                PageDock(page, pageSession, Modifier.weight(1f).fillMaxWidth(), mainWindow, state, viewModel, pageActions)
+                if (page == AppPage.START) {
+                    StartHubWorkspace(pageSession, Modifier.weight(1f).fillMaxWidth(), mainWindow, state, viewModel, pageActions)
+                } else {
+                    PageDock(page, pageSession, Modifier.weight(1f).fillMaxWidth(), mainWindow, state, viewModel, pageActions)
+                }
             } else key(workspace.id) {
                 Box(Modifier.weight(1f).fillMaxWidth().tutorialTarget(TutorialTargetId.DOCK_AREA).onGloballyPositioned { coordinates ->
                     session.workspaceBounds = { screenBounds(coordinates, mainWindow) }
@@ -484,6 +492,35 @@ private fun FloatingDockWindow(id: String, windowState: WindowState, session: Do
  * An app page's dock: the same tree, tabs, splitters and floating panels as the editor's, over the page's own panels.
  * Its arrangement goes to the preferences, never to a project.
  */
+@Composable
+private fun StartHubWorkspace(
+    pageSession: DockSession,
+    modifier: Modifier,
+    mainWindow: java.awt.Window?,
+    state: PSD2LiveState,
+    viewModel: PSD2LiveViewModel,
+    actions: PageActions,
+) {
+    val compact = viewModel.startSection == StartSection.HELP || viewModel.startSection == StartSection.SETTINGS
+    val railWidth by animateDpAsState(
+        targetValue = if (compact) 44.dp else 196.dp,
+        animationSpec = tween(Motion.Expand, easing = FastOutSlowInEasing),
+    )
+    Row(modifier) {
+        StartHubPanelFrame(null, Modifier.width(railWidth).fillMaxHeight()) {
+            StartNavPanel(state, viewModel, actions, compact = compact)
+        }
+        Spacer(Modifier.width(Spacing.Gap))
+        Box(Modifier.weight(1f).fillMaxHeight()) {
+            if (compact) {
+                StartHubSplitContent(state, viewModel, actions, Modifier.fillMaxSize())
+            } else {
+                PageDock(AppPage.START, pageSession, Modifier.fillMaxSize(), mainWindow, state, viewModel, actions)
+            }
+        }
+    }
+}
+
 @Composable
 private fun PageDock(page: AppPage, session: DockSession, modifier: Modifier, mainWindow: java.awt.Window?,
                      state: PSD2LiveState, viewModel: PSD2LiveViewModel, actions: PageActions) {

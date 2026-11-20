@@ -80,13 +80,17 @@ import io.github.psd2live.ui.components.CompactDropdown
 import io.github.psd2live.ui.components.CompactSlider
 import io.github.psd2live.ui.components.CompactTextField
 import io.github.psd2live.ui.components.GridIcon
+import io.github.psd2live.ui.components.HelpNav
+import io.github.psd2live.ui.components.HelpPanel
 import io.github.psd2live.ui.components.IconAdd
 import io.github.psd2live.ui.components.IconCheck
 import io.github.psd2live.ui.components.IconClose
 import io.github.psd2live.ui.components.IconFolder
 import io.github.psd2live.ui.components.IconInfo
-import io.github.psd2live.ui.components.IconPlay
+import io.github.psd2live.ui.components.SettingsNav
+import io.github.psd2live.ui.components.SettingsPanel
 import io.github.psd2live.ui.components.document
+import io.github.psd2live.ui.components.resetAllSettings
 import io.github.psd2live.ui.state.AppPage
 import io.github.psd2live.ui.state.AppSettings
 import io.github.psd2live.ui.state.PSD2LiveState
@@ -100,12 +104,15 @@ import io.github.psd2live.ui.state.WorkspacePreset
 import io.github.psd2live.ui.state.rememberExistingRecentFiles
 import io.github.psd2live.ui.state.rememberRecentFileDetails
 import io.github.psd2live.ui.state.validLayoutCanvasSize
+import io.github.psd2live.ui.theme.Corners
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
 import io.github.psd2live.ui.theme.Motion
+import io.github.psd2live.ui.theme.Spacing
 import io.github.psd2live.ui.theme.handCursor
 import io.github.psd2live.ui.theme.selectOrOpen
 import io.github.psd2live.ui.views.texture.AccentButton
+import io.github.psd2live.ui.views.texture.BarTooltip
 import io.github.psd2live.ui.views.texture.FloatingMenu
 import io.github.psd2live.ui.views.texture.FloatingMenuDivider
 import io.github.psd2live.ui.views.texture.FloatingMenuRow
@@ -208,7 +215,7 @@ private fun startPrimary(section: StartSection, files: StartFiles, model: StartP
 		StartSection.LAYOUT -> if (model.layout.valid) viewModel.createLayoutProject(model.layout.w!!, model.layout.h!!)
 		StartSection.CMO3 -> actions.onOpenCmo3?.invoke()
 		StartSection.RECENT -> files.selectedRecent?.let { viewModel.openRecentFile(it.path) }
-		StartSection.UPDATES -> {}
+		StartSection.UPDATES, StartSection.HELP, StartSection.SETTINGS -> {}
 	}
 }
 
@@ -218,6 +225,8 @@ internal fun startSectionTitle(section: StartSection) = when (section) {
 	StartSection.CMO3 -> tr("start.nav.cmo3")
 	StartSection.RECENT -> tr("start.nav.recent")
 	StartSection.UPDATES -> tr("start.nav.updates")
+	StartSection.HELP -> tr("page.help")
+	StartSection.SETTINGS -> tr("page.settings")
 }
 
 /** The details panel follows the selected section or file. */
@@ -227,6 +236,8 @@ internal fun startDetailsTitle(section: StartSection) = when (section) {
 	StartSection.CMO3 -> tr("start.details.cmo3")
 	StartSection.RECENT -> tr("start.details.file")
 	StartSection.UPDATES -> tr("start.details.versions")
+	StartSection.HELP -> tr("page.help")
+	StartSection.SETTINGS -> tr("page.settings")
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -235,10 +246,11 @@ internal fun startDetailsTitle(section: StartSection) = when (section) {
 
 /**
  * The start page's compact command & status rail: app version strip, active session return bar when a model is open,
- * grouped workflow commands with keycap shortcuts, and a persistent environment summary footer.
+ * grouped workflow commands with keycap shortcuts, and a persistent environment summary footer. When [compact] is true
+ * (for Help or Settings, which bring their own secondary navigation), it collapses to an icon rail.
  */
 @Composable
-internal fun StartNavPanel(state: PSD2LiveState, viewModel: PSD2LiveViewModel, actions: PageActions) {
+internal fun StartNavPanel(state: PSD2LiveState, viewModel: PSD2LiveViewModel, actions: PageActions, compact: Boolean = false) {
 	val section = viewModel.startSection
 	val enabled = !state.isBusy
 	val recent = rememberExistingRecentFiles(state.recentFiles)
@@ -249,83 +261,176 @@ internal fun StartNavPanel(state: PSD2LiveState, viewModel: PSD2LiveViewModel, a
 	val settingsShortcut = state.keymap.labelFor(ShortcutAction.OPEN_SETTINGS)
 
 	Column(Modifier.fillMaxSize()) {
-		StartBrandStrip()
+		StartBrandStrip(compact)
 		if (state.previewModel != null) {
-			ActiveSessionStrip(state, viewModel)
+			ActiveSessionStrip(state, viewModel, compact)
 		}
 		Box(Modifier.weight(1f).fillMaxWidth()) {
 			PageNavList(
 				onStep = { step -> viewModel.setStartSection(order[(order.indexOf(section) + step).mod(order.size)]) },
 			) {
-				PageNavGroup(tr("start.nav.group.open"))
-				PageNavItem(
+				StartNavGroup(tr("start.nav.group.open"), compact)
+				StartNavEntry(
 					label = tr("start.nav.openProject"),
 					selected = false,
 					enabled = enabled && actions.onOpenProject != null,
+					compact = compact,
+					shortcut = openShortcut,
 					onClick = { actions.onOpenProject?.invoke() },
-					trailingContent = openShortcut?.takeIf { it.isNotBlank() }?.let { { KeycapBadge(it) } },
 				) { IconFolder(modifier = Modifier.size(13.dp), tint = it) }
-				PageNavItem(
+				StartNavEntry(
 					label = tr("start.nav.recent"),
 					selected = section == StartSection.RECENT,
 					trailing = recent?.size?.toString(),
+					compact = compact,
 					onClick = { viewModel.setStartSection(StartSection.RECENT) },
 				) { WorkspacePresetIcon(WorkspacePreset.HISTORY, it, Modifier.size(13.dp)) }
 
-				PageNavGroup(tr("start.nav.group.new"))
-				PageNavItem(
+				StartNavGroup(tr("start.nav.group.new"), compact)
+				StartNavEntry(
 					label = tr("psdGuide.title"),
 					selected = section == StartSection.GENERATE,
+					compact = compact,
+					shortcut = psdShortcut,
 					onClick = { viewModel.setStartSection(StartSection.GENERATE) },
-					trailingContent = psdShortcut?.takeIf { it.isNotBlank() }?.let { { KeycapBadge(it) } },
 				) { WorkspacePresetIcon(WorkspacePreset.EDIT, it, Modifier.size(13.dp)) }
-				PageNavItem(
+				StartNavEntry(
 					label = tr("start.nav.layout"),
 					selected = section == StartSection.LAYOUT,
+					compact = compact,
 					onClick = { viewModel.setStartSection(StartSection.LAYOUT) },
 				) { WorkspacePresetIcon(WorkspacePreset.LAYOUT, it, Modifier.size(13.dp)) }
-				PageNavItem(
+				StartNavEntry(
 					label = tr("start.nav.cmo3"),
 					selected = section == StartSection.CMO3,
+					compact = compact,
 					onClick = { viewModel.setStartSection(StartSection.CMO3) },
 				) { IconDocument(Modifier.size(13.dp), it) }
 
-				PageNavGroup(tr("start.nav.group.learn"))
-				PageNavItem(
-					label = tr("canvas.start.quickStart"),
-					selected = false,
-					enabled = actions.onOpenTutorialCatalog != null,
-					badge = true,
-					onClick = { actions.onOpenTutorialCatalog?.invoke() },
-				) { IconPlay(modifier = Modifier.size(12.dp), tint = it) }
-				PageNavItem(
+				StartNavGroup(tr("start.nav.group.learn"), compact)
+				StartNavEntry(
 					label = tr("start.nav.updates"),
 					selected = section == StartSection.UPDATES,
+					compact = compact,
 					onClick = { viewModel.setStartSection(StartSection.UPDATES) },
-				) { IconInfo(modifier = Modifier.size(13.dp), tint = it) }
-				PageNavItem(
+				) { UpdatesIcon(Modifier.size(13.dp), it) }
+				StartNavEntry(
 					label = tr("page.help"),
-					selected = false,
-					onClick = { viewModel.showPage(AppPage.HELP) },
-					trailingContent = helpShortcut?.takeIf { it.isNotBlank() }?.let { { KeycapBadge(it) } },
-				) { PageIcon(AppPage.HELP, it, Modifier.size(13.dp)) }
-				PageNavItem(
+					selected = section == StartSection.HELP,
+					compact = compact,
+					shortcut = helpShortcut,
+					onClick = { viewModel.setStartSection(StartSection.HELP) },
+				) { IconInfo(modifier = Modifier.size(13.dp), tint = it) }
+				StartNavEntry(
 					label = tr("page.settings"),
-					selected = false,
-					onClick = { viewModel.showPage(AppPage.SETTINGS) },
-					trailingContent = settingsShortcut?.takeIf { it.isNotBlank() }?.let { { KeycapBadge(it) } },
-				) { PageIcon(AppPage.SETTINGS, it, Modifier.size(13.dp)) }
+					selected = section == StartSection.SETTINGS,
+					compact = compact,
+					shortcut = settingsShortcut,
+					onClick = { viewModel.setStartSection(StartSection.SETTINGS) },
+				) { SettingsIcon(it, Modifier.size(13.dp)) }
 			}
 		}
-		StartEnvironmentFooter(state)
+		StartEnvironmentFooter(state, compact)
+	}
+}
+
+@Composable
+private fun StartNavGroup(title: String, compact: Boolean) {
+	if (!compact) {
+		PageNavGroup(title)
+	} else {
+		Box(
+			Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 5.dp)
+				.height(0.5.dp).background(LocalToolColors.current.divider),
+		)
+	}
+}
+
+@Composable
+private fun StartNavEntry(
+	label: String,
+	selected: Boolean,
+	compact: Boolean,
+	enabled: Boolean = true,
+	trailing: String? = null,
+	shortcut: String? = null,
+	onClick: () -> Unit,
+	icon: @Composable (Color) -> Unit,
+) {
+	if (!compact) {
+		PageNavItem(
+			label = label,
+			selected = selected,
+			trailing = trailing,
+			enabled = enabled,
+			onClick = onClick,
+			trailingContent = shortcut?.takeIf { it.isNotBlank() }?.let { { KeycapBadge(it) } },
+			icon = icon,
+		)
+		return
+	}
+	val colors = LocalToolColors.current
+	val interaction = remember { MutableInteractionSource() }
+	val hovered by interaction.collectIsHoveredAsState()
+	val tip = buildString {
+		append(label)
+		if (!shortcut.isNullOrBlank()) append("  ($shortcut)")
+	}
+	val iconTint = if (selected) colors.selectionText else if (enabled) colors.textMuted else colors.textDisabled
+	BarTooltip(tip) {
+		Box(
+			Modifier.fillMaxWidth().height(28.dp).padding(horizontal = 5.dp, vertical = 1.dp)
+				.clip(RoundedCornerShape(Corners.Control))
+				.background(when {
+					selected -> colors.selection
+					hovered && enabled -> colors.controlHover.copy(alpha = 0.45f)
+					else -> Color.Transparent
+				})
+				.hoverable(interaction)
+				.clickable(interactionSource = interaction, indication = null, enabled = enabled, onClick = onClick)
+				.handCursor(enabled),
+			contentAlignment = Alignment.Center,
+		) {
+			if (selected) {
+				Box(
+					Modifier.align(Alignment.CenterStart).padding(start = 1.dp)
+						.width(2.dp).height(14.dp).clip(RoundedCornerShape(1.dp)).background(colors.accent),
+				)
+			}
+			icon(iconTint)
+		}
+	}
+}
+
+@Composable
+private fun UpdatesIcon(modifier: Modifier, tint: Color) {
+	GridIcon(modifier, tint) {
+		// Spark / release star: four-pointed star with a small accent dot.
+		line(9f, 2.5f, 9f, 15.5f)
+		line(2.5f, 9f, 15.5f, 9f)
+		line(4.8f, 4.8f, 13.2f, 13.2f)
+		line(13.2f, 4.8f, 4.8f, 13.2f)
 	}
 }
 
 /** Flat edge-to-edge software identity strip at the top of the navigation rail. */
 @Composable
-private fun StartBrandStrip() {
+private fun StartBrandStrip(compact: Boolean) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
+	if (compact) {
+		BarTooltip("PSD2Live v${AppVersion.value}") {
+			Box(
+				Modifier.fillMaxWidth().height(28.dp)
+					.background(colors.panelElevated)
+					.drawBehind { drawLine(colors.divider, Offset(0f, size.height), Offset(size.width, size.height), 0.5.dp.toPx()) },
+				contentAlignment = Alignment.Center,
+			) {
+				StartIcon(Modifier.size(14.dp), colors.accent)
+			}
+		}
+		return
+	}
 	Row(
 		Modifier.fillMaxWidth().height(28.dp)
 			.background(colors.panelElevated)
@@ -343,10 +448,28 @@ private fun StartBrandStrip() {
 
 /** Single-row active session return strip when a model is open in the background. */
 @Composable
-private fun ActiveSessionStrip(state: PSD2LiveState, viewModel: PSD2LiveViewModel) {
+private fun ActiveSessionStrip(state: PSD2LiveState, viewModel: PSD2LiveViewModel, compact: Boolean) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
 	val name = state.projectFile?.let { File(it).name } ?: state.projectSourceName ?: tr("start.session.unsaved")
+	if (compact) {
+		val interaction = remember { MutableInteractionSource() }
+		val hovered by interaction.collectIsHoveredAsState()
+		BarTooltip("${tr("start.session.return")}: $name") {
+			Box(
+				Modifier.fillMaxWidth().height(28.dp)
+					.background(if (hovered) colors.highlightContainer.copy(alpha = 0.7f) else colors.highlightContainer.copy(alpha = 0.45f))
+					.drawBehind { drawLine(colors.divider, Offset(0f, size.height), Offset(size.width, size.height), 0.5.dp.toPx()) }
+					.hoverable(interaction)
+					.clickable(interactionSource = interaction, indication = null, onClick = { viewModel.leaveStartPage() })
+					.handCursor(),
+				contentAlignment = Alignment.Center,
+			) {
+				Box(Modifier.size(8.dp).clip(CircleShape).background(colors.highlight))
+			}
+		}
+		return
+	}
 	Row(
 		Modifier.fillMaxWidth().height(28.dp)
 			.background(colors.highlightContainer.copy(alpha = 0.45f))
@@ -364,9 +487,23 @@ private fun ActiveSessionStrip(state: PSD2LiveState, viewModel: PSD2LiveViewMode
 
 /** Compact environment readout at the bottom of the navigation rail. */
 @Composable
-private fun StartEnvironmentFooter(state: PSD2LiveState) {
+private fun StartEnvironmentFooter(state: PSD2LiveState, compact: Boolean) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
+	if (compact) {
+		BarTooltip("${tr("start.env.atlas")}: ${state.atlasSize}px") {
+			Box(
+				Modifier.fillMaxWidth()
+					.background(colors.panelElevated)
+					.drawBehind { drawLine(colors.divider, Offset(0f, 0f), Offset(size.width, 0f), 0.5.dp.toPx()) }
+					.padding(vertical = 6.dp),
+				contentAlignment = Alignment.Center,
+			) {
+				Text("${state.atlasSize}", style = typography.monoSmall.copy(fontSize = 9.sp), color = colors.textMuted)
+			}
+		}
+		return
+	}
 	Column(
 		Modifier.fillMaxWidth()
 			.background(colors.panelElevated)
@@ -382,8 +519,64 @@ private fun StartEnvironmentFooter(state: PSD2LiveState) {
 }
 
 /**
- * The main workbench: in RECENT mode, a flat top command bar over the full-bleed recent table/grid (or input-routing
- * table when empty). PSD, Layout and CMO3 each have a dedicated viewport.
+ * Dual-pane Help or Settings content embedded inside the start hub when [StartSection.HELP] or
+ * [StartSection.SETTINGS] is active.
+ */
+@Composable
+internal fun StartHubSplitContent(state: PSD2LiveState, viewModel: PSD2LiveViewModel, actions: PageActions, modifier: Modifier = Modifier) {
+	val section = viewModel.startSection
+	val navTitle = tr(if (section == StartSection.HELP) "page.help" else "page.settings")
+	val bodyTitle = if (section == StartSection.HELP) helpContentTitle(viewModel) else tr(viewModel.settingsTopic.labelKey)
+	Row(modifier.fillMaxSize()) {
+		StartHubPanelFrame(navTitle, Modifier.weight(0.22f).fillMaxHeight()) {
+			if (section == StartSection.HELP) {
+				HelpNav(viewModel.helpTab, viewModel.helpPage, viewModel::setHelpTab, viewModel::showHelpPage)
+			} else {
+				SettingsNav(viewModel.settingsTopic, viewModel::setSettingsTopic, onResetAll = { resetAllSettings(viewModel) })
+			}
+		}
+		Spacer(Modifier.width(Spacing.Gap))
+		StartHubPanelFrame(bodyTitle, Modifier.weight(0.78f).fillMaxHeight()) {
+			if (section == StartSection.HELP) {
+				HelpPanel(
+					viewModel.helpTab,
+					viewModel.helpPage,
+					state.keymap,
+					onOpenPage = viewModel::showHelpPage,
+					onStartInteractiveTutorial = actions.onStartTutorialPath,
+					operationDocs = viewModel.operationDocs,
+				)
+			} else {
+				SettingsPanel(viewModel.settingsTopic, state, viewModel)
+			}
+		}
+	}
+}
+
+@Composable
+internal fun StartHubPanelFrame(title: String?, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	val shape = RoundedCornerShape(Corners.Panel)
+	Column(modifier.clip(shape).background(colors.panelBackground).border(1.dp, colors.divider, shape)) {
+		if (title != null) {
+			Row(
+				Modifier.fillMaxWidth().height(22.dp)
+					.background(colors.panelElevated)
+					.drawBehind { drawLine(colors.divider, Offset(0f, size.height), Offset(size.width, size.height), 0.5.dp.toPx()) }
+					.padding(horizontal = 8.dp),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				Text(title, style = typography.caption.copy(fontSize = 10.5.sp, fontWeight = FontWeight.Medium), color = colors.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+			}
+		}
+		Box(Modifier.weight(1f).fillMaxWidth()) { content() }
+	}
+}
+
+/**
+ * The main workbench: in RECENT mode, the full-bleed recent table/grid (or input-routing table when empty).
+ * PSD, Layout and CMO3 each have a dedicated viewport.
  */
 @Composable
 internal fun StartMainPanel(state: PSD2LiveState, viewModel: PSD2LiveViewModel, actions: PageActions) {
@@ -444,34 +637,25 @@ internal fun StartMainPanel(state: PSD2LiveState, viewModel: PSD2LiveViewModel, 
 					)
 					Cmo3Content(enabled, actions.onOpenCmo3, Modifier.weight(1f).fillMaxWidth())
 				}
-				StartSection.RECENT -> Column(Modifier.fillMaxSize()) {
-					StartActionToolbar(
-						psdShortcut = state.keymap.labelFor(ShortcutAction.OPEN_PSD),
-						openShortcut = state.keymap.labelFor(ShortcutAction.OPEN_PROJECT),
-						enabled = enabled,
-						onGenerate = { viewModel.setStartSection(StartSection.GENERATE) },
-						onLayout = { viewModel.setStartSection(StartSection.LAYOUT) },
-						onCmo3 = { viewModel.setStartSection(StartSection.CMO3) },
-						onOpenProject = { actions.onOpenProject?.invoke() },
-					)
-					RecentBrowser(
-						recent = files.recent,
-						model = model,
-						enabled = enabled,
-						actions = recentFileActions(viewModel, actions),
-						onGenerate = { viewModel.setStartSection(StartSection.GENERATE) },
-						onLayout = { viewModel.setStartSection(StartSection.LAYOUT) },
-						onCmo3 = { viewModel.setStartSection(StartSection.CMO3) },
-						onOpenTutorial = { actions.onOpenTutorialCatalog?.invoke() },
-						modifier = Modifier.weight(1f).fillMaxWidth(),
-					)
-				}
+				StartSection.RECENT -> RecentBrowser(
+					recent = files.recent,
+					model = model,
+					enabled = enabled,
+					actions = recentFileActions(viewModel, actions),
+					onGenerate = { viewModel.setStartSection(StartSection.GENERATE) },
+					onLayout = { viewModel.setStartSection(StartSection.LAYOUT) },
+					onCmo3 = { viewModel.setStartSection(StartSection.CMO3) },
+					modifier = Modifier.fillMaxSize(),
+				)
 				StartSection.UPDATES -> WhatsNewPanel(state.currentLanguage, model.updates, enabled, actions.onStartTutorial)
+				StartSection.HELP, StartSection.SETTINGS -> {}
 			}
 			// A file carried over the window lands wherever it is dropped; outside the viewport the page says so.
 			if (actions.filesDragging && section != StartSection.GENERATE) DropHighlight(tr("psdGuide.start.drop"))
 		}
-		if (section != StartSection.UPDATES) StartActionBar(section, model.layout, files, enabled, actions, primary)
+		if (section != StartSection.UPDATES && section != StartSection.HELP && section != StartSection.SETTINGS) {
+			StartActionBar(section, model.layout, files, enabled, actions, primary)
+		}
 	}
 }
 
@@ -496,107 +680,8 @@ internal fun StartDetailsPanel(state: PSD2LiveState, viewModel: PSD2LiveViewMode
 				viewModel = viewModel,
 				onRevealFile = actions.onRevealFile,
 			)
-			StartSection.UPDATES -> {}
+			StartSection.UPDATES, StartSection.HELP, StartSection.SETTINGS -> {}
 		}
-	}
-}
-
-// ---------------------------------------------------------------------------------------------------------------------
-// Recent Hub: Flat Command Toolbar & Recent Table/Grid
-// ---------------------------------------------------------------------------------------------------------------------
-
-/** Flat edge-to-edge CCD command toolbar across the top of the Recent workbench. */
-@Composable
-private fun StartActionToolbar(
-	psdShortcut: String?,
-	openShortcut: String?,
-	enabled: Boolean,
-	onGenerate: () -> Unit,
-	onLayout: () -> Unit,
-	onCmo3: () -> Unit,
-	onOpenProject: () -> Unit,
-) {
-	val colors = LocalToolColors.current
-	Row(
-		Modifier.fillMaxWidth().height(30.dp)
-			.background(colors.panelElevated)
-			.drawBehind { drawLine(colors.divider, Offset(0f, size.height), Offset(size.width, size.height), 0.5.dp.toPx()) }
-			.padding(horizontal = 6.dp),
-		verticalAlignment = Alignment.CenterVertically,
-		horizontalArrangement = Arrangement.spacedBy(2.dp),
-	) {
-		ToolbarActionItem(
-			label = tr("psdGuide.title"),
-			shortcut = psdShortcut,
-			accented = true,
-			enabled = enabled,
-			onClick = onGenerate,
-		) { WorkspacePresetIcon(WorkspacePreset.EDIT, it, Modifier.size(12.dp)) }
-		ToolbarDivider()
-		ToolbarActionItem(
-			label = tr("start.nav.layout"),
-			shortcut = null,
-			accented = false,
-			enabled = enabled,
-			onClick = onLayout,
-		) { WorkspacePresetIcon(WorkspacePreset.LAYOUT, it, Modifier.size(12.dp)) }
-		ToolbarDivider()
-		ToolbarActionItem(
-			label = tr("start.nav.cmo3"),
-			shortcut = null,
-			accented = false,
-			enabled = enabled,
-			onClick = onCmo3,
-		) { IconDocument(Modifier.size(12.dp), it) }
-		ToolbarDivider()
-		ToolbarActionItem(
-			label = tr("start.nav.openProject"),
-			shortcut = openShortcut,
-			accented = false,
-			enabled = enabled,
-			onClick = onOpenProject,
-		) { IconFolder(modifier = Modifier.size(12.dp), tint = it) }
-	}
-}
-
-@Composable
-private fun ToolbarDivider() {
-	Box(Modifier.width(0.5.dp).height(16.dp).background(LocalToolColors.current.divider))
-}
-
-@Composable
-private fun ToolbarActionItem(
-	label: String,
-	shortcut: String?,
-	accented: Boolean,
-	enabled: Boolean,
-	onClick: () -> Unit,
-	icon: @Composable (Color) -> Unit,
-) {
-	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
-	val interaction = remember { MutableInteractionSource() }
-	val hovered by interaction.collectIsHoveredAsState()
-	val bg = when {
-		hovered && enabled -> colors.controlHover
-		accented -> colors.accent.copy(alpha = 0.10f)
-		else -> Color.Transparent
-	}
-	Row(
-		Modifier.height(22.dp)
-			.clip(RoundedCornerShape(2.dp))
-			.background(bg)
-			.hoverable(interaction, enabled)
-			.clickable(interactionSource = interaction, indication = null, enabled = enabled, onClick = onClick)
-			.handCursor(enabled)
-			.padding(horizontal = 7.dp),
-		verticalAlignment = Alignment.CenterVertically,
-		horizontalArrangement = Arrangement.spacedBy(5.dp),
-	) {
-		icon(if (accented || (hovered && enabled)) colors.accent else colors.textMuted)
-		Text(label, style = typography.body.copy(fontSize = 11.sp, fontWeight = if (accented) FontWeight.Medium else FontWeight.Normal),
-			color = if (!enabled) colors.textDisabled else colors.textPrimary, maxLines = 1)
-		shortcut?.takeIf { it.isNotBlank() }?.let { KeycapBadge(it) }
 	}
 }
 
@@ -1028,7 +1113,6 @@ private fun RecentBrowser(
 	onGenerate: () -> Unit,
 	onLayout: () -> Unit,
 	onCmo3: () -> Unit,
-	onOpenTutorial: () -> Unit,
 	modifier: Modifier = Modifier,
 ) {
 	val selection = model.selection
@@ -1061,7 +1145,7 @@ private fun RecentBrowser(
 		when {
 			// Nothing while the check runs, rather than "none" for a moment.
 			recent == null -> Spacer(Modifier.weight(1f))
-			recent.isEmpty() -> EmptyInputRoutingTable(enabled, onGenerate, onLayout, onCmo3, onOpenTutorial, Modifier.weight(1f).fillMaxWidth())
+			recent.isEmpty() -> EmptyInputRoutingTable(enabled, onGenerate, onLayout, onCmo3, Modifier.weight(1f).fillMaxWidth())
 			shown.isEmpty() -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
 				Text(tr("start.recent.noMatch"), style = typography.caption.copy(fontSize = 11.sp), color = colors.textDisabled)
 			}
@@ -1097,7 +1181,6 @@ private fun EmptyInputRoutingTable(
 	onGenerate: () -> Unit,
 	onLayout: () -> Unit,
 	onCmo3: () -> Unit,
-	onOpenTutorial: () -> Unit,
 	modifier: Modifier = Modifier,
 ) {
 	val colors = LocalToolColors.current
@@ -1115,7 +1198,6 @@ private fun EmptyInputRoutingTable(
 		InputRouteRow("01", tr("start.empty.psd"), tr("psdGuide.start.details"), tr("psdGuide.title"), enabled, onGenerate)
 		InputRouteRow("02", tr("start.empty.layout"), tr("start.launcher.layout.desc"), tr("start.nav.layout"), enabled, onLayout)
 		InputRouteRow("03", tr("start.empty.cmo3"), tr("start.launcher.cmo3.desc"), tr("start.nav.cmo3"), enabled, onCmo3)
-		InputRouteRow("→", tr("canvas.start.quickStart"), tr("start.guide.subtitle"), tr("start.guide.tutorial"), true, onOpenTutorial)
 	}
 }
 
@@ -1425,7 +1507,7 @@ private fun StartActionBar(
 		StartSection.LAYOUT -> if (layout.valid) tr("start.action.layout.hint", layout.w!!, layout.h!!) else tr("start.layout.invalid")
 		StartSection.CMO3 -> tr("start.action.cmo3.hint")
 		StartSection.RECENT -> selectedRecent?.path ?: tr("start.recent.pick")
-		StartSection.UPDATES -> ""
+		StartSection.UPDATES, StartSection.HELP, StartSection.SETTINGS -> ""
 	}
 	Row(
 		Modifier.fillMaxWidth().height(36.dp)
@@ -1453,7 +1535,7 @@ private fun StartActionBar(
 				tr(if (selectedRecent?.kind == RecentFileKind.PSD) "psdGuide.start.open" else "start.action.recent.open"),
 				primary, enabled = enabled && selectedRecent != null, emphasis = true,
 			) { IconFolder(modifier = Modifier.size(12.dp), tint = it) }
-			StartSection.UPDATES -> {}
+			StartSection.UPDATES, StartSection.HELP, StartSection.SETTINGS -> {}
 		}
 	}
 }

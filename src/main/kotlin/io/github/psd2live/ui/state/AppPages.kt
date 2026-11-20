@@ -7,24 +7,15 @@ package io.github.psd2live.ui.state
  * and on the start page the details of what the topic's action will do.
  */
 internal enum class AppPage(val modules: List<String>) {
-	START(listOf(START_NAV, START_MAIN, START_DETAILS)),
+	START(listOf(START_MAIN, START_DETAILS)),
 	PSD_GUIDE(listOf(PSD_GUIDE_CONTENT, PSD_GUIDE_CONTROLS)),
-	HELP(listOf(HELP_NAV, HELP_CONTENT)),
-	SETTINGS(listOf(SETTINGS_NAV, SETTINGS_CONTENT)),
 }
 
-internal const val START_NAV = "start.nav"
 internal const val START_MAIN = "start.main"
 internal const val START_DETAILS = "start.details"
 
 internal const val PSD_GUIDE_CONTENT = "psdGuide.content"
 internal const val PSD_GUIDE_CONTROLS = "psdGuide.controls"
-
-internal const val HELP_NAV = "help.nav"
-internal const val HELP_CONTENT = "help.content"
-
-internal const val SETTINGS_NAV = "settings.nav"
-internal const val SETTINGS_CONTENT = "settings.content"
 
 /**
  * The help page's topics, in its contents' order. The manual and the tutorials are trees of pages ([Manual]); the

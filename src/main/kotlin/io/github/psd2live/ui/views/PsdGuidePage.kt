@@ -76,6 +76,7 @@ import io.github.psd2live.ui.state.HelpTab
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.state.PsdGuideStep
 import io.github.psd2live.ui.state.SettingsTopic
+import io.github.psd2live.ui.state.StartSection
 import io.github.psd2live.ui.tutorial.TutorialId
 import io.github.psd2live.ui.theme.Corners
 import io.github.psd2live.ui.theme.LocalToolColors
@@ -452,7 +453,7 @@ private fun PsdGuideActionsSection(
                 openCatalog()
             } else {
                 viewModel.setHelpTab(HelpTab.TUTORIALS)
-                viewModel.showPage(AppPage.HELP)
+                viewModel.showStartPage(StartSection.HELP)
             }
         }
     }
@@ -463,7 +464,7 @@ private fun PsdGuideActionsSection(
                 startTutorial(TutorialId.BASIC)
             } else {
                 viewModel.setHelpTab(HelpTab.TUTORIALS)
-                viewModel.showPage(AppPage.HELP)
+                viewModel.showStartPage(StartSection.HELP)
             }
         }
     }

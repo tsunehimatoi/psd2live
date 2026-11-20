@@ -80,7 +80,6 @@ import io.github.psd2live.ui.components.ImageLightboxDialog
 import io.github.psd2live.ui.components.ExportDialog
 import io.github.psd2live.ui.components.ExportPsdDialog
 import io.github.psd2live.ui.state.Manual
-import io.github.psd2live.ui.state.HELP_CONTENT
 import io.github.psd2live.ui.components.TextureUpscaleDialog
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
@@ -498,8 +497,8 @@ private fun FrameWindowScope.PSD2LiveAppContent(
 				ShortcutAction.ZOOM_IN -> { viewModel.zoomIn(); true }
 				ShortcutAction.ZOOM_OUT -> { viewModel.zoomOut(); true }
 				ShortcutAction.ZOOM_RESET -> { viewModel.resetZoom(); true }
-				ShortcutAction.OPEN_SETTINGS -> { viewModel.togglePage(AppPage.SETTINGS); true }
-				ShortcutAction.OPEN_HELP -> { viewModel.togglePage(AppPage.HELP); true }
+				ShortcutAction.OPEN_SETTINGS -> { viewModel.toggleStartSection(StartSection.SETTINGS); true }
+				ShortcutAction.OPEN_HELP -> { viewModel.toggleStartSection(StartSection.HELP); true }
 				ShortcutAction.TOGGLE_FULLSCREEN -> { AppSettings.toggleFullscreen(); true }
 				else -> {
 					// The nine tab-jump actions share one body. A null index means this is a
@@ -600,8 +599,8 @@ private fun FrameWindowScope.PSD2LiveAppContent(
 							onZoomOut = { viewModel.zoomOut() },
 							onResetZoom = { viewModel.resetZoom() },
 							onToggleTheme = { viewModel.toggleDarkTheme() },
-							onShowSettings = { viewModel.togglePage(AppPage.SETTINGS) },
-							onOpenHelp = { viewModel.showPage(AppPage.HELP, HELP_CONTENT) },
+							onShowSettings = { viewModel.toggleStartSection(StartSection.SETTINGS) },
+							onOpenHelp = { viewModel.showStartPage(StartSection.HELP) },
 							onShowHistory = { viewModel.showHistoryModule() },
 						)
 					}
@@ -639,8 +638,8 @@ private fun FrameWindowScope.PSD2LiveAppContent(
 						onZoomOut = { viewModel.zoomOut() },
 						onResetZoom = { viewModel.resetZoom() },
 						onToggleTheme = { viewModel.toggleDarkTheme() },
-						settingsShown = viewModel.activePage == AppPage.SETTINGS,
-						onShowSettings = { viewModel.togglePage(AppPage.SETTINGS) },
+						settingsShown = viewModel.activePage == AppPage.START && viewModel.startSection == StartSection.SETTINGS,
+						onShowSettings = { viewModel.toggleStartSection(StartSection.SETTINGS) },
 						onShowTextureUpscale = { viewModel.openTextureUpscaleDialog() },
 						onStartScreen = { viewModel.showStartPage(StartSection.GENERATE) },
 						onMeshSplitScan = { viewModel.requestMeshSplitScan() },
@@ -656,7 +655,7 @@ private fun FrameWindowScope.PSD2LiveAppContent(
 						onCloseTab = { viewModel.closeWorkspace(state.activeWorkspace.id) },
 						onNextTab = { viewModel.cycleWorkspace(1) },
 						onPrevTab = { viewModel.cycleWorkspace(-1) },
-						onOpenHelp = { viewModel.showPage(AppPage.HELP, HELP_CONTENT) },
+						onOpenHelp = { viewModel.showStartPage(StartSection.HELP) },
 						tutorialMenuForce = if (tutorialShown) workspaceTutorialStep.forcesMenu else null,
 						tutorialHighlightTarget = if (tutorialShown) {
 							workspaceTutorialStep.effectiveTargetId(state)

@@ -149,8 +149,8 @@ class UiResponsivenessTool {
 			for (section in StartSection.entries) step("start: $section") { vm.setStartSection(section) }
 			for (tab in HelpTab.entries) step("help: $tab") { vm.showHelp(tab) }
 			redrawRate("help page")
-			step("settings") { vm.showPage(AppPage.SETTINGS) }
-			step("back to start") { vm.showPage(AppPage.START) }
+			step("settings") { vm.setStartSection(StartSection.SETTINGS) }
+			step("back to start") { vm.showStartPage(StartSection.RECENT) }
 			step("help: QUICK_START again") { vm.showHelp(HelpTab.TUTORIALS) }
 			step("back to start again") { vm.showPage(AppPage.START) }
 			if (setting("PSD2LIVE_UI_MODEL", "1") == "1") {
