@@ -732,11 +732,6 @@ internal fun ParametersListView(
 					items(rows, key = { row -> rowKey(row) }) { row ->
 						val key = rowKey(row)
 						val layout = rowToLayout(row)
-                        val related = when (row) {
-                            is ParameterPanelRow.Single -> row.parameter.id in relatedIds
-                            is ParameterPanelRow.Linked -> row.horizontal.id in relatedIds || row.vertical.id in relatedIds
-                            is ParameterPanelRow.Folder -> row.group.containsParameter(relatedIds)
-                        }
 						val folderTint = when (row) {
 							is ParameterPanelRow.Single -> row.folderLabelColor.displayArgb()
 							is ParameterPanelRow.Linked -> row.folderLabelColor.displayArgb()
@@ -747,14 +742,8 @@ internal fun ParametersListView(
 						Column(
 								modifier = Modifier
 									.fillMaxWidth()
-                                    .background(
-										when {
-											related -> colors.selection.copy(alpha = 0.35f)
-											folderTint != null -> folderTint
-											else -> Color.Transparent
-										},
-									)
-									.parameterDragRow(layout, dragState, itemBoundsMap.values, dragPreview, related)
+                                    .background(folderTint ?: Color.Transparent)
+									.parameterDragRow(layout, dragState, itemBoundsMap.values, dragPreview)
 
 									.onGloballyPositioned { coords ->
 										val parent = containerCoordinates
@@ -1623,7 +1612,7 @@ internal fun ParameterTrack(
 		)
 
 		for (mark in marks) {
-            val keyStroke = if (highlightedKeys.any { abs(it - mark.value) < EPS_KEY }) colors.accent else keyStroke
+			val highlighted = highlightedKeys.any { abs(it - mark.value) < EPS_KEY }
 			val mx = xOf(size.width, mark.value, inset)
 			val hovered = hoverKey != null && abs(hoverKey!! - mark.value) < 1e-4f
 			val r = if (hovered) keyR * 1.35f else keyR
@@ -1631,29 +1620,62 @@ internal fun ParameterTrack(
 			when (mark.shape) {
 				SliderKeyShape.Circle -> {
 					if (hovered) drawCircle(colors.accent.copy(alpha = 0.22f), r * 1.8f, Offset(mx, cy))
-					// Hollow key dot: mask background so track line doesn't cut through, then hollow stroke
-					drawCircle(colors.panelBackground, r, Offset(mx, cy))
-					drawCircle(keyStroke, r, Offset(mx, cy), style = Stroke(width = 1.15.dp.toPx()))
+					if (highlighted) {
+						drawCircle(colors.panelBackground, r + 1.dp.toPx(), Offset(mx, cy))
+						drawCircle(colors.accent, r, Offset(mx, cy))
+					} else {
+						// Hollow key dot: mask background so track line doesn't cut through, then hollow stroke
+						drawCircle(colors.panelBackground, r, Offset(mx, cy))
+						drawCircle(keyStroke, r, Offset(mx, cy), style = Stroke(width = 1.15.dp.toPx()))
+					}
 				}
 				SliderKeyShape.Square -> {
+					if (hovered) drawCircle(colors.accent.copy(alpha = 0.22f), r * 1.8f, Offset(mx, cy))
 					val tl = Offset(mx - r, cy - r)
 					val sz = Size(r * 2f, r * 2f)
 					val cr = CornerRadius(r * 0.25f)
-					drawRoundRect(colors.panelBackground, tl, sz, cr)
-					drawRoundRect(keyStroke, tl, sz, cr, style = Stroke(width = 1.15.dp.toPx()))
+					if (highlighted) {
+						val pad = 1.dp.toPx()
+						drawRoundRect(
+							colors.panelBackground,
+							Offset(tl.x - pad, tl.y - pad),
+							Size(sz.width + pad * 2f, sz.height + pad * 2f),
+							cr,
+						)
+						drawRoundRect(colors.accent, tl, sz, cr)
+					} else {
+						drawRoundRect(colors.panelBackground, tl, sz, cr)
+						drawRoundRect(keyStroke, tl, sz, cr, style = Stroke(width = 1.15.dp.toPx()))
+					}
 				}
 			}
 		}
 		val labelStyle = TextStyle(color = colors.textMuted, fontSize = 8.sp, fontFamily = FontFamily.Monospace)
-		var labelRight = Float.NEGATIVE_INFINITY
-		for (mark in marks.sortedBy { it.value }) {
-			val label = formatAxisValue(mark.value)
-			val layout = labelMeasurer.measure(label, labelStyle)
-			val x = xOf(size.width, mark.value, inset) - layout.size.width / 2f
+		val highlightedLabelStyle = labelStyle.copy(color = colors.accent, fontWeight = FontWeight.SemiBold)
+		val minLabelGap = 1.dp.toPx()
+		val placedLabelSpans = ArrayList<ClosedFloatingPointRange<Float>>(marks.size)
+		val sortedMarks = marks.sortedWith(
+			compareByDescending<SliderKeyMark> { mark ->
+				val hovered = hoverKey != null && abs(hoverKey!! - mark.value) < 1e-4f
+				val highlighted = highlightedKeys.any { abs(it - mark.value) < EPS_KEY }
+				when {
+					hovered -> 2
+					highlighted -> 1
+					else -> 0
+				}
+			}.thenBy { it.value },
+		)
+		for (mark in sortedMarks) {
 			val hovered = hoverKey != null && abs(hoverKey!! - mark.value) < 1e-4f
-			if (!hovered && x < labelRight + 1.dp.toPx()) continue
-			drawText(labelMeasurer, label, topLeft = Offset(x, 0f), style = labelStyle)
-			labelRight = x + layout.size.width
+			val highlighted = highlightedKeys.any { abs(it - mark.value) < EPS_KEY }
+			val style = if (highlighted || hovered) highlightedLabelStyle else labelStyle
+			val label = formatAxisValue(mark.value)
+			val layout = labelMeasurer.measure(label, style)
+			val x = xOf(size.width, mark.value, inset) - layout.size.width / 2f
+			val end = x + layout.size.width
+			if (!hovered && placedLabelSpans.any { x < it.endInclusive + minLabelGap && end + minLabelGap > it.start }) continue
+			drawText(labelMeasurer, label, topLeft = Offset(x, 0f), style = style)
+			placedLabelSpans += x..end
 		}
 
 		val thumbX = xOf(size.width, value, inset)
@@ -2128,15 +2150,19 @@ internal fun ParameterPad2D(
 ) {
 	val colors = LocalToolColors.current
     val reverseYNow by rememberUpdatedState(reverseY)
-	val xKeyList = remember(horizontal, horizontalKeys) {
-		horizontalKeys?.allKeys.orEmpty()
+	val xKeyList = remember(horizontal, horizontalKeys, verticalKeys) {
+		val rawX = horizontalKeys?.allKeys.orEmpty()
 			.filter { it >= horizontal.min - 1e-4f && it <= horizontal.max + 1e-4f }
 			.distinct().sorted()
+		val hasY = verticalKeys?.allKeys.orEmpty().any { it >= vertical.min - 1e-4f && it <= vertical.max + 1e-4f }
+		if (rawX.isEmpty() && hasY) listOf(horizontal.default.coerceIn(horizontal.min, horizontal.max)) else rawX
 	}
-	val yKeyList = remember(vertical, verticalKeys) {
-		verticalKeys?.allKeys.orEmpty()
+	val yKeyList = remember(vertical, horizontalKeys, verticalKeys) {
+		val rawY = verticalKeys?.allKeys.orEmpty()
 			.filter { it >= vertical.min - 1e-4f && it <= vertical.max + 1e-4f }
 			.distinct().sorted()
+		val hasX = horizontalKeys?.allKeys.orEmpty().any { it >= horizontal.min - 1e-4f && it <= horizontal.max + 1e-4f }
+		if (rawY.isEmpty() && hasX) listOf(vertical.default.coerceIn(vertical.min, vertical.max)) else rawY
 	}
 	val blendX = remember(horizontalKeys) { horizontalKeys?.blendKeys.orEmpty().toSet() }
 	val blendY = remember(verticalKeys) { verticalKeys?.blendKeys.orEmpty().toSet() }
@@ -2284,15 +2310,22 @@ internal fun ParameterPad2D(
 		}
 
 		val labelStyle = TextStyle(color = colors.textMuted, fontSize = 8.sp, fontFamily = FontFamily.Monospace)
+		val highlightedLabelStyle = labelStyle.copy(color = colors.accent, fontWeight = FontWeight.SemiBold)
 		for (kx in xKeyList) {
+			val highlighted = highlightedX.any { abs(it - kx) < EPS_KEY } ||
+				(hoverKey != null && abs(hoverKey!!.first - kx) < 1e-4f)
+			val style = if (highlighted) highlightedLabelStyle else labelStyle
 			val label = formatAxisValue(kx)
-			val layout = labelMeasurer.measure(label, labelStyle)
-			drawText(labelMeasurer, label, topLeft = Offset(xPx(kx) - layout.size.width / 2f, 1.dp.toPx()), style = labelStyle)
+			val layout = labelMeasurer.measure(label, style)
+			drawText(labelMeasurer, label, topLeft = Offset(xPx(kx) - layout.size.width / 2f, 1.dp.toPx()), style = style)
 		}
 		for (ky in yKeyList) {
+			val highlighted = highlightedY.any { abs(it - ky) < EPS_KEY } ||
+				(hoverKey != null && abs(hoverKey!!.second - ky) < 1e-4f)
+			val style = if (highlighted) highlightedLabelStyle else labelStyle
 			val label = formatAxisValue(ky)
-			val layout = labelMeasurer.measure(label, labelStyle)
-			drawText(labelMeasurer, label, topLeft = Offset(insetX + ParamKeyRadius.toPx() + 2.dp.toPx(), yPx(ky) - layout.size.height / 2f), style = labelStyle)
+			val layout = labelMeasurer.measure(label, style)
+			drawText(labelMeasurer, label, topLeft = Offset(insetX + ParamKeyRadius.toPx() + 2.dp.toPx(), yPx(ky) - layout.size.height / 2f), style = style)
 		}
 
 		val xValue = xValue()
@@ -2304,12 +2337,21 @@ internal fun ParameterPad2D(
 		val thumbR = thumbRadiusDp.toPx()
 		val onKey = xKeyList.any { abs(it - xValue) < EPS_KEY } &&
 			yKeyList.any { abs(it - yValue) < EPS_KEY }
+		val neutralX = xKeyList.minByOrNull { abs(it - horizontal.default) }
+		val neutralY = yKeyList.minByOrNull { abs(it - vertical.default) }
 
-		// Draw hollow key dots at all intersections
+		// Draw key dots at all intersections (filled accent for the selected component's keyforms, hollow otherwise)
 		for (kx in xKeyList) {
 			val isBlendX = kx in blendX
+			val matchX = highlightedX.any { abs(it - kx) < EPS_KEY }
 			for (ky in yKeyList) {
-                val keyStroke = if (highlightedX.any { abs(it - kx) < EPS_KEY } && highlightedY.any { abs(it - ky) < EPS_KEY }) colors.accent else keyStroke
+				val matchY = highlightedY.any { abs(it - ky) < EPS_KEY }
+				val highlighted = when {
+					highlightedX.isNotEmpty() && highlightedY.isNotEmpty() -> matchX && matchY
+					highlightedX.isNotEmpty() -> matchX && neutralY != null && abs(ky - neutralY) < EPS_KEY
+					highlightedY.isNotEmpty() -> neutralX != null && abs(kx - neutralX) < EPS_KEY && matchY
+					else -> false
+				}
 				val px = xPx(kx)
 				val py = yPx(ky)
 				val isBlend = isBlendX || ky in blendY
@@ -2321,11 +2363,27 @@ internal fun ParameterPad2D(
 					val tl = Offset(px - r, py - r)
 					val sz = Size(r * 2f, r * 2f)
 					val cr = CornerRadius(r * 0.25f)
-					drawRoundRect(colors.panelBackground, tl, sz, cr)
-					drawRoundRect(keyStroke, tl, sz, cr, style = Stroke(width = 1.15.dp.toPx()))
+					if (highlighted) {
+						val pad = 1.dp.toPx()
+						drawRoundRect(
+							colors.panelBackground,
+							Offset(tl.x - pad, tl.y - pad),
+							Size(sz.width + pad * 2f, sz.height + pad * 2f),
+							cr,
+						)
+						drawRoundRect(colors.accent, tl, sz, cr)
+					} else {
+						drawRoundRect(colors.panelBackground, tl, sz, cr)
+						drawRoundRect(keyStroke, tl, sz, cr, style = Stroke(width = 1.15.dp.toPx()))
+					}
 				} else {
-					drawCircle(colors.panelBackground, r, Offset(px, py))
-					drawCircle(keyStroke, r, Offset(px, py), style = Stroke(width = 1.15.dp.toPx()))
+					if (highlighted) {
+						drawCircle(colors.panelBackground, r + 1.dp.toPx(), Offset(px, py))
+						drawCircle(colors.accent, r, Offset(px, py))
+					} else {
+						drawCircle(colors.panelBackground, r, Offset(px, py))
+						drawCircle(keyStroke, r, Offset(px, py), style = Stroke(width = 1.15.dp.toPx()))
+					}
 				}
 			}
 		}

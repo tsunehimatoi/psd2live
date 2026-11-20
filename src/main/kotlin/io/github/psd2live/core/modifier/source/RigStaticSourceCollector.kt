@@ -962,7 +962,7 @@ internal object RigStaticSourceCollector {
         val carrierNames = kotlinx.serialization.json.buildJsonObject {
             for ((targetId, layerId) in targetLayers) {
                 val layer = byLayer[layerId] ?: continue
-                put(targetId, kotlinx.serialization.json.JsonPrimitive(tr("model.deformer.blendShapeCarrier", layer.source.name)))
+                put(targetId, kotlinx.serialization.json.JsonPrimitive(tr("model.deformer.meshShape", layer.source.name)))
             }
         }
         val nativeIds = kotlinx.serialization.json.buildJsonObject {
@@ -1001,7 +1001,7 @@ internal object RigStaticSourceCollector {
             for ((targetId, layerId) in targetLayers) {
                 if (targetId !in shapeTargets) continue
                 val layer = byLayer[layerId] ?: continue
-                put(targetId, kotlinx.serialization.json.JsonPrimitive(tr("model.deformer.blendShapeCarrier", layer.source.name)))
+                put(targetId, kotlinx.serialization.json.JsonPrimitive(tr("model.deformer.meshShape", layer.source.name)))
             }
         }
         return ModifierAlgorithmContext(
