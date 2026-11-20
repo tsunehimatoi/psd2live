@@ -6982,6 +6982,31 @@ class PSD2LiveViewModel : AutoCloseable {
 	}
 
 	private var parameterSnapJob: Job? = null
+	private var parameterSnapNoticeJob: Job? = null
+	private val _parameterSnapNotice = MutableStateFlow<String?>(null)
+	/** Brief non-intrusive notice shown on the edit canvas when deformation snaps parameters to nearest keys. */
+	val parameterSnapNotice: StateFlow<String?> = _parameterSnapNotice.asStateFlow()
+
+	private fun showParameterSnapNotice(targets: Map<ParameterId, Float>, puppet: org.umamo.runtime.model.PuppetModel) {
+		val items = targets.entries.map { (id, value) ->
+			val name = puppet.parameters.firstOrNull { it.id == id }?.name?.takeIf { it.isNotBlank() } ?: id.raw
+			val formatted = if (kotlin.math.abs(value - kotlin.math.round(value)) < 1e-4f) kotlin.math.round(value).toInt().toString()
+				else "%.2f".format(java.util.Locale.ROOT, value).trimEnd('0').trimEnd('.')
+			name to formatted
+		}
+		val text = when (items.size) {
+			0 -> return
+			1 -> tr("canvas.snap.notice.one", items[0].first, items[0].second)
+			2 -> tr("canvas.snap.notice.two", items[0].first, items[0].second, items[1].first, items[1].second)
+			else -> tr("canvas.snap.notice.many", items[0].first, items[0].second, items.size)
+		}
+		_parameterSnapNotice.value = text
+		parameterSnapNoticeJob?.cancel()
+		parameterSnapNoticeJob = scope.launch {
+			delay(1800L)
+			if (_parameterSnapNotice.value == text) _parameterSnapNotice.value = null
+		}
+	}
 
 	/** True while a snap-to-nearest-key animation is running. */
 	val isSnappingParameters: Boolean get() = parameterSnapJob?.isActive == true
@@ -7045,6 +7070,7 @@ class PSD2LiveViewModel : AutoCloseable {
 		val targets = io.github.psd2live.core.nearestKeyPose(axes, pose, defaults)
 		if (targets.isEmpty()) return false
 		val expectedState = currentWorkspaceState() ?: return false
+		showParameterSnapNotice(targets, puppet)
 		parameterSnapJob?.cancel()
 		parameterSnapJob = scope.launch {
 			try {

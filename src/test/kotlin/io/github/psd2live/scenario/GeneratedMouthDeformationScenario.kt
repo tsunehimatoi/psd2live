@@ -3,6 +3,7 @@ package io.github.psd2live.scenario
 import io.github.psd2live.application.*
 import io.github.psd2live.core.*
 import io.github.psd2live.ui.keyformAxesFor
+import io.github.psd2live.ui.parameterKeyMarks
 import io.github.psd2live.core.modifier.RigModifierStack
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
@@ -102,6 +103,48 @@ class GeneratedMouthDeformationScenario {
         checkout("undo all mouth sculpts", original.historyHead)
         assertEquals(RigIrCompiler.compile(original.model), RigIrCompiler.compile(now.model))
         checkout("redo mouth sculpts", edited.historyHead)
+        assertEquals(expected, RigIrCompiler.compile(now.model))
+        reopen()
+        assertEquals(expected, RigIrCompiler.compile(now.model))
+    }
+
+    @Test fun sculptedMouthBlendShapePersistsOnUpgradedMesh() = Studio.run(temp, document()) {
+        val evaluator = CpuDeformationEvaluator()
+        val id = now.model.rig.ownLayerIdByDrawableId.entries.first { it.value == "mouth" }.key
+        val blend = puppet.parameters.firstOrNull { it.kind == ParameterKind.BLEND_SHAPE &&
+            puppet.drawables.single { d -> d.id.raw == id }.blendShapes.any { b -> b.parameterId == it.id } }
+            ?: fail("Expected a generated mouth blend shape on $id")
+        val defaults = puppet.parameters.associate { it.id to it.default }
+        val allParameterAxes = puppet.parameterKeyMarks().mapNotNull { (paramId, marks) ->
+            marks.allKeys.takeIf { it.isNotEmpty() }?.let { KeyformAxis(paramId, it.toFloatArray()) }
+        }
+        val snappedBlend = nearestKeyPose(allParameterAxes, mapOf(blend.id to .7f, open to .3f), defaults)
+        assertEquals(mapOf(blend.id to 1f, open to .25f), snappedBlend)
+        assertTrue(nearestKeyPose(allParameterAxes, snappedBlend, defaults).isEmpty())
+
+        val original = now
+        val before = puppet
+        val drawable = before.drawables.single { it.id.raw == id }
+        val key = drawable.geometryGrid?.axes.orEmpty().associate { it.parameterId.raw to defaults.getValue(it.parameterId) } +
+            (blend.id.raw to 1f)
+        val restBefore = evaluator.evaluate(before, emptyMap()).worldPositions.getValue(DrawableId(id))
+        val worldBefore = evaluator.evaluate(before, key.mapKeys { ParameterId(it.key) }).worldPositions.getValue(DrawableId(id))
+        val start = listOf(worldBefore[0], -worldBefore[1])
+        edit("sculpt mouth blend shape ${blend.id.raw}", "canvas_deform_stroke", req("correction_mode" to "delta", "stroke" to mapOf(
+            "mode" to "deform", "action" to "brush", "pose" to key,
+            "targets" to listOf(mapOf("target" to "mesh:$id", "key" to key, "vertices" to listOf(0))),
+            "radius" to 8, "strength" to 1,
+            "samples" to listOf(mapOf("point" to start), mapOf("point" to listOf(start[0] + .2f, start[1]))))))
+        val worldAfter = evaluator.evaluate(puppet, key.mapKeys { ParameterId(it.key) }).worldPositions.getValue(DrawableId(id))
+        assertEquals(worldBefore[0] + .2f, worldAfter[0], .01f, "Blend shape sculpt must persist on upgraded mouth mesh")
+        assertEquals(worldBefore[1], worldAfter[1], .01f)
+        val restAfter = evaluator.evaluate(puppet, emptyMap()).worldPositions.getValue(DrawableId(id))
+        assertEquals(restBefore[0], restAfter[0], .001f, "Rest pose must remain unchanged")
+        val edited = now
+        val expected = RigIrCompiler.compile(edited.model)
+        checkout("undo blend sculpt", original.historyHead)
+        assertEquals(RigIrCompiler.compile(original.model), RigIrCompiler.compile(now.model))
+        checkout("redo blend sculpt", edited.historyHead)
         assertEquals(expected, RigIrCompiler.compile(now.model))
         reopen()
         assertEquals(expected, RigIrCompiler.compile(now.model))

@@ -29,6 +29,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.fillMaxSize
@@ -2412,6 +2413,35 @@ fun CanvasViewportComposable(
 			}
 			if (mode == CanvasMode.EDIT && editor.hierarchyMode == EditHierarchyMode.SKELETON && editor.committedSkeleton == null) {
 				SkeletonCreatePrompt(editor, Modifier.align(Alignment.Center))
+			}
+			if (mode == CanvasMode.EDIT) {
+				val snapNotice by viewModel.parameterSnapNotice.collectAsState()
+				androidx.compose.animation.AnimatedVisibility(
+					visible = snapNotice != null,
+					enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(io.github.psd2live.ui.theme.Motion.Fade,
+						easing = androidx.compose.animation.core.LinearOutSlowInEasing)),
+					exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(io.github.psd2live.ui.theme.Motion.Instant,
+						easing = androidx.compose.animation.core.FastOutLinearInEasing)),
+					modifier = Modifier.align(Alignment.TopCenter).padding(top = 52.dp),
+				) {
+					val message = snapNotice ?: ""
+					Row(
+						modifier = Modifier
+							.frostedGlass(shape = RoundedCornerShape(io.github.psd2live.ui.theme.Corners.Panel), elevation = 2.dp, alpha = 0.82f)
+							.padding(horizontal = 10.dp, vertical = 5.dp),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
+					) {
+						Box(Modifier.size(6.dp).background(colors.accent, androidx.compose.foundation.shape.CircleShape))
+						Text(
+							text = message,
+							style = typography.captionSmall,
+							color = colors.textPrimary,
+							maxLines = 1,
+							overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+						)
+					}
+				}
 			}
 			// Merges an earlier version made that this one makes differently: offered where the trouble shows, not only in Tools.
 			if (canvasState.staleRegenerations > 0 && !canvasState.staleRegenerationsDismissed && viewModel.canUpdateGeneration(canvasState)) {

@@ -682,6 +682,15 @@ internal class RigModifierEvaluator(
             if (previous === next) return
             for ((channel, grid) in next) forms(kind, id, previous[channel], grid, channel.name.lowercase())
         }
+        fun <F> shapes(kind: String, id: String, previous: List<io.github.psd2live.format.model.BlendBinding<F>>,
+                       next: List<io.github.psd2live.format.model.BlendBinding<F>>) {
+            if (previous === next || next.isEmpty()) return
+            val oldByParam = previous.associateBy { it.parameter }
+            for (binding in next) {
+                if (oldByParam[binding.parameter] == binding) continue
+                add(ModifierKeyform(kind, id, binding.parameter))
+            }
+        }
         if (before.deformers !== after.deformers) {
             val rotations = before.deformers.filterIsInstance<Deformer.Rotation>().associateBy { it.id }
             for (rotation in after.deformers.filterIsInstance<Deformer.Rotation>()) {
@@ -689,6 +698,7 @@ internal class RigModifierEvaluator(
                 if (previous === rotation) continue
                 forms("rotation", rotation.id, previous?.pivot, rotation.pivot)
                 channels("rotation", rotation.id, previous?.channels.orEmpty(), rotation.channels)
+                shapes("rotation", rotation.id, previous?.shapes.orEmpty(), rotation.shapes)
             }
             val warps = before.deformers.filterIsInstance<Deformer.Warp>().associateBy { it.id }
             for (warp in after.deformers.filterIsInstance<Deformer.Warp>()) {
@@ -696,6 +706,7 @@ internal class RigModifierEvaluator(
                 if (previous === warp) continue
                 forms("warp", warp.id, previous?.lattice, warp.lattice)
                 channels("warp", warp.id, previous?.channels.orEmpty(), warp.channels)
+                shapes("warp", warp.id, previous?.shapes.orEmpty(), warp.shapes)
             }
         }
         if (before.meshes !== after.meshes) {
@@ -705,6 +716,7 @@ internal class RigModifierEvaluator(
                 if (previous === mesh) continue
                 forms("mesh", mesh.id, previous?.offsets, mesh.offsets)
                 channels("mesh", mesh.id, previous?.channels.orEmpty(), mesh.channels)
+                shapes("mesh", mesh.id, previous?.shapes.orEmpty(), mesh.shapes)
             }
         }
     }

@@ -2,6 +2,8 @@ package io.github.psd2live.core
 
 import io.github.psd2live.format.compile.document.ThreeWayMerge
 import kotlinx.serialization.json.*
+import org.umamo.edit.blendParametersIn
+import org.umamo.edit.withBlendShapeCaptured
 import org.umamo.runtime.model.*
 import kotlin.math.abs
 import io.github.psd2live.core.legacy.SupersededEntryNote
@@ -120,6 +122,10 @@ internal object GeneratedOverrides {
             if (preserveChildren && !generator.startsWith("modifier:")) return@map command
             require(!preserveChildren || kind == "warp") { "Keeping children requires a warp target" }
             if (kind == "rotation") return@map RotationCorrections.capture(model, id, key, command, generator, absolute = GeometryEditIntent.mode(command) == "absolute")
+			val blendTargets = model.blendParametersIn(key)
+			if (blendTargets.size == 1 && generator.startsWith("modifier:") && (kind == "mesh" || kind == "warp")) {
+				captureBlendOverride(model, kind, id, key, command, generator, blendTargets.single())?.let { return@map it }
+			}
 			val keyed = if (generator.startsWith("modifier:")) withGeometryKeys(model, kind, id, key) else model
 			val (base, points) = when (kind) {
 				"warp" -> {
@@ -552,6 +558,9 @@ internal object GeneratedOverrides {
 			return applyChannel(model, kind, id, generator, target, key, channel, base, points)
 		}
 		require(base.size == points.size && points.size % 2 == 0 && points.all(Float::isFinite) && base.all(Float::isFinite)) { "Invalid override form" }
+		command["blend_parameter"]?.jsonPrimitive?.contentOrNull?.let { paramName ->
+			return applyBlend(model, kind, id, generator, target, key, ParameterId(paramName), base, points, command)
+		}
 		fun orphaned(reason: GeneratedOverrideOrphanReason) = Outcome(model, listOf(GeneratedOverrideIssue(GeneratedOverrideIssueKind.ORPHANED, generator, target, key, points.size / 2, points.size / 2, reason)))
         val preserveChildren = command["preserve_children"]?.jsonPrimitive?.booleanOrNull == true
         if (preserveChildren && (kind != "warp" || command["children_binding"] != childrenBinding(model, id) ||
@@ -621,6 +630,120 @@ internal object GeneratedOverrides {
 			}
 		}
 		return Outcome(current, issues)
+	}
+
+	private fun blendPoints(model: PuppetModel, kind: String, id: String, parameterId: ParameterId, value: Float): FloatArray? = when (kind) {
+		"warp" -> {
+			val binding = warp(model, id)?.blendShapes?.firstOrNull { it.parameterId == parameterId } ?: return null
+			val index = binding.keys.indexOfFirst { abs(it - value) < org.umamo.runtime.eval.EPS_KEY }.takeIf { it >= 0 } ?: return null
+			binding.forms[index]?.controlPoints
+		}
+		"mesh" -> {
+			val binding = model.drawables.firstOrNull { it.id.raw == id }?.blendShapes?.firstOrNull { it.parameterId == parameterId } ?: return null
+			val index = binding.keys.indexOfFirst { abs(it - value) < org.umamo.runtime.eval.EPS_KEY }.takeIf { it >= 0 } ?: return null
+			binding.forms[index]?.positionDeltas
+		}
+		else -> null
+	}
+
+	private fun captureBlendOverride(
+		model: PuppetModel,
+		kind: String,
+		id: String,
+		key: Map<String, Float>,
+		command: JsonObject,
+		generator: String,
+		blendParameter: Parameter,
+	): JsonObject? {
+		val value = key[blendParameter.id.raw] ?: return null
+		val editedModel = runCatching { CanvasEdits.apply(model, command) }.getOrNull() ?: return null
+		val edited = blendPoints(editedModel, kind, id, blendParameter.id, value) ?: return null
+		val base = blendPoints(model, kind, id, blendParameter.id, value) ?: run {
+			val reference = runCatching { CanvasGeometryJournal.reference(model, command) }.getOrNull() ?: return null
+			val unmoved = JsonObject(command + ("points" to JsonArray(reference.map(::JsonPrimitive))) - "v" - "n" - "q" - "d" - "i")
+			val seeded = runCatching { CanvasEdits.apply(model, unmoved) }.getOrNull() ?: return null
+			blendPoints(seeded, kind, id, blendParameter.id, value) ?: return null
+		}
+		return buildJsonObject {
+			put("op", OP); put("generator", generator); put("target", "$kind:$id")
+			put("blend_parameter", blendParameter.id.raw)
+			put("merge_mode", GeometryEditIntent.mode(command))
+			put("geometry_binding", geometryBinding(model, kind, id))
+			put("key", JsonObject(mapOf(blendParameter.id.raw to JsonPrimitive(value))))
+			put("base", JsonArray(base.map(::JsonPrimitive)))
+			put("points", JsonArray(edited.map(::JsonPrimitive)))
+		}
+	}
+
+	private fun applyBlend(
+		model: PuppetModel,
+		kind: String,
+		id: String,
+		generator: String,
+		target: String,
+		key: Map<String, Float>,
+		parameterId: ParameterId,
+		base: List<Float>,
+		points: List<Float>,
+		command: JsonObject,
+	): Outcome {
+		fun orphaned(reason: GeneratedOverrideOrphanReason) = Outcome(model, listOf(
+			GeneratedOverrideIssue(GeneratedOverrideIssueKind.ORPHANED, generator, target, key, points.size / 2, points.size / 2, reason),
+		))
+		val value = key[parameterId.raw] ?: return orphaned(GeneratedOverrideOrphanReason.MISSING_KEYFORM)
+		if (model.parameters.none { it.id == parameterId && it.kind == ParameterKind.BLEND_SHAPE })
+			return orphaned(GeneratedOverrideOrphanReason.MISSING_KEYFORM)
+		val mode = command["merge_mode"]?.jsonPrimitive?.contentOrNull ?: "absolute"
+		require(mode in setOf("absolute", "delta")) { "Unknown geometry merge mode: $mode" }
+		if (mode == "delta" && command["geometry_binding"]?.jsonPrimitive?.content != geometryBinding(model, kind, id))
+			return orphaned(GeneratedOverrideOrphanReason.SHAPE_MISMATCH)
+		val seeded = if (blendPoints(model, kind, id, parameterId, value) != null) model else runCatching {
+			val coord = mapOf(parameterId.raw to value)
+			val geom = RigGeometryTools.geometry(model, kind, id, coord)
+			when (kind) {
+				"warp" -> model.withBlendShapeCaptured(KeyformOwner.Deformer(DeformerId(id)), coord, observedWarp = geom.points)
+				"mesh" -> model.withBlendShapeCaptured(KeyformOwner.Drawable(DrawableId(id)), coord,
+					observedMesh = FloatArray(geom.points.size) { geom.points[it] - geom.base[it] })
+				else -> return orphaned(GeneratedOverrideOrphanReason.MISSING_KEYFORM)
+			}
+		}.getOrNull() ?: return orphaned(GeneratedOverrideOrphanReason.MISSING_KEYFORM)
+		val current = blendPoints(seeded, kind, id, parameterId, value) ?: return orphaned(GeneratedOverrideOrphanReason.MISSING_KEYFORM)
+		if (current.size != points.size) return orphaned(GeneratedOverrideOrphanReason.SHAPE_MISMATCH)
+		fun pairs(values: List<Float>) = (0 until values.size / 2).associateWith { values[it * 2] to values[it * 2 + 1] }
+		val merged = ThreeWayMerge.merge(pairs(base), pairs(current.toList()), pairs(points)) { a, b ->
+			a != null && b != null && abs(a.first - b.first) <= EPS && abs(a.second - b.second) <= EPS
+		}
+		val result = FloatArray(current.size)
+		for ((index, point) in merged.merged) { result[index * 2] = point.first; result[index * 2 + 1] = point.second }
+		if (mode == "delta") for (index in result.indices) result[index] = current[index] + (points[index] - base[index])
+		require(result.all(Float::isFinite)) { "Geometry correction overflow" }
+		val issues = if (mode == "delta" || merged.conflicts.isEmpty()) emptyList()
+			else listOf(GeneratedOverrideIssue(GeneratedOverrideIssueKind.CONFLICT, generator, target, key, merged.conflicts.size, points.size / 2))
+		val next = when (kind) {
+			"warp" -> seeded.copy(deformers = seeded.deformers.map { deformer ->
+				if (deformer.id.raw != id || deformer !is Deformer.Warp) deformer
+				else deformer.copy(blendShapes = deformer.blendShapes.map { binding ->
+					if (binding.parameterId != parameterId) binding else {
+						val idx = binding.keys.indexOfFirst { abs(it - value) < org.umamo.runtime.eval.EPS_KEY }
+						binding.copy(forms = binding.forms.mapIndexed { i, form ->
+							if (i == idx && form != null) WarpForm(result, form.opacity, form.multiplyColor, form.screenColor) else form
+						})
+					}
+				})
+			})
+			else -> seeded.copy(drawables = seeded.drawables.map { drawable ->
+				if (drawable.id.raw != id) drawable
+				else drawable.copy(blendShapes = drawable.blendShapes.map { binding ->
+					if (binding.parameterId != parameterId) binding else {
+						val idx = binding.keys.indexOfFirst { abs(it - value) < org.umamo.runtime.eval.EPS_KEY }
+						binding.copy(forms = binding.forms.mapIndexed { i, form ->
+							if (i == idx && form != null) MeshForm(result, form.drawOrder, form.opacity, form.multiplyColor, form.screenColor) else form
+						})
+					}
+				})
+			})
+		}
+		return Outcome(next, issues)
 	}
 
 	private const val EPS = 1e-4f
