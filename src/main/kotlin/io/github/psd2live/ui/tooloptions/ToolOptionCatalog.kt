@@ -46,18 +46,20 @@ internal val BRUSH_FALLOFF = ChoiceOption("brush.falloff", "editor.falloff", { B
 
 internal val BRUSH_CONNECTED = ToggleOption("brush.connected", "editor.connectedOnly", { it.connectedOnly }, { e, on -> e.connectedOnly = on })
 internal val GEOMETRY_EDIT_STAGE = ChoiceOption("deformation.stage", "editor.deformation.stage", { it.geometryEditStages() },
-    { editor, stage -> editor.geometryEditStageLabel(stage) }, { it.geometryEditStage }, { editor, stage -> editor.changeGeometryEditStage(stage) })
+    { editor, stage -> editor.geometryEditStageLabel(stage) }, { it.geometryEditStage }, { editor, stage -> editor.changeGeometryEditStage(stage) },
+    inline = false)
 internal val GEOMETRY_CORRECTION_MODE = ChoiceOption("deformation.correctionMode", "editor.deformation.correctionMode", { listOf("delta", "absolute") },
     { _, mode -> tr("editor.deformation.correctionMode.$mode") },
-    { it.geometryCorrectionMode }, { e, mode -> e.geometryCorrectionMode = mode })
+    { it.geometryCorrectionMode }, { e, mode -> e.geometryCorrectionMode = mode }, inline = false)
 internal val DEFORMATION_KEY_POLICY = ChoiceOption("deformation.keyPolicy", "editor.deformation.keyPolicy", { listOf(false, true) },
     { _, snap -> tr(if (snap) "editor.deformation.keyPolicy.nearest" else "editor.deformation.keyPolicy.current") },
-    { it.snapDeformationToKeys }, { e, snap -> e.snapDeformationToKeys = snap })
+    { it.snapDeformationToKeys }, { e, snap -> e.snapDeformationToKeys = snap }, inline = false)
 
 internal val TEMPORARY_WARP_DIVISIONS = ChoiceOption("tempWarp.divisions", "editor.tempWarp.divisions", { (1..4).toList() },
     { _, n -> "$n×$n" }, { it.temporaryWarpDivisions }, { e, n -> e.changeTemporaryWarpDivisions(n) })
 
-internal val SOFT_SELECTION = ToggleOption("soft.selection", "editor.softSelection", { it.softSelection }, { e, on -> e.softSelection = on })
+internal val SOFT_SELECTION = ToggleOption("soft.selection", "editor.softSelection", { it.softSelection }, { e, on -> e.softSelection = on },
+    place = OptionPlace.TOP)
 
 internal val SOFT_RADIUS = SliderOption("soft.radius", "editor.softRadius", OptionUnit.PX, { 1f..it },
     { it.softRadius }, { e, v -> e.softRadius = v }, logarithmic = true, role = OptionRole.SIZE)

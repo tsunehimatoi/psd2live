@@ -36,10 +36,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Surface
@@ -361,8 +364,10 @@ internal fun FloatingMenu(
 				Modifier
 					.menuAppearance(visibility, TransformOrigin(if (alignment == Alignment.TopEnd || alignment == Alignment.BottomEnd) 0.88f else 0.12f, if (rise) 1f else 0f), rise)
 					.width(width)
+					.heightIn(max = 360.dp)
 					.menuPanel()
-					.padding(4.dp),
+					.padding(4.dp)
+					.verticalScroll(rememberScrollState()),
 			) { MenuGlide { Column(verticalArrangement = Arrangement.spacedBy(1.dp), content = content) } }
 		}
 	}

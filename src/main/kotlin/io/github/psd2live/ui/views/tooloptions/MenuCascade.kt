@@ -4,6 +4,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,7 +63,7 @@ internal fun MenuSecondLevel(id: String?, content: @Composable () -> Unit) {
     Box {
         Popup(popupPositionProvider = provider, properties = PopupProperties(focusable = false)) {
             Box(Modifier.menuAppearance(transition, TransformOrigin(if (direction?.value == true) 1f else 0f, 0f), rise = false)
-                .menuPanel().padding(4.dp).heightIn(max = 540.dp)) {
+                .menuPanel().padding(4.dp).heightIn(max = 540.dp).verticalScroll(rememberScrollState())) {
                 key(id) { content() }
             }
         }

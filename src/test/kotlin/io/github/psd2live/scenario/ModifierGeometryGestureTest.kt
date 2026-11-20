@@ -10,6 +10,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.*
 import org.junit.jupiter.api.io.TempDir
+import org.umamo.runtime.model.KeyformAxis
 import org.umamo.runtime.model.ParameterId
 import java.nio.file.Path
 import kotlin.test.*
@@ -56,10 +57,22 @@ class ModifierGeometryGestureTest {
         }
     }
 
-    @Test fun intermediatePoseSurvivesRealGestureCommitUndoRedoAndParameterChange() = runBlocking {
+    private data class MouthDeformFixture(
+        val vm: PSD2LiveViewModel,
+        val workspace: DesktopWorkspace,
+        val parameter: ParameterId,
+        val before: RigPreviewModel,
+        val drawableId: String,
+        val layer: String,
+    )
+
+    private suspend fun withMouthAtIntermediatePose(
+        storeName: String,
+        block: suspend MouthDeformFixture.() -> Unit,
+    ) {
         PSD2LiveViewModel().use { vm ->
             vm.setStateForTest(vm.state.value.copy(atlasSize = 256, exportMoc3 = false, generatePhysics = false))
-            DesktopWorkspace(vm, temp.resolve("store")).use { workspace ->
+            DesktopWorkspace(vm, temp.resolve(storeName)).use { workspace ->
                 vm.attachWorkspace(workspace)
                 workspace.importPsd(Characters.mouthPsd(temp).toString(), true, WorkspaceInitialModifiers.RECOMMENDED)
                 val parameter = ParameterId("ParamMouthOpenY")
@@ -71,47 +84,100 @@ class ModifierGeometryGestureTest {
                     it.geometryGrid?.axes.orEmpty().any { axis -> axis.parameterId == parameter }
                 } ?: error("Synthetic mouth has no geometry driven by ${parameter.raw}")
                 val layer = before.rig.ownLayerIdByDrawableId.getValue(drawable.id.raw)
-                val history = workspace.history()
-                val original = RigIrCompiler.compile(before)
+                MouthDeformFixture(vm, workspace, parameter, before, drawable.id.raw, layer).block()
+            }
+        }
+    }
+
+    private fun prepareMouthVertexPress(
+        fixture: MouthDeformFixture,
+        viewport: CanvasViewport,
+        snapToKeys: Boolean,
+    ): androidx.compose.ui.geometry.Offset {
+        fixture.vm.setStateForTest(fixture.vm.state.value.copy(selectedDeformerId = null, selectedLayerId = fixture.layer))
+        val editor = fixture.vm.canvasEditor
+        editor.hierarchyMode = EditHierarchyMode.DEFORM
+        editor.tool = CanvasTool.SELECT
+        editor.editLevel = 1
+        editor.snapDeformationToKeys = snapToKeys
+        val target = assertNotNull(editor.target())
+        val badges = editor.deformerCorners(viewport).values
+        return editor.screen(target.geometry.points, target, viewport).first { point ->
+            badges.none { it.contains(point.x.toDouble(), point.y.toDouble()) }
+        }
+    }
+
+    @Test fun intermediatePoseSurvivesRealGestureCommitUndoRedoAndParameterChange() = runBlocking {
+        withMouthAtIntermediatePose("store") {
+            val history = workspace.history()
+            val original = RigIrCompiler.compile(before)
+            val viewport = CanvasViewport(100.0, 200.0, 200.0, 500f, 500f)
+            withContext(Dispatchers.Main) {
+                val editor = vm.canvasEditor
+                val position = prepareMouthVertexPress(this@withMouthAtIntermediatePose, viewport, snapToKeys = false)
+                assertTrue(editor.press(position, viewport, false, false))
+                assertEquals(.35f, assertNotNull(editor.capturedEditPose)[parameter])
+                vm.setParameterValues(mapOf(parameter to 0f))
+                editor.move(position + androidx.compose.ui.geometry.Offset(10f, 0f), viewport, false)
+                assertNull(editor.error)
+                editor.release()
+                assertTrue(editor.busy)
+                assertEquals(.35f, assertNotNull(editor.capturedEditPose)[parameter])
+                vm.setParameterValues(mapOf(parameter to 0f))
+            }
+            withTimeout(30_000) { vm.state.first { !it.canvasEditBusy } }
+            assertFalse(vm.canvasEditor.busy)
+            assertNull(vm.canvasEditor.error)
+            assertNull(vm.canvasEditor.capturedEditPose)
+            assertEquals(.35f, vm.state.value.parameterValues[parameter])
+            val edited = RigIrCompiler.compile(requireNotNull(vm.state.value.previewModel))
+            assertNotEquals(original, edited)
+            val committed = workspace.history()
+            assertEquals(history.nodes.size + 1, committed.nodes.size)
+            assertTrue(RigModifierStack.fromJson(vm.state.value.rigEdits.modifierStack!!).overrides.isNotEmpty())
+            workspace.checkoutHistory(history.headNodeId, MutationAuthor.USER)
+            assertEquals(original, RigIrCompiler.compile(requireNotNull(vm.state.value.previewModel)))
+            workspace.checkoutHistory(committed.headNodeId, MutationAuthor.USER)
+            assertEquals(edited, RigIrCompiler.compile(requireNotNull(vm.state.value.previewModel)))
+            withContext(Dispatchers.Main) { vm.setParameterValues(mapOf(parameter to .2f)) }
+            withTimeout(30_000) { vm.state.first { it.parameterValues[parameter] == .2f } }
+            assertNull(vm.canvasEditor.capturedEditPose)
+        }
+    }
+
+    @Test fun defaultSnapDeformationToKeysSnapsOffKeyPressAndShowsNotice() = runBlocking {
+        withMouthAtIntermediatePose("snap-store") {
+            val puppet = before.rig.puppet
+            val axes = puppet.keyformAxesFor("mesh", drawableId) + puppet.parameterKeyMarks().mapNotNull { (paramId, marks) ->
+                marks.allKeys.takeIf { it.isNotEmpty() }?.let { KeyformAxis(paramId, it.toFloatArray()) }
+            }
+            val defaults = puppet.parameters.associate { it.id to it.default }
+            val expectedSnapped = assertNotNull(io.github.psd2live.ui.nearestKeyPose(axes, mapOf(parameter to .35f), defaults)[parameter])
+            assertNotEquals(.35f, expectedSnapped)
+
+            val viewport = CanvasViewport(100.0, 200.0, 200.0, 500f, 500f)
+            withContext(Dispatchers.Main) {
+                val editor = vm.canvasEditor
+                assertTrue(editor.snapDeformationToKeys)
+                val position = prepareMouthVertexPress(this@withMouthAtIntermediatePose, viewport, snapToKeys = editor.snapDeformationToKeys)
+                assertTrue(editor.press(position, viewport, false, false))
+                assertNotNull(vm.parameterSnapNotice.value)
+                assertNull(editor.capturedEditPose)
+            }
+            withTimeout(30_000) {
+                vm.state.first { it.parameterValues[parameter] == expectedSnapped }
                 withContext(Dispatchers.Main) {
-                    vm.setStateForTest(vm.state.value.copy(selectedDeformerId = null, selectedLayerId = layer))
-                    val editor = vm.canvasEditor
-                    editor.hierarchyMode = EditHierarchyMode.DEFORM
-                    editor.tool = CanvasTool.SELECT
-                    editor.editLevel = 1
-                    val viewport = CanvasViewport(100.0, 200.0, 200.0, 500f, 500f)
-                    val target = assertNotNull(editor.target())
-                    val badges = editor.deformerCorners(viewport).values
-                    val position = editor.screen(target.geometry.points, target, viewport).first { point ->
-                        badges.none { it.contains(point.x.toDouble(), point.y.toDouble()) }
-                    }
-                    assertTrue(editor.press(position, viewport, false, false))
-                    assertEquals(.35f, assertNotNull(editor.capturedEditPose)[parameter])
-                    vm.setParameterValues(mapOf(parameter to 0f))
-                    editor.move(position + androidx.compose.ui.geometry.Offset(10f, 0f), viewport, false)
-                    assertNull(editor.error)
-                    editor.release()
-                    assertTrue(editor.busy)
-                    assertEquals(.35f, assertNotNull(editor.capturedEditPose)[parameter])
-                    vm.setParameterValues(mapOf(parameter to 0f))
+                    while (vm.isSnappingParameters) delay(10)
                 }
-                withTimeout(30_000) { vm.state.first { !it.canvasEditBusy } }
-                assertFalse(vm.canvasEditor.busy)
-                assertNull(vm.canvasEditor.error)
-                assertNull(vm.canvasEditor.capturedEditPose)
-                assertEquals(.35f, vm.state.value.parameterValues[parameter])
-                val edited = RigIrCompiler.compile(requireNotNull(vm.state.value.previewModel))
-                assertNotEquals(original, edited)
-                val committed = workspace.history()
-                assertEquals(history.nodes.size + 1, committed.nodes.size)
-                assertTrue(RigModifierStack.fromJson(vm.state.value.rigEdits.modifierStack!!).overrides.isNotEmpty())
-                workspace.checkoutHistory(history.headNodeId, MutationAuthor.USER)
-                assertEquals(original, RigIrCompiler.compile(requireNotNull(vm.state.value.previewModel)))
-                workspace.checkoutHistory(committed.headNodeId, MutationAuthor.USER)
-                assertEquals(edited, RigIrCompiler.compile(requireNotNull(vm.state.value.previewModel)))
-                withContext(Dispatchers.Main) { vm.setParameterValues(mapOf(parameter to .2f)) }
-                withTimeout(30_000) { vm.state.first { it.parameterValues[parameter] == .2f } }
-                assertNull(vm.canvasEditor.capturedEditPose)
+            }
+            withContext(Dispatchers.Main) {
+                val editor = vm.canvasEditor
+                assertEquals(expectedSnapped, vm.state.value.parameterValues[parameter])
+                val snappedPosition = prepareMouthVertexPress(this@withMouthAtIntermediatePose, viewport, snapToKeys = editor.snapDeformationToKeys)
+                assertTrue(editor.press(snappedPosition, viewport, false, false))
+                assertEquals(expectedSnapped, assertNotNull(editor.capturedEditPose)[parameter])
+                editor.cancel()
+                assertNull(editor.capturedEditPose)
             }
         }
     }
