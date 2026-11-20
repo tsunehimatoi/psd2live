@@ -179,7 +179,7 @@ class EyeGazeLidAlgorithm : ReadingModifierAlgorithmPlugin {
         }
         val tree = input.parameterTree
         val treeModel = PuppetIr.toPuppet(RigIR(input.canvas, live, parameterTree = tree))
-        val folder = PuppetParameterNode.Group(ParameterGroupId(instance.outputId("parameter-folder:ParamGroupEyes")),
+        val folder = PuppetParameterNode.Group(ParameterGroupId(ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.EYES)),
             source.folderName, true,
             (eyeParameterIds + smileIds + declared.map { it.id } + emotionIds).map { PuppetParameterNode.Param(ParameterId(it)) })
         val updatedTree = BindingMerge.appendTree(treeModel, listOf(folder), additions.mapTo(hashSetOf()) { ParameterId(it.id) },

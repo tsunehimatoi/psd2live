@@ -27,7 +27,7 @@ class MouthFittedAlgorithm(
         val source = PuppetIr.toPuppet(input)
         val targets = instance.targets.mapTo(linkedSetOf()) { it.id }
         val tongues = linkedMapOf<String, String>()
-        val prepared = withParameters(source, context)
+        val prepared = withParameters(source, instance, context)
         val posed = sourceCandidate(prepared, targets, inputs, checkpoint, scaffold = scaffoldProvider, tongueId = { id ->
             instance.outputId("tongue-out:${id.raw}").also { tongues[it] = id.raw }
         })
@@ -53,18 +53,19 @@ class MouthFittedAlgorithm(
             })
     }
 
-    private fun withParameters(source: PuppetModel, context: ModifierAlgorithmContext): PuppetModel {
+    private fun withParameters(source: PuppetModel, instance: RigModifierInstance, context: ModifierAlgorithmContext): PuppetModel {
         val i18n = ModifierParameterI18n.fromContext(context)
         val missing = listOf(
             Parameter(ParameterId("ParamMouthForm"), i18n.resolveName("ParamMouthForm", "Mouth Form"), -1f, 1f, 0f),
             Parameter(ParameterId("ParamMouthOpenY"), i18n.resolveName("ParamMouthOpenY", "Mouth Open"), 0f, 1f, 0f),
         ).filter { candidate -> source.parameters.none { it.id == candidate.id } }
         if (missing.isEmpty()) return source
-        val group = ModifierParameterGroups.MOUTH
-        val groupName = i18n.resolveGroup(group).let { if (it == group) "Mouth" else it }
+        val group = ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.MOUTH)
+        val groupName = i18n.resolveGroup(ModifierParameterGroups.MOUTH).let { if (it == ModifierParameterGroups.MOUTH) "Mouth" else it }
         val folder = ParameterNode.Group(ParameterGroupId(group), groupName, true, missing.map { ParameterNode.Param(it.id) })
         return source.copy(parameters = source.parameters + missing,
-            parameterTree = BindingMerge.appendTree(source, listOf(folder), missing.mapTo(hashSetOf()) { it.id }, false))
+            parameterTree = BindingMerge.appendTree(source, listOf(folder), missing.mapTo(hashSetOf()) { it.id },
+                instance.outputAliases.keys.any { it.startsWith("parameter-folder:") }))
     }
 
     /** Unchanged engine objects retain their identity. Convert only the objects the transition wrote. */

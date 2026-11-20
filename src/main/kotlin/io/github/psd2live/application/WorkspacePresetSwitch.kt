@@ -54,8 +54,9 @@ internal object WorkspacePresetSwitch {
             ids[retired] = id
             reserved = reserved.copy(retiredIds = reserved.retiredIds + id, nextId = Math.addExact(sequence, 1))
         }
-        val aliases = template.instances.flatMap { entry -> entry.outputAliases.map { (local, old) ->
-            old to entry.copy(id = ids.getValue(entry.id), outputAliases = emptyMap()).outputId(local)
+        val aliases = template.instances.flatMap { entry -> entry.outputAliases.entries.mapNotNull { (local, old) ->
+            if (local.startsWith("parameter-folder:")) null
+            else old to entry.copy(id = ids.getValue(entry.id), outputAliases = emptyMap()).outputId(local)
         } }.toMap()
         val generatedOwner = Regex("modifier:(" + ids.keys.joinToString("|") { Regex.escape(it) } + "):")
         fun generated(value: String): String {

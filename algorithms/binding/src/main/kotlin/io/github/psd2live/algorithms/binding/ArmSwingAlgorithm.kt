@@ -71,10 +71,10 @@ class ArmSwingAlgorithm : ReadingModifierAlgorithmPlugin {
         }
         val definitions = definitions(context, source)
         val added = definitions.filter { input.parameter(it.id) == null }
-        val parameters = if (added.isEmpty()) emptyList() else input.parameters
         val tree = input.parameterTree
-        val nextTree = appendFolder(tree, parameters, added, instance.outputId("parameter-folder:ParamGroupPhysics"),
-            context.getValue("folder").jsonPrimitive.content)
+        val folderId = ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.PHYSICS)
+        val nextTree = ModifierParameterGroups.appendToFolder(tree, input.parameters.map { it.id }, added.map { it.id },
+            folderId, context.getValue("folder").jsonPrimitive.content)
         return ModifierModelChanges(parameters = ModifierObjectChanges(added = added),
             deformers = ModifierObjectChanges(updated = updates), physicsGroups = physics(input, instance, added, context),
             parameterTree = nextTree.takeIf { it != tree }?.let { ModifierFieldChange(tree, it) })
@@ -107,21 +107,6 @@ class ArmSwingAlgorithm : ReadingModifierAlgorithmPlugin {
             }
         }
         return ModifierObjectChanges(added = additions, reused = reused)
-    }
-
-    private fun appendFolder(tree: List<ParameterNode>, existing: List<Parameter>, added: List<Parameter>, folder: String, name: String): List<ParameterNode> {
-        if (added.isEmpty()) return tree
-        val nodes = added.map { ParameterNode.Param(it.id) }
-        var found = false
-        fun insert(items: List<ParameterNode>): List<ParameterNode> = items.map { node ->
-            when {
-                node !is ParameterNode.Group -> node
-                node.id == folder -> node.copy(children = node.children + nodes).also { found = true }
-                else -> node.copy(children = insert(node.children))
-            }
-        }
-        val updated = insert(tree.ifEmpty { existing.map { ParameterNode.Param(it.id) } })
-        return if (found) updated else updated + ParameterNode.Group(folder, name, true, nodes)
     }
 
     companion object {

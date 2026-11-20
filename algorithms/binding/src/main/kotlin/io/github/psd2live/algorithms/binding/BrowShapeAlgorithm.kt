@@ -48,11 +48,10 @@ class BrowShapeAlgorithm : ReadingModifierAlgorithmPlugin {
             ModifierObjectUpdate(before, next).takeIf { before != next }
         }
         val tree = if (added.isEmpty()) null else {
-            val id = instance.outputId("parameter-folder:ParamGroupBrows")
-            val children = added.map { ParameterNode.Param(it.id) }
-            val root = input.parameterTree.ifEmpty { input.parameters.map { ParameterNode.Param(it.id) } }
-            val (next, found) = append(root, id, children)
-            ModifierFieldChange(input.parameterTree, if (found) next else next + ParameterNode.Group(id, source.groupName, true, children))
+            val id = ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.BROWS)
+            ModifierParameterGroups.appendToFolder(
+                input.parameterTree, input.parameters.map { it.id }, added.map { it.id }, id, source.groupName,
+            ).takeIf { it != input.parameterTree }?.let { ModifierFieldChange(input.parameterTree, it) }
         }
         return ModifierModelChanges(parameters = ModifierObjectChanges(added = added, reused = existing),
             meshes = ModifierObjectChanges(updated = updated), parameterTree = tree)
@@ -122,22 +121,6 @@ class BrowShapeAlgorithm : ReadingModifierAlgorithmPlugin {
         grid.axes.map { KeyAxis(it.parameterId.raw, Floats.wrap(it.keys)) },
         grid.cells.map { KeyCell(Ints.wrap(it.coordinate), MeshOffsets(Floats.wrap(it.form.positionDeltas))) },
     )
-
-    private fun append(nodes: List<ParameterNode>, id: String, children: List<ParameterNode>): Pair<List<ParameterNode>, Boolean> {
-        var found = false
-        val result = nodes.map { node ->
-            if (node !is ParameterNode.Group) node
-            else if (node.id == id) {
-                found = true
-                node.copy(children = node.children + children)
-            } else {
-                val (nested, matched) = append(node.children, id, children)
-                found = found || matched
-                if (matched) node.copy(children = nested) else node
-            }
-        }
-        return result to found
-    }
 
     private fun value(config: JsonObject, key: String, default: Float, range: ClosedFloatingPointRange<Float>): Float =
         ((config["values"]?.jsonObject?.get(key)?.jsonPrimitive?.float ?: default) / 100f).also {

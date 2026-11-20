@@ -139,19 +139,11 @@ class CheekAlgorithm : ChangingModifierAlgorithmPlugin {
         channelGrids = tracks,
     )
 
-    private fun insertParameter(input: RigIR, instance: RigModifierInstance, source: CheekSource): ModifierFieldChange<List<ParameterNode>> {
-        val folder = instance.outputId("parameter-folder:ParamGroupFace")
-        val node = ParameterNode.Param(source.parameter().id)
-        val tree = input.parameterTree.ifEmpty { input.parameters.map { ParameterNode.Param(it.id) } }
-        fun insert(nodes: List<ParameterNode>): List<ParameterNode> = nodes.map {
-            if (it is ParameterNode.Group) {
-                if (it.id == folder) it.copy(children = it.children + node)
-                else it.copy(children = insert(it.children))
-            } else it
-        }
-        fun contains(nodes: List<ParameterNode>): Boolean =
-            nodes.filterIsInstance<ParameterNode.Group>().any { it.id == folder || contains(it.children) }
-        val result = if (contains(tree)) insert(tree) else tree + ParameterNode.Group(folder, source.folderName, true, listOf(node))
-        return ModifierFieldChange(input.parameterTree, result)
+    private fun insertParameter(input: RigIR, instance: RigModifierInstance, source: CheekSource): ModifierFieldChange<List<ParameterNode>>? {
+        val folder = ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.FACE)
+        val result = ModifierParameterGroups.appendToFolder(
+            input.parameterTree, input.parameters.map { it.id }, listOf(source.parameter().id), folder, source.folderName,
+        )
+        return result.takeIf { it != input.parameterTree }?.let { ModifierFieldChange(input.parameterTree, it) }
     }
 }

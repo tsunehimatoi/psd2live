@@ -190,10 +190,10 @@ class BrowFittedBinding : ChangingModifierAlgorithmPlugin {
             ModifierObjectUpdate<io.github.psd2live.format.model.Deformer>(before, after).takeIf { before != after }
         }
         val tree = if (added.isEmpty()) null else {
-            val id = instance.outputId("parameter-folder:ParamGroupBrows")
-            val nodes = added.map { ParameterNode.Param(it.id) }
-            val root = input.parameterTree.ifEmpty { input.parameters.map { ParameterNode.Param(it.id) } }
-            ModifierFieldChange(input.parameterTree, root + ParameterNode.Group(id, measurements.groupName, true, nodes))
+            val id = ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.BROWS)
+            ModifierParameterGroups.appendToFolder(
+                input.parameterTree, input.parameters.map { it.id }, added.map { it.id }, id, measurements.groupName,
+            ).takeIf { it != input.parameterTree }?.let { ModifierFieldChange(input.parameterTree, it) }
         }
         return ModifierModelChanges(parameters = ModifierObjectChanges(added = added, reused = definitions.mapNotNull { existing[it.id] }),
             meshes = ModifierObjectChanges(updated = meshes), deformers = ModifierObjectChanges(updated = deformers), parameterTree = tree)

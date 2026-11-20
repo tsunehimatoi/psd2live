@@ -43,7 +43,7 @@ class MouthSpringAlgorithm : ReadingModifierAlgorithmPlugin {
         val context = input.context
         val captured = MouthFittedInputs.decode(ModifierAlgorithmContext(context.values.getValue("source").jsonObject, context.resources))
         val source = captured.source ?: return mouthParameterOnlyChanges(input, instance, parameters(context),
-            context.values.getValue("folder").jsonPrimitive.content, "parameter-folder:ParamGroupPhysics",
+            context.values.getValue("folder").jsonPrimitive.content, ModifierParameterGroups.PHYSICS,
             listOfNotNull(input.parameters.singleOrNull { it.id == SPRING }))
         val mouth = source.rig()
         require(mouth.options.jaw && mouth.options.spring && !mouth.options.tongue)
@@ -103,7 +103,7 @@ class MouthSpringAlgorithm : ReadingModifierAlgorithmPlugin {
             } else 0
             ModifierObjectUpdate(mesh, mesh.copy(shapes = mesh.shapes.take(split) + next + mesh.shapes.drop(split)))
         }
-        val folder = PuppetParameterNode.Group(ParameterGroupId(instance.outputId("parameter-folder:ParamGroupPhysics")),
+        val folder = PuppetParameterNode.Group(ParameterGroupId(ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.PHYSICS)),
             context.values.getValue("folder").jsonPrimitive.content, true, listOf(PuppetParameterNode.Param(MouthRig.SPRING)))
         val updatedTree = BindingMerge.appendTree(model, listOf(folder), additions.mapTo(hashSetOf()) { ParameterId(it.id) },
             instance.outputAliases.keys.any { it.startsWith("parameter-folder:") })
@@ -319,7 +319,7 @@ internal fun mouthParameterOnlyChanges(
     instance: RigModifierInstance,
     declared: List<Parameter>,
     folderName: String,
-    folderKey: String = "parameter-folder:ParamGroupMouth",
+    standardGroup: String = ModifierParameterGroups.MOUTH,
     reused: List<Parameter> = emptyList(),
 ): ModifierModelChanges {
     val live = input.parameters
@@ -333,7 +333,7 @@ internal fun mouthParameterOnlyChanges(
     }
     val tree = input.parameterTree
     val parameterView = PuppetIr.toPuppet(RigIR(input.canvas, live, parameterTree = tree))
-    val folder = PuppetParameterNode.Group(ParameterGroupId(instance.outputId(folderKey)),
+    val folder = PuppetParameterNode.Group(ParameterGroupId(ModifierParameterGroups.resolveId(instance, standardGroup)),
         folderName, true, declared.map { PuppetParameterNode.Param(ParameterId(it.id)) })
     val updatedTree = BindingMerge.appendTree(parameterView, listOf(folder), additions.mapTo(hashSetOf()) { ParameterId(it.id) },
         instance.outputAliases.keys.any { it.startsWith("parameter-folder:") })

@@ -212,8 +212,7 @@ class WorkspaceLegacyBindingTest {
             val group = actual.rig.puppet.parameterTree.filterIsInstance<ParameterNode.Group>().single {
                 it.children.contains(ParameterNode.Param(StandardParameters.BROW_L_Y))
             }
-            val instance = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.single { it.id == "brow" }
-            assertEquals(instance.outputId("parameter-folder:ParamGroupBrows"), group.id.raw)
+            assertEquals("ParamGroupBrows", group.id.raw)
             compare(native, actual, neutralHead, targets = setOf(brow.id))
             assertEquals(RigIrCompiler.compile(actual), RigIrCompiler.compile(f.builder.build(f.now.document)))
         }

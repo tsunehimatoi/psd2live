@@ -115,7 +115,7 @@ class RibbonsAlgorithm : ReadingModifierAlgorithmPlugin {
         val tree = input.parameterTree
         val parameterView = RigIR(input.canvas, beforeParameters, parameterTree = tree)
         val nextTree = if (added.isEmpty()) tree else HairChainsParameterTree.append(parameterView,
-            instance.outputId("parameter-folder:ParamGroupPhysics"), source.folder, added.map { it.id })
+            ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.PHYSICS), source.folder, added.map { it.id })
         val physics = physics(input, instance, active.values, (beforeParameters.map { it.id } + parameters.keys).toSet(), source, checkpoint)
         return ModifierModelChanges(parameters = ModifierObjectChanges(added = added), meshes = ModifierObjectChanges(updated = meshes),
             deformers = ModifierObjectChanges(added = warps.values.toList()), physicsGroups = physics,

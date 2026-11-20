@@ -234,6 +234,7 @@ internal class RigModifierSource(
     fun expressionContext(instance: RigModifierInstance, requireUpstreamStandards: Boolean = false): ModifierAlgorithmContext =
         ModifierAlgorithmContext(buildJsonObject {
             put("schema", "expression/1")
+            put("folder", io.github.psd2live.i18n.tr("model.group.custom"))
             if (requireUpstreamStandards) put("requiredParameters", JsonArray(expressionStandardIds(instance).map { JsonPrimitive(it.raw) }))
             putJsonObject("layers") {
                 expressionLayers.forEach { (id, layer) ->

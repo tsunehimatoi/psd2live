@@ -145,7 +145,7 @@ class HairChainsAlgorithm : ChangingModifierAlgorithmPlugin {
             input.meshes.none { (edited[it.id] ?: it).parent == carrier } &&
                 input.deformers.none { it.parent == carrier } && newWarps.values.none { it.parent?.raw == carrier }
         }.map(inputDeformers::getValue)
-        val groupId = instance.outputId("parameter-folder:ParamGroupPhysics")
+        val groupId = ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.PHYSICS)
         val tree = appendParameters(input, groupId, source.physicsFolder, added.map { it.id })
         val physics = HairChainsPhysics.groups(input, instance, active, parameters.keys, softness, source, context, checkpoint)
         return ModifierModelChanges(

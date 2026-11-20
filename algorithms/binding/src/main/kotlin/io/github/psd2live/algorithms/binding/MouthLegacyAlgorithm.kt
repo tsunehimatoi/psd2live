@@ -88,19 +88,8 @@ class MouthLegacyAlgorithm : ChangingModifierAlgorithmPlugin {
 
     private fun parameterTree(input: RigIR, instance: RigModifierInstance, added: List<IrParameter>, name: String): List<ParameterNode> {
         if (added.isEmpty()) return input.parameterTree
-        val id = instance.outputId("parameter-folder:ParamGroupMouth")
-        val items = added.map { ParameterNode.Param(it.id) }
-        val tree = input.parameterTree.ifEmpty { input.parameters.map { ParameterNode.Param(it.id) } }
-        var found = false
-        fun append(nodes: List<ParameterNode>): List<ParameterNode> = nodes.map { node ->
-            if (node !is ParameterNode.Group) node
-            else if (node.id == id) {
-                found = true
-                node.copy(children = node.children + items)
-            } else node.copy(children = append(node.children))
-        }
-        val updated = append(tree)
-        return if (found) updated else updated + ParameterNode.Group(id, name, true, items)
+        val id = ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.MOUTH)
+        return ModifierParameterGroups.appendToFolder(input.parameterTree, input.parameters.map { it.id }, added.map { it.id }, id, name)
     }
 
     private fun selectMask(layer: MouthLegacyInputs.Layer, masks: List<MouthLegacyInputs.Layer>): MouthLegacyInputs.Layer? {

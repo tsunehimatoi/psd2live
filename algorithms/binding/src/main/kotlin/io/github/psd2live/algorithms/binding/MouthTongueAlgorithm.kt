@@ -156,7 +156,7 @@ class MouthTongueAlgorithm : ReadingModifierAlgorithmPlugin {
         }
         val ribbonUpdates = mouthOutlineRibbonUpdates(input, live, context, mouth, setOf(MouthRig.TONGUE_OUT), rest, checkpoint)
         val (partUpdates, rootChildrenChange, renderRootChange) = placeTongueCopies(input, ownerToCopy)
-        val folder = PuppetParameterNode.Group(ParameterGroupId(instance.outputId("parameter-folder:ParamGroupMouth")),
+        val folder = PuppetParameterNode.Group(ParameterGroupId(ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.MOUTH)),
             context.values.getValue("folder").jsonPrimitive.content, true, listOf(PuppetParameterNode.Param(MouthRig.TONGUE_OUT)))
         val updatedTree = BindingMerge.appendTree(model, listOf(folder), additions.mapTo(hashSetOf()) { ParameterId(it.id) },
             instance.outputAliases.keys.any { it.startsWith("parameter-folder:") })

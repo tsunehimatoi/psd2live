@@ -30,8 +30,14 @@ class ExpressionAlgorithm : ContextualModifierAlgorithmPlugin {
         val supplied = PuppetIr.toPuppet(RigIR(input.canvas, definitions)).parameters
         val existing = current.parameters.mapTo(HashSet()) { it.id.raw }
         val additions = supplied.filter { it.id.raw in ids && it.id.raw !in existing }
-        val model = current.copy(parameters = current.parameters + additions,
-            parameterTree = current.parameterTree + additions.map { ParameterNode.Param(it.id) })
+        val nextTree = if (additions.isEmpty()) current.parameterTree else {
+            val folderId = ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.CUSTOM)
+            val folderName = source["folder"]?.jsonPrimitive?.contentOrNull ?: "Custom Parameters"
+            val folder = ParameterNode.Group(ParameterGroupId(folderId), folderName, true, additions.map { ParameterNode.Param(it.id) })
+            BindingMerge.appendTree(current, listOf(folder), additions.mapTo(hashSetOf()) { it.id },
+                instance.outputAliases.keys.any { it.startsWith("parameter-folder:") })
+        }
+        val model = current.copy(parameters = current.parameters + additions, parameterTree = nextTree)
         val opacities = source.getValue("opacity").jsonObject
         val drawables = model.drawables.map { actual ->
             val layerId = meshes[actual.id.raw]?.jsonPrimitive?.content

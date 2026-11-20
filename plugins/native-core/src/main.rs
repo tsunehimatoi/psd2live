@@ -36,6 +36,20 @@ fn output_id(req: &Request, local_name: &str) -> String {
     format!("modifier:{inst_id}:{}", hex_encode(local_name))
 }
 
+pub(crate) fn standard_folder_id(req: &Request, standard_id: &str) -> String {
+    let local_name = format!("parameter-folder:{standard_id}");
+    if let Some(alias) = req
+        .header
+        .get("invocation")
+        .and_then(|inv| inv.get("outputAliases"))
+        .and_then(|aliases| aliases.get(&local_name))
+        .and_then(Json::as_str)
+    {
+        return alias.to_string();
+    }
+    standard_id.to_string()
+}
+
 fn handle_physics(req: &Request) -> Response {
     let config = req.config();
     let Some(entries) = config.as_obj() else {
@@ -625,6 +639,8 @@ fn handle_expression_toggles(req: &Request) -> Response {
         return Response::Error("Missing expression opacity".into());
     };
     let chain_owners = ctx.get("chain_owners").and_then(Json::as_arr).unwrap_or(&[]);
+    let folder_name = ctx.get("folder").and_then(Json::as_str).unwrap_or("Custom Parameters");
+    let folder_id = standard_folder_id(req, "ParamGroupCustom");
 
     let mut layers: HashMap<&str, (&str, Option<i64>)> = HashMap::new();
     for (lid, val) in layers_obj {
@@ -710,6 +726,8 @@ fn handle_expression_toggles(req: &Request) -> Response {
                     ("default".into(), Json::Num(def as f64)),
                     ("blend".into(), Json::Bool(p.get("blend").and_then(Json::as_bool).unwrap_or(false))),
                     ("repeat".into(), Json::Bool(p.get("repeat").and_then(Json::as_bool).unwrap_or(false))),
+                    ("group".into(), Json::Str(folder_id.clone())),
+                    ("groupName".into(), Json::Str(folder_name.to_string())),
                 ];
                 if let Some(keys) = p.get("keys") {
                     obj.push(("keys".into(), keys.clone()));

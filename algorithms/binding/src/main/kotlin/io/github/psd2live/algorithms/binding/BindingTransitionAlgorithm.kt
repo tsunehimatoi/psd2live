@@ -9,7 +9,6 @@ import io.github.psd2live.format.model.PhysicsGroup
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.bridge.PuppetIr
 import kotlinx.serialization.json.*
-import org.umamo.edit.withParametersSyncedFromTree
 import org.umamo.runtime.model.*
 
 /**
@@ -114,7 +113,7 @@ class BindingTransitionAlgorithm(
                 BodyVertexSources.match(to, original, target, checkpoint)
         }
         val scoped = instance.copy(targets = instance.targets.filter { it.id in ids })
-        val bound = PuppetIr.toIr(BindingMerge.apply(live, scoped, source, checkpoint).withParametersSyncedFromTree())
+        val bound = PuppetIr.toIr(BindingMerge.apply(live, scoped, source, checkpoint))
         fun <T> objects(before: List<T>, after: List<T>, id: (T) -> String): ModifierObjectChanges<T> {
             val old = before.associateBy(id)
             val next = after.associateBy(id)

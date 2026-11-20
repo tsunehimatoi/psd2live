@@ -1,5 +1,6 @@
 package io.github.psd2live.algorithms.binding
 
+import io.github.psd2live.core.modifier.ModifierParameterGroups
 import org.umamo.runtime.model.*
 
 /** The source coordinates are measured before binding. The neutral scaffold supplies carrier identities and topology. */
@@ -29,6 +30,7 @@ object LegacyFaceBinding {
         angleParameters: List<Parameter>,
         folderName: String,
         checkpoint: () -> Unit = {},
+        folderId: ParameterGroupId = ParameterGroupId(ModifierParameterGroups.FACE),
     ): PuppetModel {
         require(strength.isFinite() && strength in 0f..4f)
         require(angleParameters.map { it.id } == listOf(angleX, angleY, angleZ))
@@ -93,13 +95,36 @@ object LegacyFaceBinding {
                 }
             }
         }
-        val folder = ParameterNode.Group(ParameterGroupId("ParamGroupFace"), folderName, true,
-            angleParameters.map { ParameterNode.Param(it.id) })
-        val existingFolder = before.parameterTree.singleOrNull { it is ParameterNode.Group && it.id == folder.id } as? ParameterNode.Group
-        val nextTree = if (existingFolder == null) listOf(folder) + before.parameterTree
-            else before.parameterTree.map {
-                if (it === existingFolder) folder.copy(children = folder.children + existingFolder.children) else it
+        val angleIds = angleParameters.mapTo(HashSet()) { it.id }
+        val angleNodes = angleParameters.map { ParameterNode.Param(it.id) }
+        val baseTree = before.parameterTree.ifEmpty {
+            before.parameters.filter { it.id !in angleIds }.map { ParameterNode.Param(it.id) }
+        }
+        val placed = HashSet<ParameterId>()
+        fun collectPlaced(nodes: List<ParameterNode>) {
+            for (node in nodes) when (node) {
+                is ParameterNode.Param -> placed += node.id
+                is ParameterNode.Group -> collectPlaced(node.children)
             }
+        }
+        collectPlaced(baseTree)
+        val unplaced = angleNodes.filter { it.id !in placed }
+        var found = false
+        fun update(nodes: List<ParameterNode>): List<ParameterNode> = nodes.map { node ->
+            if (node !is ParameterNode.Group) node
+            else if (node.id == folderId) {
+                found = true
+                node.copy(children = unplaced + node.children)
+            } else {
+                val children = update(node.children)
+                if (children === node.children) node else node.copy(children = children)
+            }
+        }
+        val updatedTree = update(baseTree)
+        val nextTree = if (found) updatedTree else BindingMerge.insertGroup(
+            updatedTree,
+            ParameterNode.Group(folderId, folderName, true, unplaced),
+        )
         return before.copy(
             parameters = angleParameters + before.parameters,
             parameterTree = nextTree,

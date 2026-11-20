@@ -1,4 +1,4 @@
-use crate::output_id;
+use crate::{output_id, standard_folder_id};
 use crate::rig_ir::{
     decode_object_deformer, decode_object_frame, decode_object_mesh, decode_rig_binary,
     encode_object_deformer, encode_object_frame, encode_object_mesh, encode_rig_binary,
@@ -504,13 +504,16 @@ pub(crate) fn ensure_parameters(
     };
     let (mut next, found) = append_to_parameter_group(&root, group_id, &children);
     if !found {
-        next.push(ParameterNode::Group {
-            id: group_id.to_string(),
-            name: group_name.to_string(),
-            open: true,
-            children,
-            label: GroupLabel::None,
-        });
+        crate::rig_ir::insert_parameter_group(
+            &mut next,
+            ParameterNode::Group {
+                id: group_id.to_string(),
+                name: group_name.to_string(),
+                open: true,
+                children,
+                label: GroupLabel::None,
+            },
+        );
     }
     frame.parameter_tree = next;
     Ok(())
@@ -795,7 +798,7 @@ fn handle_brow_shape_inner(req: &Request, cache: &ObjectCache) -> Result<Respons
     ensure_parameters(
         &mut frame,
         declared,
-        &output_id(req, "parameter-folder:ParamGroupBrows"),
+        &standard_folder_id(req, "ParamGroupBrows"),
         group_name,
     )?;
 
@@ -1054,7 +1057,7 @@ fn handle_brow_spring_inner(req: &Request, cache: &ObjectCache) -> Result<Respon
     ensure_parameters(
         &mut frame,
         declared,
-        &output_id(req, "parameter-folder:ParamGroupPhysics"),
+        &standard_folder_id(req, "ParamGroupPhysics"),
         group_name,
     )?;
 

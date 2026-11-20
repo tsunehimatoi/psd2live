@@ -182,7 +182,7 @@ class EyeAftershockAlgorithm : ReadingModifierAlgorithmPlugin {
 
         val tree = input.parameterTree
         val treeModel = PuppetIr.toPuppet(RigIR(input.canvas, live, parameterTree = tree))
-        val folder = PuppetParameterNode.Group(ParameterGroupId(instance.outputId("parameter-folder:ParamGroupPhysics")),
+        val folder = PuppetParameterNode.Group(ParameterGroupId(ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.PHYSICS)),
             input.context.values.getValue("folder").jsonPrimitive.content, true,
             declared.map { PuppetParameterNode.Param(ParameterId(it.id)) })
         val updatedTree = BindingMerge.appendTree(treeModel, listOf(folder), additions.mapTo(hashSetOf()) { ParameterId(it.id) },

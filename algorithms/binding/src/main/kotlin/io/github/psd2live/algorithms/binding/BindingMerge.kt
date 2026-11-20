@@ -48,7 +48,7 @@ object BindingMerge {
             val folders = LinkedHashSet<ParameterGroupId>()
             fun collect(nodes: List<ParameterNode>) { nodes.filterIsInstance<ParameterNode.Group>().forEach { folders += it.id; collect(it.children) } }
             collect(desired.parameterTree)
-            val treeIds = ModelIdRemap(groups = folders.associateWith { ParameterGroupId(instance.outputId("parameter-folder:${it.raw}")) })
+            val treeIds = ModelIdRemap(groups = folders.associateWith { ParameterGroupId(ModifierParameterGroups.resolveId(instance, it.raw)) })
             current = current.copy(parameters = current.parameters + additions,
                 parameterTree = appendTree(current, desired.parameterTree.map(treeIds::node), additions.mapTo(HashSet()) { it.id }, preserveSourceOrder))
             val links = desired.parameterLinks.filter { it !in previous.parameterLinks && it !in current.parameterLinks }
@@ -381,6 +381,14 @@ object BindingMerge {
         return actual.map { if (key(it) in ranks) ordered.next() else it }
     }
 
+    internal fun insertGroup(tree: List<ParameterNode>, group: ParameterNode.Group): List<ParameterNode> {
+        val rank = ModifierParameterGroups.canonicalRank(group.id.raw) ?: return tree + group
+        val index = tree.indexOfFirst { node ->
+            node is ParameterNode.Group && (ModifierParameterGroups.canonicalRank(node.id.raw)?.let { it > rank } == true)
+        }
+        return if (index < 0) tree + group else tree.toMutableList().apply { add(index, group) }
+    }
+
     internal fun appendTree(model: PuppetModel, desired: List<ParameterNode>, added: Set<ParameterId>, preserveSourceOrder: Boolean): List<ParameterNode> {
         val existing = model.parameterTree.ifEmpty { model.parameters.filter { it.id !in added }.map { ParameterNode.Param(it.id) } }
         fun groups(nodes: List<ParameterNode>): Set<ParameterGroupId> = nodes.filterIsInstance<ParameterNode.Group>().flatMapTo(HashSet()) { listOf(it.id) + groups(it.children) }
@@ -401,6 +409,14 @@ object BindingMerge {
             is ParameterNode.Param -> node
             is ParameterNode.Group -> node.copy(children = ordered(update(node.children) + extra(templates[node.id]?.children.orEmpty()), templates[node.id]?.children.orEmpty()))
         } }
-        return ordered(update(existing) + extra(desired), desired)
+        val updated = update(existing)
+        val additions = extra(desired)
+        if (preserveSourceOrder) return ordered(updated + additions, desired)
+        return additions.fold(updated) { acc, node ->
+            when (node) {
+                is ParameterNode.Group -> insertGroup(acc, node)
+                is ParameterNode.Param -> acc + node
+            }
+        }
     }
 }

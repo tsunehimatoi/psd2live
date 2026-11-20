@@ -135,7 +135,7 @@ object StandardParameters {
 		val moduleGroups = io.github.psd2live.core.recipe.RigModules.modules.flatMap { it.defines }.associate { ParameterId(it.id) to it.group }
 		fun group(id: String, name: String, parameters: List<ParameterId>) = ParameterNode.Group(
 			ParameterGroupId(id), name, true, (parameters + modules.filter { moduleGroups[it] == id })
-				.filter { available == null || it in available }.map { ParameterNode.Param(it) },
+				.distinct().filter { available == null || it in available }.map { ParameterNode.Param(it) },
 		)
 		val base = listOf(
 			group("ParamGroupFace", tr("model.group.face"), listOf(ANGLE_X, ANGLE_Y, ANGLE_Z)),
@@ -146,9 +146,10 @@ object StandardParameters {
 			group("ParamGroupPhysics", tr("model.group.physics"), listOf(HAIR_FRONT, HAIR_BACK) +
 				modules.filter { (it.raw.startsWith("ParamHair") || it.raw.startsWith("ParamCloth") || it.raw.startsWith("ParamPart")) &&
 					it != HAIR_FRONT && it != HAIR_BACK }),
-		)
-		return if (custom.isNotEmpty()) {
-			base + group("ParamGroupCustom", tr("model.group.custom"), custom)
+		).filter { available == null || it.children.isNotEmpty() }
+		val customGroup = group("ParamGroupCustom", tr("model.group.custom"), custom)
+		return if (custom.isNotEmpty() && (available == null || customGroup.children.isNotEmpty())) {
+			base + customGroup
 		} else {
 			base
 		}
@@ -2234,7 +2235,7 @@ object RigBuilder {
 	internal fun expressionHairParameters(analysis: PipelineAnalysis, config: PipelineConfig, cache: PreviewMeshCache): List<Parameter> {
 		val measured = meshFramedAnalysis(analysis.copy(layers = analysis.layers.filter { it.source !is MouthLipLayer }), config, cache)
 		val face = NinePoseFaceRig.from(measured.calibration ?: measured, config.rigTuning)
-		return chainParameters(measured, hairOnlyChains(measured, face, config))
+		return chainParameters(hairOnlyChains(measured, face, config))
 	}
 
 	private fun withoutLegacyHairSway(puppet: PuppetModel, config: PipelineConfig): PuppetModel {
@@ -4565,13 +4566,18 @@ object RigBuilder {
 		return io.github.psd2live.core.recipe.RigModules.parameters(config, io.github.psd2live.core.recipe.RecipeSubject.of(context.analysis))
 			.filter { eyesFitted || !it.id.startsWith("ParamEye") }
 			.map { Parameter(ParameterId(it.id), tr(it.nameKey), it.min, it.max, it.default) } +
-			chainParameters(context.analysis, chains)
+			chainParameters(chains)
 	}
 
-	private fun chainParameters(analysis: PipelineAnalysis, chains: List<io.github.psd2live.core.fit.HairChain>): List<Parameter> =
+	private fun chainParameters(chains: List<io.github.psd2live.core.fit.HairChain>): List<Parameter> =
 		chains.flatMap { chain ->
-			val name = analysis.layers.firstOrNull { it.source.id.raw == chain.layerId }?.source?.name ?: chain.layerId
-			chain.parameters.map { p -> Parameter(p, tr("model.parameter.hairChain", name, p.raw.removePrefix(chain.kind.prefix)), -1f, 1f, 0f) }
+			val prefix = chain.kind.prefix + chain.kind.word + chain.index
+			chain.parameters.map { p ->
+				val label = io.github.psd2live.algorithms.binding.ChainLabels.formatParameter(
+					chain.kind.word, chain.index, p.raw.removePrefix(prefix),
+				) { key -> if (key == "segment") tr("model.chain.segment", "{segment}") else tr("model.chain.$key") }
+				Parameter(p, tr("model.parameter.hairChain", label), -1f, 1f, 0f)
+			}
 		}
 
 	private fun ninePoseAxes(): List<KeyformAxis> = listOf(

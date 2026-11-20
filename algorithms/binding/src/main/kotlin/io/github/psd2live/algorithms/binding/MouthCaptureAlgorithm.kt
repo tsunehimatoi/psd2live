@@ -168,7 +168,7 @@ class MouthCaptureAlgorithm : ReadingModifierAlgorithmPlugin {
         }
         val ribbonUpdates = mouthOutlineRibbonUpdates(input, live, context, mouth, ranges.keys, rest, checkpoint)
         val parameterView = model.copy(parameters = model.parameters.filter { it.id.raw in byParameter })
-        val folder = PuppetParameterNode.Group(ParameterGroupId(instance.outputId("parameter-folder:ParamGroupMouth")),
+        val folder = PuppetParameterNode.Group(ParameterGroupId(ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.MOUTH)),
             context.values.getValue("folder").jsonPrimitive.content, true, declared.map { PuppetParameterNode.Param(ParameterId(it.id)) })
         val updatedTree = BindingMerge.appendTree(parameterView, listOf(folder), additions.mapTo(hashSetOf()) { ParameterId(it.id) },
             instance.outputAliases.keys.any { it.startsWith("parameter-folder:") })

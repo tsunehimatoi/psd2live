@@ -81,7 +81,9 @@ class BustBindingAlgorithm : ReadingModifierAlgorithmPlugin {
             }
         }
         val tree = input.parameterTree
-        val nextTree = parameterTree(tree, input.parameters, added, instance.outputId("parameter-folder:$GROUP"), source.names.folder)
+        val groupId = ModifierParameterGroups.resolveId(instance, GROUP)
+        val nextTree = ModifierParameterGroups.appendToFolder(tree, input.parameters.map { it.id }, added.map { it.id },
+            groupId, source.names.folder)
         val physics = physicsChanges(input, instance, source, parameters.mapTo(hashSetOf()) { it.id })
         return ModifierModelChanges(parameters = ModifierObjectChanges(added = added), meshes = ModifierObjectChanges(updated = updates),
             physicsGroups = physics, parameterTree = nextTree.takeIf { it != tree }?.let { ModifierFieldChange(tree, it) })
@@ -115,29 +117,12 @@ class BustBindingAlgorithm : ReadingModifierAlgorithmPlugin {
         return ModifierObjectChanges(added = additions, reused = reused)
     }
 
-    private fun parameterTree(tree: List<ParameterNode>, existing: List<Parameter>, added: List<Parameter>, group: String,
-                              name: String): List<ParameterNode> {
-        if (added.isEmpty()) return tree
-        val nodes = added.map { ParameterNode.Param(it.id) }
-        val initial = tree.ifEmpty { existing.map { ParameterNode.Param(it.id) } }
-        var inserted = false
-        fun insert(tree: List<ParameterNode>): List<ParameterNode> = tree.map { node ->
-            when {
-                node !is ParameterNode.Group -> node
-                node.id == group -> node.copy(children = node.children + nodes).also { inserted = true }
-                else -> node.copy(children = insert(node.children))
-            }
-        }
-        val updated = insert(initial)
-        return if (inserted) updated else updated + ParameterNode.Group(group, name, true, nodes)
-    }
-
     companion object {
         const val TYPE = "body.bust"
         const val VERSION = 2
         const val ENTRYPOINT = "builtin.626f64792e62757374.v2/bust"
         val WRITES = setOf("mesh", "parameter", "hierarchy", "physics")
-        private const val GROUP = "ParamGroupPhysics"
+        private const val GROUP = ModifierParameterGroups.PHYSICS
         private val bustY = ParameterId("ParamBustY")
         private val bustX = ParameterId("ParamBustX")
 

@@ -21,7 +21,7 @@ class HairLegacyAlgorithm : ChangingModifierAlgorithmPlugin {
         val source = PuppetIr.toPuppet(input)
         val additions = captured.parameters.filter { parameter -> input.parameters.none { it.id == parameter.id } }
         val parameters = source.parameters + additions.map { Parameter(ParameterId(it.id), it.name, it.min, it.max, it.default) }
-        val folder = ParameterNode.Group(ParameterGroupId(instance.outputId("parameter-folder:ParamGroupPhysics")),
+        val folder = ParameterNode.Group(ParameterGroupId(ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.PHYSICS)),
             captured.physicsFolderName, true, captured.parameters.map { ParameterNode.Param(ParameterId(it.id)) })
         val tree = if (additions.isEmpty()) source.parameterTree else BindingMerge.appendTree(
             source.copy(parameters = parameters), listOf(folder), additions.mapTo(hashSetOf()) { ParameterId(it.id) },

@@ -1,4 +1,4 @@
-use crate::output_id;
+use crate::standard_folder_id;
 use crate::rig_ir::{
     channel_static, decode_object_frame, decode_object_mesh, decode_rig_binary, encode_object_frame,
     encode_object_mesh, grid_ref, objects_response, residual_channel_grid, set_channel,
@@ -130,7 +130,12 @@ fn ensure_mood_parameter(
         keys: None,
     });
     let mut tree = if frame.parameter_tree.is_empty() {
-        frame.parameters.iter().map(|p| ParameterNode::Param(p.id.clone())).collect()
+        frame
+            .parameters
+            .iter()
+            .filter(|p| p.id != id)
+            .map(|p| ParameterNode::Param(p.id.clone()))
+            .collect()
     } else {
         std::mem::take(&mut frame.parameter_tree)
     };
@@ -149,13 +154,16 @@ fn ensure_mood_parameter(
         false
     }
     if !insert(&mut tree, folder_id, id) {
-        tree.push(ParameterNode::Group {
-            id: folder_id.to_string(),
-            name: folder_name.to_string(),
-            open: true,
-            children: vec![ParameterNode::Param(id.to_string())],
-            label: GroupLabel::None,
-        });
+        crate::rig_ir::insert_parameter_group(
+            &mut tree,
+            ParameterNode::Group {
+                id: folder_id.to_string(),
+                name: folder_name.to_string(),
+                open: true,
+                children: vec![ParameterNode::Param(id.to_string())],
+                label: GroupLabel::None,
+            },
+        );
     }
     frame.parameter_tree = tree;
     sync_parameters_from_tree(frame);
@@ -218,7 +226,7 @@ pub fn handle_cheek(req: &Request, cache: &ObjectCache) -> Response {
         Ok(f) => f,
         Err(e) => return Response::Error(e),
     };
-    let folder_id = output_id(req, "parameter-folder:ParamGroupFace");
+    let folder_id = standard_folder_id(req, "ParamGroupFace");
     let frame_changed = match ensure_mood_parameter(&mut frame, PARAM_CHEEK, param_name, &folder_id, folder_name) {
         Ok(c) => c,
         Err(e) => return Response::Error(e),
@@ -391,7 +399,7 @@ pub fn handle_gloom(req: &Request, cache: &ObjectCache) -> Response {
         Ok(f) => f,
         Err(e) => return Response::Error(e),
     };
-    let folder_id = output_id(req, "parameter-folder:ParamGroupFace");
+    let folder_id = standard_folder_id(req, "ParamGroupFace");
     let frame_changed = match ensure_mood_parameter(&mut frame, PARAM_GLOOM, param_name, &folder_id, group_name) {
         Ok(c) => c,
         Err(e) => return Response::Error(e),

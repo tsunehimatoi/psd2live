@@ -108,7 +108,7 @@ class MouthVowelAlgorithm : ReadingModifierAlgorithmPlugin {
         val ribbonUpdates = mouthOutlineRibbonUpdates(input, live, context, mouth, vowelIds, rest, checkpoint)
         val tree = input.parameterTree
         val parameterView = PuppetIr.toPuppet(RigIR(input.canvas, live, parameterTree = tree))
-        val folder = PuppetParameterNode.Group(ParameterGroupId(instance.outputId("parameter-folder:ParamGroupMouth")),
+        val folder = PuppetParameterNode.Group(ParameterGroupId(ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.MOUTH)),
             context.values.getValue("folder").jsonPrimitive.content, true, declared.map { PuppetParameterNode.Param(ParameterId(it.id)) })
         val updatedTree = BindingMerge.appendTree(parameterView, listOf(folder), additions.mapTo(hashSetOf()) { ParameterId(it.id) },
             instance.outputAliases.keys.any { it.startsWith("parameter-folder:") })

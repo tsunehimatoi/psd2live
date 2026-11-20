@@ -43,15 +43,10 @@ class BrowFittedAlgorithm : ChangingModifierAlgorithmPlugin {
                 ModifierObjectUpdate(old, next).takeIf { old != next }
             }
         }
-        val groupId = instance.outputId("parameter-folder:ParamGroupBrows")
-        val tree = if (added.isEmpty()) null else {
-            val children = added.map { io.github.psd2live.format.model.ParameterNode.Param(it.id) }
-            val group = io.github.psd2live.format.model.ParameterNode.Group(groupId, inputs.groupName, true, children)
-            require(input.parameterTree.none { it is io.github.psd2live.format.model.ParameterNode.Group && it.id == groupId }) {
-                "Fitted brow parameter folder already exists"
-            }
-            ModifierFieldChange(input.parameterTree, input.parameterTree + group)
-        }
+        val groupId = ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.BROWS)
+        val tree = ModifierParameterGroups.appendToFolder(
+            input.parameterTree, input.parameters.map { it.id }, added.map { it.id }, groupId, inputs.groupName,
+        ).takeIf { it != input.parameterTree }?.let { ModifierFieldChange(input.parameterTree, it) }
         return ModifierModelChanges(parameters = ModifierObjectChanges(added = added),
             meshes = ModifierObjectChanges(updated = updated), parameterTree = tree)
     }

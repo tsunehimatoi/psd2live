@@ -13,6 +13,8 @@ internal object ModifierParameterContext {
         ModifierParameterGroups.BODY to tr("model.group.body"),
         ModifierParameterGroups.MOUTH to tr("model.group.mouth"),
         ModifierParameterGroups.PHYSICS to tr("model.group.physics"),
+        ModifierParameterGroups.CUSTOM to tr("model.group.custom"),
+        ModifierParameterGroups.SKELETON to tr("model.group.skeleton"),
     )
 
     fun i18n(parameterNames: Map<String, String> = emptyMap()): ModifierParameterI18n =

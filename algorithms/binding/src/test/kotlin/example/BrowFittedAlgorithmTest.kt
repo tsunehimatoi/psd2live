@@ -41,7 +41,7 @@ class BrowFittedAlgorithmTest {
         val output = changes.apply(source)
         assertSame(source.meshes.last(), output.meshes.last())
         val group = output.parameterTree.single() as io.github.psd2live.format.model.ParameterNode.Group
-        assertEquals(instance.outputId("parameter-folder:ParamGroupBrows"), group.id)
+        assertEquals("ParamGroupBrows", group.id)
         val drawables = PuppetIr.toPuppet(output).drawables
         for ((index, fit, travel) in listOf(Triple(0, left, .5f * 12f * .45f), Triple(1, right, 15f * .25f * .45f / .45f))) {
             val actual = drawables[index]

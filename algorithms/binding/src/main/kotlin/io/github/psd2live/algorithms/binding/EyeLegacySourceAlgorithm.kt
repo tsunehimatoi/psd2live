@@ -106,7 +106,7 @@ class EyeLegacySourceAlgorithm : ReadingModifierAlgorithmPlugin {
         val tree = input.parameterTree
         val treeModel = PuppetIr.toPuppet(RigIR(input.canvas, liveParameters, parameterTree = tree))
         val folder = (bound.parameterTree.single() as ParameterNode.Group).copy(
-            id = ParameterGroupId(instance.outputId("parameter-folder:ParamGroupEyes")))
+            id = ParameterGroupId(ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.EYES)))
         val updatedTree = BindingMerge.appendTree(treeModel, listOf(folder), additions.mapTo(hashSetOf()) { ParameterId(it.id) },
             instance.outputAliases.containsKey("parameter-folder:ParamGroupEyes"))
         val convertedTree = PuppetIr.toIr(treeModel.copy(parameterTree = updatedTree)).parameterTree

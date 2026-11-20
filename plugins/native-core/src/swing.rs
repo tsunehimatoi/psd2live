@@ -2,8 +2,8 @@ use crate::rig_ir::{
     Deformer, KeyAxis, KeyCell, KeyGrid, Mesh, ObjectCache, Parameter, ParameterNode,
     PhysicsGroup, PhysicsInput, PhysicsNormalization, PhysicsOutput, PhysicsSegment, Rgb,
     decode_object_deformer, decode_object_frame, decode_object_mesh, encode_object_deformer,
-    encode_object_frame, encode_object_mesh, grid_corners, linear_cell_map, objects_response,
-    sync_parameters_from_tree,
+    encode_object_frame, encode_object_mesh, grid_corners, linear_cell_map,
+    move_to_physics_folder, objects_response, resolve_group_name, sync_parameters_from_tree,
 };
 use psd2live_plugin_sdk::{Json, Request, Response};
 use std::collections::{HashMap, HashSet};
@@ -820,6 +820,7 @@ pub fn handle_swing(req: &Request, cache: &ObjectCache, output_id: fn(&Request, 
 
     // Create swing parameters
     let all_param_ids: Vec<String> = edit.motions.iter().flat_map(|m| m.parameter_ids.iter().cloned()).collect();
+    let mut created_ids: Vec<String> = Vec::new();
     for raw in &all_param_ids {
         if frame.parameters.iter().any(|p| &p.id == raw) {
             let existing = frame.parameters.iter().find(|p| &p.id == raw).unwrap();
@@ -845,7 +846,13 @@ pub fn handle_swing(req: &Request, cache: &ObjectCache, output_id: fn(&Request, 
                 keys: None,
             });
             frame.parameter_tree.insert(0, ParameterNode::Param(raw.clone()));
+            created_ids.push(raw.clone());
         }
+    }
+    if !created_ids.is_empty() {
+        let folder_id = crate::standard_folder_id(req, "ParamGroupPhysics");
+        let folder_name = resolve_group_name(req, "ParamGroupPhysics", "Physics");
+        move_to_physics_folder(&mut frame.parameter_tree, &created_ids, &folder_id, &folder_name);
     }
 
     let defaults: HashMap<String, f32> = frame.parameters.iter().map(|p| (p.id.clone(), p.default)).collect();

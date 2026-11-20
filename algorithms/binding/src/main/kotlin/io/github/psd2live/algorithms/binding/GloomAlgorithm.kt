@@ -49,27 +49,16 @@ class GloomAlgorithm : ReadingModifierAlgorithmPlugin {
             if (channels == mesh.channels) null else ModifierObjectUpdate(mesh, mesh.copy(channels = channels))
         }
         val originalTree = if (existing == null) input.parameterTree else null
-        val tree = originalTree?.let { addToTree(it.ifEmpty { input.parameters.map { p -> ParameterNode.Param(p.id) } },
-            instance.outputId("parameter-folder:ParamGroupFace"), source.groupName) }
+        val folderId = ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.FACE)
+        val tree = originalTree?.let {
+            ModifierParameterGroups.appendToFolder(it, input.parameters.map { p -> p.id }, listOf(PARAMETER), folderId, source.groupName)
+                .takeIf { next -> next != it }
+        }
         return ModifierModelChanges(
             parameters = if (existing == null) ModifierObjectChanges(added = listOf(definition)) else ModifierObjectChanges(reused = listOf(existing)),
             meshes = ModifierObjectChanges(updated = updates),
             parameterTree = tree?.let { ModifierFieldChange(requireNotNull(originalTree), it) },
         )
-    }
-
-    private fun addToTree(tree: List<ParameterNode>, groupId: String, groupName: String): List<ParameterNode> {
-        val entry = ParameterNode.Param(PARAMETER)
-        var found = false
-        fun insert(nodes: List<ParameterNode>): List<ParameterNode> = nodes.map { node ->
-            when {
-                node !is ParameterNode.Group -> node
-                node.id == groupId -> node.copy(children = node.children + entry).also { found = true }
-                else -> node.copy(children = insert(node.children))
-            }
-        }
-        val next = insert(tree)
-        return if (found) next else next + ParameterNode.Group(groupId, groupName, true, listOf(entry))
     }
 
     companion object {

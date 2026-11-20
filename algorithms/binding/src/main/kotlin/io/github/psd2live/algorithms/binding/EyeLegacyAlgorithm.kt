@@ -4,6 +4,7 @@ import io.github.psd2live.core.modifier.ModifierFieldChange
 import io.github.psd2live.core.modifier.ModifierModelChanges
 import io.github.psd2live.core.modifier.ModifierObjectChanges
 import io.github.psd2live.core.modifier.ModifierObjectUpdate
+import io.github.psd2live.core.modifier.ModifierParameterGroups
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.bridge.PuppetIr
 import org.umamo.runtime.model.*
@@ -81,10 +82,11 @@ class EyeLegacyAlgorithm(private val inputs: EyeLegacyInputs, checkpoint: () -> 
             checkpoint()
             if (deformer is Deformer.Warp && deformer.id in gazeIds) deformer.copy(geometryGrid = gaze) else deformer
         }
-        val tree = ParameterNode.Group(ParameterGroupId("ParamGroupEyes"), groupName, true,
+        val tree = ParameterNode.Group(ParameterGroupId(ModifierParameterGroups.EYES), groupName, true,
             definitions.map { ParameterNode.Param(it.id) })
-        return source.copy(drawables = drawables, deformers = deformers, parameters = source.parameters + definitions,
-            parameterTree = source.parameterTree + tree,
+        val nextParameters = source.parameters + definitions
+        return source.copy(drawables = drawables, deformers = deformers, parameters = nextParameters,
+            parameterTree = BindingMerge.appendTree(source.copy(parameters = nextParameters), listOf(tree), definitions.mapTo(hashSetOf()) { it.id }, false),
             parameterLinks = source.parameterLinks + ParameterLink(EyeLegacyMotion.gazeX, EyeLegacyMotion.gazeY))
     }
 }

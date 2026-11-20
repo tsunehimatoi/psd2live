@@ -6,9 +6,18 @@ import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.bridge.PuppetIr
 import io.github.psd2live.algorithms.physics.PhysicsGroups
 import org.umamo.edit.withParametersSyncedFromTree
+import org.umamo.runtime.model.ParameterGroupId
 
-class SimulationAlgorithm : ModifierAlgorithmPlugin {
-    override fun evaluate(input: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit): RigIR {
+class SimulationAlgorithm : ContextualModifierAlgorithmPlugin {
+    override fun evaluate(input: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit): RigIR =
+        evaluate(input, instance, ModifierAlgorithmContext.Empty, checkpoint)
+
+    override fun evaluate(
+        input: RigIR,
+        instance: RigModifierInstance,
+        context: ModifierAlgorithmContext,
+        checkpoint: () -> Unit,
+    ): RigIR {
         val rig = input
         require(instance.targets.all { it.kind == "mesh" }) { "A simulation modifier targets meshes" }
         checkpoint()
@@ -26,7 +35,11 @@ class SimulationAlgorithm : ModifierAlgorithmPlugin {
             source
         }
         val edit = SimulationOutputs.outputs(instance, bakedSource)
-        val (model, issues) = SimGenerator.applyOne(weighted, edit)
+        val folderId = ParameterGroupId(ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.PHYSICS))
+        val folderName = ModifierParameterI18n.fromContext(context)
+            .resolveGroup(ModifierParameterGroups.PHYSICS)
+            .let { if (it == ModifierParameterGroups.PHYSICS) "Physics" else it }
+        val (model, issues) = SimGenerator.applyOne(weighted, edit, folderId, folderName)
         require(issues.isEmpty()) { issues.joinToString("; ") }
         checkpoint()
         val groups = SimulationOutputs.physics(instance, edit, model.parameters.mapTo(HashSet()) { it.id.raw })

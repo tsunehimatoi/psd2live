@@ -32,21 +32,10 @@ class BrowLegacyAlgorithm : ReadingModifierAlgorithmPlugin {
             ModifierObjectUpdate(mesh, updated).takeIf { mesh != updated }
         }
         val originalTree = input.parameterTree
-        val groupId = instance.outputId("parameter-folder:$GROUP")
-        val nodes = added.map { ParameterNode.Param(it.id) }
-        val existingTree = originalTree.ifEmpty { input.parameters.map { ParameterNode.Param(it.id) } }
-        fun contains(nodes: List<ParameterNode>): Boolean =
-            nodes.filterIsInstance<ParameterNode.Group>().any { it.id == groupId || contains(it.children) }
-        fun insert(tree: List<ParameterNode>): List<ParameterNode> = tree.map { node ->
-            if (node !is ParameterNode.Group) node
-            else if (node.id == groupId) node.copy(children = node.children + nodes)
-            else node.copy(children = insert(node.children))
-        }
-        val tree = when {
-            nodes.isEmpty() -> originalTree
-            contains(existingTree) -> insert(existingTree)
-            else -> existingTree + ParameterNode.Group(groupId, source.groupName, true, nodes)
-        }
+        val groupId = ModifierParameterGroups.resolveId(instance, GROUP)
+        val tree = ModifierParameterGroups.appendToFolder(
+            originalTree, input.parameters.map { it.id }, added.map { it.id }, groupId, source.groupName,
+        )
         return ModifierModelChanges(parameters = ModifierObjectChanges(added = added), meshes = ModifierObjectChanges(updated = updates),
             parameterTree = tree.takeIf { it != originalTree }?.let { ModifierFieldChange(originalTree, it) })
     }

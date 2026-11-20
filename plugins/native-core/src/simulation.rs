@@ -1,9 +1,9 @@
 use crate::rig_ir::{
-    BlendBinding, KeyAxis, KeyCell, KeyGrid, Mesh, MeshShape, ObjectCache, ParameterNode,
+    BlendBinding, KeyAxis, KeyCell, KeyGrid, Mesh, MeshShape, ObjectCache,
     PhysicsGroup, PhysicsInput, PhysicsNormalization, PhysicsOutput, PhysicsSegment,
     ascii_stem, decode_object_frame, decode_object_mesh, encode_object_frame, encode_object_mesh,
-    eval_color_channel, eval_floats_grid, eval_scalar_channel, objects_response,
-    sync_parameters_from_tree, with_parameter_created,
+    eval_color_channel, eval_floats_grid, eval_scalar_channel, move_to_physics_folder,
+    objects_response, resolve_group_name, sync_parameters_from_tree, with_parameter_created,
 };
 use psd2live_plugin_sdk::{Json, Request, Response};
 use std::collections::{HashMap, HashSet};
@@ -150,41 +150,6 @@ pub(crate) fn parse_physics_group(obj: &Json) -> Option<PhysicsGroup> {
         angle_max: ang.and_then(|a| a.get("max")).or_else(|| norm.and_then(|n| n.get("angle_max"))).and_then(Json::as_f64).unwrap_or(10.0) as f32,
     };
     Some(PhysicsGroup { id, name, inputs, outputs, segments, normalization })
-}
-
-fn with_physics_group_tree(nodes: Vec<ParameterNode>, ids: &[String]) -> (Vec<ParameterNode>, bool) {
-    let moved: HashSet<&str> = ids.iter().map(String::as_str).collect();
-    let mut placed = false;
-    fn walk(
-        list: Vec<ParameterNode>,
-        moved: &HashSet<&str>,
-        ids: &[String],
-        placed: &mut bool,
-    ) -> Vec<ParameterNode> {
-        let mut out = Vec::with_capacity(list.len());
-        for node in list {
-            match node {
-                ParameterNode::Param(id) => {
-                    if !moved.contains(id.as_str()) {
-                        out.push(ParameterNode::Param(id));
-                    }
-                }
-                ParameterNode::Group { id, name, label, open, children } => {
-                    let mut next_children = walk(children, moved, ids, placed);
-                    if id == "ParamGroupPhysics" && !*placed {
-                        *placed = true;
-                        let mut prefixed: Vec<ParameterNode> = ids.iter().cloned().map(ParameterNode::Param).collect();
-                        prefixed.append(&mut next_children);
-                        next_children = prefixed;
-                    }
-                    out.push(ParameterNode::Group { id, name, label, open, children: next_children });
-                }
-            }
-        }
-        out
-    }
-    let next = walk(nodes, &moved, ids, &mut placed);
-    (next, placed)
 }
 
 fn with_key_inserted(grid: KeyGrid<Vec<f32>>, axis_idx: usize, key: f32) -> KeyGrid<Vec<f32>> {
@@ -471,10 +436,9 @@ pub fn handle_simulation(
     }
 
     if !created_ids.is_empty() {
-        let (next_tree, placed) = with_physics_group_tree(frame.parameter_tree.clone(), &created_ids);
-        if placed {
-            frame.parameter_tree = next_tree;
-        }
+        let folder_id = crate::standard_folder_id(req, "ParamGroupPhysics");
+        let folder_name = resolve_group_name(req, "ParamGroupPhysics", "Physics");
+        move_to_physics_folder(&mut frame.parameter_tree, &created_ids, &folder_id, &folder_name);
     }
 
     let vertex_counts: HashMap<String, usize> = bake

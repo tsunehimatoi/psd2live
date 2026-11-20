@@ -1,6 +1,8 @@
 package io.github.psd2live.core.modifier
 
 import io.github.psd2live.core.*
+import io.github.psd2live.core.modifier.source.ModifierParameterContext
+import kotlinx.serialization.json.buildJsonObject
 
 /** Bundled in-process algorithm entrypoint. */
 internal object SwingAlgorithmPlugin {
@@ -10,5 +12,9 @@ internal object SwingAlgorithmPlugin {
         val source = RigSwingEdit.fromJson(instance.config)
         require(!source.baked) { "A baked swing is ordinary content" }
         require(source.targets == instance.targets.map { it.id }) { "Swing targets must match the captured modifier targets" }
-    }, composableKinds = setOf("deformer", "mesh", "hierarchy"), plugin = implementation)
+    }, composableKinds = setOf("deformer", "mesh", "hierarchy"), authorContext = {
+        ModifierAlgorithmContext(buildJsonObject {
+            put(ModifierParameterI18n.CONTEXT_KEY, ModifierParameterContext.i18n().toJsonElement())
+        })
+    }, plugin = implementation)
 }

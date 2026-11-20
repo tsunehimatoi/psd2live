@@ -5,7 +5,7 @@ use crate::eye_rig::{
     Bounds, DecodedEyeInputs, EyeArtwork, EyeFit, EyeOptions, EyeRig, FittedEyeMotion, Side,
 };
 use crate::lowering;
-use crate::output_id;
+use crate::{output_id, standard_folder_id};
 use crate::rig_ir::{
     decode_object_deformer, decode_object_frame, decode_object_mesh, encode_object_deformer,
     encode_object_frame, encode_object_mesh, grid_ref, objects_response, residual_channel_grid,
@@ -310,16 +310,16 @@ fn append_folder_tree(
         .collect();
     let (mut next, found) = append_to_parameter_group(&root, group_id, &children_to_append);
     if !found {
-        next.push(ParameterNode::Group {
-            id: group_id.to_string(),
-            name: group_name.to_string(),
-            open: true,
-            children: desired_order
-                .iter()
-                .map(|id| ParameterNode::Param(id.clone()))
-                .collect(),
-            label: GroupLabel::None,
-        });
+        crate::rig_ir::insert_parameter_group(
+            &mut next,
+            ParameterNode::Group {
+                id: group_id.to_string(),
+                name: group_name.to_string(),
+                open: true,
+                children: children_to_append,
+                label: GroupLabel::None,
+            },
+        );
     }
     frame.parameter_tree = next;
 }
@@ -1226,7 +1226,7 @@ fn eye_smile_impl(req: &Request, cache: &ObjectCache) -> Result<Response, String
         .map(String::from)
         .chain(declared.iter().map(|p| p.id.clone()))
         .collect();
-        let group_id = output_id(req, "parameter-folder:ParamGroupEyes");
+        let group_id = standard_folder_id(req, "ParamGroupEyes");
         append_folder_tree(&mut frame, &group_id, &folder_name, &desired_order, &added_ids);
         out_objects.push(("frame".into(), encode_object_frame(&frame)));
     }
@@ -1524,7 +1524,7 @@ fn eye_emotion_impl(req: &Request, cache: &ObjectCache) -> Result<Response, Stri
         .map(String::from)
         .chain(declared.iter().map(|p| p.id.clone()))
         .collect();
-        let group_id = output_id(req, "parameter-folder:ParamGroupEyes");
+        let group_id = standard_folder_id(req, "ParamGroupEyes");
         append_folder_tree(&mut frame, &group_id, &folder_name, &desired_order, &added_ids);
         out_objects.push(("frame".into(), encode_object_frame(&frame)));
     }
@@ -1865,7 +1865,7 @@ fn eye_aftershock_impl(req: &Request, cache: &ObjectCache) -> Result<Response, S
     if !added_ids.is_empty() {
         frame.parameters.extend(added_params);
         let desired: Vec<String> = declared.iter().map(|p| p.id.clone()).collect();
-        let group_id = output_id(req, "parameter-folder:ParamGroupPhysics");
+        let group_id = standard_folder_id(req, "ParamGroupPhysics");
         append_folder_tree(&mut frame, &group_id, folder_title, &desired, &added_ids);
         frame_dirty = true;
     }
@@ -2634,7 +2634,7 @@ fn eye_gaze_lid_impl(req: &Request, cache: &ObjectCache) -> Result<Response, Str
             .map(String::from),
         )
         .collect();
-        let group_id = output_id(req, "parameter-folder:ParamGroupEyes");
+        let group_id = standard_folder_id(req, "ParamGroupEyes");
         append_folder_tree(&mut frame, &group_id, &folder_name, &desired_order, &added_ids);
         frame_dirty = true;
     }

@@ -6,13 +6,12 @@ import io.github.psd2live.core.modifier.ModifierObjectChanges
 import io.github.psd2live.core.modifier.ModifierObjectUpdate
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.bridge.PuppetIr
-import org.umamo.edit.withParametersSyncedFromTree
 import org.umamo.runtime.model.PuppetModel
 
 /** Lowers the local face transition after shared authored residual composition. */
 object LegacyFaceChanges {
     fun lower(input: RigIR, before: PuppetModel, result: PuppetModel): ModifierModelChanges {
-        val after = result.withParametersSyncedFromTree()
+        val after = result
         require(before.parts == after.parts && before.rootChildren == after.rootChildren && before.rootPartId == after.rootPartId)
         require(before.glues == after.glues && before.deformPaths == after.deformPaths && before.vertexGroups == after.vertexGroups)
         val oldIds = before.parameters.mapTo(hashSetOf()) { it.id }

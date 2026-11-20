@@ -3,10 +3,12 @@ package io.github.psd2live.algorithms.binding
 import io.github.psd2live.core.modifier.ChangingModifierAlgorithmPlugin
 import io.github.psd2live.core.modifier.ModifierAlgorithmContext
 import io.github.psd2live.core.modifier.ModifierModelChanges
+import io.github.psd2live.core.modifier.ModifierParameterGroups
 import io.github.psd2live.core.modifier.RigModifierInstance
 import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.bridge.PuppetIr
 import org.umamo.runtime.model.Parameter
+import org.umamo.runtime.model.ParameterGroupId
 
 /** Standalone legacy face binding algorithm eliminating host before/after transition delegation. */
 class LegacyFaceAlgorithm : ChangingModifierAlgorithmPlugin {
@@ -30,6 +32,7 @@ class LegacyFaceAlgorithm : ChangingModifierAlgorithmPlugin {
             angleParameters = angles,
             folderName = base.folderLabel,
             checkpoint = checkpoint,
+            folderId = ParameterGroupId(ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.FACE)),
         )
         return LegacyFaceChanges.lower(input, before, bound)
     }

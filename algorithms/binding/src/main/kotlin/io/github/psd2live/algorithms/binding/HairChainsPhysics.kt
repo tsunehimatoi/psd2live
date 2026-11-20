@@ -2,6 +2,7 @@ package io.github.psd2live.algorithms.binding
 
 import io.github.psd2live.algorithms.physics.PhysicsGroups
 import io.github.psd2live.core.RigPhysicsEdit
+import io.github.psd2live.core.modifier.ModifierParameterGroups
 import io.github.psd2live.core.modifier.RigModifierInstance
 import io.github.psd2live.format.model.ParameterNode
 import io.github.psd2live.format.model.PhysicsGroup
@@ -53,19 +54,6 @@ internal object HairChainsPhysics {
 }
 
 internal object HairChainsParameterTree {
-    fun append(input: RigIR, folder: String, name: String, ids: List<String>): List<ParameterNode> {
-        val additions = ids.map { ParameterNode.Param(it) }
-        var found = false
-        fun update(nodes: List<ParameterNode>): List<ParameterNode> = nodes.map { node ->
-            when (node) {
-                is ParameterNode.Param -> node
-                is ParameterNode.Group -> if (node.id == folder) {
-                    found = true
-                    node.copy(children = node.children + additions)
-                } else node.copy(children = update(node.children))
-            }
-        }
-        val tree = update(input.parameterTree.ifEmpty { input.parameters.map { ParameterNode.Param(it.id) } })
-        return if (found) tree else tree + ParameterNode.Group(folder, name, true, additions)
-    }
+    fun append(input: RigIR, folder: String, name: String, ids: List<String>): List<ParameterNode> =
+        ModifierParameterGroups.appendToFolder(input.parameterTree, input.parameters.map { it.id }, ids, folder, name)
 }

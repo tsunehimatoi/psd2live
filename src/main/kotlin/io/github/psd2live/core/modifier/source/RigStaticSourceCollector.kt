@@ -630,7 +630,7 @@ internal object RigStaticSourceCollector {
                 meshes = meshes,
                 paired = layer.source.id.raw in paired,
                 warpName = tr("model.deformer.clothChain", layer.source.name),
-                parameterName = tr("model.parameter.hairChain", layer.source.name, SkirtAlgorithm.TOKEN),
+                parameterName = tr("model.parameter.hairChain", SkirtAlgorithm.TOKEN),
             )
         }
         return SkirtInputs(
@@ -675,7 +675,7 @@ internal object RigStaticSourceCollector {
                 meshes = meshes,
                 attachment = attachment,
                 warpName = tr("model.deformer.clothChain", layer.source.name),
-                parameterName = tr("model.parameter.hairChain", layer.source.name, RibbonsAlgorithm.TOKEN),
+                parameterName = tr("model.parameter.hairChain", RibbonsAlgorithm.TOKEN),
             )
         }
         return RibbonsInputs(
@@ -718,7 +718,7 @@ internal object RigStaticSourceCollector {
                 meshes = meshes,
                 attachment = attachment,
                 warpName = tr("model.deformer.partChain", layer.source.name),
-                parameterName = tr("model.parameter.hairChain", layer.source.name, CreatureAlgorithm.TOKEN),
+                parameterName = tr("model.parameter.hairChain", CreatureAlgorithm.TOKEN),
             )
         }
         return CreatureInputs(
@@ -1323,7 +1323,7 @@ internal object RigStaticSourceCollector {
                 paired = layer.source.id.raw in paired,
                 meshes = meshes,
                 warpName = tr("model.deformer.hairChain", layer.source.name),
-                parameterName = tr("model.parameter.hairChain", layer.source.name, HairChainsAlgorithm.NAME_TOKEN),
+                parameterName = tr("model.parameter.hairChain", HairChainsAlgorithm.NAME_TOKEN),
             )
         }
         val physicsLabels = listOf(

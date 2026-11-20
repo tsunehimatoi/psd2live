@@ -35,12 +35,17 @@ object FittedFaceBindingAlgorithm : ChangingModifierAlgorithmPlugin {
             val limit = if (i == 0) 45f else 30f
             Parameter(id, base.parameterLabels[i], -limit, limit, 0f)
         }
+        val folderId = ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.FACE)
         if (ScaffoldHead.faceId !in live) {
             val oldParameters = input.parameters.mapTo(hashSetOf()) { it.id }
             val added = angles.filter { it.id.raw !in oldParameters }.map {
                 io.github.psd2live.format.model.Parameter(it.id.raw, it.name, it.min, it.max, it.default)
             }
-            return ModifierModelChanges(parameters = ModifierObjectChanges(added = added))
+            val tree = ModifierParameterGroups.appendToFolder(
+                input.parameterTree, input.parameters.map { it.id }, added.map { it.id },
+                folderId, base.folderLabel, prependChildren = true,
+            ).takeIf { it != input.parameterTree }?.let { ModifierFieldChange(input.parameterTree, it) }
+            return ModifierModelChanges(parameters = ModifierObjectChanges(added = added), parameterTree = tree)
         }
         require(live.values.toSet().size == live.size) { "Invalid scaffold head aliases" }
         require(live.none { (canonical, actual) -> canonical != actual && canonical.raw in existing }) {
@@ -50,7 +55,7 @@ object FittedFaceBindingAlgorithm : ChangingModifierAlgorithmPlugin {
             .model(PuppetIr.toPuppet(input))
         require(before.parameters.none { p -> angles.any { it.id == p.id } })
         val bound = LegacyFaceBinding.bind(before, base.measurements, base.tuning, base.strength, angles,
-            base.folderLabel, checkpoint)
+            base.folderLabel, checkpoint, ParameterGroupId(folderId))
         val targets = instance.targets.mapTo(linkedSetOf()) { it.id }
         val turned = DepthTurnAlgorithm().project(bound, targets, turn, checkpoint)
         val originals = before.deformers.mapTo(hashSetOf()) { it.id }

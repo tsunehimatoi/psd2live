@@ -278,18 +278,11 @@ class EyeFittedAlgorithm : ChangingModifierAlgorithmPlugin {
 
     private fun parameterTree(input: RigIR, instance: RigModifierInstance, name: String, additions: List<Parameter>): ModifierFieldChange<List<ParameterNode>>? {
         if (additions.isEmpty()) return null
-        val id = instance.outputId("parameter-folder:ParamGroupEyes")
-        val nodes = additions.map { ParameterNode.Param(it.id) }
-        var found = false
-        fun append(tree: List<ParameterNode>): List<ParameterNode> = tree.map { node ->
-            if (node !is ParameterNode.Group) node
-            else if (node.id == id) {
-                found = true
-                node.copy(children = node.children + nodes)
-            } else node.copy(children = append(node.children))
-        }
-        val tree = append(input.parameterTree.ifEmpty { input.parameters.map { ParameterNode.Param(it.id) } })
-        return ModifierFieldChange(input.parameterTree, if (found) tree else tree + ParameterNode.Group(id, name, true, nodes))
+        val id = ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.EYES)
+        val tree = ModifierParameterGroups.appendToFolder(
+            input.parameterTree, input.parameters.map { it.id }, additions.map { it.id }, id, name,
+        )
+        return tree.takeIf { it != input.parameterTree }?.let { ModifierFieldChange(input.parameterTree, it) }
     }
 
     companion object {

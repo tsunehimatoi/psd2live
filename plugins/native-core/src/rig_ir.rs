@@ -1580,6 +1580,129 @@ fn collect_param_ids(nodes: &[ParameterNode], out: &mut Vec<String>) {
     }
 }
 
+pub fn canonical_folder_rank(id: &str) -> Option<usize> {
+    match id {
+        "ParamGroupFace" => Some(0),
+        "ParamGroupEyes" => Some(1),
+        "ParamGroupBrows" => Some(2),
+        "ParamGroupMouth" => Some(3),
+        "ParamGroupBody" => Some(4),
+        "ParamGroupHair" => Some(5),
+        "ParamGroupPhysics" => Some(6),
+        "ParamGroupExpressions" => Some(7),
+        "ParamGroupCustom" => Some(8),
+        "ParamGroupSkeleton" => Some(9),
+        _ => None,
+    }
+}
+
+pub fn insert_parameter_group(tree: &mut Vec<ParameterNode>, group: ParameterNode) {
+    let rank = match &group {
+        ParameterNode::Group { id, .. } => canonical_folder_rank(id),
+        ParameterNode::Param(_) => None,
+    };
+    let pos = rank.and_then(|r| {
+        tree.iter().position(|node| match node {
+            ParameterNode::Group { id, .. } => canonical_folder_rank(id).is_some_and(|other| other > r),
+            ParameterNode::Param(_) => false,
+        })
+    });
+    match pos {
+        Some(idx) => tree.insert(idx, group),
+        None => tree.push(group),
+    }
+}
+
+pub fn resolve_group_name(req: &Request, group_id: &str, fallback: &str) -> String {
+    req.context_values()
+        .and_then(|c| {
+            c.get("parameter_i18n")
+                .and_then(|i| i.get("groupNames"))
+                .and_then(|g| g.get(group_id))
+                .and_then(Json::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+pub fn move_to_physics_folder(
+    tree: &mut Vec<ParameterNode>,
+    ids: &[String],
+    folder_id: &str,
+    folder_name: &str,
+) {
+    if ids.is_empty() {
+        return;
+    }
+    let moved: HashSet<&str> = ids.iter().map(String::as_str).collect();
+    let mut placed = false;
+    fn walk(
+        nodes: Vec<ParameterNode>,
+        moved: &HashSet<&str>,
+        ids: &[String],
+        folder_id: &str,
+        placed: &mut bool,
+    ) -> Vec<ParameterNode> {
+        let mut out = Vec::with_capacity(nodes.len());
+        for node in nodes {
+            match node {
+                ParameterNode::Param(id) => {
+                    if !moved.contains(id.as_str()) {
+                        out.push(ParameterNode::Param(id));
+                    }
+                }
+                ParameterNode::Group {
+                    id,
+                    name,
+                    open,
+                    children,
+                    label,
+                } => {
+                    let mut next_children = walk(children, moved, ids, folder_id, placed);
+                    if id == folder_id && !*placed {
+                        *placed = true;
+                        let existing: HashSet<String> = next_children
+                            .iter()
+                            .filter_map(|n| match n {
+                                ParameterNode::Param(pid) => Some(pid.clone()),
+                                ParameterNode::Group { .. } => None,
+                            })
+                            .collect();
+                        for pid in ids {
+                            if !existing.contains(pid) {
+                                next_children.push(ParameterNode::Param(pid.clone()));
+                            }
+                        }
+                    }
+                    out.push(ParameterNode::Group {
+                        id,
+                        name,
+                        open,
+                        children: next_children,
+                        label,
+                    });
+                }
+            }
+        }
+        out
+    }
+    let mut next = walk(std::mem::take(tree), &moved, ids, folder_id, &mut placed);
+    if !placed {
+        insert_parameter_group(
+            &mut next,
+            ParameterNode::Group {
+                id: folder_id.to_string(),
+                name: folder_name.to_string(),
+                open: true,
+                children: ids.iter().cloned().map(ParameterNode::Param).collect(),
+                label: GroupLabel::None,
+            },
+        );
+    }
+    *tree = next;
+}
+
 pub fn sync_parameters_from_tree(frame: &mut RigIR) {
     if frame.parameter_tree.is_empty() {
         return;

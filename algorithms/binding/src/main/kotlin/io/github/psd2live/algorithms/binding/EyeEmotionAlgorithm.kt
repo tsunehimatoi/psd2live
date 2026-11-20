@@ -141,7 +141,7 @@ class EyeEmotionAlgorithm : ReadingModifierAlgorithmPlugin {
         }
         val tree = input.parameterTree
         val treeModel = PuppetIr.toPuppet(RigIR(input.canvas, live, parameterTree = tree))
-        val folder = PuppetParameterNode.Group(ParameterGroupId(instance.outputId("parameter-folder:ParamGroupEyes")),
+        val folder = PuppetParameterNode.Group(ParameterGroupId(ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.EYES)),
             source.folderName, true, (eyeParameterIds + declared.map { it.id }).map {
                 PuppetParameterNode.Param(ParameterId(it))
             })

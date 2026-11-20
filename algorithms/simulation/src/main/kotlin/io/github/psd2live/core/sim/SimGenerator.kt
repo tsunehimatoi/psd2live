@@ -2,6 +2,7 @@ package io.github.psd2live.core.sim
 
 import io.github.psd2live.core.RigPhysicsEdit
 import io.github.psd2live.core.SwingGenerator
+import io.github.psd2live.core.modifier.ModifierParameterGroups
 import org.umamo.edit.withParameterCreated
 import org.umamo.edit.withParameterKeys
 import org.umamo.runtime.keyform.MeshDeltaInterpolator
@@ -32,8 +33,13 @@ object SimGenerator {
     /** Past this many keyforms on a target, a simulation left to choose writes its modes as blend shapes. */
     const val AUTO_BLEND_CELLS = 64L
 
-    fun apply(model: PuppetModel, sims: List<RigSimEdit>): PuppetModel =
-        sims.fold(model) { current, sim -> applyOne(current, sim).first }
+    fun apply(
+        model: PuppetModel,
+        sims: List<RigSimEdit>,
+        physicsFolderId: ParameterGroupId = physicsGroupId,
+        physicsFolderName: String? = null,
+    ): PuppetModel =
+        sims.fold(model) { current, sim -> applyOne(current, sim, physicsFolderId, physicsFolderName).first }
 
     fun issues(model: PuppetModel, sim: RigSimEdit): List<String> = applyOne(model, sim).second
 
@@ -124,14 +130,18 @@ object SimGenerator {
         }
     }
 
-    private val physicsGroupId = ParameterGroupId("ParamGroupPhysics")
+    private val physicsGroupId = ParameterGroupId(ModifierParameterGroups.PHYSICS)
 
     /**
-     * [ids] moved from the top of the parameter tree to the top of the physics folder, wherever the user has
-     * put it. At the top, as at the root, so panel edits replayed before the simulation land as they were made.
-     * Without a physics folder they stay at the root.
+     * [ids] moved from the root of the parameter tree to [folderId], wherever the user has put it,
+     * or creates [folderId] in canonical order when [folderName] is supplied.
      */
-    private fun withPhysicsGroup(model: PuppetModel, ids: List<ParameterId>): PuppetModel {
+    private fun withPhysicsGroup(
+        model: PuppetModel,
+        ids: List<ParameterId>,
+        folderId: ParameterGroupId = physicsGroupId,
+        folderName: String? = null,
+    ): PuppetModel {
         if (ids.isEmpty()) return model
         val moved = ids.toSet()
         var placed = false
@@ -140,18 +150,34 @@ object SimGenerator {
                 is ParameterNode.Param -> node.takeIf { it.id !in moved }
                 is ParameterNode.Group -> {
                     val children = place(node.children)
-                    if (node.id == physicsGroupId && !placed) {
+                    if (node.id == folderId && !placed) {
                         placed = true
-                        node.copy(children = ids.map { ParameterNode.Param(it) } + children)
+                        val existing = children.mapNotNullTo(HashSet()) { (it as? ParameterNode.Param)?.id }
+                        node.copy(children = children + ids.filter { it !in existing }.map { ParameterNode.Param(it) })
                     } else node.copy(children = children)
                 }
             }
         }
         val tree = place(model.parameterTree)
-        return if (placed) model.copy(parameterTree = tree) else model
+        if (placed) return model.copy(parameterTree = tree)
+        if (folderName == null) return model
+        val group = ParameterNode.Group(folderId, folderName, true, ids.map { ParameterNode.Param(it) })
+        val rank = ModifierParameterGroups.canonicalRank(folderId.raw)
+        val inserted = if (rank == null) tree + group else {
+            val index = tree.indexOfFirst { node ->
+                node is ParameterNode.Group && (ModifierParameterGroups.canonicalRank(node.id.raw)?.let { it > rank } == true)
+            }
+            if (index < 0) tree + group else tree.toMutableList().apply { add(index, group) }
+        }
+        return model.copy(parameterTree = inserted)
     }
 
-    fun applyOne(model: PuppetModel, sim: RigSimEdit): Pair<PuppetModel, List<String>> {
+    fun applyOne(
+        model: PuppetModel,
+        sim: RigSimEdit,
+        physicsFolderId: ParameterGroupId = physicsGroupId,
+        physicsFolderName: String? = null,
+    ): Pair<PuppetModel, List<String>> {
         val bake = sim.bake?.takeIf { sim.enabled } ?: return model to emptyList()
         val issues = ArrayList<String>()
         var current = model
@@ -178,7 +204,7 @@ object SimGenerator {
                 else it.copy(min = keys.first(), max = keys.last(), default = 0f, keys = if (blend) keys.toList() else it.keys)
             })
         }
-        current = withPhysicsGroup(current, created)
+        current = withPhysicsGroup(current, created, physicsFolderId, physicsFolderName)
         // Static corrections first: blend shapes add to the grid as it is at the default pose. The modes
         // swing as far as the simulation times their gain, over their output range; the statics stay exact.
         for (axis in bake.statics + modes) {

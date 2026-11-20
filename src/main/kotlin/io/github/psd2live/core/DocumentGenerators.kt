@@ -3,6 +3,7 @@ package io.github.psd2live.core
 import io.github.psd2live.core.sim.SimGenerator
 import io.github.psd2live.format.compile.document.GeneratorGraph
 import io.github.psd2live.format.compile.document.GeneratorNode
+import io.github.psd2live.i18n.tr
 import org.umamo.runtime.model.PuppetModel
 import kotlinx.serialization.json.*
 
@@ -229,7 +230,9 @@ internal object DocumentGenerators {
 				}
 			}
 			swings[node.id]?.let { swing ->
-				current = GeneratorReuse.run(node.id, swing, current, swingReads(current, swing)) { SwingGenerator.apply(it, listOf(swing)) }
+				current = GeneratorReuse.run(node.id, swing, current, swingReads(current, swing)) {
+					SwingGenerator.apply(it, listOf(swing), physicsFolderName = tr("model.group.physics"))
+				}
 			}
 			overlay.interiorEffects
 				.firstOrNull { node.id == "interiorEffect:" + it.id }
@@ -248,7 +251,9 @@ internal object DocumentGenerators {
 					current = GeneratorReuse.run(node.id, effect, current, reads) { effect.apply(it) }
 				}
 			sims[node.id]?.let { sim ->
-				current = GeneratorReuse.run(node.id, sim, current, simulationReads(current, sim)) { SimGenerator.apply(it, listOf(sim)) }
+				current = GeneratorReuse.run(node.id, sim, current, simulationReads(current, sim)) {
+					SimGenerator.apply(it, listOf(sim), physicsFolderName = tr("model.group.physics"))
+				}
 			}
 		}
 		return current

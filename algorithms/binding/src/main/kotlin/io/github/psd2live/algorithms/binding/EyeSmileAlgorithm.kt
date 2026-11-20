@@ -108,7 +108,7 @@ class EyeSmileAlgorithm : ReadingModifierAlgorithmPlugin {
         }
         val tree = input.parameterTree
         val treeModel = PuppetIr.toPuppet(RigIR(input.canvas, live, parameterTree = tree))
-        val folder = PuppetParameterNode.Group(ParameterGroupId(instance.outputId(FOLDER)), source.folderName, true,
+        val folder = PuppetParameterNode.Group(ParameterGroupId(ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.EYES)), source.folderName, true,
             (eyeParameterIds + declared.map { it.id }).map { PuppetParameterNode.Param(ParameterId(it)) })
         val updatedTree = BindingMerge.appendTree(treeModel, listOf(folder), additions.mapTo(hashSetOf()) { ParameterId(it.id) },
             instance.outputAliases.keys.any { it.startsWith("parameter-folder:") })
@@ -135,7 +135,6 @@ class EyeSmileAlgorithm : ReadingModifierAlgorithmPlugin {
         const val TYPE = "eye.smile"
         const val VERSION = 2
         const val ENTRYPOINT = "builtin.6579652e736d696c65.v2/smile"
-        private const val FOLDER = "parameter-folder:ParamGroupEyes"
         val WRITES = setOf("mesh", "parameter", "hierarchy")
         private val coupled = setOf("eye.gaze-lid", "eye.emotion", "eye.aftershock", "brow.blink", "brow.lid-coupling", "mouth.cheek-lid")
         val optionalUpstream = coupled + setOf(TYPE, "eye.wide")

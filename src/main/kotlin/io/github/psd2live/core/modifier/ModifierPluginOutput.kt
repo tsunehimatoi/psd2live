@@ -84,9 +84,25 @@ internal object ModifierPluginOutput {
                             repeat = command["repeat"]?.jsonPrimitive?.booleanOrNull ?: false,
                             keys = keys?.let(io.github.psd2live.format.model.Floats::of),
                         )
+                        val group = command["group"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                            ?: algorithm.parameters.firstOrNull { it.id == id }?.group?.takeIf { it.isNotBlank() }
+                        val nextTree = if (group != null) {
+                            val groupName = command["groupName"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                                ?: io.github.psd2live.core.modifier.source.ModifierParameterContext.standardGroupNames()[group]
+                                ?: group
+                            ModifierParameterGroups.appendToFolder(
+                                output.parameterTree,
+                                output.parameters.map { it.id },
+                                listOf(id),
+                                group,
+                                groupName,
+                            )
+                        } else {
+                            output.parameterTree + io.github.psd2live.format.model.ParameterNode.Param(id)
+                        }
                         output = output.copy(
                             parameters = output.parameters + param,
-                            parameterTree = output.parameterTree + io.github.psd2live.format.model.ParameterNode.Param(id),
+                            parameterTree = nextTree,
                         )
                     }
                 }

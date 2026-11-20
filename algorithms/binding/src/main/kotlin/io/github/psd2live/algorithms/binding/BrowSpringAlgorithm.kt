@@ -51,11 +51,10 @@ class BrowSpringAlgorithm : ReadingModifierAlgorithmPlugin {
         }
         val tree = if (added.isEmpty()) null else {
             val before = input.parameterTree
-            val roots = before.ifEmpty { input.parameters.map { ParameterNode.Param(it.id) } }
-            val id = instance.outputId("parameter-folder:ParamGroupPhysics")
-            val children = added.map { ParameterNode.Param(it.id) }
-            val next = append(roots, id, children) ?: (roots + ParameterNode.Group(id, source.group, true, children))
-            ModifierFieldChange(before, next)
+            val id = ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.PHYSICS)
+            ModifierParameterGroups.appendToFolder(
+                before, input.parameters.map { it.id }, added.map { it.id }, id, source.group,
+            ).takeIf { it != before }?.let { ModifierFieldChange(before, it) }
         }
         val physics = if (instance.config["physicsEnabled"]?.jsonPrimitive?.boolean == false) ModifierObjectChanges()
         else BrowSpringPhysics.changes(input.physics, instance, (input.parameters + added).mapTo(hashSetOf()) { it.id }, source.physicsNames)
@@ -121,15 +120,6 @@ class BrowSpringAlgorithm : ReadingModifierAlgorithmPlugin {
         val merged = MeshBlendResidual.merge(contribution, contribution, previous, desired, drawable.id,
             correspondence, correspondence, checkpoint)
         return mesh.copy(shapes = PuppetIr.meshToIr(drawable.copy(blendShapes = merged)).shapes + mesh.shapes)
-    }
-
-    private fun append(nodes: List<ParameterNode>, id: String, children: List<ParameterNode>): List<ParameterNode>? {
-        for ((index, node) in nodes.withIndex()) {
-            if (node !is ParameterNode.Group) continue
-            val next = if (node.id == id) node.children + children else append(node.children, id, children) ?: continue
-            return nodes.toMutableList().apply { set(index, node.copy(children = next)) }
-        }
-        return null
     }
 
     private fun value(config: JsonObject, key: String, default: Float, range: ClosedFloatingPointRange<Float>): Float =

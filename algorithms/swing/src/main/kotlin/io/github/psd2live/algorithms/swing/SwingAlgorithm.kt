@@ -6,10 +6,19 @@ import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.bridge.PuppetIr
 import io.github.psd2live.algorithms.physics.PhysicsGroups
 import org.umamo.edit.withParametersSyncedFromTree
+import org.umamo.runtime.model.ParameterGroupId
 import kotlinx.serialization.json.jsonPrimitive
 
-class SwingAlgorithm : ModifierAlgorithmPlugin {
-    override fun evaluate(input: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit): RigIR {
+class SwingAlgorithm : ContextualModifierAlgorithmPlugin {
+    override fun evaluate(input: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit): RigIR =
+        evaluate(input, instance, ModifierAlgorithmContext.Empty, checkpoint)
+
+    override fun evaluate(
+        input: RigIR,
+        instance: RigModifierInstance,
+        context: ModifierAlgorithmContext,
+        checkpoint: () -> Unit,
+    ): RigIR {
         val rig = input
         checkpoint()
         val source = RigSwingEdit.fromJson(instance.config)
@@ -28,7 +37,11 @@ class SwingAlgorithm : ModifierAlgorithmPlugin {
             require(command["id"]?.jsonPrimitive?.content == expected) { "Swing wrapper ID collides with existing content: $expected" }
         }
         val edit = requested.copy(targets = wrapped.targets)
-        val (model, issues) = SwingGenerator.applyOne(wrapped.model, edit)
+        val folderId = ParameterGroupId(ModifierParameterGroups.resolveId(instance, ModifierParameterGroups.PHYSICS))
+        val folderName = ModifierParameterI18n.fromContext(context)
+            .resolveGroup(ModifierParameterGroups.PHYSICS)
+            .let { if (it == ModifierParameterGroups.PHYSICS) "Physics" else it }
+        val (model, issues) = SwingGenerator.applyOne(wrapped.model, edit, folderId, folderName)
         require(issues.isEmpty()) { issues.joinToString("; ") }
         checkpoint()
         val result = PuppetIr.toIr(model.withParametersSyncedFromTree()).copy(

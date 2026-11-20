@@ -1,5 +1,6 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.core.modifier.ModifierParameterGroups
 import kotlinx.serialization.json.*
 import org.umamo.edit.withParameterCreated
 import org.umamo.edit.withParameterKeys
@@ -238,8 +239,51 @@ object SwingPresets {
 object SwingGenerator {
     fun asciiStem(text: String): String = text.filter { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' }.take(24).ifEmpty { "Swing" }
 
-    fun apply(model: PuppetModel, swings: List<RigSwingEdit>): PuppetModel =
-        swings.fold(model) { current, swing -> applyOne(current, swing).first }
+    private val physicsGroupId = ParameterGroupId(ModifierParameterGroups.PHYSICS)
+
+    fun apply(
+        model: PuppetModel,
+        swings: List<RigSwingEdit>,
+        physicsFolderId: ParameterGroupId = physicsGroupId,
+        physicsFolderName: String? = null,
+    ): PuppetModel =
+        swings.fold(model) { current, swing -> applyOne(current, swing, physicsFolderId, physicsFolderName).first }
+
+    private fun withPhysicsGroup(
+        model: PuppetModel,
+        ids: List<ParameterId>,
+        folderId: ParameterGroupId = physicsGroupId,
+        folderName: String? = null,
+    ): PuppetModel {
+        if (ids.isEmpty()) return model
+        val moved = ids.toSet()
+        var placed = false
+        fun place(nodes: List<ParameterNode>): List<ParameterNode> = nodes.mapNotNull { node ->
+            when (node) {
+                is ParameterNode.Param -> node.takeIf { it.id !in moved }
+                is ParameterNode.Group -> {
+                    val children = place(node.children)
+                    if (node.id == folderId && !placed) {
+                        placed = true
+                        val existing = children.mapNotNullTo(HashSet()) { (it as? ParameterNode.Param)?.id }
+                        node.copy(children = children + ids.filter { it !in existing }.map { ParameterNode.Param(it) })
+                    } else node.copy(children = children)
+                }
+            }
+        }
+        val tree = place(model.parameterTree)
+        if (placed) return model.copy(parameterTree = tree)
+        if (folderName == null) return model
+        val group = ParameterNode.Group(folderId, folderName, true, ids.map { ParameterNode.Param(it) })
+        val rank = ModifierParameterGroups.canonicalRank(folderId.raw)
+        val inserted = if (rank == null) tree + group else {
+            val index = tree.indexOfFirst { node ->
+                node is ParameterNode.Group && (ModifierParameterGroups.canonicalRank(node.id.raw)?.let { it > rank } == true)
+            }
+            if (index < 0) tree + group else tree.toMutableList().apply { add(index, group) }
+        }
+        return model.copy(parameterTree = inserted)
+    }
 
     fun issues(model: PuppetModel, swing: RigSwingEdit): List<String> = applyOne(model, swing).second
 
@@ -274,16 +318,24 @@ object SwingGenerator {
 
     private class Axis(val motion: Int, val segment: Int, val parameter: Parameter, val keys: List<Float>)
 
-    fun applyOne(model: PuppetModel, swing: RigSwingEdit): Pair<PuppetModel, List<String>> {
+    fun applyOne(
+        model: PuppetModel,
+        swing: RigSwingEdit,
+        physicsFolderId: ParameterGroupId = physicsGroupId,
+        physicsFolderName: String? = null,
+    ): Pair<PuppetModel, List<String>> {
         if (swing.baked) return model to emptyList()
         val issues = mutableListOf<String>()
         var current = model
+        val created = ArrayList<ParameterId>()
         val parameters = swing.parameterIds.map { raw ->
             val id = ParameterId(raw)
+            if (current.parameters.none { it.id == id }) created += id
             current = current.withParameterCreated(id, parameterName(swing, raw))
             current.parameters.single { it.id == id }
         }
         if (parameters.any { it.kind != ParameterKind.NORMAL }) return model to listOf("${swing.id}: swing parameters must be normal parameters")
+        current = withPhysicsGroup(current, created, physicsFolderId, physicsFolderName)
         val byId = parameters.associateBy { it.id.raw }
         val keys = parameters.associate { p -> p.id.raw to listOf(p.min, p.default, p.max).distinct().sorted() }
         val axes = swing.motions.flatMapIndexed { m, motion ->
