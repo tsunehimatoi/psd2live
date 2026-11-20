@@ -1443,6 +1443,7 @@ internal class CanvasEditor(
     var bezierState by mutableStateOf<BezierDeformerState?>(null)
     var activeBezierAnchor by mutableStateOf<Pair<Int, Int>?>(null)
     var activeBezierHandle by mutableStateOf<Triple<Int, Int, BezierHandleDir>?>(null)
+    private var activeBezierHandleStart: Offset? = null
     var hoveredBezierAnchor by mutableStateOf<Pair<Int, Int>?>(null)
     var hoveredBezierHandle by mutableStateOf<Triple<Int, Int, BezierHandleDir>?>(null)
 
@@ -1681,6 +1682,13 @@ internal class CanvasEditor(
             (candidates.minByOrNull { (it - start).getDistance() } ?: start).also { snapAnchor = it }
         }
         return start + (snap(anchor + (pos - start)) - anchor)
+    }
+
+    /** With [shift], the drag keeps only the larger of its two screen components, as Cubism's Shift drag does. */
+    private fun straightened(pos: Offset, shift: Boolean): Offset {
+        if (!shift) return pos
+        val d = pos - start
+        return if (abs(d.x) >= abs(d.y)) Offset(pos.x, start.y) else Offset(start.x, pos.y)
     }
 
     /** Whether the pointer is over one of the editor's own handles, which a press takes before a guide. */
@@ -2875,7 +2883,7 @@ internal class CanvasEditor(
         glueStrokeA = emptySet()
         glueStrokeB = emptySet()
         poseDrag = null
-        activeBezierAnchor = null; activeBezierHandle = null
+        activeBezierAnchor = null; activeBezierHandle = null; activeBezierHandleStart = null
         activeBrushWeights = null; activeBrushCenter = null; endMeshStroke()
         marquee = emptyList(); draft = emptyList(); draftPathId = null; drawingPath = false
         pathDragging = false
@@ -6527,6 +6535,7 @@ internal class CanvasEditor(
                 }
                 if (hoveredBezierHandle != null) {
                     activeBezierHandle = hoveredBezierHandle
+                    activeBezierHandleStart = bezierState?.handles?.get(hoveredBezierHandle)?.let { screen(floatArrayOf(it.x, it.y), t, viewport)[0] }
                     targetAtPress = t
                     original = model
                     dragging = true
@@ -6861,7 +6870,8 @@ internal class CanvasEditor(
         if (activeBezierHandle != null) {
             val (br, bc, dir) = activeBezierHandle!!
             val t = targetAtPress ?: return; val source = original ?: return
-            val (lx, ly) = local(pos, t, viewport)
+            val handleStart = activeBezierHandleStart ?: start
+            val (lx, ly) = local(handleStart + (straightened(pos, shift) - start), t, viewport)
             bezierState?.moveHandle(br, bc, dir, lx, ly, smooth = !alt)
             val warp = source.deformers.filterIsInstance<Deformer.Warp>().firstOrNull { it.id.raw == t.id } ?: return
             val evaluated = bezierState?.evaluateLattice(warp.rows, warp.columns)?.also { points ->
@@ -6879,7 +6889,8 @@ internal class CanvasEditor(
         if (activeBezierAnchor != null) {
             val (br, bc) = activeBezierAnchor!!
             val t = targetAtPress ?: return; val source = original ?: return
-            val (lx, ly) = local(pos, t, viewport)
+            val at = straightened(pos, shift)
+            val (lx, ly) = local(at, t, viewport)
             val (prevLx, prevLy) = local(previous, t, viewport)
             bezierState?.moveAnchor(br, bc, lx - prevLx, ly - prevLy)
             val warp = source.deformers.filterIsInstance<Deformer.Warp>().firstOrNull { it.id.raw == t.id } ?: return
@@ -6889,7 +6900,8 @@ internal class CanvasEditor(
             bezierSourcePoints = evaluated.copyOf()
             val cmd = RigBezierJournal.materialize(source, t.id, coordinate(t), pose,
                 RigBezierJournal.Controls(requireNotNull(bezierState), bezierResidual), preserveChildren = effectiveCtrl)
-            preview = RigAuthoringJournal.apply(source, cmd); pending = cmd; previous = pos
+            // The anchor moves by steps from the last point, so that point is the straightened one.
+            preview = RigAuthoringJournal.apply(source, cmd); pending = cmd; previous = at
             return
         }
 
@@ -6926,7 +6938,9 @@ internal class CanvasEditor(
         }
 
         val t = targetAtPress ?: return; val source = original ?: return
-        @Suppress("NAME_SHADOWING") val pos = snappedDrag(pos, t, viewport)
+        // Shift keeps a move straight; a box's scale and a rotation's arm already give it a meaning of their own.
+        val straight = shift && if (boxDrag) activeHandle == BoundingHandle.BODY else !(t.kind == "rotation" && vertices == setOf(1))
+        @Suppress("NAME_SHADOWING") val pos = snappedDrag(pos, t, viewport).let { if (straight) straightened(it, true) else it }
 
         try {
             if (boxDrag) {
@@ -7223,6 +7237,7 @@ internal class CanvasEditor(
         if (activeBezierAnchor != null || activeBezierHandle != null) {
             activeBezierAnchor = null
             activeBezierHandle = null
+            activeBezierHandleStart = null
             val cmd = pending
             if (moved && cmd != null) {
                 commit(cmd)
