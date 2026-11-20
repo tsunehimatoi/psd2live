@@ -1633,8 +1633,13 @@ internal class CanvasEditor(
         snapEditTargetsToNearestKeys(listOf(kind to id), onReady)
     private fun snapEditTargetsToNearestKeys(targets: List<Pair<String, String>>, onReady: () -> Unit): Boolean {
         val source = editSource ?: return true
-        val axes = targets.flatMap { (kind, id) -> source.keyformAxesFor(kind, id) }
-        return viewModel.snapAxesToNearestKeysOnModel(axes, source, onReady)
+        val targetAxes = targets.flatMap { (kind, id) -> source.keyformAxesFor(kind, id) }
+        val selectedAxes = deformationParameters.mapNotNull { raw ->
+            val parameter = source.parameters.firstOrNull { it.id.raw == raw && it.kind == ParameterKind.NORMAL } ?: return@mapNotNull null
+            val keys = io.github.psd2live.core.ParameterKeyEdits.pointValues(source, parameter.id)
+            keys.takeIf { it.isNotEmpty() }?.let { KeyformAxis(parameter.id, it.toFloatArray()) }
+        }
+        return viewModel.snapAxesToNearestKeysOnModel(targetAxes + selectedAxes, source, onReady)
     }
     var geometryCorrectionMode by mutableStateOf("delta")
     private var capturedCorrectionMode: String? = null

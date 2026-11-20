@@ -36,6 +36,11 @@ class GeneratedMouthDeformationScenario {
         val marked = ParameterKeyEdits.apply(puppet, req("op" to "parameter_keys", "parameter" to open.raw,
             "action" to "add", "values" to listOf(.4f)))
         assertTrue(nearestKeyPose(marked.keyformAxesFor("mesh", id), mapOf(open to .4f), defaults).isEmpty())
+        val form = ParameterId("ParamMouthForm")
+        val axes = puppet.keyformAxesFor("mesh", id)
+        val snapped = nearestKeyPose(axes, mapOf(open to .3f, form to .35f), defaults)
+        assertEquals(mapOf(open to .25f, form to .5f), snapped)
+        assertTrue(nearestKeyPose(axes, snapped, defaults).isEmpty())
     }
 
     @Test fun sculptedOpenAndClosedVerticesPersistAtEveryDefaultAndNewKey() = Studio.run(temp, document()) {

@@ -208,10 +208,6 @@ fun nearestKeyPose(
 /** Geometry gestures snap to sculptable poses independently of drawable opacity and color tracks. */
 fun PuppetModel.keyformAxesFor(kind: String, id: String): List<KeyformAxis> =
 	when (kind) {
-		"mesh", "warp" -> io.github.psd2live.core.GeometryKeyforms.editingAxes(this, kind, id)
-		"rotation" -> {
-			val rotation = deformers.firstOrNull { it.id.raw == id } as? Deformer.Rotation ?: return emptyList()
-			(rotation.geometryGrid?.axes.orEmpty()) + rotation.channelGrids.allAxes()
-		}
+		"mesh", "warp", "rotation" -> io.github.psd2live.core.GeometryKeyforms.editingAxes(this, kind, id)
 		else -> emptyList()
 	}

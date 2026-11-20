@@ -15,13 +15,19 @@ internal object GeometryKeyforms {
     }
 
     /** Explicit stops can be sculpted even before this object's geometry has a cell at that value. */
-    fun editingAxes(model: PuppetModel, kind: String, id: String): List<KeyformAxis> = axes(model, kind, id).orEmpty().map { axis ->
-        val keys = (axis.keys.toList() + ParameterKeyEdits.pointValues(model, axis.parameterId)).sorted()
-            .fold(ArrayList<Float>()) { result, key ->
-                if (result.isEmpty() || abs(result.last() - key) >= EPS_KEY) result += key
-                result
-            }
-        KeyformAxis(axis.parameterId, keys.toFloatArray())
+    fun editingAxes(model: PuppetModel, kind: String, id: String): List<KeyformAxis> {
+        val raw = when (kind) {
+            "rotation" -> (model.deformers.firstOrNull { it.id.raw == id } as? Deformer.Rotation)?.geometryGrid?.axes.orEmpty()
+            else -> axes(model, kind, id).orEmpty()
+        }
+        return raw.map { axis ->
+            val keys = (axis.keys.toList() + ParameterKeyEdits.pointValues(model, axis.parameterId)).sorted()
+                .fold(ArrayList<Float>()) { result, key ->
+                    if (result.isEmpty() || abs(result.last() - key) >= EPS_KEY) result += key
+                    result
+                }
+            KeyformAxis(axis.parameterId, keys.toFloatArray())
+        }
     }
 
     /** A closed drawing can have an opacity track before it has any geometry keyed to Mouth Open.

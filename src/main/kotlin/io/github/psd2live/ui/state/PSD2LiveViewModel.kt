@@ -7042,12 +7042,7 @@ class PSD2LiveViewModel : AutoCloseable {
 		if (axes.isEmpty()) return false
 		val pose = _state.value.parameterValues
 		val defaults = puppet.parameters.associate { it.id to it.default }
-		val targets = try { io.github.psd2live.core.nearestKeyPose(axes, pose, defaults) }
-		catch (failure: io.github.psd2live.core.NoCommonKeyform) {
-			val name = puppet.parameters.firstOrNull { it.id == failure.parameter }?.name ?: failure.parameter.raw
-			updateState { it.copy(statusText = tr("editor.keyform.noCommon", name)) }
-			return true // Consume the gesture; never start an edit at an incompatible pose.
-		}
+		val targets = io.github.psd2live.core.nearestKeyPose(axes, pose, defaults)
 		if (targets.isEmpty()) return false
 		val expectedState = currentWorkspaceState() ?: return false
 		parameterSnapJob?.cancel()
