@@ -11,6 +11,7 @@ import io.github.psd2live.core.mesh.cross
 import io.github.psd2live.core.mesh.distance
 import io.github.psd2live.core.mesh.distanceSquared
 import io.github.psd2live.core.mesh.distanceSquaredToLoop
+import io.github.psd2live.core.mesh.distanceSquaredToSegment
 import io.github.psd2live.core.mesh.edgeOf
 import io.github.psd2live.core.mesh.hasSelfIntersection
 import io.github.psd2live.core.mesh.inDomain
@@ -107,6 +108,7 @@ internal object AdaptiveMeshGenerator {
 		settings: MeshSettings,
 		unitScale: Float = 1f,
 		detail: Float = 1f,
+		coverAllAlpha: Boolean = false,
 	): Result? = generate(
 		width = width,
 		height = height,
@@ -123,6 +125,7 @@ internal object AdaptiveMeshGenerator {
 		unitScale = unitScale,
 		detail = detail,
 		wrap = settings.wrap,
+		coverAllAlpha = coverAllAlpha,
 	)
 
 	fun generate(
@@ -141,10 +144,36 @@ internal object AdaptiveMeshGenerator {
 		unitScale: Float = 1f,
 		detail: Float = 1f,
 		wrap: Float = 0f,
+		coverAllAlpha: Boolean = false,
 	): Result? {
 		if (width <= 0 || height <= 0 || width.toLong() * height * 4 > rgba.size ||
 			!spacing.isFinite() || !interiorSpacing.isFinite() ||
 			!outerMargin.isFinite() || !edgeWidth.isFinite() || edgeWidth < 0f) return null
+		if (coverAllAlpha) {
+			// Keep existing smooth deformation where it already encloses the whole drawing.
+			// Holes use the full trace below; legacy fitting may discard the smallest ones.
+			fun smooth(margin: Float) = generate(width, height, rgba, alphaThreshold, spacing, interiorSpacing, margin, edgeMode,
+					edgeWidth, fillAlgorithm, suppressBoundaryDiagonals, fillParameters, unitScale, detail, wrap, coverAllAlpha = false)
+			fun covered(mesh: Result?) = mesh != null && RasterMeshCoverage.uncovered(width, height, rgba,
+				listOf(org.umamo.runtime.model.DrawableMesh(mesh.positions, mesh.positions, mesh.indices))) == 0f
+			if (paintedMask(width, height, rgba).contours().none { it.isHole }) {
+				val original = smooth(outerMargin)
+				if (covered(original)) return original
+				if (original != null && edgeMode == MeshEdgeMode.SINGLE && outerMargin > 0f) {
+					var low = outerMargin; var high = outerMargin + 0.125f
+					var safe = smooth(high)
+					if (covered(safe)) {
+						// Keep the correction small: changing the whole outline also changes fitted motion.
+						repeat(5) {
+							val middle = (low + high) * 0.5f
+							val candidate = smooth(middle)
+							if (covered(candidate)) { safe = candidate; high = middle } else low = middle
+						}
+						return safe
+					}
+				}
+			}
+		}
 		// Mesh near the scale the lengths are measured in: every pixel tolerance below is a multiple of the
 		// working pixels per mesh unit, so it holds at any resolution, and contour tracing, smoothing and
 		// triangulation see a fraction of the pixels. At a [detail] above one the contour is traced finer
@@ -152,13 +181,13 @@ internal object AdaptiveMeshGenerator {
 		val traceDetail = if (detail.isFinite() && detail > 1f) detail else 1f
 		MeshResolution.reduce(width, height, rgba, if (traceDetail > 1f) unitScale / traceDetail else unitScale)?.let { reduced ->
 			val unit = unitScale.toDouble() / reduced.scale
-			return working(reduced.width, reduced.height, reduced.rgba, alphaThreshold, spacing * unit, interiorSpacing * unit,
+			return working(reduced.width, reduced.height, reduced.rgba, alphaThreshold, coverAllAlpha, spacing * unit, interiorSpacing * unit,
 				outerMargin * unit, edgeMode, edgeWidth * unit, fillAlgorithm, suppressBoundaryDiagonals, fillParameters, unit,
 				MeshWrap.radius(wrap, unit))
 				?.scaledBy(reduced.scale)
 		}
 		val unit = if (traceDetail > 1f) max(1.0, unitScale.toDouble()) else 1.0
-		return working(width, height, rgba, alphaThreshold, spacing * unit, interiorSpacing * unit, outerMargin * unit,
+		return working(width, height, rgba, alphaThreshold, coverAllAlpha, spacing * unit, interiorSpacing * unit, outerMargin * unit,
 			edgeMode, edgeWidth * unit, fillAlgorithm, suppressBoundaryDiagonals, fillParameters, unit, MeshWrap.radius(wrap, unit))
 	}
 
@@ -172,6 +201,7 @@ internal object AdaptiveMeshGenerator {
 		height: Int,
 		rgba: ByteArray,
 		alphaThreshold: Int,
+		coverAllAlpha: Boolean,
 		spacing: Double,
 		interiorSpacing: Double,
 		outerMargin: Double,
@@ -182,10 +212,18 @@ internal object AdaptiveMeshGenerator {
 		fillParameters: MeshFillParameters,
 		unit: Double,
 		wrapRadius: Double = 0.0,
+		exact: Boolean = false,
 	): Result? {
+		fun recover(): Result? {
+			if (exact || !coverAllAlpha) return null
+			return working(width, height, rgba, alphaThreshold, coverAllAlpha, spacing, interiorSpacing,
+				outerMargin, edgeMode, edgeWidth, fillAlgorithm,
+				suppressBoundaryDiagonals, fillParameters, unit, wrapRadius, exact = true)
+		}
 		val threshold = alphaThreshold.coerceIn(1, 255)
 		val solidMask = RigBuildProfile.stage("mesh: alpha mask") {
-			AlphaEdgePreprocessor.geometryMask(width, height, rgba, threshold)
+			// Alpha thresholds classify artwork; they must never remove painted texels from its mesh.
+			if (coverAllAlpha) paintedMask(width, height, rgba) else AlphaEdgePreprocessor.geometryMask(width, height, rgba, threshold)
 		}
 		// Wrapping only adds to the traced mask, so whatever the source paints stays inside the mesh.
 		if (wrapRadius > 0.0) MeshWrap.close(solidMask, wrapRadius)
@@ -196,7 +234,7 @@ internal object AdaptiveMeshGenerator {
 		// Derive both precisions from the same exact rings. The coarser guides suppress raster staircase curvature.
 		val fitSources = HashMap<IntArray, IntArray>(rings.size)
 		val contours = rings.map { ring ->
-			ring.simplified(0.35f).also { fitSources[it.points] = ring.simplified(1.0f).points }
+			ring.simplified(if (coverAllAlpha) 0f else 0.35f).also { fitSources[it.points] = ring.simplified(1.0f).points }
 		}
 		val outerCandidates = contours.filter { !it.isHole && it.points.size >= 6 }
 		if (outerCandidates.isEmpty()) return null
@@ -204,7 +242,7 @@ internal object AdaptiveMeshGenerator {
 		val largestIndex = areas.indices.maxByOrNull { areas[it] } ?: return null
 		val minimumSecondaryArea = max(6.0 * unit * unit, min(24.0 * unit * unit, areas[largestIndex] * 0.0002))
 		val outerContours = outerCandidates.filterIndexed { index, _ ->
-			index == largestIndex || areas[index] >= minimumSecondaryArea
+			coverAllAlpha || index == largestIndex || areas[index] >= minimumSecondaryArea
 		}
 		if (outerContours.isEmpty()) return null
 
@@ -214,7 +252,8 @@ internal object AdaptiveMeshGenerator {
 		val sources = outerContours.map { it.points }
 		val holesByOuter = Array(sources.size) { mutableListOf<IntArray>() }
 		// Traced finer than a mesh unit, a hole must also be as large as the smallest one a mesh-unit trace keeps.
-		for (hole in contours.filter { it.isHole && it.points.size >= 6 && (unit <= 1.0 || contourArea(it.points) >= 2.0 * unit * unit) }) {
+		for (hole in contours.filter { it.isHole && it.points.size >= 6 &&
+			(coverAllAlpha || unit <= 1.0 || contourArea(it.points) >= 2.0 * unit * unit) }) {
 			val probe = Point(hole.points[0].toDouble(), hole.points[1].toDouble())
 			val owner = sources.indices.filter { pointInPolygon(probe, sourcePoints(sources[it])) }
 				.minByOrNull { contourArea(sources[it]) } ?: continue
@@ -243,7 +282,14 @@ internal object AdaptiveMeshGenerator {
 		val completed = mutableListOf<BandedMesh>()
 		val domains = sources.indices.map { island ->
 			val contours = listOf(sources[island]) + holesByOuter[island]
-			val raw = contours.mapIndexed { index, contour -> orient(sourcePoints(contour), index == 0) }
+			var raw = contours.mapIndexed { index, contour -> orient(sourcePoints(contour), index == 0) }
+			if (exact) {
+				// Pixel holes may meet at a corner. Separate their cycles and inset them a thousandth
+				// of a pixel to avoid coincident bridges; this only adds material, never cuts artwork.
+				raw = listOf(raw.first()) + raw.drop(1).flatMap(::splitTouchingLoop)
+					.map { offsetLoop(it, -0.001, emptyList()) }
+				return@map Domain(raw, raw, raw.map(EdgeBandBuilder::interleave))
+			}
 			var interleaved = contours.mapIndexed { index, contour ->
 				EdgeBandBuilder.orientInterleaved(buildBezierBoundary(fitSources[contour] ?: contour, edgeSpacing, unit), index == 0)
 			}
@@ -275,8 +321,26 @@ internal object AdaptiveMeshGenerator {
 						previous.boundaries.map { loop -> loop.map { previous.mesh.points[it] } }, allowBoundaryContact) }
 			}
 			var built: BandedMesh? = null
+			if (exact) {
+				val borders = neighbors + completed.flatMap { previous -> previous.boundaries.map { loop -> loop.map { previous.mesh.points[it] } } }
+				// Keep tiny holes intact: simplifying them can erase their transparent centres.
+				val simplified = listOf(enclosingContour(raw.first(), unit, borders)) + raw.drop(1)
+				for (outline in listOf(if (validDomain(simplified)) simplified else raw, raw)) {
+					// Simplify islands in order, so later ones respect the space their neighbors took.
+					val contours = outline.map { loop -> loop.indices.flatMap { i ->
+						val a = loop[i]; val b = loop[(i + 1) % loop.size]
+						val count = max(1, ceil(distance(a, b) / edgeSpacing).toInt())
+						List(count) { k -> snap(lerp(a, b, k.toDouble() / count)) }
+					} }
+					var cursor = 0
+					val loops = contours.map { loop -> IntArray(loop.size) { cursor + it }.also { cursor += loop.size } }
+					val candidate = fillDomain(contours, fill, suppressBoundaryDiagonals)
+						?.let { BandedMesh(it, loops, emptyList(), emptyList()) } ?: continue
+					if (isolated(candidate, allowBoundaryContact = true)) { built = candidate; break }
+				}
+			}
 			// A ribbon is already a two-row strip, so slender islands use it in every edge mode.
-			if (raw.size == 1) {
+			if (!exact && raw.size == 1) {
 				for (scale in doubleArrayOf(1.0, 0.5, 0.25, 0.0)) {
 					val samplingScale = if (scale < 0.5) 0.25 else 1.0
 					val ribbon = buildRibbon(raw.single(), neighbors, edgeSpacing, scale,
@@ -320,7 +384,7 @@ internal object AdaptiveMeshGenerator {
 					if (built != null) break
 				}
 			}
-			if (built == null) return null
+			if (built == null) return recover()
 			completed += built
 			val offset = globalPoints.size
 			globalPoints += built.mesh.points
@@ -351,7 +415,47 @@ internal object AdaptiveMeshGenerator {
 				indices[index * 3 + 2] = triangle.b
 			}
 		}
-		return Result(positions, indices, globalBoundaryLoops, globalMiddleLoops, globalInnerLoops, globalSpines)
+		val result = Result(positions, indices, globalBoundaryLoops, globalMiddleLoops, globalInnerLoops, globalSpines)
+		if (!coverAllAlpha) return result
+		val coverage = RasterMeshCoverage.uncovered(width, height, rgba,
+			listOf(org.umamo.runtime.model.DrawableMesh(positions, positions, indices)))
+		if (coverage == 0f) return result
+		// Smooth guides are an optimization, never permission to clip a pixel's antialiased edge.
+		return recover()
+	}
+
+	/** Remove raster stairs only outward, within one mesh unit of the original outline. */
+	private fun enclosingContour(original: List<Point>, tolerance: Double, neighbors: List<List<Point>>): List<Point> {
+		if (original.size <= 3 || hasSelfIntersection(original)) return original
+		val kept = original.indices.toMutableList()
+		var changed: Boolean
+		do {
+			changed = false
+			var i = 0
+			while (i < kept.size && kept.size > 3) {
+				val before = kept[(i + kept.size - 1) % kept.size]
+				val after = kept[(i + 1) % kept.size]
+				val a = original[before]; val b = original[kept[i]]; val c = original[after]
+				if (cross(a, b, c) > GEOMETRY_EPSILON) { i++; continue }
+				var cursor = (before + 1) % original.size
+				var near = true
+				while (cursor != after) {
+					if (distanceSquaredToSegment(original[cursor], a, c) > tolerance * tolerance) { near = false; break }
+					cursor = (cursor + 1) % original.size
+				}
+				val crossing = near && kept.indices.any { j ->
+					val u = kept[j]; val v = kept[(j + 1) % kept.size]
+					u != before && u != after && v != before && v != after && u != kept[i] && v != kept[i] &&
+						(segmentsProperlyIntersect(a, c, original[u], original[v]) ||
+							pointOnSegment(original[u], a, c) || pointOnSegment(original[v], a, c))
+				}
+				val joinsNeighbor = near && !crossing && cross(a, b, c) < -GEOMETRY_EPSILON && neighbors.any { neighbor ->
+					domainsOverlap(listOf(listOf(a, b, c)), listOf(neighbor), allowBoundaryContact = true)
+				}
+				if (near && !crossing && !joinsNeighbor) { kept.removeAt(i); changed = true } else i++
+			}
+		} while (changed)
+		return kept.map { original[it] }
 	}
 
 	/** The same mesh in a raster [scale] times larger; topology and loops are unchanged. */
@@ -496,6 +600,22 @@ internal object AdaptiveMeshGenerator {
 
 	private fun sourcePoints(source: IntArray): List<Point> =
 		List(source.size / 2) { Point(source[it * 2].toDouble(), source[it * 2 + 1].toDouble()) }
+
+	/** Every pixel with any alpha. */
+	private fun paintedMask(width: Int, height: Int, rgba: ByteArray) = BinaryAlphaMask(width, height).also { mask ->
+		for (y in 0 until height) for (x in 0 until width) if (rgba[(y * width + x) * 4 + 3].toInt() != 0) mask.add(x, y)
+	}
+
+	/** A weakly simple raster ring can pass through a saddle corner more than once. */
+	private fun splitTouchingLoop(loop: List<Point>): List<List<Point>> {
+		val seen = HashMap<Point, Int>()
+		for ((index, point) in loop.withIndex()) {
+			val previous = seen.put(point, index) ?: continue
+			return splitTouchingLoop(loop.subList(previous, index)) +
+				splitTouchingLoop(loop.take(previous) + loop.drop(index))
+		}
+		return listOf(loop)
+	}
 
 	/** Signed material-side offset. Winding makes the same code work for holes and islands. */
 	private fun offsetLoop(loop: List<Point>, amount: Double, barriers: List<List<Point>>): List<Point> =

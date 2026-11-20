@@ -1025,6 +1025,7 @@ object RigBuilder {
 		meshMaxEdgeDistance = config.meshMaxEdgeDistance, meshInteriorDensity = config.meshInteriorDensity,
 		meshFillAlgorithm = config.meshFillAlgorithm, meshSuppressBoundaryDiagonals = config.meshSuppressBoundaryDiagonals,
 		meshFillParameters = config.meshFillParameters, meshUnits = config.meshUnits, meshTrace = config.meshTrace, meshWrap = config.meshWrap,
+		meshAlphaCoverage = config.meshAlphaCoverage,
 		alphaThreshold = config.alphaThreshold, headTurnStrength = config.headTurnStrength, bodyStrength = config.bodyStrength, rigTuning = config.rigTuning,
 		recipe = config.recipe,
 		meshOnly = config.meshOnly, generateDeformers = config.generateDeformers, featureDisplacementEnabled = config.featureDisplacementEnabled,
@@ -2548,7 +2549,7 @@ object RigBuilder {
 		val styledFace = (styledMesh || mountedOnFace) && context.faceTurn(config) != null
 		val styledTurn = if (styledMesh && styledFace) context.head to context.faceLandmarks(config) else null
 		val key = MeshKey(layer.meta(), layer.source.raster.width, layer.source.raster.height,
-			MeshResolution.input(layer.source, config.meshTrace, MeshResolution.unitScale(config, context.analysis.source)).key,
+			MeshResolution.input(layer.source, config.meshTrace, MeshResolution.unitScale(config, context.analysis.source), config.meshAlphaCoverage).key,
 			rigLayer.bounds, rigLayer.centroidX, rigLayer.centroidY, parentId, parentFrame, headSpace,
 			listOf(rigLayer.semantic, if (eyeGeometry) faceSignature(context.faceRig) else null, localEyes, localBrow, localMouth, context.headTurn(config)?.let {
 				listOf(faceSignature(context.faceRig), headShell(rigLayer), io.github.psd2live.core.recipe.RigModules.FACE_DEPTH_TURN.let { m ->
@@ -3680,7 +3681,7 @@ object RigBuilder {
 		if (layer.semantic.tag in setOf(SemanticTag.TOOTH_T, SemanticTag.TOOTH_B)) {
 			return buildRectangularFallbackMesh(layer, parentFrame, headSpace, effectiveSpacing)
 		}
-		val adaptive = MeshResolution.mesh(MeshResolution.input(layer.source, config.meshTrace, unitScale), config.alphaThreshold, settings, meshCache)
+		val adaptive = MeshResolution.mesh(MeshResolution.input(layer.source, config.meshTrace, unitScale, config.meshAlphaCoverage), config.alphaThreshold, settings, meshCache)
 		if (adaptive != null) {
 			val positions = FloatArray(adaptive.positions.size)
 			val canvas = FloatArray(adaptive.positions.size)

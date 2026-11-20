@@ -9,14 +9,18 @@ import kotlin.math.max
 
 object CharacterAnalyzer {
 	/** [layer] classified at canvas resolution ([CanvasDensity]): a dense layer is analysed through its canvas view. */
-	internal fun classify(layer: org.umamo.format.art.SourceLayer, config: PipelineConfig): ClassifiedLayer =
-		LayerClassifier.classify(CanvasDensity.canvasLayer(layer), config.alphaThreshold).withOverride(config.layerOverrides[layer.id.raw])
+	internal fun classify(layer: org.umamo.format.art.SourceLayer, config: PipelineConfig): ClassifiedLayer {
+		val canvas = CanvasDensity.canvasLayer(layer)
+		val classified = LayerClassifier.classify(canvas, config.alphaThreshold)
+		val covered = if (config.meshAlphaCoverage && classified.opaquePixels == 0) LayerClassifier.classify(canvas, 1) else classified
+		return covered.withOverride(config.layerOverrides[layer.id.raw])
+	}
 
 	/** Recreate retained legacy component identities without building a model or discarding deleted pixels. */
 	internal fun expandLayer(original: ClassifiedLayer, config: PipelineConfig, unitScale: Float = 1f,
 	                         references: LegacySplitReferences = LegacySplitReferences(config)): List<ClassifiedLayer> {
 		if (!references.preserves(original.source.id.raw)) return listOf(original)
-		return ComponentSplitter.split(original, config.meshSpacing.toFloat(), config.alphaThreshold, unitScale).map { component ->
+		return ComponentSplitter.split(original, config.meshSpacing.toFloat(), config.alphaThreshold, unitScale, config.meshAlphaCoverage).map { component ->
 			val override = config.layerOverrides[component.source.id.raw] ?: config.layerOverrides[original.source.id.raw]
 			component.withOverride(override, preserveSide = component.source.id != original.source.id)
 		}

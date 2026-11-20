@@ -36,7 +36,7 @@ internal object RigSourceMeasurements {
         val stages = meshCache?.stages?.takeIf { RigStageCache.enabled }
         if (stages != null && analysis.calibration == null) {
             val key = listOf(analysis.source, analysis.layers, analysis.anchors, analysis.warnings,
-                config.meshTrace, MeshResolution.unitScale(config, analysis.source),
+                config.meshTrace, config.meshAlphaCoverage, MeshResolution.unitScale(config, analysis.source),
                 config.alphaThreshold, RigMeshSeed.layers(config.rigEdits), resolution.partByLayer,
                 analysis.layers.map { meshSettings(it, config).first })
             return stages.get("framed analysis", 16, key) {
@@ -68,7 +68,7 @@ internal object RigSourceMeasurements {
 		meshCache?.prefetch(layers.mapNotNull { layer ->
 			if (layer.source.id.raw in seeds || resolution.partByLayer[layer.source.id.raw] != null || layer.opaquePixels <= 0 ||
 				layer.semantic.tag in setOf(SemanticTag.TOOTH_T, SemanticTag.TOOTH_B)) null
-			else MeshResolution.input(layer.source, config.meshTrace, unitScale) to meshSettings(layer, config).first
+			else MeshResolution.input(layer.source, config.meshTrace, unitScale, config.meshAlphaCoverage) to meshSettings(layer, config).first
 		}, config.alphaThreshold)
 		return layers.map { layer ->
 			val pinned = resolution.partByLayer[layer.source.id.raw] ?: seeds[layer.source.id.raw]
@@ -124,7 +124,7 @@ internal object RigSourceMeasurements {
 			return rectangle()
 		}
 		val (settings, _) = meshSettings(layer, config)
-		val input = MeshResolution.input(source, config.meshTrace, unitScale)
+		val input = MeshResolution.input(source, config.meshTrace, unitScale, config.meshAlphaCoverage)
 		fun generate() = adaptiveFootprint(MeshResolution.mesh(input, config.alphaThreshold, settings, meshCache), source, ::rectangle)
 		val stages = meshCache?.stages?.takeIf { RigStageCache.enabled } ?: return generate()
 		val key = FootprintKey(width, height, input.key, source.bounds.left, source.bounds.top,

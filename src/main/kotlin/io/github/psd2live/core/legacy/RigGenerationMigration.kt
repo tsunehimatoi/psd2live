@@ -70,6 +70,7 @@ internal object RigGenerationMigration {
                 val old = oldLayers[layerId]; val next = desiredLayers[layerId]
                 sourceChanged || current.config.alphaThreshold != requested.alphaThreshold || current.config.meshUnits != requested.meshUnits ||
                     current.config.meshTrace != requested.meshTrace ||
+                    current.config.meshAlphaCoverage != requested.meshAlphaCoverage ||
                     (old != null && next != null && RigBuilder.meshSettings(old, current.config) != RigBuilder.meshSettings(next, requested)) ||
                     (next?.source is MouthLipLayer && (current.config.mouthThickness != requested.mouthThickness ||
                         current.config.mouthCurve != requested.mouthCurve || current.config.mouthShape != requested.mouthShape))

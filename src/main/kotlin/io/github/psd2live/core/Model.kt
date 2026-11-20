@@ -185,6 +185,11 @@ data class PipelineConfig(
 	val meshUnits: MeshUnits = MeshUnits.DOCUMENT,
 	/** What mesh outlines are traced from; projects saved before it trace the canvas view. */
 	val meshTrace: MeshTrace = MeshTrace.TEXTURE,
+	/**
+	 * Whether generated meshes cover every pixel with any alpha, not only those above [alphaThreshold], so soft edges
+	 * are never clipped. Off by default; projects saved before it keep their meshes.
+	 */
+	val meshAlphaCoverage: Boolean = false,
 	/** [MeshSettings.wrap] of every layer without an override; projects saved before it wrap nothing. */
 	val meshWrap: Float = 0f,
 	val alphaThreshold: Int = 8,

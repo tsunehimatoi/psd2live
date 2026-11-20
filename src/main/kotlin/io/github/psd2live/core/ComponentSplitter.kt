@@ -33,13 +33,15 @@ object ComponentSplitter {
 		alphaThreshold: Int = 8,
 		/** Source pixels per mesh unit, the unit [meshSpacing] is in (see [MeshResolution]). */
 		unitScale: Float = 1f,
-	): List<ClassifiedLayer> = splitInternal(layer, meshSpacing, alphaThreshold, unitScale)
+		coverAllAlpha: Boolean = false,
+	): List<ClassifiedLayer> = splitInternal(layer, meshSpacing, alphaThreshold, unitScale, coverAllAlpha)
 
 	private fun splitInternal(
 		layer: ClassifiedLayer,
 		meshSpacing: Float,
 		alphaThreshold: Int,
 		unitScale: Float,
+		coverAllAlpha: Boolean,
 	): List<ClassifiedLayer> {
 		if (layer.semantic.side != Side.NONE || layer.semantic.tag in nonSplittableTags) return listOf(layer)
 		val source = layer.source
@@ -63,6 +65,7 @@ object ComponentSplitter {
 			alphaThreshold = alphaThreshold,
 			spacing = effectiveSpacing,
 			unitScale = unitScale,
+			coverAllAlpha = coverAllAlpha,
 		) ?: return listOf(layer)
 
 		val positions = mesh.positions
@@ -168,10 +171,11 @@ object ComponentSplitter {
 		val rightPixels = mutableListOf<Int>()
 		val rgba = source.raster.rgba
 
+		val pixelThreshold = if (coverAllAlpha) 1 else alphaThreshold
 		for (y in 0 until height) {
 			for (x in 0 until width) {
 				val pixelIndex = y * width + x
-				if (alphaAt(rgba, pixelIndex) < alphaThreshold) continue
+				if (alphaAt(rgba, pixelIndex) < pixelThreshold) continue
 				val belongsToLeft = if (hasHorizontalGap) {
 					x < splitX
 				} else {
@@ -188,8 +192,8 @@ object ComponentSplitter {
 		if (leftPixels.isEmpty() || rightPixels.isEmpty()) return listOf(layer)
 
 		// Viewer-left is character's right (-r); viewer-right is character's left (-l)
-		val pieceR = extractLayer(source, leftPixels, Side.RIGHT, "r", alphaThreshold, layer.semantic)
-		val pieceL = extractLayer(source, rightPixels, Side.LEFT, "l", alphaThreshold, layer.semantic)
+		val pieceR = extractLayer(source, leftPixels, Side.RIGHT, "r", pixelThreshold, layer.semantic)
+		val pieceL = extractLayer(source, rightPixels, Side.LEFT, "l", pixelThreshold, layer.semantic)
 		return listOf(pieceR, pieceL)
 	}
 
