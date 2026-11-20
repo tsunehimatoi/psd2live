@@ -508,7 +508,7 @@ private fun StartHubWorkspace(
     )
     Row(modifier) {
         StartHubPanelFrame(null, Modifier.width(railWidth).fillMaxHeight()) {
-            StartNavPanel(state, viewModel, actions, compact = compact)
+            StartNavPanel(state, viewModel, compact = compact)
         }
         Spacer(Modifier.width(Spacing.Gap))
         Box(Modifier.weight(1f).fillMaxHeight()) {

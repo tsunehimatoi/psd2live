@@ -40,6 +40,7 @@ import kotlinx.coroutines.withContext
 internal fun SettingsGraphicsSection() {
 	val colors = LocalToolColors.current
 	val graphics by AppSettings.graphicsFlow.collectAsState()
+	val iconBitmapCache by AppSettings.iconBitmapCacheFlow.collectAsState()
 	val gpuStatus by SkiaGpu.status.collectAsState()
 	val startup = GraphicsSettings.startup
 	fun update(change: (GraphicsOptions) -> GraphicsOptions) { AppSettings.graphics = change(AppSettings.graphics) }
@@ -131,6 +132,10 @@ internal fun SettingsGraphicsSection() {
 		SettingsRow(tr("settings.graphics.windowCache"), description = tr("settings.graphics.windowCache.desc")) {
 			CompactCheckbox(checked = graphics.windowCache, onCheckedChange = { on -> update { it.copy(windowCache = on) } },
 				enabled = gpuWindow, label = tr("settings.graphics.windowCache.label"))
+		}
+		SettingsRow(tr("settings.graphics.iconCache"), description = tr("settings.graphics.iconCache.desc")) {
+			CompactCheckbox(checked = iconBitmapCache, onCheckedChange = { AppSettings.iconBitmapCache = it },
+				label = tr("settings.graphics.iconCache.label"))
 		}
 		GraphicsRow(tr("settings.graphics.cache"), GpuCacheSize.entries, graphics.gpuCache, tr("settings.graphics.cache.desc"),
 			enabled = gpuWindow) { size -> update { it.copy(gpuCache = size) } }

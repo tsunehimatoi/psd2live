@@ -2,6 +2,8 @@ package io.github.psd2live.ui.components
 
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.CornerRadius
@@ -60,7 +62,7 @@ internal class IconPen(val scope: DrawScope, val color: Color) {
     private val oy = (scope.size.height - scope.size.minDimension) / 2f
 
     /** The tint at the fill strength a shape's body takes under its outline. */
-    val soft = color.copy(alpha = color.alpha * 0.28f)
+    val soft = color.copy(alpha = color.alpha * 0.12f)
 
     /** [tone] at the tint's alpha, for an icon part whose colour carries meaning. */
     fun tone(tone: Color, alpha: Float = 1f) = tone.copy(alpha = tone.alpha * color.alpha * alpha)
@@ -106,7 +108,7 @@ internal class IconPen(val scope: DrawScope, val color: Color) {
 
     /** A rounded box filled [soft] and outlined. */
     fun panel(x: Float, y: Float, w: Float, h: Float, r: Float = 1.2f, width: Float = ICON_LINE, tint: Color = color) {
-        fillBox(x, y, w, h, r, if (tint == color) soft else tint.copy(alpha = tint.alpha * 0.28f))
+        fillBox(x, y, w, h, r, if (tint == color) soft else tint.copy(alpha = tint.alpha * 0.12f))
         box(x, y, w, h, r, width, tint)
     }
 
@@ -167,22 +169,25 @@ internal class GridPath(private val s: Float, private val ox: Float = 0f, privat
 }
 
 /**
- * An icon drawn with [IconPen] in [tint], scaled to [modifier]'s size. It is drawn once into a bitmap of its
- * size, and again only when its size, tint or drawing changes: the window draws every frame while a preview
- * plays, and an icon's handful of antialiased strokes per frame, over every icon in the panels, is a large
- * part of that frame.
+ * An icon drawn with [IconPen] in [tint], scaled to [modifier]'s size. By default it draws directly as sharp vectors;
+ * when [AppSettings.iconBitmapCache] is enabled in Settings › Graphics, it caches a rasterized bitmap of its size.
  */
 @Composable
 internal fun GridIcon(modifier: Modifier, tint: Color, draw: IconPen.() -> Unit) {
+    val cacheBitmap by io.github.psd2live.ui.state.AppSettings.iconBitmapCacheFlow.collectAsState()
     Spacer(modifier.drawWithCache {
         if (size.width <= 0f || size.height <= 0f) return@drawWithCache onDrawBehind {}
-        // A round cap may reach past the box, which the canvas this replaces did not clip.
-        val bleed = ICON_BLEED_PX
-        val bitmap = ImageBitmap(ceil(size.width).toInt() + 2 * bleed, ceil(size.height).toInt() + 2 * bleed)
-        CanvasDrawScope().draw(this, layoutDirection, androidx.compose.ui.graphics.Canvas(bitmap), size) {
-            translate(bleed.toFloat(), bleed.toFloat()) { IconPen(this, tint).draw() }
+        if (!cacheBitmap) {
+            onDrawBehind { IconPen(this, tint).draw() }
+        } else {
+            // A round cap may reach past the box, which the canvas this replaces did not clip.
+            val bleed = ICON_BLEED_PX
+            val bitmap = ImageBitmap(ceil(size.width).toInt() + 2 * bleed, ceil(size.height).toInt() + 2 * bleed)
+            CanvasDrawScope().draw(this, layoutDirection, androidx.compose.ui.graphics.Canvas(bitmap), size) {
+                translate(bleed.toFloat(), bleed.toFloat()) { IconPen(this, tint).draw() }
+            }
+            onDrawBehind { drawImage(bitmap, topLeft = Offset(-bleed.toFloat(), -bleed.toFloat())) }
         }
-        onDrawBehind { drawImage(bitmap, topLeft = Offset(-bleed.toFloat(), -bleed.toFloat())) }
     })
 }
 
@@ -287,6 +292,94 @@ internal fun IconPen.document(lines: Boolean = true) {
         line(6.6f, 9.4f, 11.6f, 9.4f, width = ICON_FINE)
         line(6.6f, 12.4f, 10.2f, 12.4f, width = ICON_FINE)
     }
+}
+
+/** PSD file: Adobe-style rounded square badge with top-right corner cut and clear "Ps" monogram. */
+internal fun IconPen.psdFile() {
+    shape(path {
+        m(4.0f, 2.2f)
+        l(11.8f, 2.2f)
+        l(15.6f, 6.0f)
+        l(15.6f, 14.2f)
+        q(15.6f, 15.8f, 14.0f, 15.8f)
+        l(4.0f, 15.8f)
+        q(2.4f, 15.8f, 2.4f, 14.2f)
+        l(2.4f, 3.8f)
+        q(2.4f, 2.2f, 4.0f, 2.2f)
+        z()
+    })
+    outline(path { m(11.8f, 2.2f); l(11.8f, 6.0f); l(15.6f, 6.0f) }, width = ICON_FINE)
+    // "P"
+    line(5.2f, 6.8f, 5.2f, 13.0f, width = ICON_LINE)
+    outline(path {
+        m(5.2f, 6.8f)
+        l(7.2f, 6.8f)
+        q(9.0f, 6.8f, 9.0f, 8.4f)
+        q(9.0f, 10.0f, 7.2f, 10.0f)
+        l(5.2f, 10.0f)
+    }, width = ICON_LINE)
+    // "s"
+    outline(path {
+        m(13.0f, 8.9f)
+        c(12.6f, 8.1f, 10.5f, 8.1f, 10.5f, 9.3f)
+        c(10.5f, 10.4f, 13.1f, 10.5f, 13.1f, 11.7f)
+        c(13.1f, 13.0f, 10.7f, 13.0f, 10.3f, 12.1f)
+    }, width = ICON_FINE)
+}
+
+/** CMO3 file: Cubism's tapered shield with right-side notch and crisp inner chevron wings. */
+internal fun IconPen.cmo3File() {
+    shape(path {
+        m(2.2f, 5.2f)
+        q(2.2f, 4.1f, 3.3f, 3.7f)
+        l(9.8f, 1.8f)
+        l(14.2f, 1.8f)
+        q(15.8f, 1.8f, 15.8f, 3.4f)
+        l(15.8f, 7.1f)
+        l(12.4f, 9.0f)
+        l(15.8f, 10.9f)
+        l(15.8f, 14.6f)
+        q(15.8f, 16.2f, 14.2f, 16.2f)
+        l(9.8f, 16.2f)
+        l(3.3f, 14.3f)
+        q(2.2f, 13.9f, 2.2f, 12.8f)
+        z()
+    })
+    // Crisp Cubism inner folded ribbon wings
+    fill(path {
+        m(5.8f, 7.3f)
+        l(11.0f, 5.0f)
+        l(11.0f, 7.5f)
+        l(5.8f, 9.8f)
+        z()
+    }, color.copy(alpha = color.alpha * 0.85f))
+    fill(path {
+        m(6.4f, 10.8f)
+        l(11.0f, 9.2f)
+        l(11.0f, 12.8f)
+        z()
+    }, color.copy(alpha = color.alpha * 0.85f))
+}
+
+/** Stacked isometric layer sheets: the universal Layers / Layered Import glyph. */
+internal fun IconPen.layeredSheets() {
+    shape(path {
+        m(9.0f, 2.6f)
+        l(15.6f, 6.2f)
+        l(9.0f, 9.8f)
+        l(2.4f, 6.2f)
+        z()
+    })
+    outline(path {
+        m(2.4f, 9.4f)
+        l(9.0f, 13.0f)
+        l(15.6f, 9.4f)
+    })
+    outline(path {
+        m(2.4f, 12.4f)
+        l(9.0f, 16.0f)
+        l(15.6f, 12.4f)
+    }, width = ICON_FINE)
 }
 
 /** Two sheets, the front one hiding the back: copy. */

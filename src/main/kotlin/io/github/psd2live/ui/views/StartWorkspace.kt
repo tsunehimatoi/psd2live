@@ -85,11 +85,11 @@ import io.github.psd2live.ui.components.HelpPanel
 import io.github.psd2live.ui.components.IconAdd
 import io.github.psd2live.ui.components.IconCheck
 import io.github.psd2live.ui.components.IconClose
+import io.github.psd2live.ui.components.IconCmo3
 import io.github.psd2live.ui.components.IconFolder
-import io.github.psd2live.ui.components.IconInfo
+import io.github.psd2live.ui.components.IconPsd
 import io.github.psd2live.ui.components.SettingsNav
 import io.github.psd2live.ui.components.SettingsPanel
-import io.github.psd2live.ui.components.document
 import io.github.psd2live.ui.components.resetAllSettings
 import io.github.psd2live.ui.state.AppPage
 import io.github.psd2live.ui.state.AppSettings
@@ -250,12 +250,10 @@ internal fun startDetailsTitle(section: StartSection) = when (section) {
  * (for Help or Settings, which bring their own secondary navigation), it collapses to an icon rail.
  */
 @Composable
-internal fun StartNavPanel(state: PSD2LiveState, viewModel: PSD2LiveViewModel, actions: PageActions, compact: Boolean = false) {
+internal fun StartNavPanel(state: PSD2LiveState, viewModel: PSD2LiveViewModel, compact: Boolean = false) {
 	val section = viewModel.startSection
-	val enabled = !state.isBusy
 	val recent = rememberExistingRecentFiles(state.recentFiles)
 	val order = StartSection.entries
-	val openShortcut = state.keymap.labelFor(ShortcutAction.OPEN_PROJECT)
 	val psdShortcut = state.keymap.labelFor(ShortcutAction.OPEN_PSD)
 	val helpShortcut = state.keymap.labelFor(ShortcutAction.OPEN_HELP)
 	val settingsShortcut = state.keymap.labelFor(ShortcutAction.OPEN_SETTINGS)
@@ -271,20 +269,12 @@ internal fun StartNavPanel(state: PSD2LiveState, viewModel: PSD2LiveViewModel, a
 			) {
 				StartNavGroup(tr("start.nav.group.open"), compact)
 				StartNavEntry(
-					label = tr("start.nav.openProject"),
-					selected = false,
-					enabled = enabled && actions.onOpenProject != null,
-					compact = compact,
-					shortcut = openShortcut,
-					onClick = { actions.onOpenProject?.invoke() },
-				) { IconFolder(modifier = Modifier.size(13.dp), tint = it) }
-				StartNavEntry(
 					label = tr("start.nav.recent"),
 					selected = section == StartSection.RECENT,
 					trailing = recent?.size?.toString(),
 					compact = compact,
 					onClick = { viewModel.setStartSection(StartSection.RECENT) },
-				) { WorkspacePresetIcon(WorkspacePreset.HISTORY, it, Modifier.size(13.dp)) }
+				) { IconFolder(Modifier.size(13.dp), it) }
 
 				StartNavGroup(tr("start.nav.group.new"), compact)
 				StartNavEntry(
@@ -293,7 +283,7 @@ internal fun StartNavPanel(state: PSD2LiveState, viewModel: PSD2LiveViewModel, a
 					compact = compact,
 					shortcut = psdShortcut,
 					onClick = { viewModel.setStartSection(StartSection.GENERATE) },
-				) { WorkspacePresetIcon(WorkspacePreset.EDIT, it, Modifier.size(13.dp)) }
+				) { IconPsd(Modifier.size(13.dp), it) }
 				StartNavEntry(
 					label = tr("start.nav.layout"),
 					selected = section == StartSection.LAYOUT,
@@ -305,7 +295,7 @@ internal fun StartNavPanel(state: PSD2LiveState, viewModel: PSD2LiveViewModel, a
 					selected = section == StartSection.CMO3,
 					compact = compact,
 					onClick = { viewModel.setStartSection(StartSection.CMO3) },
-				) { IconDocument(Modifier.size(13.dp), it) }
+				) { IconCmo3(Modifier.size(13.dp), it) }
 
 				StartNavGroup(tr("start.nav.group.learn"), compact)
 				StartNavEntry(
@@ -320,7 +310,7 @@ internal fun StartNavPanel(state: PSD2LiveState, viewModel: PSD2LiveViewModel, a
 					compact = compact,
 					shortcut = helpShortcut,
 					onClick = { viewModel.setStartSection(StartSection.HELP) },
-				) { IconInfo(modifier = Modifier.size(13.dp), tint = it) }
+				) { HelpSectionIcon(Modifier.size(13.dp), it) }
 				StartNavEntry(
 					label = tr("page.settings"),
 					selected = section == StartSection.SETTINGS,
@@ -405,11 +395,33 @@ private fun StartNavEntry(
 @Composable
 private fun UpdatesIcon(modifier: Modifier, tint: Color) {
 	GridIcon(modifier, tint) {
-		// Spark / release star: four-pointed star with a small accent dot.
-		line(9f, 2.5f, 9f, 15.5f)
-		line(2.5f, 9f, 15.5f, 9f)
-		line(4.8f, 4.8f, 13.2f, 13.2f)
-		line(13.2f, 4.8f, 4.8f, 13.2f)
+		// Curved four-point sparkle with soft fill and a secondary accent star at top-right.
+		shape(path {
+			m(7.6f, 3.8f)
+			q(7.6f, 9.8f, 13.6f, 9.8f)
+			q(7.6f, 9.8f, 7.6f, 15.8f)
+			q(7.6f, 9.8f, 1.6f, 9.8f)
+			q(7.6f, 9.8f, 7.6f, 3.8f)
+			z()
+		})
+		line(14.2f, 2.0f, 14.2f, 6.0f)
+		line(12.2f, 4.0f, 16.2f, 4.0f)
+	}
+}
+
+@Composable
+private fun HelpSectionIcon(modifier: Modifier, tint: Color) {
+	GridIcon(modifier, tint) {
+		// Soft-filled help circle with a clean question-mark glyph.
+		shape(circlePath(9f, 9f, 6.8f))
+		outline(path {
+			m(7.1f, 6.9f)
+			q(7.1f, 4.9f, 9.1f, 4.9f)
+			q(11.1f, 4.9f, 11.1f, 6.7f)
+			q(11.1f, 8.0f, 9.6f, 8.8f)
+			q(9.0f, 9.2f, 9.0f, 10.2f)
+		})
+		dot(9.0f, 12.7f, 0.9f)
 	}
 }
 
@@ -641,6 +653,8 @@ internal fun StartMainPanel(state: PSD2LiveState, viewModel: PSD2LiveViewModel, 
 					recent = files.recent,
 					model = model,
 					enabled = enabled,
+					openShortcut = state.keymap.labelFor(ShortcutAction.OPEN_PROJECT),
+					onOpenProject = actions.onOpenProject,
 					actions = recentFileActions(viewModel, actions),
 					onGenerate = { viewModel.setStartSection(StartSection.GENERATE) },
 					onLayout = { viewModel.setStartSection(StartSection.LAYOUT) },
@@ -734,11 +748,11 @@ private fun GenerateViewport(
 				}
 			}
 			file != null -> Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-				IconDocument(Modifier.size(28.dp), colors.textMuted)
+				IconPsd(Modifier.size(28.dp), colors.textMuted)
 				Text(tr("start.viewport.noPreview"), style = typography.caption.copy(fontSize = 11.sp), color = colors.textMuted)
 			}
 			else -> Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-				IconDocument(Modifier.size(28.dp), if (hovered && enabled) colors.accent else colors.textMuted)
+				IconPsd(Modifier.size(28.dp), if (hovered && enabled) colors.accent else colors.textMuted)
 				Text(tr("psdGuide.start.hint"),
 					style = typography.body.copy(fontSize = 13.sp, fontWeight = FontWeight.Medium), color = colors.textPrimary)
 				Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1056,7 +1070,7 @@ private fun Cmo3Content(enabled: Boolean, onOpenCmo3: (() -> Unit)?, modifier: M
 		enabled = enabled && onOpenCmo3 != null,
 		onClick = { onOpenCmo3?.invoke() },
 		modifier = modifier,
-	) { IconDocument(Modifier.size(28.dp), it) }
+	) { IconCmo3(Modifier.size(28.dp), it) }
 }
 
 /**
@@ -1109,6 +1123,8 @@ private fun RecentBrowser(
 	recent: List<RecentFile>?,
 	model: StartPageModel,
 	enabled: Boolean,
+	openShortcut: String?,
+	onOpenProject: (() -> Unit)?,
 	actions: RecentFileActions,
 	onGenerate: () -> Unit,
 	onLayout: () -> Unit,
@@ -1118,9 +1134,10 @@ private fun RecentBrowser(
 	val selection = model.selection
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
+	val filtering = selection.recentFilter.isNotBlank()
 	val shown = recent.orEmpty().filter { file ->
 		(if (file.kind == RecentFileKind.PROJECT) selection.showProjects else selection.showPsds) &&
-			(selection.recentFilter.isBlank() || file.name.contains(selection.recentFilter.trim(), ignoreCase = true))
+			(!filtering || file.name.contains(selection.recentFilter.trim(), ignoreCase = true))
 	}
 	Column(modifier) {
 		val kinds = listOf(tr("canvas.start.kind.project"), tr("canvas.start.kind.psd"))
@@ -1132,7 +1149,7 @@ private fun RecentBrowser(
 			}
 			PanelToolButton(kinds[1], showLabel = labelsShown > 1, onClick = { selection.showPsds = !selection.showPsds },
 				enabled = true, tooltip = tr("start.recent.showPsds"), active = selection.showPsds) {
-				IconDocument(Modifier.size(12.dp), if (selection.showPsds) colors.accent else colors.textMuted)
+				IconPsd(Modifier.size(12.dp), if (selection.showPsds) colors.accent else colors.textMuted)
 			}
 			Spacer(Modifier.weight(1f))
 			if (selection.recentGrid) CompactSlider(value = model.card, onValueChange = { model.card = it; model.saveSizes() },
@@ -1145,17 +1162,27 @@ private fun RecentBrowser(
 		when {
 			// Nothing while the check runs, rather than "none" for a moment.
 			recent == null -> Spacer(Modifier.weight(1f))
-			recent.isEmpty() -> EmptyInputRoutingTable(enabled, onGenerate, onLayout, onCmo3, Modifier.weight(1f).fillMaxWidth())
-			shown.isEmpty() -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+			shown.isEmpty() && filtering -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
 				Text(tr("start.recent.noMatch"), style = typography.caption.copy(fontSize = 11.sp), color = colors.textDisabled)
 			}
-			selection.recentGrid -> Box(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(4.dp)) {
-				MenuGlide(Modifier.fillMaxWidth()) {
+			selection.recentGrid -> Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
+				MenuGlide(Modifier.fillMaxWidth().padding(4.dp)) {
 					FlowRow(Modifier.fillMaxWidth()) {
+						if (!filtering) {
+							OpenProjectTile(
+								size = model.card.dp,
+								shortcut = openShortcut,
+								enabled = enabled && onOpenProject != null,
+								onClick = { onOpenProject?.invoke() },
+							)
+						}
 						shown.forEach { file ->
 							RecentTile(file, file.path == selection.recentPath, model.card.dp, enabled, onClick = { selection.recentPath = file.path }, actions)
 						}
 					}
+				}
+				if (recent.isEmpty()) {
+					EmptyInputRoutingTable(enabled, onGenerate, onLayout, onCmo3, Modifier.fillMaxWidth())
 				}
 			}
 			else -> Column(Modifier.weight(1f).fillMaxWidth()) {
@@ -1163,8 +1190,18 @@ private fun RecentBrowser(
 				Box(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
 					MenuGlide(Modifier.fillMaxWidth()) {
 						Column(Modifier.fillMaxWidth()) {
+							if (!filtering) {
+								OpenProjectRow(
+									shortcut = openShortcut,
+									enabled = enabled && onOpenProject != null,
+									onClick = { onOpenProject?.invoke() },
+								)
+							}
 							shown.forEach { file ->
 								RecentRow(file, file.path == selection.recentPath, enabled, onClick = { selection.recentPath = file.path }, actions)
+							}
+							if (recent.isEmpty()) {
+								EmptyInputRoutingTable(enabled, onGenerate, onLayout, onCmo3, Modifier.fillMaxWidth())
 							}
 						}
 					}
@@ -1251,6 +1288,98 @@ private fun RecentTableHeader() {
 		Text(tr("start.recent.column.modified"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.width(96.dp))
 		Text(tr("start.recent.column.size"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted,
 			modifier = Modifier.width(56.dp), textAlign = TextAlign.End)
+	}
+}
+
+/**
+ * The first tile in the Projects grid: opens an existing `.psd2live` project file from disk.
+ */
+@Composable
+private fun OpenProjectTile(size: Dp, shortcut: String?, enabled: Boolean, onClick: () -> Unit) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	val interaction = remember { MutableInteractionSource() }
+	val hovered by interaction.collectIsHoveredAsState()
+	val edge by animateColorAsState(
+		if (hovered && enabled) colors.accent.copy(alpha = 0.55f) else colors.divider,
+		tween(Motion.Instant),
+	)
+	val thumbBg by animateColorAsState(
+		if (hovered && enabled) colors.accent.copy(alpha = 0.10f) else colors.panelElevated,
+		tween(Motion.Instant),
+	)
+	Column(
+		Modifier.padding(3.dp).glideItem(enabled)
+			.border(0.5.dp, edge)
+			.hoverable(interaction, enabled)
+			.clickable(interactionSource = interaction, indication = null, enabled = enabled, onClick = onClick)
+			.handCursor(enabled)
+			.padding(4.dp),
+		horizontalAlignment = Alignment.CenterHorizontally,
+	) {
+		Box(
+			Modifier.size(size, size * 0.75f)
+				.background(thumbBg)
+				.drawBehind {
+					val stroke = Stroke(1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx())))
+					drawRoundRect(
+						color = if (hovered && enabled) colors.accent.copy(alpha = 0.55f) else colors.divider,
+						topLeft = Offset(4.dp.toPx(), 4.dp.toPx()),
+						size = Size(this.size.width - 8.dp.toPx(), this.size.height - 8.dp.toPx()),
+						cornerRadius = CornerRadius(2.dp.toPx()),
+						style = stroke,
+					)
+				},
+			contentAlignment = Alignment.Center,
+		) {
+			IconFolder(Modifier.size(22.dp), if (hovered && enabled) colors.accent else colors.textMuted)
+		}
+		Text(
+			tr("start.nav.openProject"),
+			color = if (!enabled) colors.textDisabled else colors.textPrimary,
+			fontSize = 10.5.sp,
+			fontWeight = FontWeight.Medium,
+			maxLines = 1,
+			overflow = TextOverflow.Ellipsis,
+			textAlign = TextAlign.Center,
+			modifier = Modifier.width(size).padding(top = 3.dp),
+		)
+		Text(
+			shortcut?.takeIf { it.isNotBlank() } ?: ".psd2live",
+			style = typography.monoSmall.copy(fontSize = 9.5.sp),
+			color = colors.textMuted,
+			maxLines = 1,
+			overflow = TextOverflow.Ellipsis,
+			textAlign = TextAlign.Center,
+			modifier = Modifier.width(size).padding(top = 1.dp),
+		)
+	}
+}
+
+@Composable
+private fun OpenProjectRow(shortcut: String?, enabled: Boolean, onClick: () -> Unit) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	Row(
+		Modifier.fillMaxWidth().height(26.dp)
+			.glideItem(enabled)
+			.drawBehind { drawLine(colors.divider.copy(alpha = 0.45f), Offset(0f, size.height), Offset(size.width, size.height), 0.5.dp.toPx()) }
+			.clickable(enabled = enabled, onClick = onClick)
+			.handCursor(enabled)
+			.padding(horizontal = 6.dp),
+		verticalAlignment = Alignment.CenterVertically,
+		horizontalArrangement = Arrangement.spacedBy(6.dp),
+	) {
+		Box(Modifier.size(22.dp, 18.dp), contentAlignment = Alignment.Center) {
+			IconFolder(Modifier.size(14.dp), colors.accent)
+		}
+		Text(tr("start.nav.openProject"), color = if (!enabled) colors.textDisabled else colors.textPrimary, fontSize = 11.sp,
+			fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(0.45f))
+		Text(tr("start.launcher.open.desc"), style = typography.caption.copy(fontSize = 10.5.sp), color = colors.textMuted,
+			maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(0.55f))
+		Text(".psd2live", style = typography.monoSmall.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.width(104.dp))
+		Text(shortcut.orEmpty(), style = typography.monoSmall.copy(fontSize = 10.sp), color = colors.textMuted,
+			modifier = Modifier.width(152.dp), textAlign = TextAlign.End)
 	}
 }
 
@@ -1368,7 +1497,7 @@ private fun Thumbnail(image: ImageBitmap?, kind: RecentFileKind, modifier: Modif
 		if (image != null) Image(image, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize().padding(2.dp))
 		else when (kind) {
 			RecentFileKind.PROJECT -> IconFolder(modifier = Modifier.size(16.dp), tint = colors.warning.copy(alpha = 0.8f))
-			RecentFileKind.PSD -> IconDocument(Modifier.size(16.dp), colors.accent.copy(alpha = 0.85f))
+			RecentFileKind.PSD -> IconPsd(Modifier.size(16.dp), colors.accent.copy(alpha = 0.85f))
 		}
 	}
 }
@@ -1524,12 +1653,12 @@ private fun StartActionBar(
 			StartSection.GENERATE -> AccentButton(
                 tr(if (selectedPsd != null) "psdGuide.start.open" else "psdGuide.start.browse"),
                 primary, enabled = enabled && (selectedPsd != null || actions.onOpenPsd != null), emphasis = true
-            ) { IconDocument(Modifier.size(12.dp), it) }
+            ) { IconPsd(Modifier.size(12.dp), it) }
 			StartSection.LAYOUT -> AccentButton(tr("start.action.layout"), primary, enabled = enabled && layout.valid, emphasis = true) {
 				WorkspacePresetIcon(WorkspacePreset.LAYOUT, it, Modifier.size(12.dp))
 			}
 			StartSection.CMO3 -> AccentButton(tr("start.action.cmo3"), primary, enabled = enabled && actions.onOpenCmo3 != null, emphasis = true) {
-				IconDocument(Modifier.size(12.dp), it)
+				IconCmo3(Modifier.size(12.dp), it)
 			}
 			StartSection.RECENT -> AccentButton(
 				tr(if (selectedRecent?.kind == RecentFileKind.PSD) "psdGuide.start.open" else "start.action.recent.open"),
@@ -1682,9 +1811,3 @@ internal fun StartIcon(
 	}
 	dot(9f, 6.2f, 1.7f)
 }
-
-@Composable
-private fun IconDocument(
-	modifier: Modifier = Modifier.size(14.dp),
-	tint: Color,
-) = GridIcon(modifier, tint) { document() }

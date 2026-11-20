@@ -56,7 +56,9 @@ import io.github.psd2live.ui.components.CompactTextField
 import io.github.psd2live.ui.components.ModalDialogFrame
 import io.github.psd2live.ui.components.IconAdd
 import io.github.psd2live.ui.components.IconChevron
+import io.github.psd2live.ui.components.IconCmo3
 import io.github.psd2live.ui.components.IconFolder
+import io.github.psd2live.ui.components.IconPsd
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.FileDropIntent
 import io.github.psd2live.ui.state.PSD2LiveViewModel
@@ -706,7 +708,11 @@ private fun FolderRow(name: String, kind: String?, depth: Int, selected: Boolean
 			if (hasChildren) IconChevron(open == true, Modifier.size(10.dp))
 		}
 		val tint = if (selected) colors.selectionText else colors.textMuted
-		if (kind != null) FileGlyph(Modifier.size(12.dp), tint) else IconFolder(Modifier.size(12.dp), tint)
+		when (kind) {
+			"PSD" -> IconPsd(Modifier.size(12.dp), tint)
+			"CMO3" -> IconCmo3(Modifier.size(12.dp), tint)
+			else -> IconFolder(Modifier.size(12.dp), tint)
+		}
 		Spacer(Modifier.width(4.dp))
 		Text(name, color = if (selected) colors.selectionText else colors.textPrimary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
 	}
@@ -743,7 +749,7 @@ private fun FolderFace(kind: String?, size: Dp, count: Int, dropping: Boolean) {
 	Box(Modifier.size(size).clip(RoundedCornerShape(3.dp)).background(colors.panelElevated.copy(alpha = 0.5f)), contentAlignment = Alignment.Center) {
 		if (kind == null) IconFolder(Modifier.size(size * 0.45f), tint)
 		else {
-			val band = if (kind == "PSD") Color(0xFF3D8FD6) else Color(0xFFE08A3C)
+			val band = if (kind == "PSD") colors.accent else colors.warning
 			val page = size * 0.46f
 			Box(Modifier.size(page * 1.1f, page * 1.3f)) {
 				// The page behind: there is more inside.
@@ -825,7 +831,11 @@ private fun MaterialRow(entry: MaterialEntry, selected: Boolean, dropping: Boole
 		when (entry) {
 			is MaterialEntry.Item -> MaterialThumbnail(entry.item.raster, 48, Modifier.size(24.dp).clip(RoundedCornerShape(2.dp)))
 			is MaterialEntry.Folder -> Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
-				if (fileKind(entry.folder) != null) FileGlyph(Modifier.size(16.dp), colors.textMuted) else IconFolder(Modifier.size(16.dp), colors.textMuted)
+				when (fileKind(entry.folder)) {
+					"PSD" -> IconPsd(Modifier.size(16.dp), colors.textMuted)
+					"CMO3" -> IconCmo3(Modifier.size(16.dp), colors.textMuted)
+					else -> IconFolder(Modifier.size(16.dp), colors.textMuted)
+				}
 			}
 		}
 		val text = if (selected) colors.selectionText else colors.textPrimary
@@ -887,11 +897,6 @@ internal fun MaterialDragGhost(vm: PSD2LiveViewModel) {
 @Composable private fun TreeGlyph(tint: Color) = io.github.psd2live.ui.components.GridIcon(Modifier.size(12.dp), tint) {
 	line(4f, 3f, 4f, 14f); line(4f, 8f, 8f, 8f); line(4f, 14f, 8f, 14f)
 	box(9f, 6f, 6f, 4f, 1f); box(9f, 12f, 6f, 4f, 1f)
-}
-/** A file: a page with its corner folded, for a folder read from a PSD or CMO3. */
-@Composable private fun FileGlyph(modifier: Modifier, tint: Color) = io.github.psd2live.ui.components.GridIcon(modifier, tint) {
-	shape(path { m(4f, 2f); l(11f, 2f); l(15f, 6f); l(15f, 16f); l(4f, 16f); z() })
-	outline(path { m(11f, 2f); l(11f, 6f); l(15f, 6f) })
 }
 
 /**
