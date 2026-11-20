@@ -180,6 +180,20 @@ object AppSettings {
 			runCatching { preferences.putBoolean("simulation_auto_bake", value) }
 		}
 
+	private val iconBitmapCacheState = kotlinx.coroutines.flow.MutableStateFlow(
+		runCatching { preferences.getBoolean("icon_bitmap_cache", false) }.getOrDefault(false),
+	)
+
+	/** Whether vector [GridIcon]s rasterize into cached bitmaps; off by default so icons render directly as sharp vectors. */
+	val iconBitmapCacheFlow: kotlinx.coroutines.flow.StateFlow<Boolean> get() = iconBitmapCacheState
+
+	var iconBitmapCache: Boolean
+		get() = iconBitmapCacheState.value
+		set(value) {
+			iconBitmapCacheState.value = value
+			runCatching { preferences.putBoolean("icon_bitmap_cache", value) }
+		}
+
 	private fun parameterPadHeightKey(horizontalId: String, verticalId: String): String {
 		val pair = "${horizontalId.length}:$horizontalId$verticalId"
 		val digest = MessageDigest.getInstance("SHA-256").digest(pair.toByteArray(Charsets.UTF_8))
@@ -555,6 +569,8 @@ object AppSettings {
 			preferences.remove(KEY_THEME_ID)
 			preferences.remove(KEY_THEME_LAST_DARK)
 			preferences.remove(KEY_THEME_LAST_LIGHT)
+			preferences.remove("icon_bitmap_cache")
+			iconBitmapCacheState.value = false
 			// Enumerated by prefix so there is no action-name list to keep up to date.
 			preferences.keys().filter { it.startsWith(KEYMAP_PREFIX) }.forEach { preferences.remove(it) }
 			preferences.flush()

@@ -392,7 +392,7 @@ fun AppTitleBar(
 									icon = { tint ->
 										when (file.kind) {
 											RecentFileKind.PROJECT -> IconFolder(Modifier.size(14.dp), tint)
-											RecentFileKind.PSD -> GridIcon(Modifier.size(14.dp), tint) { document() }
+											RecentFileKind.PSD -> IconPsd(Modifier.size(14.dp), tint)
 										}
 									},
 									onClick = { activeMenu = null; activeSubmenu = null; onOpenRecent(file.path) },
@@ -1568,11 +1568,7 @@ private fun TitleBarLanguageButton(
 		) {
 			IconLanguage(
 				modifier = Modifier.size(14.dp),
-				tint = when {
-					expanded -> colors.selectionText
-					isHovered -> colors.textPrimary
-					else -> colors.textMuted
-				},
+				tint = if (expanded) colors.selectionText else colors.textPrimary.copy(alpha = if (isHovered) 1f else 0.85f),
 			)
 			AppSeamlessDropdownMenu(
 				expanded = expanded,

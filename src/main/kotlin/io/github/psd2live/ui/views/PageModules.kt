@@ -96,7 +96,9 @@ internal fun SettingsIcon(tint: Color, modifier: Modifier = Modifier.size(12.dp)
 			cog.arcTo(Rect(c, r), Math.toDegrees(a + 0.36).toFloat(), Math.toDegrees(PI / 3 - 0.72).toFloat(), false)
 		}
 		cog.close()
-		shape(cog)
-		ring(9f, 9f, 2.1f)
+		val hole = circlePath(9f, 9f, 2.3f)
+		behind(hole) { fill(cog, soft) }
+		outline(cog)
+		ring(9f, 9f, 2.3f)
 	}
 }
