@@ -363,6 +363,65 @@ class EditorAndAgentScenario {
 		}
 	}
 
+	@Test fun theVertexAndBezierLevelsCanBeOnTogether() = editor {
+		workspace.importPsd(Characters.figurePsd(temp).toString(), true)
+		consistent("imported")
+		val warp = vm.state.value.previewModel!!.rig.puppet.deformers.filterIsInstance<org.umamo.runtime.model.Deformer.Warp>().first { it.rows >= 3 && it.columns >= 3 }
+		val canvas = withContext(Dispatchers.Main) {
+			vm.selectDeformer(warp.id.raw)
+			io.github.psd2live.ui.CanvasEditor(vm, vm.state.value.activeWorkspace.id, "bezier-test").also {
+				it.hierarchyMode = io.github.psd2live.ui.EditHierarchyMode.DEFORM
+				it.setEditLevel(2)
+				it.activateTool(io.github.psd2live.ui.CanvasTool.SELECT)
+			}
+		}
+		settle()
+		val puppet = vm.state.value.previewModel!!.rig.puppet
+		val viewport = io.github.psd2live.core.CanvasViewport(4.0, 0.0, 0.0, puppet.canvasWidth, puppet.canvasHeight)
+		fun points() = canvas.target()!!.let { canvas.screen(it.geometry.points, it, viewport) }
+		// A lattice point clear of every anchor and handle, and a handle's place on screen.
+		val (point, handle) = withContext(Dispatchers.Main) {
+			canvas.ensureBezierState()
+			val t = canvas.target()!!
+			val state = assertNotNull(canvas.bezierState)
+			val controls = (state.anchors.values.map { it.x to it.y } + state.handles.values.map { it.x to it.y })
+				.map { (x, y) -> canvas.screen(floatArrayOf(x, y), t, viewport)[0] }
+			val shown = points()
+			val (key, h) = state.handles.entries.first()
+			shown.indices.first { i -> controls.all { (it - shown[i]).getDistance() > 20f } } to (key to canvas.screen(floatArrayOf(h.x, h.y), t, viewport)[0])
+		}
+
+		// Bezier alone, as before: the lattice points are not picked, and the last level on stays on.
+		withContext(Dispatchers.Main) {
+			canvas.move(points()[point], viewport, shift = false)
+			assertNull(canvas.hoveredVertex, "a lattice point was picked with only the Bezier level on")
+			canvas.toggleEditLevel(2)
+			assertEquals(setOf(2), canvas.editLevels, "the last level on must stay on")
+		}
+
+		// Both on: a lattice point and a Bezier handle are both picked.
+		withContext(Dispatchers.Main) {
+			canvas.toggleEditLevel(1)
+			assertEquals(setOf(1, 2), canvas.editLevels)
+			canvas.move(points()[point], viewport, shift = false)
+			assertEquals(point, canvas.hoveredVertex, "the lattice point was not picked with both levels on")
+			canvas.move(handle.second, viewport, shift = false)
+			assertEquals(handle.first, canvas.hoveredBezierHandle, "the Bezier handle was not picked with both levels on")
+		}
+
+		// The lattice point drags with both on.
+		val before = points()[point]
+		withContext(Dispatchers.Main) {
+			canvas.move(before, viewport, shift = false)
+			canvas.press(before, viewport, shift = false, alt = false)
+			canvas.move(before + androidx.compose.ui.geometry.Offset(30f, 0f), viewport, shift = false)
+			canvas.release()
+		}
+		consistent("dragged a lattice point with both levels on")
+		val after = points()[point]
+		assertTrue(after.x - before.x > 20f, "the lattice point did not move with both levels on: $before -> $after")
+	}
+
 	@Test fun settledPresetFieldChangesThePosedGeometryOnlyOnce() = editor {
 		workspace.importPsd(Characters.figurePsd(temp).toString(), true)
 		consistent("imported")

@@ -98,7 +98,7 @@ class ModifierGeometryGestureTest {
         val editor = fixture.vm.canvasEditor
         editor.hierarchyMode = EditHierarchyMode.DEFORM
         editor.tool = CanvasTool.SELECT
-        editor.editLevel = 1
+        editor.setEditLevel(1)
         editor.snapDeformationToKeys = snapToKeys
         val target = assertNotNull(editor.target())
         val badges = editor.deformerCorners(viewport).values

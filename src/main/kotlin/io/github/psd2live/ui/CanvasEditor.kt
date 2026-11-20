@@ -1071,7 +1071,9 @@ internal class CanvasEditor(
             if (value != EditHierarchyMode.SELECT) lastWorkMode = value
             viewModel.switchHierarchyModeView(value, canvasId, workspaceId)
         }
-    var editLevel by mutableStateOf(2) // Level 1 (grid), Level 2 (bezier), Level 3 (macro)
+    /** A warp's deform levels switched on, at least one: 1 its lattice points, 2 its Bezier anchors and handles over them. */
+    var editLevels by mutableStateOf(setOf(2))
+        private set
 
     /** The mode Tab returns to from object mode: the last mode other than Select the canvas was in or asked for. */
     private var lastWorkMode = EditHierarchyMode.DEFORM
@@ -3800,7 +3802,7 @@ internal class CanvasEditor(
         } else if (next == EditHierarchyMode.SELECT) {
             selection = emptyMap()
         } else if (next == EditHierarchyMode.DEFORM) {
-            if (editLevel == 2) ensureBezierState()
+            if (2 in editLevels) ensureBezierState()
         }
         if (tool !in palette()) {
             tool = if (next == EditHierarchyMode.SKELETON && committedSkeleton?.enabled != true) CanvasTool.SKELETON_EDIT else palette().first()
@@ -3812,17 +3814,24 @@ internal class CanvasEditor(
 
     /**
      * Whether the deform levels apply to the target in hand: only a warp has a lattice of its own for each, its grid
-     * points at level 1 and its Bezier handles at level 2; everything else deforms alike at either.
+     * points at level 1 and its Bezier handles over them at level 2, either alone or both together; everything else
+     * deforms alike at any.
      */
     fun deformLevelsShown(): Boolean = hierarchyMode == EditHierarchyMode.DEFORM && target()?.kind == "warp"
 
-    @JvmName("changeEditLevel")
-    fun setEditLevel(level: Int) {
-        editLevel = level
-        // The lattice's points take no edits at the Bezier level, so a selection of them would only be moved by
+    /** Switches to [level] alone, as the number keys do. */
+    fun setEditLevel(level: Int) = switchEditLevels(setOf(level))
+
+    /** Switches [level] on or off beside the other, as its button does; the last one on stays on. */
+    fun toggleEditLevel(level: Int) = switchEditLevels(if (level in editLevels) editLevels - level else editLevels + level)
+
+    private fun switchEditLevels(levels: Set<Int>) {
+        if (levels.isEmpty()) return
+        editLevels = levels
+        // The lattice's points take no edits without the vertex level, so a selection of them would only be moved by
         // the transform box unseen.
-        if (level == 2 && target()?.kind == "warp") selection = emptyMap()
-        if (level == 2 && hierarchyMode == EditHierarchyMode.DEFORM) {
+        if (1 !in levels && target()?.kind == "warp") selection = emptyMap()
+        if (2 in levels && hierarchyMode == EditHierarchyMode.DEFORM) {
             ensureBezierState()
         }
         clearHover()
@@ -4221,7 +4230,7 @@ internal class CanvasEditor(
 
         if (hierarchyMode == EditHierarchyMode.DEFORM) {
             if (t.kind == "warp") {
-                if (editLevel == 2) {
+                if (2 in editLevels) {
                     ensureBezierState()
                     val bState = bezierState
                     if (bState != null) {
@@ -4255,7 +4264,9 @@ internal class CanvasEditor(
                             return
                         }
                     }
-                    if (tool == CanvasTool.SELECT) {
+                    // Under the anchors and handles, the lattice points when the vertex level is on too.
+                    if (1 in editLevels) updatePointHover(pos, viewport, t)
+                    else if (tool == CanvasTool.SELECT) {
                         val frame = transformFrame(viewport)
                         hoveredHandle = if (frame != null) transformHandleAt(pos, frame) else BoundingHandle.NONE
                     }
@@ -4630,9 +4641,9 @@ internal class CanvasEditor(
         }
     }
 
-    /** The points a keyform tool keeps to: the picked ones, but none of a warp's at the Bezier level or of a rotation. */
+    /** The points a keyform tool keeps to: the picked ones, but none of a warp's without the vertex level or of a rotation. */
     private fun keyformPoints(t: CanvasTarget): Set<Int> =
-        if (t.kind == "rotation" || (t.kind == "warp" && editLevel != 1)) emptySet() else vertices
+        if (t.kind == "rotation" || (t.kind == "warp" && 1 !in editLevels)) emptySet() else vertices
 
     /** How many points the keyform tools would keep to: 0 when they write the whole shape. */
     fun keyformPointCount(): Int = keyformTarget()?.first?.let { keyformPoints(it).size } ?: 0
@@ -4824,7 +4835,7 @@ internal class CanvasEditor(
     private var temporaryWarpPressWorld: FloatArray? = null
 
     fun canBeginTemporaryWarp(): Boolean = hierarchyMode == EditHierarchyMode.DEFORM &&
-        target()?.let { it.kind == "mesh" || (it.kind == "warp" && editLevel == 1) } == true
+        target()?.let { it.kind == "mesh" || (it.kind == "warp" && 1 in editLevels) } == true
 
     /** Lays a [temporaryWarpDivisions] lattice over [carried] points of the target in hand (default the picked ones, or all). */
     fun beginTemporaryWarp(carried: Collection<Int>? = null) {
@@ -4937,8 +4948,8 @@ internal class CanvasEditor(
     /** Whether a drag of picked points carries the points around them: Deform's point tools with [softSelection] on. */
     fun softSelectionActive(): Boolean = softSelection && hierarchyMode == EditHierarchyMode.DEFORM &&
         (tool in SELECTION_TOOLS || tool == CanvasTool.TRANSFORM) &&
-        // A warp's lattice points are what it picks only at the vertex level; its Bezier handles take no soft drag.
-        target()?.let { it.kind != "warp" || editLevel == 1 } != false
+        // A warp's lattice points are what it picks only with the vertex level on; its Bezier handles take no soft drag.
+        target()?.let { it.kind != "warp" || 1 in editLevels } != false
 
     private var softReachKey: List<Any?>? = null
     private var softReach: Map<String, FloatArray> = emptyMap()
@@ -4953,7 +4964,7 @@ internal class CanvasEditor(
         val t = target()?.takeIf { it.kind != "rotation" } ?: return emptyMap()
         val picked = vertices
         if (picked.isEmpty()) return emptyMap()
-        val key = listOf(editSource, pose, viewport, softRadius, brushFalloff, picked, t.id, editLevel)
+        val key = listOf(editSource, pose, viewport, softRadius, brushFalloff, picked, t.id, editLevels)
         if (key != softReachKey) {
             softReach = mapOf(t.id to softSelectionWeights(screen(t.geometry.points, t, viewport), picked, (softRadius * viewport.scale).toFloat(), brushFalloff))
             softReachKey = key
@@ -5446,7 +5457,7 @@ internal class CanvasEditor(
             deferredMode = null
             hierarchyMode = returnMode
             if (returnMode == EditHierarchyMode.DEFORM) {
-                if (editLevel == 2) ensureBezierState()
+                if (2 in editLevels) ensureBezierState()
             }
         }
         tool = CanvasTool.SELECT
@@ -6508,7 +6519,7 @@ internal class CanvasEditor(
         }
 
         // 2. Level 2 Bezier Deformer in DEFORM mode
-        if (hierarchyMode == EditHierarchyMode.DEFORM && editLevel == 2) {
+        if (hierarchyMode == EditHierarchyMode.DEFORM && 2 in editLevels) {
             val t = target()
             if (t != null && t.kind == "warp") {
                 if (hoveredBezierHandle != null || hoveredBezierAnchor != null) {
@@ -6530,9 +6541,9 @@ internal class CanvasEditor(
                 }
             }
         }
-        // At the Bezier level a warp is edited through its anchors and handles alone; the lattice under them is
+        // Without the vertex level a warp is edited through its anchors and handles alone; the lattice under them is
         // shown for reference and takes no edits.
-        val bezierOnly = hierarchyMode == EditHierarchyMode.DEFORM && editLevel == 2 && target()?.kind == "warp" &&
+        val bezierOnly = hierarchyMode == EditHierarchyMode.DEFORM && 1 !in editLevels && target()?.kind == "warp" &&
             tool !in CREATION_TOOLS
 
         // 2b. A corner badge picks the deformer it belongs to, in every mode.

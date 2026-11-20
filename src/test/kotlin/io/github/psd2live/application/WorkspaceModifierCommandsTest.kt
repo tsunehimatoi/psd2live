@@ -1142,7 +1142,7 @@ class WorkspaceModifierCommandsTest {
                 val editor = vm.canvasEditor
                 editor.hierarchyMode = io.github.psd2live.ui.EditHierarchyMode.DEFORM
                 editor.tool = io.github.psd2live.ui.CanvasTool.SELECT
-                editor.editLevel = 1
+                editor.setEditLevel(1)
                 editor.snapDeformationToKeys = false
                 val viewport = CanvasViewport(100.0, 200.0, 200.0, 500f, 500f)
                 for (cancel in listOf(true, false)) {
@@ -1188,7 +1188,7 @@ class WorkspaceModifierCommandsTest {
                     historySnapshot = io.github.psd2live.project.WorkspaceHistorySnapshot("test", emptyList())))
                 val editor = vm.canvasEditor
                 editor.hierarchyMode = io.github.psd2live.ui.EditHierarchyMode.DEFORM
-                editor.editLevel = 1
+                editor.setEditLevel(1)
                 editor.snapDeformationToKeys = false
                 val viewport = CanvasViewport(100.0, 200.0, 200.0, 500f, 500f)
                 val target = assertNotNull(editor.target())
@@ -1243,7 +1243,7 @@ class WorkspaceModifierCommandsTest {
                 val editor = vm.canvasEditor
                 editor.hierarchyMode = io.github.psd2live.ui.EditHierarchyMode.DEFORM
                 editor.tool = io.github.psd2live.ui.CanvasTool.SELECT
-                editor.editLevel = 2
+                editor.setEditLevel(2)
                 editor.pathLevel = 2
                 editor.snapDeformationToKeys = false
                 editor.parameter = parameter.raw

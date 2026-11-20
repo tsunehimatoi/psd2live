@@ -447,6 +447,23 @@ internal fun BoxScope.CanvasEditorOverlay(
         // Rotation interactive guide uses the same showRotation toggle as the global channel.
         if ((editor.hierarchyMode == EditHierarchyMode.DEFORM || editor.hierarchyMode == EditHierarchyMode.EDIT) && target != null && (target.kind == "warp" || target.kind == "rotation")) {
             val pts = editor.screen(target.geometry.points, target, viewport)
+            // The warp's lattice in the mesh's look, its control points square: alone at level 1, under the curves with both on.
+            fun drawLattice() {
+                val columns = target.geometry.columns!! + 1
+                val wires = ArrayList<Offset>()
+                pts.indices.forEach { i ->
+                    if (i % columns < columns - 1) { wires += pts[i]; wires += pts[i + 1] }
+                    if (i + columns < pts.size) { wires += pts[i]; wires += pts[i + columns] }
+                }
+                drawMeshWires(wires, MeshLook.Structure)
+                val reach = editor.activeBrushWeights ?: editor.brushHoverReach(viewport)[target.id]
+                pts.forEachIndexed { i, p ->
+                    drawMeshHandle(p, MeshLook.Structure, colors.accent, selected = i in editor.vertices,
+                        hovered = i == editor.hoveredVertex, shape = HandleShape.SQUARE)
+                    reach?.getOrNull(i)?.let { w -> drawReachRing(p, editor.reachShown(w), MeshLook.Reach) }
+                    if (i !in editor.vertices) editor.softSelectionReach(viewport)[target.id]?.getOrNull(i)?.let { w -> drawReachRing(p, w, MeshLook.Reach) }
+                }
+            }
             if (target.kind == "rotation") {
                 if (showRotation && pts.size >= 2) {
                     val guide = editor.rotationGuideScreen(target, viewport)
@@ -460,20 +477,25 @@ internal fun BoxScope.CanvasEditorOverlay(
                         isAltHeld = editor.altHeld,
                     )
                 }
-            } else if (editor.hierarchyMode == EditHierarchyMode.DEFORM && editor.editLevel == 2) {
+            } else if (editor.hierarchyMode == EditHierarchyMode.DEFORM && 2 in editor.editLevels) {
                 // LEVEL 2: Live2D Cubism-style Bezier Deformer
                 editor.ensureBezierState()
                 val bState = editor.bezierState
                 if (bState != null) {
-                    // The lattice the curves bend, faint and neutral: it is there for reference and takes no edits.
-                    val columns = target.geometry.columns!! + 1
-                    val lattice = colors.textMuted.copy(alpha = 0.28f)
-                    pts.indices.flatMap { i ->
-                        listOfNotNull(
-                            if (i % columns < columns - 1) i to i + 1 else null,
-                            if (i + columns < pts.size) i to i + columns else null
-                        )
-                    }.forEach { (a, b) -> drawLine(lattice, pts[a], pts[b], 0.8f) }
+                    if (1 in editor.editLevels) {
+                        // The lattice the curves bend, its points picked and moved as at level 1.
+                        drawLattice()
+                    } else {
+                        // The lattice the curves bend, faint and neutral: it is there for reference and takes no edits.
+                        val columns = target.geometry.columns!! + 1
+                        val lattice = colors.textMuted.copy(alpha = 0.28f)
+                        pts.indices.flatMap { i ->
+                            listOfNotNull(
+                                if (i % columns < columns - 1) i to i + 1 else null,
+                                if (i + columns < pts.size) i to i + columns else null
+                            )
+                        }.forEach { (a, b) -> drawLine(lattice, pts[a], pts[b], 0.8f) }
+                    }
 
                     fun screenOf(x: Float, y: Float) = editor.screen(floatArrayOf(x, y), target, viewport)[0]
                     // Each curve over a dark halo, so it reads on light and dark art alike.
@@ -528,21 +550,7 @@ internal fun BoxScope.CanvasEditorOverlay(
                     }
                 }
             } else {
-                // Level 1: the lattice in the mesh's look, its control points square.
-                val columns = target.geometry.columns!! + 1
-                val wires = ArrayList<Offset>()
-                pts.indices.forEach { i ->
-                    if (i % columns < columns - 1) { wires += pts[i]; wires += pts[i + 1] }
-                    if (i + columns < pts.size) { wires += pts[i]; wires += pts[i + columns] }
-                }
-                drawMeshWires(wires, MeshLook.Structure)
-                val reach = editor.activeBrushWeights ?: editor.brushHoverReach(viewport)[target.id]
-                pts.forEachIndexed { i, p ->
-                    drawMeshHandle(p, MeshLook.Structure, colors.accent, selected = i in editor.vertices,
-                        hovered = i == editor.hoveredVertex, shape = HandleShape.SQUARE)
-                    reach?.getOrNull(i)?.let { w -> drawReachRing(p, editor.reachShown(w), MeshLook.Reach) }
-                    if (i !in editor.vertices) editor.softSelectionReach(viewport)[target.id]?.getOrNull(i)?.let { w -> drawReachRing(p, w, MeshLook.Reach) }
-                }
+                drawLattice()
             }
         }
 
@@ -2241,10 +2249,10 @@ private fun BoxScope.HierarchyModeBar(
                 }.forEach { (lvl, tooltip) ->
                     BarChip(
                         label = tr("editor.level.$lvl"),
-                        selected = editor.editLevel == lvl,
+                        selected = lvl in editor.editLevels,
                         tooltip = tooltip,
                         onClick = {
-                            editor.setEditLevel(lvl)
+                            editor.toggleEditLevel(lvl)
                             focus()
                         },
                     )
