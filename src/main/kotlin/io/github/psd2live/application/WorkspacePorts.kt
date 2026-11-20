@@ -163,6 +163,8 @@ interface WorkspaceSourcePort {
     suspend fun importPsd(path: String, discardUnsaved: Boolean = false, modifiers: WorkspaceInitialModifiers? = null, preset: WorkspaceInitialPreset? = null): WorkspaceMutationResult
     /** A new Layout project, not generated yet, from a layout manifest or a zip holding one ([LayoutManifest]). */
     suspend fun importLayout(path: String, discardUnsaved: Boolean = false): WorkspaceMutationResult
+    /** Refresh external PSD pixels in the loaded project, retaining its rig and history. */
+    suspend fun reloadPsd(state: String, path: String): WorkspaceMutationResult
     suspend fun importCmo3(path: java.nio.file.Path, mode: Cmo3ImportMode,
                            discardUnsaved: Boolean = false): WorkspaceMutationResult
     suspend fun createArtwork(arguments: JsonObject): WorkspaceMutationResult

@@ -2605,6 +2605,7 @@ class PSD2LiveViewModel : AutoCloseable {
             projectId = projectId, projectSourceName = if (replacing) current.projectSourceName else sourceName,
             projectFile = if (replacing) current.projectFile else null,
             inputPath = if (replacing) current.inputPath else path?.toString().orEmpty(),
+            externalPsdPath = if (replacing) current.externalPsdPath else path?.takeIf { it.fileName.toString().endsWith(".psd", true) }?.toString(),
             loadedInputPath = if (replacing) current.loadedInputPath else path?.toString(),
             loadedInputFileSignature = if (replacing) current.loadedInputFileSignature else null,
             analysis = preview.analysis, previewModel = preview, previewModelDirty = false,
@@ -7544,6 +7545,34 @@ class PSD2LiveViewModel : AutoCloseable {
 	fun clearExportSuccess() {
 		updateState { it.copy(exportSuccess = null, focusCanvasRequest = it.focusCanvasRequest + 1) }
 	}
+
+    /** Model > Reload PSD: refresh textures in this project; starting over from a PSD still goes through analyze. */
+    fun reloadPsd(path: Path) {
+        if (_state.value.isBusy || _state.value.projectSaving || _state.value.analysis == null) return
+        flushEditorFields()
+        endSwing()
+        previewRebuildJob?.cancel()
+        activeWorkJob = scope.launch {
+            try {
+                val workspace = requireNotNull(workspaceBackend) { "Project workspace unavailable" }
+                workspace.awaitEditorDrafts()
+                _state.first { !it.workspaceEditBusy }
+                val expected = workspace.snapshot()
+                updateState { it.copy(isAnalyzing = true, isIndeterminateProgress = true, errorMessage = null, statusText = tr("status.analyzing")) }
+                val result = withContext(io.github.psd2live.application.WorkspaceExecution(expected.projectId, expected.state, MutationAuthor.USER)) {
+                    workspace.reloadPsd(expected.state, path.toAbsolutePath().normalize().toString())
+                }
+                updateState { it.copy(statusText = tr(if (result.applied) "psdReload.completed" else "psdReload.unchanged")) }
+            } catch (failure: Throwable) {
+                if (failure is kotlinx.coroutines.CancellationException) throw failure
+                val detail = workspaceFailureMessage(failure)
+                updateState { it.withLog(tr("log.failed", detail), level = LogLevel.ERROR, tag = "Analysis")
+                    .copy(errorMessage = detail, statusText = tr("status.failed", detail)) }
+            } finally { updateState { it.copy(isAnalyzing = false, isIndeterminateProgress = false) } }
+        }
+    }
+
+    internal fun rememberExternalPsd(path: String) = updateState { it.copy(externalPsdPath = path) }
 
     fun analyze(discardUnsaved: Boolean = false, checkImportedMeshSplits: Boolean = true) {
         if (_state.value.isBusy || _state.value.projectSaving) return

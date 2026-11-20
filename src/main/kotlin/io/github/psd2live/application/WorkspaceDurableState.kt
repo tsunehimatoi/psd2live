@@ -16,6 +16,7 @@ internal data class WorkspaceDurableIdentity(
     val annotations: Map<String, HistoryAnnotation>,
     val auxiliaryVersion: Long,
     val workspaces: List<Workspace>,
+    val externalPsdPath: String? = null,
 ) {
     data class Workspace(val id: String, val name: String, val preset: String,
                          val values: Map<ParameterId, Float>, val locks: Set<ParameterId>,

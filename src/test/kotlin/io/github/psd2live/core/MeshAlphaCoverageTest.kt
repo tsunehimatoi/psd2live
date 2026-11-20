@@ -115,10 +115,13 @@ class MeshAlphaCoverageTest {
         } }
         val faintOnly = raster { x, y -> if (x in 8..23 && y in 8..23) 1 else 0 }
         val mainLayer = io.github.psd2live.document.WorkspaceSourceLayer(
-            id = org.umamo.format.art.LayerId("face"), name = "face", visible = true, groupPath = "",
+            id = org.umamo.format.art.LayerId("face"), name = "face", groupPath = "",
+            kind = org.umamo.format.art.SourceLayerKind.Raster, visible = true,
             order = 1, bounds = org.umamo.format.art.LayerBounds(0, 0, 32, 32), opacity = 1f,
             clipped = false, blend = org.umamo.format.art.LayerBlend.Normal,
+            channelMask = org.umamo.format.art.ChannelMask.ALL,
             raster = org.umamo.format.art.LayerRaster(32, 32, pixels),
+            sourceAssetId = null, sourceSpatialReferenceId = null, derived = false,
         )
         val softLayer = mainLayer.copy(
             id = org.umamo.format.art.LayerId("glow"), name = "glow", order = 0,

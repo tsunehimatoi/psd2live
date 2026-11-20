@@ -486,6 +486,8 @@ data class PSD2LiveState(
     /** Bookmarks, shy and frozen tracks and markers of the motion editor; saved project data, not rig history. */
     val timelineAids: io.github.psd2live.project.TimelineAids = io.github.psd2live.project.TimelineAids(),
     val inputPath: String = "",
+    /** External editable PSD; inputPath may instead point to an archive's extracted source. */
+    val externalPsdPath: String? = null,
 	/** Input identity that produced [analysis]; remains stable while the user edits the next path field. */
 	val loadedInputPath: String? = null,
 	val loadedInputFileSignature: String? = null,

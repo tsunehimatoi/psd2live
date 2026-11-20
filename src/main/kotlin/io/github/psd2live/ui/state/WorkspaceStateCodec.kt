@@ -420,6 +420,7 @@ internal object WorkspaceStateCodec {
         }) } }
         put("activeWorkspaceId", state.activeWorkspaceId)
         put("outputPath", state.outputPath)
+        state.externalPsdPath?.let { put("externalPsdPath", it) }
         put("atlasSize", state.atlasSize)
         put("textureUpscale", Json.encodeToJsonElement(state.textureUpscale))
         put("meshSpacing", state.meshSpacing)
@@ -535,6 +536,7 @@ internal object WorkspaceStateCodec {
         val (workspaces, activeWorkspaceId) = decodeWorkspaces(value, base)
         return base.copy(
         projectSourceName = value["projectSourceName"]?.jsonPrimitive?.contentOrNull ?: base.projectSourceName,
+        externalPsdPath = value["externalPsdPath"]?.jsonPrimitive?.contentOrNull ?: base.externalPsdPath,
         historyZoom = value["historyZoom"]?.jsonPrimitive?.float ?: base.historyZoom,
         historyPanX = value["historyPanX"]?.jsonPrimitive?.float ?: base.historyPanX,
         historyPanY = value["historyPanY"]?.jsonPrimitive?.float ?: base.historyPanY,
