@@ -593,4 +593,25 @@ class EditorAndAgentScenario {
 		assertEquals(padding, vm.state.value.texturePadding, "the archive holds the editor's copy")
 	}
 
+	/** A split whose pieces the user deletes leaves the canvas's visible set, so a View that follows the canvas still renders. */
+	@Test fun aViewFollowingTheCanvasRendersAfterALayerIsDeleted() = editor {
+		workspace.importPsd(Characters.figurePsd(temp).toString(), true)
+		consistent("imported")
+		val source = vm.state.value.previewModel!!.analysis.source
+		val layer = source.layers.first().id.raw
+		val (w, h) = source.widthPx to source.heightPx
+		// The pieces of a split, deleted one by one, as a user takes a split back.
+		call("source_split_polygon", req("state" to state(), "layer_id" to layer, "names" to listOf("Left", "Right"),
+			"piece_ids" to listOf("piece_l", "piece_r"), "polygon" to listOf(listOf(0, 0), listOf(w / 2, 0), listOf(w / 2, h), listOf(0, h)))).data()
+		consistent("split")
+		for (piece in listOf("piece_l", "piece_r")) {
+			call("layer_delete", req("state" to state(), "layer_id" to piece)).data()
+			consistent("deleted $piece")
+		}
+		val gone = setOf(layer, "piece_l", "piece_r")
+		assertTrue((vm.state.value.effectiveVisibleLayerIds intersect gone).isEmpty(), "the canvas still shows ${vm.state.value.effectiveVisibleLayerIds intersect gone}")
+		val view = call("view_render_model", req("viewport" to mapOf("mode" to "canvas_rect", "left" to 0, "top" to 0, "width" to 64, "height" to 64)))
+		assertTrue((view.data().getValue("includedLayerIds").jsonArray.map { it.jsonPrimitive.content } intersect gone).isEmpty(), "rendered a deleted layer: $view")
+	}
+
 }
