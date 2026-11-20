@@ -527,6 +527,27 @@ class EditorAndAgentScenario {
 		assertEquals(20f, vm.state.value.parameterValues[ParameterId("ParamAngleX")], "the slider jumped back")
 	}
 
+	@Test fun undoAndRedoKeepThePoseTheUserSet() = editor {
+		workspace.importPsd(Characters.figurePsd(temp).toString(), true)
+		consistent("imported")
+		val angle = ParameterId("ParamAngleX")
+		vm.setParameterValue(angle, -10f)
+		consistent("posed")
+		val before = workspace.snapshot().historyHeadNodeId
+		vm.setFeatureDisplacementEnabled(true)
+		consistent("edited at the pose")
+		val edited = workspace.snapshot().historyHeadNodeId
+		assertNotEquals(before, edited, "the edit made no history node")
+		withContext(Dispatchers.Main) { vm.undoHistory() }
+		consistent("undo")
+		assertEquals(before, workspace.snapshot().historyHeadNodeId)
+		assertEquals(-10f, vm.state.value.parameterValues[angle], "undo moved the slider")
+		withContext(Dispatchers.Main) { vm.redoHistory() }
+		consistent("redo")
+		assertEquals(edited, workspace.snapshot().historyHeadNodeId)
+		assertEquals(-10f, vm.state.value.parameterValues[angle], "redo moved the slider")
+	}
+
 	@Test fun anAgentEditDuringAnOpenFieldLandsAndTheFieldCommitsOverIt() = editor {
 		workspace.importPsd(Characters.figurePsd(temp).toString(), true)
 		consistent("imported")

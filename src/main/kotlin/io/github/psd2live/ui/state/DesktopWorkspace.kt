@@ -165,8 +165,8 @@ internal class DesktopPresentation(private val viewModel: PSD2LiveViewModel) : W
     }
 
     override fun show(view: PSD2LiveState, preview: RigPreviewModel, base: WorkspaceDocument?, next: WorkspaceDocument,
-                      status: String, restoreCheckedOutPose: Boolean) =
-        viewModel.showWorkspaceCommit(preview, base, next, status, view.projectId, view.projectOpenGeneration, restoreCheckedOutPose)
+                      status: String) =
+        viewModel.showWorkspaceCommit(preview, base, next, status, view.projectId, view.projectOpenGeneration)
 
     override fun draftYielded(view: PSD2LiveState, fields: List<String>) = viewModel.reportDraftYielded(view, fields)
 

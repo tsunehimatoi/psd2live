@@ -7923,7 +7923,6 @@ class PSD2LiveViewModel : AutoCloseable {
 		status: String,
 		expectedProjectId: String? = _state.value.projectId,
 		expectedProjectOpenGeneration: Long = _state.value.projectOpenGeneration,
-		restoreCheckedOutPose: Boolean = false,
 	) {
 		var applied = false
 		var drafted = false
@@ -7984,18 +7983,11 @@ class PSD2LiveViewModel : AutoCloseable {
 				// Canvas solo is local presentation; a document commit neither ends nor forgets it.
 				isolationSnapshot = current.isolationSnapshot,
 				lockedParameters = current.lockedParameters.intersect(preview.rig.puppet.parameters.mapTo(mutableSetOf()) { it.id }),
-				parameterValues = if (restoreCheckedOutPose) {
-					preview.rig.puppet.parameters.associate { it.id to it.default }
-				} else {
-					preview.rig.puppet.parameters.associate { parameter ->
-						parameter.id to (current.parameterValues[parameter.id] ?: parameter.default).coerceIn(parameter.min, parameter.max)
-					}
+				// The pose is not part of the document: a commit or a history checkout (undo, redo) keeps it.
+				parameterValues = preview.rig.puppet.parameters.associate { parameter ->
+					parameter.id to (current.parameterValues[parameter.id] ?: parameter.default).coerceIn(parameter.min, parameter.max)
 				},
-				previewParameterValues = if (restoreCheckedOutPose) {
-					preview.rig.puppet.parameters.associate { it.id to it.default }
-				} else {
-					current.previewParameterValues
-				},
+				previewParameterValues = current.previewParameterValues,
 				statusText = status,
 				errorMessage = null,
 			).let { shownState ->

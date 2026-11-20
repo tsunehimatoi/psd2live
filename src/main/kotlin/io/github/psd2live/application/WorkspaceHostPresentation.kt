@@ -52,8 +52,7 @@ internal interface WorkspaceHostPresentation<V> {
      * does. Called inside the runtime's commit, so the presentation and the history change together; it never
      * refuses the commit. A presentation that moved on to another project load than [view] shows nothing.
      */
-    fun show(view: V, preview: RigPreviewModel, base: WorkspaceDocument?, next: WorkspaceDocument, status: String,
-             restoreCheckedOutPose: Boolean = false)
+    fun show(view: V, preview: RigPreviewModel, base: WorkspaceDocument?, next: WorkspaceDocument, status: String)
 
     /** A draft of [view]'s editor gave up [fields] to another author's commit that changed them too. */
     fun draftYielded(view: V, fields: List<String>)

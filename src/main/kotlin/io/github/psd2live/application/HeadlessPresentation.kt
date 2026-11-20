@@ -56,8 +56,7 @@ internal class HeadlessPresentation(
     override fun config(view: View): PipelineConfig = config
     override fun basis(view: View): Pair<RigPreviewModel?, Map<String, Float>> = null to emptyMap()
 
-    override fun show(view: View, preview: RigPreviewModel, base: WorkspaceDocument?, next: WorkspaceDocument, status: String,
-                      restoreCheckedOutPose: Boolean) = Unit
+    override fun show(view: View, preview: RigPreviewModel, base: WorkspaceDocument?, next: WorkspaceDocument, status: String) = Unit
 
     override fun draftYielded(view: View, fields: List<String>) = Unit
     override fun savedView(capture: WorkspaceCapture<RigPreviewModel>, view: View): View = view
