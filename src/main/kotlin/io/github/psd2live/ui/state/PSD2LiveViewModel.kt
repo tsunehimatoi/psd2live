@@ -2182,6 +2182,7 @@ class PSD2LiveViewModel : AutoCloseable {
         if (_state.value.workspaceEditBusy || _state.value.editorDraftBusy) { onComplete("An editor operation is still being applied"); return }
         updateState { it.copy(canvasEditBusy = true) }
         scope.launch {
+            var busyCleared = false
             try {
                 val failure = try {
                     withContext(Dispatchers.Default) { mutation() }
@@ -2190,10 +2191,13 @@ class PSD2LiveViewModel : AutoCloseable {
                     if (failure is kotlinx.coroutines.CancellationException) throw failure
                     failure.message ?: "Could not save editor changes"
                 }
+                // Clear busy before invoking onComplete so callbacks (e.g. an immediate save) see an idle workspace.
+                updateState { it.copy(canvasEditBusy = false) }
+                busyCleared = true
                 // A failed completion callback cannot turn an already committed edit into a rejected one.
                 onComplete(failure)
             } finally {
-                updateState { it.copy(canvasEditBusy = false) }
+                if (!busyCleared) updateState { it.copy(canvasEditBusy = false) }
                 runQueuedProjectSave()
             }
         }

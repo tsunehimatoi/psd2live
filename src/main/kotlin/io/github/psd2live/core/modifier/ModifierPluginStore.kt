@@ -67,15 +67,27 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
         }
         internal fun deleteTree(path: Path) {
             if (!Files.exists(path, NOFOLLOW_LINKS)) return
+            val isWindows = platform.startsWith("windows")
+            val retryDelaysMs = longArrayOf(20L, 40L, 60L, 100L, 150L, 200L, 250L, 300L)
             Files.walk(path).use { stream -> stream.sorted(Comparator.reverseOrder()).forEach { entry ->
-                try { Files.delete(entry) }
-                catch (failure: java.nio.file.AccessDeniedException) {
-                    // Git marks object files read-only on Windows. Never follow links while clearing that attribute.
-                    val attributes = if (Files.isSymbolicLink(entry)) null else
-                        Files.getFileAttributeView(entry, java.nio.file.attribute.DosFileAttributeView::class.java, NOFOLLOW_LINKS)
-                    if (attributes?.readAttributes()?.isReadOnly != true) throw failure
-                    attributes.setReadOnly(false)
-                    Files.delete(entry)
+                var attempt = 0
+                while (true) {
+                    try {
+                        Files.deleteIfExists(entry)
+                        break
+                    } catch (failure: java.nio.file.FileSystemException) {
+                        // Git marks object files read-only on Windows. Never follow links while clearing that attribute.
+                        val attributes = if (Files.isSymbolicLink(entry)) null else
+                            Files.getFileAttributeView(entry, java.nio.file.attribute.DosFileAttributeView::class.java, NOFOLLOW_LINKS)
+                        if (attributes?.readAttributes()?.isReadOnly == true) {
+                            attributes.setReadOnly(false)
+                            try { Files.deleteIfExists(entry); break } catch (_: java.nio.file.FileSystemException) {}
+                        }
+                        // On Windows, a freshly terminated worker binary or JAR can remain briefly locked by the OS or AV scanner.
+                        if (!isWindows || attempt >= retryDelaysMs.size) throw failure
+                        try { Thread.sleep(retryDelaysMs[attempt++]) }
+                        catch (_: InterruptedException) { Thread.currentThread().interrupt(); throw failure }
+                    }
                 }
             } }
         }

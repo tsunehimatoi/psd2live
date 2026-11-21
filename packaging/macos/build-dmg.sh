@@ -97,6 +97,14 @@ cp -R "$app" "$stage/PSD2Live.app"
 ln -s /Applications "$stage/Applications"
 arch="$(uname -m)"
 dmg="$root/build/PSD2Live-${version}-macos-${arch}.dmg"
-rm -f "$dmg"
-hdiutil create -volname "PSD2Live" -srcfolder "$stage" -ov -format UDZO "$dmg" >/dev/null
+for attempt in 1 2 3 4 5; do
+	rm -f "$dmg"
+	if hdiutil create -volname "PSD2Live" -srcfolder "$stage" -ov -format UDZO "$dmg" >/dev/null; then
+		break
+	fi
+	if [[ $attempt -eq 5 ]]; then
+		exit 1
+	fi
+	sleep $((attempt * 2))
+done
 echo "built $dmg"

@@ -20,6 +20,19 @@ internal class SessionRecovery(private val root: Path) {
 
     private val file = root.resolve("session.json")
 
+    private fun <T> retryWindowsLock(action: () -> T): T {
+        val isWindows = System.getProperty("os.name").orEmpty().lowercase().contains("win")
+        val delays = longArrayOf(15L, 30L, 60L, 100L, 150L, 200L)
+        var attempt = 0
+        while (true) {
+            try { return action() } catch (failure: java.nio.file.FileSystemException) {
+                if (!isWindows || attempt >= delays.size) throw failure
+                try { Thread.sleep(delays[attempt++]) }
+                catch (_: InterruptedException) { Thread.currentThread().interrupt(); throw failure }
+            }
+        }
+    }
+
     @Synchronized
     fun record(session: Session) {
         run {
@@ -32,14 +45,14 @@ internal class SessionRecovery(private val root: Path) {
             val staged = Files.createTempFile(root, "session", ".tmp")
             try {
                 Files.writeString(staged, json.toString())
-                Files.move(staged, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+                retryWindowsLock { Files.move(staged, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE) }
             } finally { Files.deleteIfExists(staged) }
         }
     }
 
     @Synchronized
     fun forget() {
-        Files.deleteIfExists(file)
+        retryWindowsLock { Files.deleteIfExists(file) }
     }
 
     /** The session the last run left unsaved, or null; a marker whose history is gone is dropped. */

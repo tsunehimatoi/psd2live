@@ -19,7 +19,7 @@ runs:
       env:
         EXPECTED_ARCH: ${{ inputs.architecture }}
       run: test "$(uname -m)" = "$EXPECTED_ARCH"
-    - uses: actions/setup-java@v4
+    - uses: actions/setup-java@v5
       with:
         distribution: temurin
         java-version: '21'

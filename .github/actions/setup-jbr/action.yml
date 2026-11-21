@@ -25,7 +25,7 @@ runs:
         echo "file=${RUNNER_TEMP}/${file}" >> "$GITHUB_OUTPUT"
         echo "arch=$([ "${RUNNER_ARCH}" = ARM64 ] && echo aarch64 || echo x64)" >> "$GITHUB_OUTPUT"
     - name: Install JBR SDK
-      uses: actions/setup-java@v4
+      uses: actions/setup-java@v5
       with:
         distribution: jdkfile
         jdkFile: ${{ steps.jbr.outputs.file }}
