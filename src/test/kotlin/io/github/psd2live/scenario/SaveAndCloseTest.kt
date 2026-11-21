@@ -20,7 +20,7 @@ class SaveAndCloseTest {
 
     private fun editor(body: suspend (PSD2LiveViewModel, DesktopWorkspace) -> Unit) = runBlocking {
         PSD2LiveViewModel().use { vm ->
-            vm.setStateForTest(vm.state.value.copy(atlasSize = 512, exportMoc3 = false, generatePhysics = false))
+            vm.setStateForTest(vm.state.value.copy(atlasSize = 256, exportMoc3 = false, generatePhysics = false))
             DesktopWorkspace(vm, temp.resolve("store")).use { workspace ->
                 vm.attachWorkspace(workspace)
                 workspace.importPsd(Characters.headPsd(temp).toString(), true)

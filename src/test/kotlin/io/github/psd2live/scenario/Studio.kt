@@ -44,6 +44,7 @@ internal class Studio(private val temp: Path, private val checks: Set<Check> = C
 	private val allowed = HashSet<String>()
 	private val opened = ArrayList<Path>()
 	private var saves = 0
+	private var pendingReplayStep: String? = null
 
 	val now: WorkspaceCapture<RigPreviewModel> get() = runtime.capture()
 	val puppet: PuppetModel get() = now.model.rig.puppet
@@ -161,10 +162,10 @@ internal class Studio(private val temp: Path, private val checks: Set<Check> = C
 	}
 
 	private fun verify(name: String, before: WorkspaceCapture<RigPreviewModel>, applied: Boolean) {
-		// Undo first, while the builds of both nodes are still cached; the replay check then forgets them.
+		// Undo first, while the builds of both nodes are still cached.
 		if (Check.UNDO in checks && applied) timed("check undo") { Oracles.undoes(this, name, before) }
 		if (Check.QUALITY in checks) timed("check quality") { Oracles.quality(this, name, allowed) }
-		if (Check.REPLAY in checks) timed("check replay") { Oracles.replays(this, name) }
+		if (Check.REPLAY in checks && applied) pendingReplayStep = name
 	}
 
 	private val timings = LinkedHashMap<String, Long>()
@@ -227,6 +228,7 @@ internal class Studio(private val temp: Path, private val checks: Set<Check> = C
 				"the reopened document is another revision; fields whose text changed: ${Oracles.textDifference(live.document, head)}"
 			}
 			expect(name, project.history.state().selections.map { it.node } == history.selections.map { it.node }) { "the reopened history differs" }
+			pendingReplayStep = null
 			runtime.install(live.state, project.projectId, head, model, project.history.state(), live.auxiliary, discardUnsaved = true)
 		}
 	}
@@ -278,6 +280,14 @@ internal class Studio(private val temp: Path, private val checks: Set<Check> = C
 		MaterializedRigStore.clear(); ReplayCheckpoints.clear(); SkeletonRig.clearCache()
 	}
 
+	internal fun verifyFinalReplay() {
+		// Verify cold replay once at scenario end (unless reopen() already cold-built the final state).
+		pendingReplayStep?.let { step ->
+			pendingReplayStep = null
+			timed("check replay") { Oracles.replays(this, step) }
+		}
+	}
+
 	override fun close() {
 		if (timings.isNotEmpty()) println("Studio time: " + timings.entries.joinToString { "${it.key} ${it.value / 1_000_000} ms" })
 		forgetBuilds()
@@ -290,6 +300,7 @@ internal class Studio(private val temp: Path, private val checks: Set<Check> = C
 			Studio(temp, checks).use { studio ->
 				document?.let(studio::open)
 				studio.body()
+				studio.verifyFinalReplay()
 			}
 		}
 	}

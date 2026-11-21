@@ -58,7 +58,7 @@ class HeadlessHostScenario {
 		edit("layer_place", "material_id" to "close", "layer_id" to "close")
 		edit("layer_tag", "layer_ids" to listOf("close"), "set" to listOf("face"))
 		edit("rig_generate")
-		return backend.snapshot().revisionId ?: fail("No revision after generating")
+		return backend.snapshot().revisionId.ifBlank { fail("No revision after generating") }
 	}
 
 	@Test fun anAgentBuildsAProjectWithoutAWindow() = runBlocking {

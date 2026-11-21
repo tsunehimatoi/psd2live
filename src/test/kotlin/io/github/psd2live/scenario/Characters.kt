@@ -17,12 +17,16 @@ import java.nio.file.Path
  * classified by override so that generation does not depend on name heuristics; settings keep a build cheap.
  */
 internal object Characters {
+	private val figureCache = java.util.concurrent.ConcurrentHashMap<Triple<Boolean, Int, Float>, WorkspaceDocument>()
+
 	/**
 	 * A 420² full figure: hair front and back, face, top, skirt, both sleeves and legs. Enough for the skeleton to find
 	 * a torso and limbs, for the hair generators, and for splits.
 	 */
 	fun figure(physics: Boolean = false, atlas: Int = 512, scale: Float = 1f): WorkspaceDocument =
-		document((420 * scale).toInt(), (420 * scale).toInt(), figureParts(scale), PipelineConfig(atlasSize = atlas, generatePhysics = physics, exportMoc3 = false))
+		figureCache.computeIfAbsent(Triple(physics, atlas, scale)) {
+			document((420 * scale).toInt(), (420 * scale).toInt(), figureParts(scale), PipelineConfig(atlasSize = atlas, generatePhysics = physics, exportMoc3 = false))
+		}
 
 	private fun figureParts(scale: Float): List<Part> {
 		fun box(x0: Int, y0: Int, x1: Int, y1: Int) = Characters.box((x0 * scale).toInt(), (y0 * scale).toInt(), (x1 * scale).toInt(), (y1 * scale).toInt())
@@ -50,70 +54,101 @@ internal object Characters {
 		Part("wings", 10, SemanticTag.WINGS, Side.NONE, box(400, 400, 406, 406)),
 	), PipelineConfig(atlasSize = 512, generatePhysics = false, exportMoc3 = false))
 
+	private val browedCached by lazy {
+		document(420, 420, figureParts(1f).map {
+			// Lower orders list first, in front: the bangs over the brows over the face over the back hair.
+			when (it.tag) {
+				SemanticTag.FACE -> Part(it.id, 11, it.tag, it.side, it.inside)
+				SemanticTag.BACK_HAIR -> Part(it.id, 12, it.tag, it.side, it.inside)
+				else -> it
+			}
+		} + listOf(
+			Part("brow_r", 9, SemanticTag.EYEBROW, Side.RIGHT, box(184, 50, 204, 56)),
+			Part("brow_l", 10, SemanticTag.EYEBROW, Side.LEFT, box(216, 50, 236, 56)),
+		), PipelineConfig(atlasSize = 512, generatePhysics = false, exportMoc3 = false))
+	}
+
 	/**
 	 * [figure] with an eyebrow on each side under the bangs, the hair reaching over both: what the copies over the bangs
 	 * are made for ([SeeThroughLayers]).
 	 */
-	fun browed(): WorkspaceDocument = document(420, 420, figureParts(1f).map {
-		// Lower orders list first, in front: the bangs over the brows over the face over the back hair.
-		when (it.tag) {
-			SemanticTag.FACE -> Part(it.id, 11, it.tag, it.side, it.inside)
-			SemanticTag.BACK_HAIR -> Part(it.id, 12, it.tag, it.side, it.inside)
-			else -> it
-		}
-	} + listOf(
-		Part("brow_r", 9, SemanticTag.EYEBROW, Side.RIGHT, box(184, 50, 204, 56)),
-		Part("brow_l", 10, SemanticTag.EYEBROW, Side.LEFT, box(216, 50, 236, 56)),
-	), PipelineConfig(atlasSize = 512, generatePhysics = false, exportMoc3 = false))
+	fun browed(): WorkspaceDocument = browedCached
+
+	private val eyedCache = java.util.concurrent.ConcurrentHashMap<Boolean, WorkspaceDocument>()
 
 	/**
 	 * [figure] with an eye on each side under the bangs, the hair reaching over their tops: a white, an iris taller than
 	 * the white (which clips it), a lash line over the white's top and a closed-eye line, as anime art draws them - what
 	 * the eyes' window in the bangs is made for ([SeeThroughLayers]).
 	 */
-	fun eyed(legacyEyes: Boolean = false): WorkspaceDocument = document(420, 420, figureParts(1f).map {
-		// Lower orders list first, in front: the bangs over the lashes, closed lines, irides and whites, over the face.
-		when (it.tag) {
-			SemanticTag.FACE -> Part(it.id, 17, it.tag, it.side, it.inside)
-			SemanticTag.BACK_HAIR -> Part(it.id, 18, it.tag, it.side, it.inside)
-			else -> it
-		}
-	} + listOf(
-		Part("lash_r", 9, SemanticTag.EYELASH, Side.RIGHT, box(182, 58, 206, 61)),
-		Part("lash_l", 10, SemanticTag.EYELASH, Side.LEFT, box(214, 58, 238, 61)),
-		Part("close_r", 11, SemanticTag.EYE_CLOSE, Side.RIGHT, box(184, 66, 204, 68)),
-		Part("close_l", 12, SemanticTag.EYE_CLOSE, Side.LEFT, box(216, 66, 236, 68)),
-		Part("iris_r", 13, SemanticTag.IRIDES, Side.RIGHT, box(189, 56, 199, 76)),
-		Part("iris_l", 14, SemanticTag.IRIDES, Side.LEFT, box(221, 56, 231, 76)),
-		Part("white_r", 15, SemanticTag.EYEWHITE, Side.RIGHT, box(184, 59, 204, 72)),
-		Part("white_l", 16, SemanticTag.EYEWHITE, Side.LEFT, box(216, 59, 236, 72)),
-	), PipelineConfig(atlasSize = 512, generatePhysics = false, exportMoc3 = false, recipe = if (!legacyEyes) RigRecipe.Modern
-		else RigRecipe(true, bases = mapOf("eye" to BaseChoice("eye/legacy")))))
+	fun eyed(legacyEyes: Boolean = false): WorkspaceDocument = eyedCache.computeIfAbsent(legacyEyes) {
+		document(420, 420, figureParts(1f).map {
+			// Lower orders list first, in front: the bangs over the lashes, closed lines, irides and whites, over the face.
+			when (it.tag) {
+				SemanticTag.FACE -> Part(it.id, 17, it.tag, it.side, it.inside)
+				SemanticTag.BACK_HAIR -> Part(it.id, 18, it.tag, it.side, it.inside)
+				else -> it
+			}
+		} + listOf(
+			Part("lash_r", 9, SemanticTag.EYELASH, Side.RIGHT, box(182, 58, 206, 61)),
+			Part("lash_l", 10, SemanticTag.EYELASH, Side.LEFT, box(214, 58, 238, 61)),
+			Part("close_r", 11, SemanticTag.EYE_CLOSE, Side.RIGHT, box(184, 66, 204, 68)),
+			Part("close_l", 12, SemanticTag.EYE_CLOSE, Side.LEFT, box(216, 66, 236, 68)),
+			Part("iris_r", 13, SemanticTag.IRIDES, Side.RIGHT, box(189, 56, 199, 76)),
+			Part("iris_l", 14, SemanticTag.IRIDES, Side.LEFT, box(221, 56, 231, 76)),
+			Part("white_r", 15, SemanticTag.EYEWHITE, Side.RIGHT, box(184, 59, 204, 72)),
+			Part("white_l", 16, SemanticTag.EYEWHITE, Side.LEFT, box(216, 59, 236, 72)),
+		), PipelineConfig(atlasSize = 512, generatePhysics = false, exportMoc3 = false, recipe = if (!legacyEyes) RigRecipe.Modern
+			else RigRecipe(true, bases = mapOf("eye" to BaseChoice("eye/legacy")))))
+	}
+
+	private val mouthedCache = java.util.concurrent.ConcurrentHashMap<Boolean, WorkspaceDocument>()
 
 	/** [figure] with an open mouth drawn on the face: what the fitted mouth reads. */
-	fun mouthed(withNose: Boolean = false): WorkspaceDocument = document(420, 420, figureParts(1f).map {
-		when (it.tag) {
-			SemanticTag.FACE -> Part(it.id, 17, it.tag, it.side, it.inside)
-			SemanticTag.BACK_HAIR -> Part(it.id, 18, it.tag, it.side, it.inside)
-			else -> it
-		}
-	} + Part("mouth", 8, SemanticTag.MOUTH, Side.NONE, ellipse(210, 100, 14, 7)) +
-        listOfNotNull(Part("nose", 9, SemanticTag.NOSE, Side.NONE, ellipse(210, 79, 5, 4)).takeIf { withNose }),
-		PipelineConfig(atlasSize = 512, generatePhysics = false, exportMoc3 = false, recipe = RigRecipe.Modern))
+	fun mouthed(withNose: Boolean = false): WorkspaceDocument = mouthedCache.computeIfAbsent(withNose) {
+		document(420, 420, figureParts(1f).map {
+			when (it.tag) {
+				SemanticTag.FACE -> Part(it.id, 17, it.tag, it.side, it.inside)
+				SemanticTag.BACK_HAIR -> Part(it.id, 18, it.tag, it.side, it.inside)
+				else -> it
+			}
+		} + Part("mouth", 8, SemanticTag.MOUTH, Side.NONE, ellipse(210, 100, 14, 7)) +
+			listOfNotNull(Part("nose", 9, SemanticTag.NOSE, Side.NONE, ellipse(210, 79, 5, 4)).takeIf { withNose }),
+			PipelineConfig(atlasSize = 512, generatePhysics = false, exportMoc3 = false, recipe = RigRecipe.Modern))
+	}
+
+	private val closedMouthedCached by lazy {
+		val base = mouthed()
+		val open = base.source.layers.single { it.id.raw == "mouth" } as WorkspaceSourceLayer
+		val closed = open.copy(id = LayerId("closed-mouth"), name = "mouth_close", order = open.order + 1)
+		base.copy(
+			source = WorkspaceSourceArt(base.source.widthPx, base.source.heightPx, base.source.layers + closed, base.source.groups),
+			layerOverrides = base.layerOverrides + mapOf(
+				open.id.raw to LayerClassificationOverride(LayerType.PRESET, SemanticTag.MOUTH_OPEN, Side.NONE),
+				closed.id.raw to LayerClassificationOverride(LayerType.PRESET, SemanticTag.MOUTH_CLOSE, Side.NONE)),
+			rigEdits = base.rigEdits.copy(modifierStack = RigModifierStack().toJson()),
+		)
+	}
 
     /** Separate open/closed drawings, for preset and shared-key editing regressions. */
-    fun closedMouthed(): WorkspaceDocument {
-        val base = mouthed()
-        val open = base.source.layers.single { it.id.raw == "mouth" } as WorkspaceSourceLayer
-        val closed = open.copy(id = LayerId("closed-mouth"), name = "mouth_close", order = open.order + 1)
-        return base.copy(
-            source = WorkspaceSourceArt(base.source.widthPx, base.source.heightPx, base.source.layers + closed, base.source.groups),
-            layerOverrides = base.layerOverrides + mapOf(
-                open.id.raw to LayerClassificationOverride(LayerType.PRESET, SemanticTag.MOUTH_OPEN, Side.NONE),
-                closed.id.raw to LayerClassificationOverride(LayerType.PRESET, SemanticTag.MOUTH_CLOSE, Side.NONE)),
-            rigEdits = base.rigEdits.copy(modifierStack = RigModifierStack().toJson()),
-        )
-    }
+    fun closedMouthed(): WorkspaceDocument = closedMouthedCached
+
+	private val closedMouthHeadCached by lazy {
+		val base = document(128, 128, listOf(
+			Part("mouth", 0, SemanticTag.MOUTH_OPEN, Side.NONE, ellipse(64, 92, 18, 8)),
+			Part("face", 2, SemanticTag.FACE, Side.NONE, ellipse(64, 64, 48, 56)),
+		), PipelineConfig(atlasSize = 256, generatePhysics = false, exportMoc3 = false, recipe = RigRecipe.Modern))
+		val open = base.source.layers.single { it.id.raw == "mouth" } as WorkspaceSourceLayer
+		val closed = open.copy(id = LayerId("closed-mouth"), name = "mouth_close", order = 1)
+		base.copy(
+			source = WorkspaceSourceArt(base.source.widthPx, base.source.heightPx, listOf(open, closed, base.source.layers[1]), base.source.groups),
+			layerOverrides = base.layerOverrides + ("closed-mouth" to LayerClassificationOverride(LayerType.PRESET, SemanticTag.MOUTH_CLOSE, Side.NONE)),
+			rigEdits = base.rigEdits.copy(modifierStack = RigModifierStack().toJson()),
+		)
+	}
+
+	/** Compact 128² face + open/closed mouth drawings, without unrelated body/hair layers. */
+	fun closedMouthHead(): WorkspaceDocument = closedMouthHeadCached
 
 	/**
 	 * A 64² head: back hair and a face. The smallest document the hair generators and simulation presets act on; its
@@ -130,17 +165,23 @@ internal object Characters {
 		Part("top", 0, SemanticTag.TOPWEAR, Side.NONE, box(50, 100, 1150, 1100)),
 	), PipelineConfig(atlasSize = 512, generatePhysics = false, exportMoc3 = false))
 
-	/** Writes [figure]'s art as a PSD, as an artist hands it over; generation then classifies it by override. */
-	fun figurePsd(directory: Path): Path {
+	private val figurePsdBytes by lazy {
 		val source = figure().source
-		return directory.resolve("figure.psd").also { Files.write(it, PsdWriter.write(source.widthPx, source.heightPx, source.layers, source.groups)) }
+		PsdWriter.write(source.widthPx, source.heightPx, source.layers, source.groups)
+	}
+
+	/** Writes [figure]'s art as a PSD, as an artist hands it over; generation then classifies it by override. */
+	fun figurePsd(directory: Path): Path =
+		directory.resolve("figure.psd").also { Files.write(it, figurePsdBytes) }
+
+	private val headPsdBytes by lazy {
+		val source = head(physics = false).source
+		PsdWriter.write(source.widthPx, source.heightPx, source.layers, source.groups)
 	}
 
 	/** Writes [head]'s art as a PSD: the cheapest import that still generates a head turn. */
-	fun headPsd(directory: Path): Path {
-		val source = head(physics = false).source
-		return directory.resolve("head.psd").also { Files.write(it, PsdWriter.write(source.widthPx, source.heightPx, source.layers, source.groups)) }
-	}
+	fun headPsd(directory: Path): Path =
+		directory.resolve("head.psd").also { Files.write(it, headPsdBytes) }
 
 	/** [figure] at [scale] with both eyes on one layer, two islands a mesh split offers to separate. */
 	fun eyesPsd(directory: Path, scale: Float = 1f): Path {
@@ -152,14 +193,17 @@ internal object Characters {
 		return directory.resolve("eyes.psd").also { Files.write(it, PsdWriter.write(source.widthPx, source.heightPx, source.layers, source.groups)) }
 	}
 
-	/** A face and mouth, with enough contour for the generated lip ribbons. */
-	fun mouthPsd(directory: Path): Path {
+	private val mouthPsdBytes by lazy {
 		val source = document(128, 128, listOf(
 			Part("face", 0, SemanticTag.FACE, Side.NONE, ellipse(64, 64, 48, 56)),
 			Part("mouth", 1, SemanticTag.MOUTH, Side.NONE, ellipse(64, 92, 22, 6)),
 		), PipelineConfig(atlasSize = 256, generatePhysics = false, exportMoc3 = false)).source
-		return directory.resolve("mouth.psd").also { Files.write(it, PsdWriter.write(source.widthPx, source.heightPx, source.layers, source.groups)) }
+		PsdWriter.write(source.widthPx, source.heightPx, source.layers, source.groups)
 	}
+
+	/** A face and mouth, with enough contour for the generated lip ribbons. */
+	fun mouthPsd(directory: Path): Path =
+		directory.resolve("mouth.psd").also { Files.write(it, mouthPsdBytes) }
 
 	/** A [size]² PNG of an opaque disc, coloured by position so that resampling and misplacement show. */
 	fun disc(directory: Path, name: String = "disc.png", size: Int = 24): Path {

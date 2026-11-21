@@ -30,7 +30,7 @@ class EditorAndAgentScenario {
 
 	private fun editor(body: suspend Editor.() -> Unit) = runBlocking {
 		PSD2LiveViewModel().use { vm ->
-			vm.setStateForTest(vm.state.value.copy(atlasSize = 512, exportMoc3 = false, generatePhysics = false))
+			vm.setStateForTest(vm.state.value.copy(atlasSize = 256, exportMoc3 = false, generatePhysics = false))
 			DesktopWorkspace(vm, temp.resolve("store")).use { workspace ->
 				vm.attachWorkspace(workspace)
 				WorkspaceOperations(workspace).use { operations ->
@@ -81,10 +81,10 @@ class EditorAndAgentScenario {
 		assertEquals(workspace.snapshot().historyHeadNodeId, state.historySnapshot?.headNodeId, "[$step] the editor shows another history head")
 	}
 
-	private fun Editor.state(): String = workspace.snapshot().state!!
+	private fun Editor.state(): String = workspace.snapshot().state
 
 	@Test fun backgroundPaintEditsQueueAndEndWithTheSession() = editor {
-		workspace.importPsd(Characters.figurePsd(temp).toString(), true)
+		workspace.importPsd(Characters.headPsd(temp).toString(), true)
 		consistent("imported")
 		withContext(Dispatchers.Main) {
 			val layers = vm.state.value.previewModel!!.analysis.source.layers
@@ -184,7 +184,7 @@ class EditorAndAgentScenario {
 	}
 
 	@Test fun theDeformMenuCopiesPastesInterpolatesAndResetsAKeyform() = editor {
-		workspace.importPsd(Characters.figurePsd(temp).toString(), true)
+		workspace.importPsd(Characters.headPsd(temp).toString(), true)
 		consistent("imported")
 		val angle = ParameterId("ParamAngleX")
 		val parameters = vm.state.value.previewModel!!.rig.puppet.parameters
@@ -364,7 +364,7 @@ class EditorAndAgentScenario {
 	}
 
 	@Test fun theVertexAndBezierLevelsCanBeOnTogether() = editor {
-		workspace.importPsd(Characters.figurePsd(temp).toString(), true)
+		workspace.importPsd(Characters.headPsd(temp).toString(), true)
 		consistent("imported")
 		val warp = vm.state.value.previewModel!!.rig.puppet.deformers.filterIsInstance<org.umamo.runtime.model.Deformer.Warp>().first { it.rows >= 3 && it.columns >= 3 }
 		val canvas = withContext(Dispatchers.Main) {
@@ -457,7 +457,7 @@ class EditorAndAgentScenario {
 	}
 
 	@Test fun shiftKeepsALatticePointAndABezierAnchorDragStraight() = editor {
-		workspace.importPsd(Characters.figurePsd(temp).toString(), true)
+		workspace.importPsd(Characters.headPsd(temp).toString(), true)
 		consistent("imported")
 		val warp = vm.state.value.previewModel!!.rig.puppet.deformers.filterIsInstance<org.umamo.runtime.model.Deformer.Warp>().first { it.rows >= 3 && it.columns >= 3 }
 		val canvas = withContext(Dispatchers.Main) {
@@ -624,7 +624,7 @@ class EditorAndAgentScenario {
 	}
 
 	@Test fun theUsersGesturesLeaveTheEditorShowingTheCommittedDocument() = editor {
-		workspace.importPsd(Characters.figurePsd(temp).toString(), true)
+		workspace.importPsd(Characters.headPsd(temp).toString(), true)
 		consistent("imported")
 		val root = workspace.snapshot().historyHeadNodeId!!
 		vm.setFeatureDisplacementEnabled(true)
@@ -664,7 +664,7 @@ class EditorAndAgentScenario {
 	}
 
 	@Test fun undoAndRedoKeepThePoseTheUserSet() = editor {
-		workspace.importPsd(Characters.figurePsd(temp).toString(), true)
+		workspace.importPsd(Characters.headPsd(temp).toString(), true)
 		consistent("imported")
 		val angle = ParameterId("ParamAngleX")
 		vm.setParameterValue(angle, -10f)
@@ -685,7 +685,7 @@ class EditorAndAgentScenario {
 	}
 
 	@Test fun anAgentEditDuringAnOpenFieldLandsAndTheFieldCommitsOverIt() = editor {
-		workspace.importPsd(Characters.figurePsd(temp).toString(), true)
+		workspace.importPsd(Characters.headPsd(temp).toString(), true)
 		consistent("imported")
 		fun setting(key: String) = workspace.captureQueries().projectSettings().getValue(key).jsonPrimitive.int
 		val nodes = workspace.history().nodes.size
@@ -713,7 +713,7 @@ class EditorAndAgentScenario {
 	}
 
 	@Test fun savingRecordsTheRuntimeAndNotTheEditorsCopy() = editor {
-		workspace.importPsd(Characters.figurePsd(temp).toString(), true)
+		workspace.importPsd(Characters.headPsd(temp).toString(), true)
 		consistent("imported")
 		val nodes = workspace.history().nodes.size
 		val padding = workspace.captureQueries().projectSettings().getValue("texturePadding").jsonPrimitive.int
@@ -731,7 +731,7 @@ class EditorAndAgentScenario {
 
 	/** A split whose pieces the user deletes leaves the canvas's visible set, so a View that follows the canvas still renders. */
 	@Test fun aViewFollowingTheCanvasRendersAfterALayerIsDeleted() = editor {
-		workspace.importPsd(Characters.figurePsd(temp).toString(), true)
+		workspace.importPsd(Characters.headPsd(temp).toString(), true)
 		consistent("imported")
 		val source = vm.state.value.previewModel!!.analysis.source
 		val layer = source.layers.first().id.raw

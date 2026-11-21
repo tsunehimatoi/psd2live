@@ -33,7 +33,18 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class ParameterFolderOrganizationTest {
-    private fun fullModernDocument(withExpressionToggle: Boolean = true): WorkspaceDocument {
+    companion object {
+        private val modernWithToggleDoc by lazy { buildModernDocument(withExpressionToggle = true) }
+        private val modernWithoutToggleDoc by lazy { buildModernDocument(withExpressionToggle = false) }
+        private val preparedModernWithToggle by lazy {
+            WorkspacePresetInitialization.prepare(
+                modernWithToggleDoc,
+                WorkspaceRasterWork.Direct,
+                WorkspaceInitialPreset(clothing = false),
+            )
+        }
+
+        private fun buildModernDocument(withExpressionToggle: Boolean): WorkspaceDocument {
         val eyed = Characters.eyed(legacyEyes = false)
         val browed = Characters.browed()
         val mouthed = Characters.mouthed()
@@ -73,6 +84,7 @@ class ParameterFolderOrganizationTest {
             rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()),
             settings = WorkspaceSettingsCodec.encode(config),
         )
+        }
     }
 
     private fun collectGroups(nodes: List<ParameterNode>): List<ParameterNode.Group> = buildList {
@@ -147,13 +159,8 @@ class ParameterFolderOrganizationTest {
         )
     }
 
-    @Test fun fullModernPresetWithTogglesSwingAndSimulationHasCleanCanonicalFolders() {
-        val baseDoc = fullModernDocument(withExpressionToggle = true)
-        val (preparedDoc, preparedPreview) = WorkspacePresetInitialization.prepare(
-            baseDoc,
-            WorkspaceRasterWork.Direct,
-            WorkspaceInitialPreset(clothing = false),
-        )
+    @Test fun fullModernPresetWithTogglesSwingAndSimulationHasCleanCanonicalFolders() = kotlinx.coroutines.runBlocking {
+        val (preparedDoc, preparedPreview) = preparedModernWithToggle
         val swingMeshId = preparedPreview.rig.puppet.drawables.first {
             preparedPreview.rig.layerIdByDrawableId[it.id.raw] == "skirt"
         }.id.raw
@@ -164,13 +171,14 @@ class ParameterFolderOrganizationTest {
         val swingEdit = RigSwingEdit.single("sleeve_swing", "Sleeve Swing", SwingKind.LATERAL, listOf(swingMeshId), listOf("ParamSwingTmp"))
         stack = stack.add("swing", 1, listOf(ModifierTarget("mesh", swingMeshId)), swingEdit.toJson())
         val swingInstance = stack.instances.last()
+        val builder = io.github.psd2live.application.WorkspacePreviewBuilder()
         val afterSwingDoc = preparedDoc.copy(rigEdits = preparedDoc.rigEdits.copy(modifierStack = stack.toJson()))
-        val afterSwingPreview = PSD2LivePipeline().buildPreview(afterSwingDoc.source, afterSwingDoc.config(), ProgressListener { _, _ -> })
+        val afterSwingPreview = builder.build(afterSwingDoc, preparedPreview)
         val simInstance = simulationInstanceForMesh(afterSwingPreview.rig.puppet, simMeshId, "sleeve", "Sleeve Sim")
         stack = stack.add(simInstance.type, simInstance.version, simInstance.targets, simInstance.config)
         val simAddedInstance = stack.instances.last()
         val finalDoc = afterSwingDoc.copy(rigEdits = afterSwingDoc.rigEdits.copy(modifierStack = stack.toJson()))
-        val finalPreview = PSD2LivePipeline().buildPreview(finalDoc.source, finalDoc.config(), ProgressListener { _, _ -> })
+        val finalPreview = builder.build(finalDoc, afterSwingPreview)
         val puppet = finalPreview.rig.puppet
 
         assertCanonicalUniqueFolders(puppet)
@@ -185,10 +193,10 @@ class ParameterFolderOrganizationTest {
         assertTrue(ParameterId(simAddedInstance.outputId("simulation:ParamSimsleeve_1")) in physicsChildren)
     }
 
-    @Test fun scrambledModifierOrderStillProducesCanonicalFoldersWithoutDuplicates() {
-        val doc = fullModernDocument(withExpressionToggle = false)
-        val pipeline = PSD2LivePipeline()
-        val ordinary = pipeline.buildPreview(doc.source, doc.config(), ProgressListener { _, _ -> })
+    @Test fun scrambledModifierOrderStillProducesCanonicalFoldersWithoutDuplicates() = kotlinx.coroutines.runBlocking {
+        val doc = modernWithoutToggleDoc
+        val builder = io.github.psd2live.application.WorkspacePreviewBuilder()
+        val ordinary = builder.build(doc)
         val targets = ordinary.rig.puppet.drawables
             .filter { it.mesh != null && it.id.raw in ordinary.rig.ownLayerIdByDrawableId }
             .map { ModifierTarget("mesh", it.id.raw) }
@@ -205,7 +213,7 @@ class ParameterFolderOrganizationTest {
             }
             stack = WorkspaceModifierPlan.plan(currentPreview, stack, request).first
             currentDoc = doc.copy(rigEdits = doc.rigEdits.copy(modifierStack = stack.toJson()))
-            currentPreview = pipeline.buildPreview(currentDoc.source, currentDoc.config(), ProgressListener { _, _ -> })
+            currentPreview = builder.build(currentDoc, currentPreview)
         }
         val puppet = currentPreview.rig.puppet
         assertCanonicalUniqueFolders(puppet)
@@ -260,13 +268,8 @@ class ParameterFolderOrganizationTest {
         assertTrue(ParameterId(simInst.outputId("simulation:ParamSimfacesim_1")) in childIds)
     }
 
-    @Test fun applyThroughAndApplySelectedPreserveResultWithCanonicalFolders() {
-        val baseDoc = fullModernDocument(withExpressionToggle = true)
-        val (preparedDoc, preparedPreview) = WorkspacePresetInitialization.prepare(
-            baseDoc,
-            WorkspaceRasterWork.Direct,
-            WorkspaceInitialPreset(clothing = false),
-        )
+    @Test fun applyThroughAndApplySelectedPreserveResultWithCanonicalFolders() = kotlinx.coroutines.runBlocking {
+        val (preparedDoc, preparedPreview) = preparedModernWithToggle
         val stack = RigModifierStack.fromJson(requireNotNull(preparedDoc.rigEdits.modifierStack))
         val selectedTarget = stack.instances.first { it.type == "expression.toggles" }
         val selectedApplied = WorkspaceModifierEdits.apply(
@@ -293,8 +296,9 @@ class ParameterFolderOrganizationTest {
             preparedPreview,
             WorkspaceRasterWork.Direct,
         )
-        val rebuiltSelected = PSD2LivePipeline().buildPreview(selectedApplied.source, selectedApplied.config(), ProgressListener { _, _ -> })
-        val rebuiltPrefix = PSD2LivePipeline().buildPreview(prefixApplied.source, prefixApplied.config(), ProgressListener { _, _ -> })
+        val builder = io.github.psd2live.application.WorkspacePreviewBuilder()
+        val rebuiltSelected = builder.build(selectedApplied, preparedPreview)
+        val rebuiltPrefix = builder.build(prefixApplied, preparedPreview)
         assertCanonicalUniqueFolders(rebuiltSelected.rig.puppet)
         assertCanonicalUniqueFolders(rebuiltPrefix.rig.puppet)
         assertEquals(RigIrCompiler.compile(preparedPreview).parameterTree, RigIrCompiler.compile(rebuiltSelected).parameterTree)

@@ -21,12 +21,12 @@ import kotlin.test.*
 class PsdReloadScenario {
     @TempDir lateinit var temp: Path
 
-    private fun editor(body: suspend (PSD2LiveViewModel, DesktopWorkspace, Path) -> Unit) = runBlocking {
+    private fun editor(useFigure: Boolean = false, body: suspend (PSD2LiveViewModel, DesktopWorkspace, Path) -> Unit) = runBlocking {
         PSD2LiveViewModel().use { vm ->
-            vm.setStateForTest(vm.state.value.copy(atlasSize = 512, exportMoc3 = false, generatePhysics = false))
+            vm.setStateForTest(vm.state.value.copy(atlasSize = if (useFigure) 512 else 256, exportMoc3 = false, generatePhysics = false))
             DesktopWorkspace(vm, temp.resolve("store")).use { workspace ->
                 vm.attachWorkspace(workspace)
-                val psd = Characters.figurePsd(temp)
+                val psd = if (useFigure) Characters.figurePsd(temp) else Characters.headPsd(temp)
                 workspace.importPsd(psd.toString(), true)
                 body(vm, workspace, psd)
             }
@@ -203,7 +203,7 @@ class PsdReloadScenario {
         check(vm.state.value.previewModel!!)
     }
 
-    @Test fun newRectanglesAndAnAddedLayerReloadInOneStepKeepingForms() = editor { vm, workspace, psd ->
+    @Test fun newRectanglesAndAnAddedLayerReloadInOneStepKeepingForms() = editor(useFigure = true) { vm, workspace, psd ->
         val source = read(psd)
         val extra = 6
         fun firstRow(l: SourceLayer) = (0 until l.raster.height).firstOrNull { l.painted(it) }

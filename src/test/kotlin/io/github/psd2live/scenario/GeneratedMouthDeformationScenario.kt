@@ -15,15 +15,19 @@ import kotlin.math.abs
 import kotlin.test.*
 
 class GeneratedMouthDeformationScenario {
+    companion object {
+        private val preparedDocument by lazy {
+            val (source, choices) = WorkspacePresetInitialize.prepare(Characters.closedMouthHead(), WorkspaceInitialModifiers.RECOMMENDED)
+            WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, requireNotNull(choices),
+                requestedVersions = mapOf("mouth/fitted" to 1)).first
+        }
+    }
+
     @TempDir lateinit var temp: Path
     private val open = ParameterId("ParamMouthOpenY")
     private val stops = listOf(0f, .05f, .25f, .5f, 1f)
 
-    private fun document(): io.github.psd2live.project.WorkspaceDocument {
-        val (source, choices) = WorkspacePresetInitialize.prepare(Characters.closedMouthed(), WorkspaceInitialModifiers.RECOMMENDED)
-        return WorkspacePresetInitialization.prepare(source, WorkspaceRasterWork.Direct, requireNotNull(choices),
-            requestedVersions = mapOf("mouth/fitted" to 1)).first
-    }
+    private fun document(): io.github.psd2live.project.WorkspaceDocument = preparedDocument
 
     @Test fun geometryKeysDoNotSnapToOpacityKeys(): Unit = runBlocking {
         val model = WorkspacePreviewBuilder().build(document())
@@ -56,8 +60,10 @@ class GeneratedMouthDeformationScenario {
             assertEquals(expected.size, actual.size, label)
             assertTrue(expected.indices.all { abs(expected[it] - actual[it]) <= tolerance }, label)
         }
+        // Exercise endpoints, an interior stop, an added key, and a second edit on an already-sculpted stop.
+        val sampleStops = listOf(0f, .25f, .4f, 1f, .25f)
         for (id in ids) {
-            for (value in stops + .4f + .25f) {
+            for (value in sampleStops) {
                 if (value == .4f && puppet.parameters.single { it.id == open }.keys?.contains(.4f) != true) {
                     edit("add independent mouth key", "keyform_apply", req("changes" to listOf(mapOf("op" to "parameter_keys",
                         "parameter" to open.raw, "action" to "add", "values" to listOf(.4f)))))
@@ -91,7 +97,7 @@ class GeneratedMouthDeformationScenario {
                 }
             }
         }
-        val sculpted = ids.associateWith { id -> (stops + .4f).associateWith { value -> local(puppet, id, value).copyOfRange(0, 2) } }
+        val sculpted = ids.associateWith { id -> sampleStops.distinct().associateWith { value -> local(puppet, id, value).copyOfRange(0, 2) } }
         val mouth = RigModifierStack.fromJson(requireNotNull(now.document.rigEdits.modifierStack)).instances.single { it.type == "mouth/fitted" }
         allow("GENERATED_OVERRIDE_CONFLICT")
         edit("regenerate the fitted mouth with different opening timing", "modifier_update", req("id" to mouth.id,

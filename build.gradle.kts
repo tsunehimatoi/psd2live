@@ -196,9 +196,12 @@ subprojects {
 	}
 }
 
-// Give each fork roughly four CPUs, up to eight JVMs. Both fork count and heap can be overridden.
+// Give each fork roughly four CPUs, up to eight JVMs (at least two on 4+ CPU hosts such as CI runners).
 val testForks = providers.gradleProperty("psd2live.testForks").map(String::toInt)
-	.orElse(providers.provider { (Runtime.getRuntime().availableProcessors() / 4).coerceIn(1, 8) })
+	.orElse(providers.provider {
+		val cpus = Runtime.getRuntime().availableProcessors()
+		(cpus / 4).coerceIn(if (cpus >= 4) 2 else 1, 8)
+	})
 
 tasks.withType<Test>().configureEach {
 	// Development tools measure this invocation and write artifacts outside test reports.
@@ -222,8 +225,19 @@ tasks.withType<Test>().configureEach {
 	systemProperty("psd2live.runtime.dir", file("runtime/target/release").absolutePath)
 }
 
+val toolsEnabledGlobal = providers.environmentVariable("PSD2LIVE_TOOLS").orNull == "1"
+if (!toolsEnabledGlobal) {
+	// Keep ~18k lines of manual development tools out of routine test compilation and discovery unless PSD2LIVE_TOOLS=1.
+	sourceSets.test {
+		kotlin.exclude {
+			val rel = it.relativePath.pathString
+			rel.startsWith("io/github/psd2live/tools/") && rel != "io/github/psd2live/tools/ToolSupport.kt"
+		}
+	}
+}
+
 tasks.test {
-	if (providers.environmentVariable("PSD2LIVE_TOOLS").orNull != "1") {
+	if (!toolsEnabledGlobal) {
 		// Short regression runs finish sooner without compiling long-lived optimized JVM code.
 		jvmArgs("-XX:TieredStopAtLevel=1")
 	}
@@ -236,8 +250,41 @@ tasks.test {
 	inputs.files(fileTree("runtime/target/release") { include(System.mapLibraryName("p2l_runtime")) })
 }
 
+val integrationTestPatterns = listOf(
+	"io/github/psd2live/scenario/**",
+	"io/github/psd2live/**/*Worker*Test.class",
+	"io/github/psd2live/**/*Worker*Test\$*.class",
+	"io/github/psd2live/**/*Plugin*Test.class",
+	"io/github/psd2live/**/*Plugin*Test\$*.class",
+	"io/github/psd2live/**/*E2E*Test.class",
+	"io/github/psd2live/**/*E2E*Test\$*.class",
+)
+
+// Fast local unit/contract suite: excludes scenario/ and external worker/plugin E2E tests.
+val unitTest = tasks.register<Test>("unitTest") {
+	group = "verification"
+	description = "Runs fast unit and contract tests (excludes scenario/ and worker/plugin E2E tests)."
+	testClassesDirs = sourceSets.test.get().output.classesDirs
+	classpath = sourceSets.test.get().runtimeClasspath
+	jvmArgs("-XX:TieredStopAtLevel=1")
+	useJUnitPlatform { excludeTags("plugin-build") }
+	exclude(integrationTestPatterns)
+}
+
+// Scenario and external worker/plugin integration suite (complement of unitTest within :test).
+val integrationTest = tasks.register<Test>("integrationTest") {
+	group = "verification"
+	description = "Runs scenario and external worker/plugin integration tests."
+	testClassesDirs = sourceSets.test.get().output.classesDirs
+	classpath = sourceSets.test.get().runtimeClasspath
+	jvmArgs("-XX:TieredStopAtLevel=1")
+	mustRunAfter("buildRuntime")
+	useJUnitPlatform { excludeTags("plugin-build") }
+	include(integrationTestPatterns)
+}
+
 // A managed plugin build starts its own Gradle processes. Keep this acceptance suite in check and CI.
-val pluginBuildTest by tasks.registering(Test::class) {
+val pluginBuildTest = tasks.register<Test>("pluginBuildTest") {
 	group = "verification"
 	testClassesDirs = sourceSets.test.get().output.classesDirs
 	classpath = sourceSets.test.get().runtimeClasspath
@@ -693,15 +740,4 @@ tasks.register<Jar>("buildPluginExample") {
     }.map { zipTree(it) } })
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     exclude("META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA")
-}
-
-tasks.register<Test>("testMouthOutlinePackage") {
-    dependsOn("testClasses", ":algorithms:binding:pluginPackages")
-    val testSource = sourceSets.test.get()
-    testClassesDirs = testSource.output.classesDirs
-    classpath = testSource.runtimeClasspath
-    filter.includeTestsMatching("io.github.psd2live.core.MouthOutlinePluginParityTest")
-    val packageDirectory = project(":algorithms:binding").layout.buildDirectory.dir("plugin-packages/mouth-outline")
-    inputs.dir(packageDirectory)
-    systemProperty("psd2live.mouthOutlinePackage", packageDirectory.get().asFile.absolutePath)
 }

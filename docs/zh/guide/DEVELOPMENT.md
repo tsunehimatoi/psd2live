@@ -81,6 +81,8 @@ Windows 也可以直接运行根目录的 `run-gui.bat`。不带参数启动 GUI
 ## 测试与打包
 
 ```bash
+./gradlew unitTest                               # 本地快速单元与契约测试（不含 scenario 与外部 worker/plugin 测试）
+./gradlew integrationTest                        # 场景与外部 worker/plugin 集成测试
 ./gradlew test                                   # 各模块日常 JVM 回归
 ./gradlew test pluginBuildTest                   # 完整 JVM 回归，含插件实际编译、热替换、撤销和重开
 ./gradlew test --tests "io.github.psd2live.scenario.CatalogContractsTest"   # 单个测试类
