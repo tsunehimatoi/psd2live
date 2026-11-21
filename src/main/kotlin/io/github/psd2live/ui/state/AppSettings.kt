@@ -78,6 +78,43 @@ object AppSettings {
 		}
 	}
 
+	internal fun workspaceTabLayoutOf(stored: String?): WorkspaceTabLayout =
+		WorkspaceTabLayout.entries.firstOrNull { it.name == stored } ?: WorkspaceTabLayout.LEFT
+
+	private val workspaceTabLayoutState = kotlinx.coroutines.flow.MutableStateFlow(
+		workspaceTabLayoutOf(runCatching { preferences.get("workspace_tab_layout", null) }.getOrNull()),
+	)
+
+	/** Where the workspace tabs sit: collapsible left vertical rail by default, or top horizontal strip. */
+	val workspaceTabLayoutFlow: kotlinx.coroutines.flow.StateFlow<WorkspaceTabLayout> get() = workspaceTabLayoutState
+
+	var workspaceTabLayout: WorkspaceTabLayout
+		get() = workspaceTabLayoutState.value
+		set(value) {
+			workspaceTabLayoutState.value = value
+			runCatching {
+				preferences.put("workspace_tab_layout", value.name)
+				preferences.flush()
+			}
+		}
+
+	private val workspaceTabRailExpandedState = kotlinx.coroutines.flow.MutableStateFlow(
+		runCatching { preferences.getBoolean("workspace_tab_rail_expanded", true) }.getOrDefault(true),
+	)
+
+	/** Whether the left vertical workspace tab rail is expanded (labels visible) or collapsed to icons. */
+	val workspaceTabRailExpandedFlow: kotlinx.coroutines.flow.StateFlow<Boolean> get() = workspaceTabRailExpandedState
+
+	var workspaceTabRailExpanded: Boolean
+		get() = workspaceTabRailExpandedState.value
+		set(value) {
+			workspaceTabRailExpandedState.value = value
+			runCatching {
+				preferences.putBoolean("workspace_tab_rail_expanded", value)
+				preferences.flush()
+			}
+		}
+
 	/** Wide enough for names like "Angle X" or "Eye L Open"; 40 dp cut nearly every name to its first word. */
 	const val DEFAULT_PARAMETER_NAME_WIDTH = 96f
 
@@ -571,6 +608,10 @@ object AppSettings {
 			preferences.remove(KEY_THEME_LAST_LIGHT)
 			preferences.remove("icon_bitmap_cache")
 			iconBitmapCacheState.value = false
+			preferences.remove("workspace_tab_layout")
+			workspaceTabLayoutState.value = WorkspaceTabLayout.LEFT
+			preferences.remove("workspace_tab_rail_expanded")
+			workspaceTabRailExpandedState.value = true
 			// Enumerated by prefix so there is no action-name list to keep up to date.
 			preferences.keys().filter { it.startsWith(KEYMAP_PREFIX) }.forEach { preferences.remove(it) }
 			preferences.flush()

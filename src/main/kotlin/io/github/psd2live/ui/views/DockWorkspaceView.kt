@@ -349,47 +349,37 @@ internal fun DockWorkspaceView(
     val startModel = remember { StartPageModel() }
     val pageActions = PageActions(onOpenTutorialCatalog, onStartTutorial, onStartTutorialPath, onOpenProject, onOpenPsd, onOpenCmo3,
         onReplaceCmo3, onRevealFile, filesDragging, startModel)
-    // Overlay the rebuild prompt on a Box so its fillMaxSize scrim cannot compete for
-    // Column height with the dock (which would collapse the workspace to solid black).
-    Box(modifier) {
-        Column(Modifier.fillMaxSize().background(colors.windowBackground)) {
-            Row(
-				Modifier.fillMaxWidth().height(26.dp).tutorialTarget(TutorialTargetId.WORKSPACE_STRIP),
-				verticalAlignment = Alignment.CenterVertically,
-			) {
-                // The strip shows no pose; its chips' positioning callbacks would ask for the whole window on each.
-                WorkspaceStrip(
-                    withoutPose(state),
-                    viewModel,
-                    layoutModules = session.root?.allModules()?.toSet().orEmpty(),
-                    onResetLayout = {
-                        if (page != null) {
-                            pageSessions[page]?.let { pageSession ->
-                                pageSession.floating.clear()
-                                pageSession.root = pageDockLayout(page)
-                            }
-                            viewModel.resetPageArrangement(page)
-                        } else {
-                            session.floating.clear()
-                            session.root = presetDockLayout(workspace)
-                            viewModel.resetWorkspaceArrangement()
-                        }
-                    },
-                    modifier = Modifier.weight(1f),
-                )
-                Spacer(Modifier.width(4.dp))
+    val tabLayout by AppSettings.workspaceTabLayoutFlow.collectAsState()
+    val railExpanded by AppSettings.workspaceTabRailExpandedFlow.collectAsState()
+    val railWidth by animateDpAsState(
+        targetValue = if (railExpanded) WorkspaceRailExpandedWidth else WorkspaceRailCollapsedWidth,
+        animationSpec = tween(Motion.Expand, easing = FastOutSlowInEasing),
+    )
+    val layoutModules = session.root?.allModules()?.toSet().orEmpty()
+    val onResetLayout: () -> Unit = {
+        if (page != null) {
+            pageSessions[page]?.let { pageSession ->
+                pageSession.floating.clear()
+                pageSession.root = pageDockLayout(page)
             }
-            // The tabs (22 dp in the 26 dp strip) end 2 dp above the strip's edge: the rest of the margin to the panels.
-            Spacer(Modifier.height(Spacing.Margin - 2.dp))
+            viewModel.resetPageArrangement(page)
+        } else {
+            session.floating.clear()
+            session.root = presetDockLayout(workspace)
+            viewModel.resetWorkspaceArrangement()
+        }
+    }
+    val workspaceBody: @Composable (Modifier) -> Unit = { bodyModifier ->
+        Box(bodyModifier) {
             if (page != null) key(page) {
                 val pageSession = pageSessions.getOrPut(page) { DockSession(pageDockRoot(page, viewModel.pageArrangement(page))) }
                 if (page == AppPage.START) {
-                    StartHubWorkspace(pageSession, Modifier.weight(1f).fillMaxWidth(), mainWindow, state, viewModel, pageActions)
+                    StartHubWorkspace(pageSession, Modifier.fillMaxSize(), mainWindow, state, viewModel, pageActions)
                 } else {
-                    PageDock(page, pageSession, Modifier.weight(1f).fillMaxWidth(), mainWindow, state, viewModel, pageActions)
+                    PageDock(page, pageSession, Modifier.fillMaxSize(), mainWindow, state, viewModel, pageActions)
                 }
             } else key(workspace.id) {
-                Box(Modifier.weight(1f).fillMaxWidth().tutorialTarget(TutorialTargetId.DOCK_AREA).onGloballyPositioned { coordinates ->
+                Box(Modifier.fillMaxSize().tutorialTarget(TutorialTargetId.DOCK_AREA).onGloballyPositioned { coordinates ->
                     session.workspaceBounds = { screenBounds(coordinates, mainWindow) }
                 }) {
                     visibleRoot?.let {
@@ -407,9 +397,50 @@ internal fun DockWorkspaceView(
                         }
                 }
             }
+            if (page == null) key(state.projectOpenGeneration, workspace.id) {
+                WorkspaceEditPanels(state, viewModel, Modifier.align(Alignment.BottomStart).padding(10.dp))
+            }
         }
-        if (page == null) key(state.projectOpenGeneration, workspace.id) {
-            WorkspaceEditPanels(state, viewModel, Modifier.align(Alignment.BottomStart).padding(10.dp))
+    }
+    // Overlay the rebuild prompt on a Box so its fillMaxSize scrim cannot compete for
+    // Column height with the dock (which would collapse the workspace to solid black).
+    Box(modifier) {
+        if (tabLayout == WorkspaceTabLayout.LEFT) {
+            Row(Modifier.fillMaxSize().background(colors.windowBackground)) {
+                // The rail shares the window background with the title bar, with no card frame around it.
+                WorkspaceTabRail(
+                    state = withoutPose(state),
+                    viewModel = viewModel,
+                    layoutModules = layoutModules,
+                    expanded = railExpanded,
+                    onToggleExpanded = { AppSettings.workspaceTabRailExpanded = !railExpanded },
+                    onExpand = { AppSettings.workspaceTabRailExpanded = true },
+                    onResetLayout = onResetLayout,
+                    modifier = Modifier.width(railWidth).fillMaxHeight().tutorialTarget(TutorialTargetId.WORKSPACE_STRIP),
+                )
+                Spacer(Modifier.width(Spacing.Margin))
+                workspaceBody(Modifier.weight(1f).fillMaxHeight())
+            }
+        } else {
+            Column(Modifier.fillMaxSize().background(colors.windowBackground)) {
+                Row(
+                    Modifier.fillMaxWidth().height(26.dp).tutorialTarget(TutorialTargetId.WORKSPACE_STRIP),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    // The strip shows no pose; its chips' positioning callbacks would ask for the whole window on each.
+                    WorkspaceStrip(
+                        withoutPose(state),
+                        viewModel,
+                        layoutModules = layoutModules,
+                        onResetLayout = onResetLayout,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                }
+                // The tabs (22 dp in the 26 dp strip) end 2 dp above the strip's edge: the rest of the margin to the panels.
+                Spacer(Modifier.height(Spacing.Margin - 2.dp))
+                workspaceBody(Modifier.weight(1f).fillMaxWidth())
+            }
         }
         viewModel.pendingDepthSplit?.takeIf { it.workspaceId == workspace.id }?.let { offer ->
             io.github.psd2live.ui.components.DepthSplitDialog(offer,

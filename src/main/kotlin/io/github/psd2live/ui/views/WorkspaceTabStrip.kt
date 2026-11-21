@@ -295,55 +295,13 @@ fun WorkspaceStrip(
 		Box {
 			TabStripButton(label = "${tr("workspace.windows")} \u25BE") { showWindowMenu = true }
 			TabStripDropdown(expanded = showWindowMenu, onDismissRequest = { showWindowMenu = false }) {
-				AppMenuHeader(tr("workspace.windows"))
-				// A page lists its own panels; the editor's belong to the workspaces.
-				if (activePage != null) {
-					val hidden = viewModel.pageArrangement(activePage).hiddenModules
-					activePage.modules.forEach { module ->
-						AppMenuItem(
-							text = pageModuleTitle(module, viewModel),
-							isChecked = module !in hidden,
-							onClick = { viewModel.setPageModuleVisible(activePage, module, module in hidden) },
-						)
-					}
-					AppMenuSeparator()
-					AppMenuItem(text = tr("dock.reset"), onClick = {
-						showWindowMenu = false
-						onResetLayout()
-					})
-					return@TabStripDropdown
-				}
-				WINDOW_MODULES.forEach { module ->
-					val shown = module in layoutModules && module !in workspace.hiddenModules
-					AppMenuItem(
-						text = moduleTitle(module),
-						isChecked = shown,
-						onClick = { viewModel.setModuleVisible(module, !shown) },
-					)
-				}
-				AppMenuSeparator()
-				AppMenuHeader(tr("dock.canvas"))
-				workspace.canvases.forEach { canvas ->
-					val shown = canvas.id in layoutModules && canvas.id !in workspace.hiddenModules
-					AppMenuItem(
-						text = viewModel.canvasTitle(canvas, workspace),
-						isChecked = shown,
-						onClick = { viewModel.setModuleVisible(canvas.id, !shown) },
-					)
-				}
-				AppMenuItem(text = tr("window.addEditCanvas"), onClick = {
-					showWindowMenu = false
-					viewModel.addCanvas(CanvasMode.EDIT)
-				})
-				AppMenuItem(text = tr("window.addPreviewCanvas"), onClick = {
-					showWindowMenu = false
-					viewModel.addCanvas(CanvasMode.PREVIEW)
-				})
-				AppMenuSeparator()
-				AppMenuItem(text = tr("dock.reset"), onClick = {
-					showWindowMenu = false
-					onResetLayout()
-				})
+				WindowModulesMenuContent(
+					state = state,
+					viewModel = viewModel,
+					layoutModules = layoutModules,
+					onResetLayout = onResetLayout,
+					onDismiss = { showWindowMenu = false },
+				)
 			}
 		}
 		Spacer(Modifier.width(2.dp))
@@ -567,30 +525,22 @@ private fun WorkspaceChip(
 		}
 
 		TabStripDropdown(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-			AppMenuHeader(workspace.displayName())
-			AppMenuItem(text = tr("workspace.rename"), onClick = {
-				showMenu = false
-				onSelect()
-				draft = workspace.displayName()
-				renaming = true
-			})
-			AppMenuItem(text = tr("workspace.duplicate"), onClick = {
-				showMenu = false
-				onDuplicate()
-			})
-			AppMenuSeparator()
-			AppMenuItem(text = tr("workspace.close"), enabled = canClose, onClick = {
-				showMenu = false
-				onClose()
-			})
-			AppMenuItem(text = tr("workspace.closeOthers"), enabled = canClose, onClick = {
-				showMenu = false
-				onCloseOthers()
-			})
-			AppMenuItem(text = tr("workspace.closeRight"), enabled = canCloseRight, onClick = {
-				showMenu = false
-				onCloseRight()
-			})
+			WorkspaceContextMenuContent(
+				title = workspace.displayName(),
+				canClose = canClose,
+				canCloseTrailing = canCloseRight,
+				closeTrailingLabelKey = "workspace.closeRight",
+				onDismiss = { showMenu = false },
+				onRename = {
+					onSelect()
+					draft = workspace.displayName()
+					renaming = true
+				},
+				onDuplicate = onDuplicate,
+				onClose = onClose,
+				onCloseOthers = onCloseOthers,
+				onCloseTrailing = onCloseRight,
+			)
 		}
 	}
 }
@@ -641,6 +591,104 @@ internal fun TabStripDropdown(
 		onDismissRequest = onDismissRequest,
 		content = content,
 	)
+}
+
+@Composable
+internal fun WindowModulesMenuContent(
+	state: PSD2LiveState,
+	viewModel: PSD2LiveViewModel,
+	layoutModules: Set<String>,
+	onResetLayout: () -> Unit,
+	onDismiss: () -> Unit,
+) {
+	val workspace = state.activeWorkspace
+	val activePage = viewModel.activePage
+	AppMenuHeader(tr("workspace.windows"))
+	// A page lists its own panels; the editor's belong to the workspaces.
+	if (activePage != null) {
+		val hidden = viewModel.pageArrangement(activePage).hiddenModules
+		activePage.modules.forEach { module ->
+			AppMenuItem(
+				text = pageModuleTitle(module, viewModel),
+				isChecked = module !in hidden,
+				onClick = { viewModel.setPageModuleVisible(activePage, module, module in hidden) },
+			)
+		}
+		AppMenuSeparator()
+		AppMenuItem(text = tr("dock.reset"), onClick = {
+			onDismiss()
+			onResetLayout()
+		})
+		return
+	}
+	WINDOW_MODULES.forEach { module ->
+		val shown = module in layoutModules && module !in workspace.hiddenModules
+		AppMenuItem(
+			text = moduleTitle(module),
+			isChecked = shown,
+			onClick = { viewModel.setModuleVisible(module, !shown) },
+		)
+	}
+	AppMenuSeparator()
+	AppMenuHeader(tr("dock.canvas"))
+	workspace.canvases.forEach { canvas ->
+		val shown = canvas.id in layoutModules && canvas.id !in workspace.hiddenModules
+		AppMenuItem(
+			text = viewModel.canvasTitle(canvas, workspace),
+			isChecked = shown,
+			onClick = { viewModel.setModuleVisible(canvas.id, !shown) },
+		)
+	}
+	AppMenuItem(text = tr("window.addEditCanvas"), onClick = {
+		onDismiss()
+		viewModel.addCanvas(CanvasMode.EDIT)
+	})
+	AppMenuItem(text = tr("window.addPreviewCanvas"), onClick = {
+		onDismiss()
+		viewModel.addCanvas(CanvasMode.PREVIEW)
+	})
+	AppMenuSeparator()
+	AppMenuItem(text = tr("dock.reset"), onClick = {
+		onDismiss()
+		onResetLayout()
+	})
+}
+
+@Composable
+internal fun WorkspaceContextMenuContent(
+	title: String,
+	canClose: Boolean,
+	canCloseTrailing: Boolean,
+	closeTrailingLabelKey: String,
+	onDismiss: () -> Unit,
+	onRename: () -> Unit,
+	onDuplicate: () -> Unit,
+	onClose: () -> Unit,
+	onCloseOthers: () -> Unit,
+	onCloseTrailing: () -> Unit,
+) {
+	AppMenuHeader(title)
+	AppMenuItem(text = tr("workspace.rename"), onClick = {
+		onDismiss()
+		onRename()
+	})
+	AppMenuItem(text = tr("workspace.duplicate"), onClick = {
+		onDismiss()
+		onDuplicate()
+	})
+	AppMenuSeparator()
+	AppMenuItem(text = tr("workspace.close"), enabled = canClose, onClick = {
+		onDismiss()
+		onClose()
+	})
+	AppMenuItem(text = tr("workspace.closeOthers"), enabled = canClose, onClick = {
+		onDismiss()
+		onCloseOthers()
+	})
+	AppMenuItem(text = tr(closeTrailingLabelKey), enabled = canCloseTrailing, onClick = {
+		onDismiss()
+		onCloseTrailing()
+	})
 }
 
 internal fun moduleTitle(id: String): String = when {

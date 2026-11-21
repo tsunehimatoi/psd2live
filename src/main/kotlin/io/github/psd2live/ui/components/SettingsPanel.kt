@@ -59,6 +59,7 @@ import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.state.SettingsTopic
 import io.github.psd2live.ui.state.WindowMode
+import io.github.psd2live.ui.state.WorkspaceTabLayout
 import io.github.psd2live.ui.views.PageBody
 import io.github.psd2live.ui.views.PageNavItem
 import io.github.psd2live.ui.views.PageNavList
@@ -418,6 +419,25 @@ private fun SettingsCanvasSection() {
 				)
 				Text(
 					text = tr(mode.descriptionKey),
+					style = typography.caption.copy(fontSize = 10.5.sp),
+					color = colors.textMuted,
+					modifier = Modifier.padding(start = 24.dp),
+				)
+			}
+		}
+	}
+
+	val tabLayout by AppSettings.workspaceTabLayoutFlow.collectAsState()
+	SettingsGroup(tr("settings.tabs.title")) {
+		for (layout in WorkspaceTabLayout.entries) {
+			Column(Modifier.fillMaxWidth()) {
+				CompactRadioButton(
+					selected = layout == tabLayout,
+					onClick = { AppSettings.workspaceTabLayout = layout },
+					label = tr(layout.labelKey),
+				)
+				Text(
+					text = tr(layout.descriptionKey),
 					style = typography.caption.copy(fontSize = 10.5.sp),
 					color = colors.textMuted,
 					modifier = Modifier.padding(start = 24.dp),
