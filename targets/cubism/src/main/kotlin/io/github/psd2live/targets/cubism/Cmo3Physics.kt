@@ -72,7 +72,7 @@ public object Cmo3Physics {
 			}
 			sources.add(setting)
 		}
-		physicsSet.selectedCubismPhysics = guid("CPhysicsSettingsGuid", "physics-selection")
+		physicsSet.selectedCubismPhysics = (sources.firstOrNull() as? CPhysicsSettingsSource)?.guid
 		physicsSet.settingFPS = fps.takeIf { it > 0 }
 		return rules.size
 	}

@@ -145,7 +145,7 @@ internal class Cmo3StructureLowering(
 				isRepeat = editedParameter.repeat
 				// CMO3: CParameterSource fields paramType / description - a Type element plus the
 				// (possibly empty) description string on every corpus parameter, never null.
-				paramType = if (editedParameter.kind == ParameterKind.BLEND_SHAPE) Type.MORPH_TARGET else template?.paramType ?: Type.NORMAL
+				paramType = if (editedParameter.kind == ParameterKind.BLEND_SHAPE) Type.MORPH_TARGET else Type.NORMAL
 				description = ""
 				name = editedParameter.name
 				combined = false

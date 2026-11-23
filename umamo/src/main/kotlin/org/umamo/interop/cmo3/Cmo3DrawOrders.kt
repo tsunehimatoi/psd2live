@@ -37,7 +37,7 @@ internal object Cmo3DrawOrders {
 			values.addAll(keyed(part.channelGrids))
 			part.blendShapes.forEach { binding -> binding.forms.forEach { form -> form?.let { values.add(it.drawOrder) } } }
 		}
-		if (values.all { it == floor(it) }) return Result(puppet, emptyList())
+		if (values.all { it == floor(it) && it in 0f..1000f }) return Result(puppet, emptyList())
 		val map = renumbering(values.toList())
 
 		val renumbered = ArrayList<String>()

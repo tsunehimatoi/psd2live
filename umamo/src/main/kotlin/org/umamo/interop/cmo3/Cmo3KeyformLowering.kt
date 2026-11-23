@@ -159,6 +159,7 @@ internal class Cmo3KeyformLowering(
 		channels: ChannelGrids,
 		statics: Map<FormChannel, ChannelValue>,
 		requireGeometry: Boolean,
+		hasExistingForms: Boolean,
 	): KeyformBundle? =
 		when (
 			val result =
@@ -179,7 +180,29 @@ internal class Cmo3KeyformLowering(
 				}
 			is KeyformBundleResult.Unrepresentable -> {
 				unsupported(category, subject, ExportNoticeReason.KeyformCannotBundle(result.rejection))
-				null
+				if (hasExistingForms) {
+					null
+				} else {
+					when (
+						val fallback =
+							buildKeyformBundle(
+								geometryGrid,
+								geometryBlend,
+								channels,
+								statics,
+								requireGeometry,
+								OutOfSpanPolicy.DemoteChannel,
+							)
+					) {
+						is KeyformBundleResult.Bundled ->
+							if (!requireGeometry && fallback.bundle.axes.isEmpty() && fallback.bundle.cells.isEmpty()) {
+								KeyformBundle(emptyList(), listOf(KeyformBundleCell(IntArray(0), emptyMap(), null, statics)))
+							} else {
+								fallback.bundle
+							}
+						is KeyformBundleResult.Unrepresentable -> null
+					}
+				}
 			}
 		}
 
@@ -478,6 +501,7 @@ internal class Cmo3KeyformLowering(
 				editedDrawable.channelGrids,
 				statics,
 				requireGeometry = false,
+				hasExistingForms = Cmo3Import.elementsOf(source.keyforms).isNotEmpty(),
 			) ?: return
 		if (!drawOrdersAreIntegral(bundle)) {
 			unsupported(ExportEntityCategory.Drawable, subject, ExportNoticeReason.FractionalDrawOrderNotStorable)
@@ -614,7 +638,7 @@ internal class Cmo3KeyformLowering(
 							FormChannel.SCREEN_COLOR to ChannelValue.Color(payload.screenColor),
 						),
 					)
-				} ?: return
+				} ?: existingMorphForms(source.keyformMorphTargetSet, source.keyforms)
 			} else {
 				existingMorphForms(source.keyformMorphTargetSet, source.keyforms)
 			}
@@ -633,8 +657,16 @@ internal class Cmo3KeyformLowering(
 				FormChannel.SCREEN_COLOR to ChannelValue.Color(editedWarp.screenColor),
 			)
 		val bundle =
-			buildBundle(ExportEntityCategory.Deformer, subject, editedWarp.geometryGrid, WarpLatticeInterpolator, editedWarp.channelGrids, statics, requireGeometry = true)
-				?: return
+			buildBundle(
+				ExportEntityCategory.Deformer,
+				subject,
+				editedWarp.geometryGrid,
+				WarpLatticeInterpolator,
+				editedWarp.channelGrids,
+				statics,
+				requireGeometry = true,
+				hasExistingForms = Cmo3Import.elementsOf(source.keyforms).isNotEmpty(),
+			) ?: return
 		val existingForms = existingFormsByValues(source.keyformGridSource, source.keyforms)
 		val template = templateForm<CWarpDeformerForm>(source.keyforms, index.deformerSources.filterIsInstance<CWarpDeformerSource>().map { it.keyforms })
 
@@ -701,7 +733,7 @@ internal class Cmo3KeyformLowering(
 							FormChannel.SCREEN_COLOR to ChannelValue.Color(payload.screenColor),
 						),
 					)
-				} ?: return
+				} ?: existingMorphForms(source.keyformMorphTargetSet, source.keyforms)
 			} else {
 				existingMorphForms(source.keyformMorphTargetSet, source.keyforms)
 			}
@@ -722,8 +754,16 @@ internal class Cmo3KeyformLowering(
 				FormChannel.FLIP_Y to ChannelValue.Flag(editedRotation.flipY),
 			)
 		val bundle =
-			buildBundle(ExportEntityCategory.Deformer, subject, editedRotation.geometryGrid, RotationPivotInterpolator, editedRotation.channelGrids, statics, requireGeometry = true)
-				?: return
+			buildBundle(
+				ExportEntityCategory.Deformer,
+				subject,
+				editedRotation.geometryGrid,
+				RotationPivotInterpolator,
+				editedRotation.channelGrids,
+				statics,
+				requireGeometry = true,
+				hasExistingForms = Cmo3Import.elementsOf(source.keyforms).isNotEmpty(),
+			) ?: return
 		val existingForms = existingFormsByValues(source.keyformGridSource, source.keyforms)
 		val template = templateForm<CRotationDeformerForm>(source.keyforms, index.deformerSources.filterIsInstance<CRotationDeformerSource>().map { it.keyforms })
 
@@ -804,7 +844,7 @@ internal class Cmo3KeyformLowering(
 							FormChannel.FLIP_Y to ChannelValue.Flag(payload.flipY),
 						),
 					)
-				} ?: return
+				} ?: existingMorphForms(source.keyformMorphTargetSet, source.keyforms)
 			} else {
 				existingMorphForms(source.keyformMorphTargetSet, source.keyforms)
 			}
@@ -825,8 +865,16 @@ internal class Cmo3KeyformLowering(
 				FormChannel.SCREEN_COLOR to ChannelValue.Color(editedPart.composite.screenColor),
 			)
 		val bundle =
-			buildBundle(ExportEntityCategory.Part, subject, null as KeyformGrid<Unit>?, UnitInterpolator, editedPart.channelGrids, statics, requireGeometry = false)
-				?: return
+			buildBundle(
+				ExportEntityCategory.Part,
+				subject,
+				null as KeyformGrid<Unit>?,
+				UnitInterpolator,
+				editedPart.channelGrids,
+				statics,
+				requireGeometry = false,
+				hasExistingForms = Cmo3Import.elementsOf(source.keyforms).isNotEmpty(),
+			) ?: return
 		if (!drawOrdersAreIntegral(bundle)) {
 			unsupported(ExportEntityCategory.Part, subject, ExportNoticeReason.FractionalDrawOrderNotStorable)
 			return
@@ -916,8 +964,16 @@ internal class Cmo3KeyformLowering(
 		val subject = "${editedGlue.meshA.raw}+${editedGlue.meshB.raw}"
 		val statics = mapOf<FormChannel, ChannelValue>(FormChannel.GLUE_INTENSITY to ChannelValue.Scalar(editedGlue.intensity))
 		val bundle =
-			buildBundle(ExportEntityCategory.Glue, subject, null as KeyformGrid<Unit>?, UnitInterpolator, editedGlue.channelGrids, statics, requireGeometry = false)
-				?: return
+			buildBundle(
+				ExportEntityCategory.Glue,
+				subject,
+				null as KeyformGrid<Unit>?,
+				UnitInterpolator,
+				editedGlue.channelGrids,
+				statics,
+				requireGeometry = false,
+				hasExistingForms = Cmo3Import.elementsOf(source.keyforms).isNotEmpty(),
+			) ?: return
 		if (bundle.axes.isEmpty() && bundle.cells.isEmpty()) {
 			// No intensity track: write the static into whatever forms exist (an unkeyed glue welds
 			// fully, so a non-1 static without forms has no CMO3 home) - never clear a glue's grid.

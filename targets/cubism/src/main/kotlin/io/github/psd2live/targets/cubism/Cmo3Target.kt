@@ -13,10 +13,13 @@ import org.umamo.interop.cmo3.Cmo3GraphIndex
 import org.umamo.interop.cmo3.Cmo3Import
 import org.umamo.render.restMeshesToCanvasSpace
 import org.umamo.runtime.model.AtlasTileId
+import org.umamo.runtime.model.Deformer
 import org.umamo.runtime.model.ParameterId
 import org.umamo.runtime.model.KeyformGrid
 import org.umamo.runtime.model.KeyformCell
 import org.umamo.runtime.model.MeshDeltaForm
+import org.umamo.runtime.model.RotationPivotForm
+import org.umamo.runtime.model.WarpLatticeForm
 
 /**
  * A Cubism Editor project (`.cmo3`): the baked rig with editable source layers and physics. Generator
@@ -102,12 +105,25 @@ public class Cmo3Target(
 	private fun convertLowered(ir: RigIR, options: ExportOptions, decorate: (CModelSource) -> Unit): Cmo3Conversion.Result {
 		val puppet = PuppetIr.toPuppet(ir)
 		// CMO3 stores rest meshes in canvas space, but evaluates mesh forms in their parent's space.
-		// Keep an explicit static form for unkeyed children before rebasing their rest mesh for export.
-		val withStaticChildren = puppet.copy(drawables = puppet.drawables.map { drawable ->
-			val mesh = drawable.mesh
-			if (drawable.parentDeformerId == null || mesh == null || drawable.geometryGrid != null) drawable
-			else drawable.copy(geometryGrid = KeyformGrid(emptyList(), listOf(KeyformCell(IntArray(0), MeshDeltaForm(FloatArray(mesh.positions.size))))))
-		})
+		// Keep an explicit static form for unkeyed children before rebasing their rest mesh for export,
+		// and for unkeyed deformers so every deformer in CMO3 carries a default keyform.
+		val withStaticChildren = puppet.copy(
+			drawables = puppet.drawables.map { drawable ->
+				val mesh = drawable.mesh
+				if (drawable.parentDeformerId == null || mesh == null || drawable.geometryGrid != null) drawable
+				else drawable.copy(geometryGrid = KeyformGrid(emptyList(), listOf(KeyformCell(IntArray(0), MeshDeltaForm(FloatArray(mesh.positions.size))))))
+			},
+			deformers = puppet.deformers.map { deformer ->
+				when (deformer) {
+					is Deformer.Warp ->
+						if (deformer.geometryGrid != null) deformer
+						else deformer.copy(geometryGrid = KeyformGrid(emptyList(), listOf(KeyformCell(IntArray(0), WarpLatticeForm(FloatArray((deformer.rows + 1) * (deformer.columns + 1) * 2))))))
+					is Deformer.Rotation ->
+						if (deformer.geometryGrid != null) deformer
+						else deformer.copy(geometryGrid = KeyformGrid(emptyList(), listOf(KeyformCell(IntArray(0), RotationPivotForm(0f, 0f, deformer.baseAngle, 1f)))))
+				}
+			},
+		)
 		val exportPuppet = restMeshesToCanvasSpace(withStaticChildren, ir.restPose.mapKeys { ParameterId(it.key) })
 		val pages = ir.textures.pages.mapIndexed { index, page ->
 			require(page.png.size > 0) { "Texture page $index has no pixels" }
