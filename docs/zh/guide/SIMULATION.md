@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/guide/SIMULATION.md) · [한국어](../../ko/guide/SIMULATION.md) · [日本語](../../ja/guide/SIMULATION.md)
+
 # 模拟与烘焙
 
 [文档目录](../../README.md) · [物理](PHYSICS.md) · [摇摆生成](SWING.md) · [画布编辑](CANVAS_EDITOR.md) · [MCP 使用与接口](../agent/MCP_AUTHORING.md)

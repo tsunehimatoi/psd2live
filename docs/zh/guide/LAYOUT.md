@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/guide/LAYOUT.md) · [한국어](../../ko/guide/LAYOUT.md) · [日本語](../../ja/guide/LAYOUT.md)
+
 # 素材与 Layout
 
 [文档目录](../../README.md) · [使用指南](USER_GUIDE.md) · [画布编辑](CANVAS_EDITOR.md) · [Layout 清单](../spec/LAYOUT_MANIFEST.md)

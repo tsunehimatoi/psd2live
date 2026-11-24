@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../en/CHANGELOG.md) · [한국어](../ko/CHANGELOG.md) · [日本語](../ja/CHANGELOG.md)
+
 # 更新日志
 
 [文档目录](../README.md) · [下载](https://github.com/tsunehimatoi/psd2live/releases)

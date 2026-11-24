@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/guide/PHYSICS.md) · [한국어](../../ko/guide/PHYSICS.md) · [日本語](../../ja/guide/PHYSICS.md)
+
 # 物理
 
 [文档目录](../../README.md) · [摇摆生成](SWING.md) · [模拟与烘焙](SIMULATION.md) · [MCP 使用与接口](../agent/MCP_AUTHORING.md)

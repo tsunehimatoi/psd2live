@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/spec/DEFORMER_AND_PARAMETER_SPEC.md) · [한국어](../../ko/spec/DEFORMER_AND_PARAMETER_SPEC.md) · [日本語](../../ja/spec/DEFORMER_AND_PARAMETER_SPEC.md)
+
 # 变形器与参数参考
 
 [文档目录](../../README.md) · [PSD 素材与命名](PSD_LAYER_SPEC.md)

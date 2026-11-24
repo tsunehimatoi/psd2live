@@ -47,4 +47,4 @@ pose references guide local knee and elbow deformation; they do not constitute a
 An optional open-source C++ wrapper under `native/live2d_renderer/` can produce a native renderer library (`live2d_renderer.dll` on Windows, `liblive2d_renderer.so` on Linux) when linked against a **user-provided** local Cubism SDK for Native install. The wrapper sources are part of this repository; the proprietary Core library, Framework, and shaders must be obtained directly from Live2D and are never committed here.
 
 For setup instructions, see:
-- [Live2D SDK 配置指南 (中文)](docs/zh/guide/CUBISM_SDK_SETUP.md)
+- [中文](docs/zh/guide/CUBISM_SDK_SETUP.md) · [English](docs/en/guide/CUBISM_SDK_SETUP.md) · [한국어](docs/ko/guide/CUBISM_SDK_SETUP.md) · [日本語](docs/ja/guide/CUBISM_SDK_SETUP.md)

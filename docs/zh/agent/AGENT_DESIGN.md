@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/agent/AGENT_DESIGN.md) · [한국어](../../ko/agent/AGENT_DESIGN.md) · [日本語](../../ja/agent/AGENT_DESIGN.md)
+
 # Agent 设计与验收
 
 [文档目录](../../README.md) · [MCP 接口](MCP_AUTHORING.md) · [能力实测](../STATUS.md) · [路线图](../ROADMAP.md)

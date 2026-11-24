@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/spec/PROJECT_FORMAT.md) · [한국어](../../ko/spec/PROJECT_FORMAT.md) · [日本語](../../ja/spec/PROJECT_FORMAT.md)
+
 # 工程格式 v2
 
 [文档目录](../../README.md)

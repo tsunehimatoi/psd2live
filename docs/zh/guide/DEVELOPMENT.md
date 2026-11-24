@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/guide/DEVELOPMENT.md) · [한국어](../../ko/guide/DEVELOPMENT.md) · [日本語](../../ja/guide/DEVELOPMENT.md)
+
 # 开发与命令行
 
 [文档目录](../../README.md)

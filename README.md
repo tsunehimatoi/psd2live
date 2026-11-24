@@ -1,5 +1,8 @@
 <div align="center">
 
+<!-- lang: zh en ko ja -->
+> **中文** · [English](README.en.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
+
 <img src="docs/branding/psd2live-icon-mesh.png" width="112" alt="PSD2Live 图标">
 
 # PSD2Live

@@ -622,7 +622,8 @@ private fun DccAboutContent() {
 
 /** A page of the repository's documentation. */
 private fun docsUrl(path: String): String {
-	return "${DesktopUtils.GITHUB_REPO_URL}/blob/master/docs/zh/$path"
+	val language = I18n.currentLanguage.tag
+	return "${DesktopUtils.GITHUB_REPO_URL}/blob/master/docs/$language/$path"
 }
 
 // ---------------------------------------------------------------------------

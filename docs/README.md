@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](en/README.md) · [한국어](ko/README.md) · [日本語](ja/README.md)
+
 # 文档目录
 
 [项目首页](../README.md) · [更新日志](zh/CHANGELOG.md) · [路线图](zh/ROADMAP.md) · [能力实测](zh/STATUS.md)
@@ -6,18 +9,23 @@
 
 ## 目录结构
 
+`en/`、`ja/`、`ko/` 与 `zh/` 的文件一一对应。下面只展开中文；其余三种语言是同一套路径。
+
 ```text
 docs/
-├─ README.md            # 文档总索引
+├─ README.md            # 中文文档总索引（本文件）
 ├─ branding/            # 应用图标资源
 ├─ imgs/                # README 与图文教程截图（WebP）
-└─ zh/                  # 中文主文档
-   ├─ CHANGELOG.md      # 版本更新日志
-   ├─ ROADMAP.md        # 后续规划
-   ├─ STATUS.md         # 真实任务能力实测记录
-   ├─ guide/            # 使用指南、开发与构建文档
-   ├─ spec/             # 格式规范与核心架构契约
-   └─ agent/            # MCP 接口与 Agent 验收说明
+├─ zh/                  # 中文（源文）
+│  ├─ CHANGELOG.md      # 版本更新日志
+│  ├─ ROADMAP.md        # 后续规划
+│  ├─ STATUS.md         # 真实任务能力实测记录
+│  ├─ guide/            # 使用指南、开发与构建文档
+│  ├─ spec/             # 格式规范与核心架构契约
+│  └─ agent/            # MCP 接口与 Agent 验收说明
+├─ en/                  # English
+├─ ja/                  # 日本語
+└─ ko/                  # 한국어
 ```
 
 ## 使用指南
@@ -78,6 +86,6 @@ docs/
 ## 维护约定
 
 1. README 只写定位、上手、能力边界与入口；逐步操作以程序内交互教程为准。
-2. 仅维护中文主文档，不再同步多语言文档副本。
+2. 中文是源文。英文、日文、韩文是同步译文：文档在 `docs/en`、`docs/ja`、`docs/ko`，项目首页在仓库根目录的 `README.en.md`、`README.ja.md`、`README.ko.md`。改中文时一并改这三份；每页顶部的语言切换指向同一路径的四种语言。
 3. 不再新增零散的过程性设计稿/审阅稿到 `docs/`（过程笔记放 `local/`）。
 4. 描述须与源码一致：教程顺序对照 `InteractiveTutorial.kt`，快捷键对照 `ShortcutRegistry.kt`，CLI 对照 `Main.kt`，MCP 工具对照应用层操作定义与 `AgentOperationTools.kt`。

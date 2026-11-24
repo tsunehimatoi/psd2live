@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/guide/USER_GUIDE.md) · [한국어](../../ko/guide/USER_GUIDE.md) · [日本語](../../ja/guide/USER_GUIDE.md)
+
 # 操作速查
 
 [文档目录](../../README.md) · [PSD 图层规范](../spec/PSD_LAYER_SPEC.md) · [画布编辑](CANVAS_EDITOR.md) · [开发与 CLI](DEVELOPMENT.md)

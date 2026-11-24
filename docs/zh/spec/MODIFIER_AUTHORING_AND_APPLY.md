@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/spec/MODIFIER_AUTHORING_AND_APPLY.md) · [한국어](../../ko/spec/MODIFIER_AUTHORING_AND_APPLY.md) · [日本語](../../ja/spec/MODIFIER_AUTHORING_AND_APPLY.md)
+
 # 修改器与手工编辑共存
 
 ## 目标与边界

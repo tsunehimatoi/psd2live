@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/spec/LITE_WORKSPACE.md) · [한국어](../../ko/spec/LITE_WORKSPACE.md) · [日本語](../../ja/spec/LITE_WORKSPACE.md)
+
 # 极简工作区与移动端设计（设计中）
 
 [文档目录](../../README.md) · [路线图](../ROADMAP.md) · [MCP 使用与接口](../agent/MCP_AUTHORING.md) · [前后分层教程](../guide/DEPTH_SPLIT.md)

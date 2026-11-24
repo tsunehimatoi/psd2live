@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/guide/SWING.md) · [한국어](../../ko/guide/SWING.md) · [日本語](../../ja/guide/SWING.md)
+
 # 摇摆生成
 
 [文档目录](../../README.md) · [物理](PHYSICS.md) · [MCP 使用与接口](../agent/MCP_AUTHORING.md)

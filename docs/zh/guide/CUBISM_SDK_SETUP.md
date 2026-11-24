@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/guide/CUBISM_SDK_SETUP.md) · [한국어](../../ko/guide/CUBISM_SDK_SETUP.md) · [日本語](../../ja/guide/CUBISM_SDK_SETUP.md)
+
 # 可选 Cubism Native 预览
 
 [文档目录](../../README.md) · [CI 与发行](CUBISM_CI_RELEASE.md)

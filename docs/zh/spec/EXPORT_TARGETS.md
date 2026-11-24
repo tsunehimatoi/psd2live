@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/spec/EXPORT_TARGETS.md) · [한국어](../../ko/spec/EXPORT_TARGETS.md) · [日本語](../../ja/spec/EXPORT_TARGETS.md)
+
 # 中立绑定 IR 与导出目标
 
 所有导出都从同一份中立绑定 IR 出发：编辑器把当前已提交的 Rig 编译成 IR，每个导出目标再把 IR 降级成自己的格式，并写出一份损失报告，列出该格式无法保留的内容。
