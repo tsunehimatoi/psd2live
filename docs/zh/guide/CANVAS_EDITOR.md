@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/guide/CANVAS_EDITOR.md) · [한국어](../../ko/guide/CANVAS_EDITOR.md) · [日本語](../../ja/guide/CANVAS_EDITOR.md)
+
 # 画布编辑速查
 
 [文档目录](../../README.md) · [操作速查](USER_GUIDE.md) · [前后分层图文教程](DEPTH_SPLIT.md) · [变形路径](DEFORM_PATHS.md)

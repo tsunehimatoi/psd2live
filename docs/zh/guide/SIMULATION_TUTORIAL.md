@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/guide/SIMULATION_TUTORIAL.md) · [한국어](../../ko/guide/SIMULATION_TUTORIAL.md) · [日本語](../../ja/guide/SIMULATION_TUTORIAL.md)
+
 # 模拟图文教程：让头发与服装自然摆动
 
 [文档目录](../../README.md) · [模拟与烘焙](SIMULATION.md) · [画布编辑](CANVAS_EDITOR.md) · [操作速查](USER_GUIDE.md)

@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../en/ROADMAP.md) · [한국어](../ko/ROADMAP.md) · [日本語](../ja/ROADMAP.md)
+
 # 路线图
 
 [项目首页](../../README.md) · [实测记录](STATUS.md) · [更新日志](CHANGELOG.md)

@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/spec/P2LRT_V2.md) · [한국어](../../ko/spec/P2LRT_V2.md) · [日本語](../../ja/spec/P2LRT_V2.md)
+
 # `.p2lrt` 2.0 格式
 
 [运行时](RUNTIME.md)

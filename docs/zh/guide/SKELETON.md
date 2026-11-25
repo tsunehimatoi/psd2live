@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/guide/SKELETON.md) · [한국어](../../ko/guide/SKELETON.md) · [日本語](../../ja/guide/SKELETON.md)
+
 # 骨骼与姿态
 
 [文档目录](../../README.md) · [操作速查](USER_GUIDE.md) · [物理](PHYSICS.md)

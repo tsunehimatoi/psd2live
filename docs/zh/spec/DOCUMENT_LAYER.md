@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/spec/DOCUMENT_LAYER.md) · [한국어](../../ko/spec/DOCUMENT_LAYER.md) · [日本語](../../ja/spec/DOCUMENT_LAYER.md)
+
 # 文档层：生成器、覆盖与缓存
 
 格式设计把工程定义为“意图 + 用户覆盖”：生成器只保存参数，生成结果由纯函数算出，用户在生成结果上的修改按稳定 ID 记录，生成器重跑时做三方合并。第一阶段以摆动生成器为样板验证了机制；本页记录推广到其余生成器、按测量接入生成缓存，以及工程格式 v2 的实现状态。
@@ -258,7 +261,7 @@
 - 提交携带裁剪到不透明像素的栅格与其画布矩形（`WorkspacePaintRaster.rect`），不缩回画布分辨率。矩形从图层原矩形量起：未移动的边保留原坐标，扩展或裁剪都保持密度，整数边界取外包框，矩形与整数边界相同时不存储。提交时只读取图层原区域与笔触写过的区域，不复制整张画布。完全擦空的图层与此前相同，变为画布原点的 1×1 透明像素。
 - 深度拆分前层保持栅格尺寸：按像素中心从提交像素取样，网格对齐时逐位复制。保留网格的绘画、重建网格的绘画与导入 CMO3 的绘画都按 `LayerSpace` 寻址图块（`RasterPaintCommit` 的切片重映射、`Cmo3ModelImport` 的绘画纹理坐标）；连通块拆分在源图层自身的栅格中裁剪部件，部件保持原密度。
 
-纹理命令（`application/WorkspaceTextureEdits`、`WorkspaceTextureOperations`）：纹理工作区（纹理集页面与密度热力图、逐层尺寸面板、编辑画布的原始像素预览，见[操作速查](../guide/USER_GUIDE.md#纹理工作区)）经 `WorkspaceTexturePort` 提交，与 MCP `layer_set_canvas_rect`、`layer_replace_image`、`layer_set_pixel_density`、`atlas_set_tile`、`atlas_set_budget`、`atlas_pack` 共用同一纯候选，均为后台任务与原子批量成员，查询为 `layer_get_texture`、`atlas_get`、`atlas_check_placement` 与 `atlas_render_page`（见 [MCP 接口](../agent/MCP_AUTHORING.md#纹理与纹理集)）。分数矩形写入 umamo 的源图层清单（整数）时取整数边界；按清单解析纹理的网格迁移（`LayerTexture.of`）对分数矩形只是近似（整数矩形精确：图块宽高为栅格尺寸、清单为画布尺寸，比值即密度）。生成输入的补边（`RigGenerationSource.padded`，保留网格、新建网格与 `art_primitive` 部件的纹理覆盖）对高密度图层按原密度补透明，不降采样；`art_primitive`、`canvas_mesh_create` / `canvas_mesh_rebuild` 的 `canvas_uvs` 为画布单位，经 `LayerTexture.of` 映射到高分辨率图块。
+纹理命令（`application/WorkspaceTextureEdits`、`WorkspaceTextureOperations`）：纹理工作区（纹理集页面与密度热力图、逐层尺寸面板、编辑画布的原始像素预览，见[操作速查](../guide/USER_GUIDE.md#纹理工作区要点)）经 `WorkspaceTexturePort` 提交，与 MCP `layer_set_canvas_rect`、`layer_replace_image`、`layer_set_pixel_density`、`atlas_set_tile`、`atlas_set_budget`、`atlas_pack` 共用同一纯候选，均为后台任务与原子批量成员，查询为 `layer_get_texture`、`atlas_get`、`atlas_check_placement` 与 `atlas_render_page`（见 [MCP 接口](../agent/MCP_AUTHORING.md#纹理与纹理集)）。分数矩形写入 umamo 的源图层清单（整数）时取整数边界；按清单解析纹理的网格迁移（`LayerTexture.of`）对分数矩形只是近似（整数矩形精确：图块宽高为栅格尺寸、清单为画布尺寸，比值即密度）。生成输入的补边（`RigGenerationSource.padded`，保留网格、新建网格与 `art_primitive` 部件的纹理覆盖）对高密度图层按原密度补透明，不降采样；`art_primitive`、`canvas_mesh_create` / `canvas_mesh_rebuild` 的 `canvas_uvs` 为画布单位，经 `LayerTexture.of` 映射到高分辨率图块。
 
 ## 性能基线
 

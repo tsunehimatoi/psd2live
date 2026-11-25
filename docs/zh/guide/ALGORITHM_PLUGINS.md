@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/guide/ALGORITHM_PLUGINS.md) · [한국어](../../ko/guide/ALGORITHM_PLUGINS.md) · [日本語](../../ja/guide/ALGORITHM_PLUGINS.md)
+
 # 算法插件
 
 > **单版本与共享运行时架构**：当前绑定修改器使用规范 facade `version = 1`（`rig.scaffold` 保留 `v1` 与 `v2`）。`:algorithms:binding` 通过 `pluginPackages` 任务产出单一共享 `shared/runtime.jar`（入口 `ExpressionWorker`）与各类型的轻量 `<slug>/plugin.json` 清单；类型与清单数量以 `algorithms/binding/build.gradle.kts` 的声明及生成的 `index.txt` 为准。宿主按命令与文件摘要池化常驻工作进程并缓存输入/上下文资源哈希。外部插件可继续以任意语言实现 `protocol: 1` 工作进程协议。

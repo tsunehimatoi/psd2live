@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/spec/RIG_PRESETS.md) · [한국어](../../ko/spec/RIG_PRESETS.md) · [日本語](../../ja/spec/RIG_PRESETS.md)
+
 # Rig 预设架构：部位、基础算法与模块
 
 [文档目录](../../README.md) · 模块与算法目录：面部 · [变形器与参数](DEFORMER_AND_PARAMETER_SPEC.md) · [文档层](DOCUMENT_LAYER.md)

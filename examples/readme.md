@@ -1,6 +1,6 @@
 # 示例素材与输出
 
-[项目首页](../README.md) · [操作速查](../docs/zh/guide/USER_GUIDE.md) · [独立示例仓库](https://github.com/tsunehimatoi/psd2live-examples)
+[项目首页](../README.md) · [操作速查](../docs/zh/guide/USER_GUIDE.md)（[English](../docs/en/guide/USER_GUIDE.md) · [한국어](../docs/ko/guide/USER_GUIDE.md) · [日本語](../docs/ja/guide/USER_GUIDE.md)） · [独立示例仓库](https://github.com/tsunehimatoi/psd2live-examples)
 
 示例素材、工程、导出与预览由独立示例仓库维护，大文件通过版本化 Release 附件分发。主项目保留说明与固定素材清单。
 

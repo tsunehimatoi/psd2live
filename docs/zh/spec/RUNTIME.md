@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/spec/RUNTIME.md) · [한국어](../../ko/spec/RUNTIME.md) · [日本語](../../ja/spec/RUNTIME.md)
+
 # PSD2Live 运行时
 
 `runtime/` 是一个独立的 Rust 库（MIT），播放 PSD2Live 编译出的 `.p2lrt` 模型：参数驱动的变形、物理和动作片段，提供 C ABI 给其他语言和引擎调用。编辑器通过 `:format-eval`（JNA）调用同一个库。

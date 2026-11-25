@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/spec/LAYOUT_MANIFEST.md) · [한국어](../../ko/spec/LAYOUT_MANIFEST.md) · [日本語](../../ja/spec/LAYOUT_MANIFEST.md)
+
 # Layout 清单
 
 [文档目录](../../README.md) · [使用指南](../guide/LAYOUT.md) · [PSD 素材与命名](PSD_LAYER_SPEC.md)

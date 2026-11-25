@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/agent/MCP_AUTHORING.md) · [한국어](../../ko/agent/MCP_AUTHORING.md) · [日本語](../../ja/agent/MCP_AUTHORING.md)
+
 # MCP 使用与接口
 
 [文档目录](../../README.md) · [设计与验收](AGENT_DESIGN.md) · [能力实测](../STATUS.md)

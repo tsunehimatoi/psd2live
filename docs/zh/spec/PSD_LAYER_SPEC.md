@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/spec/PSD_LAYER_SPEC.md) · [한국어](../../ko/spec/PSD_LAYER_SPEC.md) · [日本語](../../ja/spec/PSD_LAYER_SPEC.md)
+
 # PSD 素材与命名
 
 [文档目录](../../README.md) · [操作速查](../guide/USER_GUIDE.md)

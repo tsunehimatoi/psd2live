@@ -54,4 +54,4 @@ iOS needs `cargo build --release --lib --target aarch64-apple-ios` on a Mac, whi
 
 ## WebAssembly and Godot
 
-The web player (`targets/web`) and the Godot node (`runtime/godot`) ship with PSD2Live; see `docs/zh/spec/RUNTIME.md`.
+The web player (`targets/web`) and the Godot node (`runtime/godot`) ship with PSD2Live. See the runtime spec: [中文](../../docs/zh/spec/RUNTIME.md) · [English](../../docs/en/spec/RUNTIME.md) · [한국어](../../docs/ko/spec/RUNTIME.md) · [日本語](../../docs/ja/spec/RUNTIME.md).

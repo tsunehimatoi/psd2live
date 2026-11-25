@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/guide/TEXTURE_UPSCALE.md) · [한국어](../../ko/guide/TEXTURE_UPSCALE.md) · [日本語](../../ja/guide/TEXTURE_UPSCALE.md)
+
 # 纹理高清化
 
 [文档目录](../../README.md) · [操作速查](USER_GUIDE.md) · [开发与命令行](DEVELOPMENT.md)

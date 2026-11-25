@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/guide/DEPTH_SPLIT.md) · [한국어](../../ko/guide/DEPTH_SPLIT.md) · [日本語](../../ja/guide/DEPTH_SPLIT.md)
+
 # 前后分层图文教程
 
 [文档目录](../../README.md) · [操作速查](USER_GUIDE.md) · [画布编辑](CANVAS_EDITOR.md)

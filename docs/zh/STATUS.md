@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../en/STATUS.md) · [한국어](../ko/STATUS.md) · [日本語](../ja/STATUS.md)
+
 # Agent 能力实测
 
 [文档目录](../README.md) · [MCP 使用与接口](agent/MCP_AUTHORING.md) · [Agent 设计与验收](agent/AGENT_DESIGN.md)

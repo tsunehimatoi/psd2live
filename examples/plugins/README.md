@@ -24,4 +24,4 @@ python examples/plugins/package.py --payload build/plugin-example --output build
 
 For Git installation, commit the **contents** of the ZIP, including `plugin.json`, at the repository root of a dedicated distribution branch. Do not put build scripts or unlisted source files in that package. Use `ref` to choose a branch, tag or commit; the installer records the resolved commit. No submodules are fetched.
 
-See the [plugin protocol](../../docs/zh/guide/ALGORITHM_PLUGINS.md) for requests, buffers, deterministic IDs, response operations and limitations.
+See the plugin protocol for requests, buffers, deterministic IDs, response operations and limitations: [中文](../../docs/zh/guide/ALGORITHM_PLUGINS.md) · [English](../../docs/en/guide/ALGORITHM_PLUGINS.md) · [한국어](../../docs/ko/guide/ALGORITHM_PLUGINS.md) · [日本語](../../docs/ja/guide/ALGORITHM_PLUGINS.md).

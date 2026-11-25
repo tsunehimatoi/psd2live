@@ -1,3 +1,6 @@
+<!-- lang: zh en ko ja -->
+> **中文** · [English](../../en/guide/DEFORM_PATHS.md) · [한국어](../../ko/guide/DEFORM_PATHS.md) · [日本語](../../ja/guide/DEFORM_PATHS.md)
+
 # 变形路径（实验性）
 
 [文档目录](../../README.md) · [画布编辑](CANVAS_EDITOR.md)
