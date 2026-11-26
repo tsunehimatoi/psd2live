@@ -240,8 +240,9 @@ jobs:
       - name: Verify packaged Cubism preview bridge
         shell: pwsh
         run: |
-          $jar = "build/compose/binaries/main/app/PSD2Live/app/psd2live-$env:VERSION.jar"
-          python -c "import sys,zipfile; names=zipfile.ZipFile(sys.argv[1]).namelist(); assert 'cubism/windows-x86_64/live2d_renderer.dll' in names" $jar
+          $jars = @(Get-ChildItem 'build/compose/binaries/main/app/PSD2Live/app' -File -Filter "psd2live-$env:VERSION*.jar")
+          if ($jars.Count -ne 1) { throw "Expected one packaged PSD2Live JAR, found $($jars.Count)" }
+          python -c "import sys,zipfile; names=zipfile.ZipFile(sys.argv[1]).namelist(); assert 'cubism/windows-x86_64/live2d_renderer.dll' in names" $jars[0].FullName
 
       # The same packages again with ffmpeg among the app's resources (resources/ffmpeg/), so video and
       # animated image export work without installing ffmpeg. A pinned Gyan.dev essentials build: GPL,
@@ -284,8 +285,9 @@ jobs:
       - name: Verify packaged Cubism preview bridge with ffmpeg
         shell: pwsh
         run: |
-          $jar = "build/compose/binaries/main/app/PSD2Live/app/psd2live-$env:VERSION.jar"
-          python -c "import sys,zipfile; names=zipfile.ZipFile(sys.argv[1]).namelist(); assert 'cubism/windows-x86_64/live2d_renderer.dll' in names" $jar
+          $jars = @(Get-ChildItem 'build/compose/binaries/main/app/PSD2Live/app' -File -Filter "psd2live-$env:VERSION*.jar")
+          if ($jars.Count -ne 1) { throw "Expected one packaged PSD2Live JAR, found $($jars.Count)" }
+          python -c "import sys,zipfile; names=zipfile.ZipFile(sys.argv[1]).namelist(); assert 'cubism/windows-x86_64/live2d_renderer.dll' in names" $jars[0].FullName
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
@@ -490,8 +492,14 @@ jobs:
           cp "$DEB" "$OUT/PSD2Live-${VERSION}-linux-${{ matrix.asset_arch }}.deb"
           APP=build/compose/binaries/main/app
           test -x "$APP/PSD2Live/bin/PSD2Live"
+          shopt -s nullglob
+          jars=("$APP/PSD2Live/lib/app/psd2live-$VERSION"*.jar)
+          if [[ ${#jars[@]} -ne 1 ]]; then
+            echo "::error::Expected one packaged PSD2Live JAR, found ${#jars[@]}"
+            exit 1
+          fi
           python3 -c 'import sys,zipfile; names=zipfile.ZipFile(sys.argv[1]).namelist(); assert sys.argv[2] in names' \
-            "$APP/PSD2Live/lib/app/psd2live-$VERSION.jar" "cubism/${{ matrix.platform }}/liblive2d_renderer.so"
+            "${jars[0]}" "cubism/${{ matrix.platform }}/liblive2d_renderer.so"
           tar -C "$APP" -czf "$OUT/PSD2Live-${VERSION}-linux-${{ matrix.asset_arch }}.tar.gz" PSD2Live
           ls -la "$OUT"
           # Soft file-existence smoke (no GUI): confirm package is non-empty
