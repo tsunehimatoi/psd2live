@@ -7,6 +7,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.contentOrNull
 
 /** An applied provider remains available to downstream modifiers at the same captured targets. */
 @Serializable
@@ -120,16 +121,44 @@ internal data class RigModifierStack(
 
     /** The rear slice inherits the source binding. The front follows its deformation through Glue. */
     fun retargetDepthSplit(sourceMesh: String, backMesh: String, sourceLayer: String, backLayer: String,
-                           glueKeys: Map<String, String>): RigModifierStack {
-        val replacements = mapOf(ModifierTarget("mesh", sourceMesh) to ModifierTarget("mesh", backMesh),
-            ModifierTarget("layer", sourceLayer) to ModifierTarget("layer", backLayer))
-        fun retarget(targets: List<ModifierTarget>) = targets.map { replacements[it] ?: it }.distinct()
+                           glueKeys: Map<String, String>): RigModifierStack = retarget(
+        mapOf(ModifierTarget("mesh", sourceMesh) to listOf(ModifierTarget("mesh", backMesh)),
+            ModifierTarget("layer", sourceLayer) to listOf(ModifierTarget("layer", backLayer))), glueKeys, depthSplit = true)
+
+    /** Follow replacements through captured targets. Only one-to-one substitutions can reuse vertex-indexed edits. */
+    fun retarget(replacements: Map<ModifierTarget, List<ModifierTarget>>, glueKeys: Map<String, String> = emptyMap(),
+                 depthSplit: Boolean = false): RigModifierStack {
+        if (replacements.isEmpty()) return this
+        fun retarget(targets: List<ModifierTarget>) = targets.flatMap { replacements[it] ?: listOf(it) }.distinct()
+        val single = replacements.mapNotNull { (from, targets) -> targets.singleOrNull()?.let { from to it } }.toMap()
+        val meshes = single.filterKeys { it.kind == "mesh" }.mapKeys { it.key.id }.mapValues { it.value.id }
+        val authorNodes = appliedNodes.filter { (id, _) -> instances.any { it.id == id && it.type == ModifierAuthorEdits.TYPE } }
+            .filterKeys { id -> instances[index(id)].targets.all { it !in replacements || it in single } &&
+                (!depthSplit || overrides[id].orEmpty().none { command -> command["op"] == JsonPrimitive("canvas_topology") &&
+                    (command["id"] as? JsonPrimitive)?.contentOrNull in meshes }) }
+        fun rewrite(command: JsonObject): JsonObject {
+            val target = (command["target"] as? JsonPrimitive)?.contentOrNull
+            val id = (command["id"] as? JsonPrimitive)?.contentOrNull
+            val kind = target?.substringBefore(':')
+            val namespace = if (kind == "warp" || kind == "rotation") "deformer" else kind
+            val targetId = target?.substringAfter(':', "")
+            val newTarget = if (namespace in setOf("mesh", "deformer", "part", "layer") && !targetId.isNullOrBlank() &&
+                targetId.none(Char::isISOControl)) single[ModifierTarget(requireNotNull(namespace), targetId)] else null
+            val newId = if (command["mesh_baseline"] == null) null else meshes[id]
+            return when {
+                newTarget != null -> JsonObject(command + ("target" to JsonPrimitive("$kind:${newTarget.id}")))
+                newId != null -> JsonObject(command + ("id" to JsonPrimitive(newId)))
+                else -> command
+            }
+        }
         return copy(instances = instances.map { instance ->
             // Applied patches keep their captured inputs. The edit gate rejects changes they cannot replay.
-            if (instance.id in appliedNodes) instance
+            if (instance.id in appliedNodes && instance.id !in authorNodes) instance
             else {
                 val children = instance.config["subConfigs"] as? JsonObject
-                val config = if (instance.type == "simulation") depthSplitSimulation(instance.config, sourceMesh, backMesh, glueKeys)
+                val config = if (instance.type == "simulation") meshes.entries.fold(instance.config) { config, (from, to) ->
+                    retargetSimulation(config, from, to, glueKeys)
+                }
                 else if (instance.type !in ModifierPartConfig.features || children == null) instance.config else {
                     val updated = children.mapValues { (_, value) ->
                         val child = value as? JsonObject ?: return@mapValues value
@@ -142,10 +171,15 @@ internal data class RigModifierStack(
                 }
                 instance.copy(targets = retarget(instance.targets), config = config)
             }
-        }, appliedCapabilities = appliedCapabilities.map { it.copy(targets = retarget(it.targets)) })
+        }, appliedCapabilities = appliedCapabilities.map { it.copy(targets = retarget(it.targets)) },
+            appliedNodes = appliedNodes + authorNodes.mapValues { (_, node) ->
+                node.copy(capability = node.capability.copy(targets = retarget(node.capability.targets)))
+            }, overrides = overrides.mapValues { (id, commands) ->
+                if (id in appliedNodes && id !in authorNodes) commands else commands.map(::rewrite)
+            })
     }
 
-    private fun depthSplitSimulation(config: JsonObject, source: String, back: String, glueKeys: Map<String, String>): JsonObject {
+    private fun retargetSimulation(config: JsonObject, source: String, back: String, glueKeys: Map<String, String>): JsonObject {
         // Keep the saved bake until the normal simulation preparation can refresh it against the new prefix.
         val updated = config.toMutableMap()
         val sourceId = JsonPrimitive(source)

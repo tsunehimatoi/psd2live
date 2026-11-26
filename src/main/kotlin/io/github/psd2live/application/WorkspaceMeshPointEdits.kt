@@ -6,9 +6,73 @@ import io.github.psd2live.core.modifier.*
 import io.github.psd2live.project.WorkspaceDocument
 import io.github.psd2live.project.config
 import kotlinx.serialization.json.*
+import org.umamo.render.eval.drawableSpaceMapping
+import org.umamo.runtime.model.DrawableId
+import org.umamo.runtime.model.ParameterId
 
 /** Edit the evaluated topology, including the keyforms, paths, glue and painted groups attached to it. */
 internal object WorkspaceMeshPointEdits {
+    /** Re-express a moved vertex in the new rear slice's modifier space. The new journal guards that exact input. */
+    fun rebaseDepthSplit(document: WorkspaceDocument, before: RigPreviewModel, source: DrawableId, back: DrawableId,
+                         work: WorkspaceRasterWork): WorkspaceDocument {
+        val old = before.modifierEvaluation ?: return document
+        var next = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack))
+        val owners = next.instances.filter { instance ->
+            instance.type == ModifierAuthorEdits.TYPE && instance.id in next.appliedNodes &&
+                next.overrides[instance.id].orEmpty().any { command -> command["mesh_baseline"] != null &&
+                    command["op"] == JsonPrimitive("canvas_geometry") && command["id"] == JsonPrimitive(back.raw) }
+        }
+        if (owners.isEmpty()) return document
+        val pipeline = PSD2LivePipeline().also { it.deferRuntimeBundles = true; it.reuseModifierInputs(before, shareOwner = false) }
+        try {
+            for (owner in owners) {
+                work.checkpoint()
+                val index = next.index(owner.id)
+                var previous = PuppetIr.toPuppet(if (index == 0) old.authored else old.outputs[index - 1])
+                val prefix = document.config().let { it.copy(rigEdits = it.rigEdits.copy(modifierStack = next.prefix(index).toJson())) }
+                var current = pipeline.buildPreview(document.source, prefix, ProgressListener { _, _ -> work.checkpoint() }).rig.puppet
+                val commands = old.stack.overrides.getValue(owner.id).zip(next.overrides.getValue(owner.id)).map { (from, to) ->
+                    val rewritten = if (from["id"] == JsonPrimitive(source.raw) && to["id"] == JsonPrimitive(back.raw)) {
+                        val oldDrawable = previous.drawables.single { it.id == source }
+                        val newDrawable = current.drawables.single { it.id == back }
+                        val oldMesh = requireNotNull(oldDrawable.mesh)
+                        val newMesh = requireNotNull(newDrawable.mesh)
+                        val oldUV = RasterMeshJournal.TextureCoordinates(previous, oldDrawable).toCanvas(oldMesh.uvs)
+                        val newUV = RasterMeshJournal.TextureCoordinates(current, newDrawable).toCanvas(newMesh.uvs)
+                        require(oldMesh.indices.contentEquals(newMesh.indices) && oldUV.size == newUV.size &&
+                            oldUV.indices.all { kotlin.math.abs(oldUV[it] - newUV[it]) <= .01f }) {
+                            "Depth split cannot match the edited vertices of ${source.raw}"
+                        }
+                        val pose = (from["pose"] ?: from.getValue("key")).jsonObject.entries.associate { (id, value) ->
+                            ParameterId(id) to value.jsonPrimitive.float
+                        }
+                        val oldSpace = requireNotNull(drawableSpaceMapping(previous, pose, source))
+                        val newSpace = requireNotNull(drawableSpaceMapping(current, pose, back))
+                        val oldReference = oldSpace.localToWorld(CanvasGeometryJournal.reference(previous, from))
+                        val newReference = CanvasGeometryJournal.reference(current, to)
+                        val newWorld = newSpace.localToWorld(newReference)
+                        val desired = oldSpace.localToWorld(CanvasGeometryJournal.points(previous, from))
+                        val delta = FloatArray(desired.size) { desired[it] - oldReference[it] }
+                        val vertices = (0 until newMesh.vertexCount).filterTo(HashSet()) { delta[it * 2] != 0f || delta[it * 2 + 1] != 0f }
+                        val points = newSpace.worldToLocal(FloatArray(delta.size) { newWorld[it] + delta[it] }, newReference, vertices)
+                        val command = JsonObject(to - setOf("v", "n", "q", "i", "d") + mapOf(
+                            "points" to JsonArray(points.map(::JsonPrimitive)),
+                            "mesh_baseline" to JsonPrimitive(RasterMeshJournal.fingerprint(newMesh)),
+                            "mesh_parent" to (newDrawable.parentDeformerId?.raw?.let(::JsonPrimitive) ?: JsonNull)))
+                        CanvasGeometryJournal.encode(current, command)
+                    } else to
+                    previous = RigAuthoringJournal.apply(previous, from)
+                    current = RigAuthoringJournal.apply(current, rewritten)
+                    rewritten
+                }
+                next = next.withOverrides(owner.id, commands)
+            }
+        } finally {
+            pipeline.modifierBuildOwner.close()
+        }
+        return document.copy(rigEdits = document.rigEdits.copy(modifierStack = next.toJson()))
+    }
+
     private fun structural(command: JsonObject): Boolean = when (command["op"]?.jsonPrimitive?.content) {
         "canvas_topology" -> true
         "canvas_geometry" -> command["kind"]?.jsonPrimitive?.content == "mesh" && command["key"]?.jsonObject?.isEmpty() == true

@@ -1,6 +1,7 @@
 package io.github.psd2live.core
 
 import org.umamo.format.art.LayerBounds
+import org.umamo.format.art.LayerId
 import org.umamo.format.art.LayerRaster
 import org.umamo.format.art.SourceArt
 import org.umamo.format.art.SourceLayer
@@ -98,6 +99,12 @@ internal object RigGenerationSource {
         val owned = ArtPrimitiveJournal.ownedLayers(config.rigEdits)
         val superseded = ArtPrimitiveJournal.supersededLayers(config.rigEdits)
         val primitiveCoverage = ArtPrimitiveJournal.coverage(config.rigEdits)
+        val retainedTextures = ArtPrimitiveJournal.retainedTextures(config.rigEdits)
+        val frozenLayers = if (retainedTextures.isEmpty()) emptyMap() else reference.layers.associateBy { it.id.raw }
+        fun retained(id: String): SourceLayer? {
+            val saved = frozenLayers[retainedTextures[id]] ?: return null
+            return object : SourceLayer by saved { override val id = LayerId(id) }
+        }
         // A part a later record superseded, or one deleted since (its pinned stand-in still generates, up to the
         // record that removes its mesh).
         fun gone(id: String) = id !in current && (superseded.any { id == it || id.startsWith("$it:") } || resolution.isPartLayer(id))
@@ -122,7 +129,9 @@ internal object RigGenerationSource {
                 layer.copy(source = MouthLipLayer(lip.ownerId, lip.side, owner, covered.raster, covered.bounds))
             } else if (gone(layer.source.id.raw)) {
                 // Superseded by an art primitive: only journal entries before that record address it.
-                layer.copy(source = ArtPrimitiveJournal.placeholder(layer.source), opaquePixels = 1)
+                val texture = retained(layer.source.id.raw)?.let { padded(it, layer.source.bounds) }
+                    ?: ArtPrimitiveJournal.placeholder(layer.source)
+                layer.copy(source = texture, opaquePixels = 1)
             } else {
                 val artwork = current[layer.source.id.raw] ?: current.entries
                     .filter { layer.source.id.raw.startsWith("${it.key}:") }.maxByOrNull { it.key.length }?.value
@@ -146,7 +155,8 @@ internal object RigGenerationSource {
             layer.copy(source = MouthLipLayer(lip.ownerId, lip.side, owner, covered.raster, covered.bounds), opaquePixels = layer.opaquePixels.coerceAtLeast(1))
         } + primitiveCoverage.filterNot { (id, _) -> resolution.active && geometry.layers.any { it.source.id.raw == id } }.mapNotNull { (id, coverage) ->
             // Primitive layers are textured, never generated. A superseded one keeps a transparent tile.
-            val artwork = current[id]?.let { padded(it, coverage) } ?: if (id in superseded) ArtPrimitiveJournal.placeholder(id, id, coverage) else null
+            val artwork = (current[id] ?: retained(id))?.let { padded(it, coverage) }
+                ?: if (id in superseded) ArtPrimitiveJournal.placeholder(id, id, coverage) else null
             artwork?.let { CharacterAnalyzer.classify(it, textureConfig).let { classified -> classified.copy(opaquePixels = classified.opaquePixels.coerceAtLeast(1)) } }
         })
         if (RigBuildProfile.recording) RigBuildProfile.add("prepare: texture layers", System.nanoTime() - texturesStart)

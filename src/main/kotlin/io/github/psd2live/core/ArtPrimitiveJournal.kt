@@ -43,6 +43,16 @@ internal object ArtPrimitiveJournal {
 		primitives(command).map { it.getValue("layer_id").jsonPrimitive.content }
 	}
 
+	const val RETAINED_TEXTURE = "retained_texture"
+
+	/** A frozen raster for copies that outlive their original source layer. */
+	fun retainedTextures(overlay: RigEditOverlay): Map<String, String> = buildMap {
+		for (record in commands(overlay)) {
+			val raster = record[RETAINED_TEXTURE]?.jsonPrimitive?.contentOrNull ?: continue
+			put(record.getValue("supersedes_layers").jsonArray.single().jsonPrimitive.content, raster)
+		}
+	}
+
 	/** Layers a record removed. They exist only before that record's position in the journal. */
 	fun supersededLayers(overlay: RigEditOverlay): Set<String> = commands(overlay).flatMapTo(LinkedHashSet()) { command ->
 		command.getValue("supersedes_layers").jsonArray.map { it.jsonPrimitive.content }

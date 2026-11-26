@@ -127,13 +127,15 @@ object AlgorithmResultValidation {
         }
         val meshById = rig.meshes.associateBy { it.id }
         rig.glues.forEach { glue ->
-            require(glue.meshA in meshes && glue.meshB in meshes && glue.meshA != glue.meshB)
+            require(glue.meshA in meshes && glue.meshB in meshes)
             val a = meshById.getValue(glue.meshA).geometry?.positions?.size?.div(2) ?: 0
             val b = meshById.getValue(glue.meshB).geometry?.positions?.size?.div(2) ?: 0
             finite(glue.intensity); require(glue.intensity in 0f..1f); channels(glue.channels)
             glue.pairs.forEach { pair ->
                 require(pair.a in 0 until a && pair.b in 0 until b)
                 finite(pair.weightA, pair.weightB); require(pair.weightA in 0f..1f && pair.weightB in 0f..1f)
+                // Polygon seams can place a cut vertex and its ancestor on the same mesh.
+                if (glue.meshA == glue.meshB) require(pair.a != pair.b && (pair.weightA == 0f || pair.weightB == 0f))
             }
         }
         val outputs = HashSet<String>()

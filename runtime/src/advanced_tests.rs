@@ -77,6 +77,23 @@ fn worst(a: &[f32], b: &[f32]) -> f32 {
 }
 
 #[test]
+fn a_cut_vertex_can_follow_another_vertex_on_its_mesh() {
+    let (mut rig, _) = arm();
+    let mut evaluator = Evaluator::new();
+    let before = evaluator.evaluate(&rig, &[30.0]).vertices[0].clone();
+    rig.glues.push(Glue {
+        id: "partition-follow".into(), mesh_a: 0, mesh_b: 0, intensity: 1.0,
+        pairs: vec![GluePair { a: 2, b: 0, weight_a: 0.5, weight_b: 0.0 }], channels: vec![],
+    });
+    let after = &evaluator.evaluate(&rig, &[30.0]).vertices[0];
+    assert_eq!(&after[..4], &before[..4]);
+    assert_eq!(&after[6..], &before[6..]);
+    for k in 0..2 {
+        assert!((after[4 + k] - (before[4 + k] + before[k]) * 0.5).abs() < 1e-5);
+    }
+}
+
+#[test]
 fn skinning_follows_the_arc_between_keys_and_the_bake_at_them() {
     let (rig, forearm) = arm();
     let mut advanced = Advanced::new();

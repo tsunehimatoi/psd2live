@@ -1,6 +1,8 @@
 package io.github.psd2live.application
 
 import io.github.psd2live.core.*
+import io.github.psd2live.core.modifier.ModifierTarget
+import io.github.psd2live.core.modifier.RigModifierStack
 import io.github.psd2live.project.*
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -172,7 +174,13 @@ internal object WorkspacePartitionEdits {
                 authored, drawable.id.raw, pieceIds, geometry), mapOf(drawable.id.raw to pieceIds))
             // Generated parts take the bones of the original; their parents are generated unless the original's was chosen.
             val overlay = if (generated) SourcePartitionJournal.migrateBones(simulations, drawable.id.raw, pieceIds) else simulations
+            val modifiers = overlay.modifierStack?.let { raw ->
+                RigModifierStack.fromJson(raw).retarget(mapOf(
+                    ModifierTarget("mesh", drawable.id.raw) to pieceIds.map { ModifierTarget("mesh", it) },
+                    ModifierTarget("layer", id) to pieces.map { ModifierTarget("layer", it.id.raw) })).toJson()
+            }
             WorkspaceArtPrimitives.replaceLayer(frozen, model, id, pieces, sides, explicitParentOnly = generated).copy(rigEdits = overlay.copy(
+                modifierStack = modifiers,
                 splitDrawableIds = overlay.splitDrawableIds + pieces.map { it.id.raw }.zip(pieceIds)))
         }, model, "split", drawable.id, id, parts, SourcePartitionJournal.splitParts(command),
             mapOf(drawable.id to partitioned.ids), mapOf(drawable.id to partitioned.ids), JsonObject(emptyMap()), userRecord, work)

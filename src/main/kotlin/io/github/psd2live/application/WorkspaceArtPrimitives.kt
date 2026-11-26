@@ -42,7 +42,22 @@ internal object WorkspaceArtPrimitives {
             parts.map { declaration(generatedParts, authoredParts, it) }, emptyList(), emptyList(),
             masks.mapKeys { generatedId(it.key) }, version = ArtPrimitiveV2.VERSION_V2) + extra)
         val placed = document(generatedParts != null)
-        val candidate = placed.copy(rigEdits = placed.rigEdits.copy(authoringJournal = placed.rigEdits.authoringJournal + record))
+        // Pasted meshes keep sampling the original pixels after the source layer is removed from the canvas.
+        val authored = model.authored.rig
+        val sharesTexture = authored.puppet.drawables.any { it.id.raw in authored.copiedDrawableIds &&
+            authored.layerIdByDrawableId[it.id.raw] == originalLayer }
+        val (art, entry) = if (!sharesTexture) placed to record else {
+            val source = model.analysis.source.layers.firstOrNull { it.id.raw == originalLayer }
+                ?: model.analysis.layers.first { it.source.id.raw == originalLayer }.source
+            val frozen = placed.generationSource ?: model.analysis.source
+            val occupied = (frozen.layers + placed.source.layers).mapTo(HashSet()) { it.id.raw }
+            val id = StableIds.fresh(StableIds.stem("split-texture:", originalLayer, parts.map { it.layer })) { it in occupied }
+            val saved = (WorkspaceSourceLayer.copyOf(source, source.order) as WorkspaceSourceLayer).copy(
+                id = org.umamo.format.art.LayerId(id), sourceAssetId = null, sourceSpatialReferenceId = null)
+            placed.copy(generationSource = WorkspaceSourceArt(frozen.widthPx, frozen.heightPx, frozen.layers + saved, frozen.groups)) to
+                JsonObject(record + (ArtPrimitiveJournal.RETAINED_TEXTURE to JsonPrimitive(id)))
+        }
+        val candidate = art.copy(rigEdits = art.rigEdits.copy(authoringJournal = art.rigEdits.authoringJournal + entry))
         val decoded = candidate.config()
         val config = if ("drawOrderOverrides" in candidate.settings) decoded else decoded.copy(drawOrderOverrides = model.config.drawOrderOverrides)
         work.progress(0.8f, "Merging the split into the rig")
@@ -102,26 +117,36 @@ internal object WorkspaceArtPrimitives {
         if (meshes != null) throw IllegalArgumentException("Mesh $id was split and no longer exists; use its parts: ${meshes.joinToString()}")
     }
 
-    /** Superseded layer and mesh ids, each with the current ids that replaced it. */
-    fun supersededBy(overlay: RigEditOverlay): Map<String, List<String>> =
-        ArtPrimitiveJournal.replacementDrawables(overlay) + ArtPrimitiveJournal.replacementLayers(overlay)
-
     /** Request fields that name an existing layer or object; new ids and display names are not checked. */
     internal val referenceFields = setOf("layer_id", "layer_ids", "target", "targets", "destination", "source_id", "middle_ids",
         "mesh_a", "mesh_b", "meshes", "mesh_id", "mesh_ids", "drawable_id", "drawable_ids", "object_id", "object_ids")
 
     /** Every reference field in [request] naming a superseded layer or mesh, alone or as `kind:id`. */
-    fun requireCurrentReferences(overlay: RigEditOverlay, request: JsonObject) {
-        val superseded = supersededBy(overlay)
-        if (superseded.isEmpty()) return
+    fun requireCurrentReferences(overlay: RigEditOverlay, model: RigPreviewModel, request: JsonObject) {
+        val supersededLayers = ArtPrimitiveJournal.replacementLayers(overlay)
+        val supersededMeshes = ArtPrimitiveJournal.replacementDrawables(overlay)
+        if (supersededLayers.isEmpty() && supersededMeshes.isEmpty()) return
+        val meshes = model.rig.puppet.drawables.mapTo(HashSet()) { it.id.raw }
+        val layers = model.analysis.layers.mapTo(HashSet()) { it.source.id.raw }.also { ids ->
+            model.analysis.source.layers.mapTo(ids) { it.id.raw }
+        }
+        fun requireCurrent(kind: String, id: String, live: Set<String>, replaced: Map<String, List<String>>) {
+            if (id in live) return
+            val pieces = replaced[id] ?: return
+            throw IllegalArgumentException("$kind $id was split and no longer exists; use its parts: ${pieces.joinToString()}")
+        }
         fun visit(value: JsonElement, reference: Boolean) {
             when (value) {
                 is JsonObject -> value.forEach { (key, child) -> visit(child, key in referenceFields) }
                 is JsonArray -> value.forEach { visit(it, reference) }
                 is JsonPrimitive -> if (reference && value.isString) {
                     val text = value.content
-                    val id = if (text in superseded) text else text.substringAfter(':', "").takeIf { it in superseded }
-                    if (id != null) requireCurrent(overlay, id)
+                    when {
+                        text in meshes || text in layers -> Unit
+                        text.startsWith("mesh:") -> requireCurrent("Mesh", text.removePrefix("mesh:"), meshes, supersededMeshes)
+                        text.startsWith("layer:") -> requireCurrent("Layer", text.removePrefix("layer:"), layers, supersededLayers)
+                        else -> requireCurrent(overlay, text)
+                    }
                 }
                 else -> Unit
             }

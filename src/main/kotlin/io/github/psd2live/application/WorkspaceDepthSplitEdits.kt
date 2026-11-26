@@ -67,7 +67,7 @@ internal object WorkspaceDepthSplitEdits {
             val parts = listOf(slices.back, slices.front).zip(slices.sliceIds).map { (layer, id) ->
                 WorkspaceArtPrimitives.Part(id, layer.id.raw, requireNotNull(slices.coverage), slices.classification)
             }
-            return WorkspaceArtPrimitives.materialize({ generated ->
+            val split = WorkspaceArtPrimitives.materialize({ generated ->
                 if (!generated) documentWith(placed, overlay, layers.associateWith { slices.parent }) else {
                     // Generated slices take the bones of the source; their parents are generated unless the source's was chosen.
                     val explicit = if (slices.sourceLayerId in model.config.parentOverrides)
@@ -78,6 +78,7 @@ internal object WorkspaceDepthSplitEdits {
                 }
             }, model, "depth", source, slices.sourceLayerId, parts, DepthSplit.splitParts(slices), mapOf(source to slices.sliceIds),
                 mapOf(source to listOf(slices.sliceIds.first())), JsonObject(mapOf("depth" to slices.record.getValue("depth"))), slices.record, work)
+            return WorkspaceMeshPointEdits.rebaseDepthSplit(split, model, source, slices.sliceIds.first(), work)
         }
         val prepared = DepthSplit.prepare(model, config, sourceId, middleIds, frontId, frontMeshId, glueId, names, work::checkpoint)
         work.progress(0.75f, "Preserving depth slice bindings")

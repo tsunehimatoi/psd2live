@@ -52,7 +52,7 @@ internal object WorkspaceDocumentEdits {
               simulationWork: WorkspaceSimulationWork, physicsWork: WorkspacePhysicsWork, rasterWork: WorkspaceRasterWork,
               assetResources: WorkspaceAssetWorkflow?, draftInputs: WorkspaceModifierDraftInputs?): WorkspaceDocument {
         val request = operation.request
-        WorkspaceArtPrimitives.requireCurrentReferences(document.rigEdits, request)
+        WorkspaceArtPrimitives.requireCurrentReferences(document.rigEdits, model, request)
         // Every document operation, not only journal edits: a copy over the bangs is made anew on each build.
         refuseCopies(model, request)
         return when (operation.operation) {

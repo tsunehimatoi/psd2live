@@ -431,6 +431,16 @@ impl Evaluator {
             apply_channels(&glue.channels, values, &mut state, cells);
             let intensity = state.glue_intensity;
             if glue.mesh_a == glue.mesh_b {
+                let vertices = &mut pose.vertices[glue.mesh_a];
+                for pair in &glue.pairs {
+                    for k in 0..2 {
+                        let a = pair.a * 2 + k;
+                        let b = pair.b * 2 + k;
+                        let (pa, pb) = (vertices[a], vertices[b]);
+                        vertices[a] = pa + (pb - pa) * pair.weight_a * intensity;
+                        vertices[b] = pb + (pa - pb) * pair.weight_b * intensity;
+                    }
+                }
                 continue;
             }
             let (a, b) = if glue.mesh_a < glue.mesh_b {

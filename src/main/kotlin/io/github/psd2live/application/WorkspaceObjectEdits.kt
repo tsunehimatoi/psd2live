@@ -1,6 +1,9 @@
 package io.github.psd2live.application
 
 import io.github.psd2live.core.*
+import io.github.psd2live.core.modifier.ModifierTarget
+import io.github.psd2live.core.modifier.RigModifierStack
+import io.github.psd2live.project.PinPoint
 import io.github.psd2live.project.WorkspaceDocument
 import kotlinx.serialization.json.*
 import org.umamo.runtime.model.Deformer
@@ -260,12 +263,30 @@ internal object WorkspaceObjectEdits {
 		val journaled = WorkspaceDocumentEdits.journal(document, model, JsonArray(listOf(RigIdConversion.encode(renames))))
 		val parameters = renames.filter { it.kind == "parameter" }.associate { it.from to it.to }
 		val deformers = renames.filter { it.namespace == "deformer" }.associate { it.from to it.to }
+		val meshes = renames.filter { it.kind == "mesh" }.associate { it.from to it.to }
 		var overlay = journaled.rigEdits
 		// Motion curves and expression entries name parameters, the pose names parts, hit areas name meshes.
 		for (rename in renames) if (rename.kind == "parameter" || rename.kind == "part")
 			overlay = ModelSidecars.withIdRenamed(overlay, rename.kind, rename.from, rename.to)
-		overlay = RigHitAreas.replacingMeshes(overlay, renames.filter { it.kind == "mesh" }.associate { it.from to listOf(it.to) })
-		return journaled.copy(rigEdits = overlay.copy(
+		overlay = RigHitAreas.replacingMeshes(overlay, meshes.mapValues { listOf(it.value) })
+		val orders = journaled.settings["drawOrderOverrides"]?.jsonObject
+		val layerIds = model.analysis.layers.mapTo(HashSet()) { it.source.id.raw }
+		val movedOrders = orders?.mapKeys { (id, _) -> if (id in layerIds) id else meshes[id] ?: id }
+		val settings = if (orders == movedOrders) journaled.settings else
+			JsonObject(journaled.settings + ("drawOrderOverrides" to JsonObject(requireNotNull(movedOrders))))
+		fun pins(points: List<PinPoint>) = points.map { point -> point.mapKeys { parameters[it.key] ?: it.key } }
+		val layout = if (parameters.isEmpty()) journaled.layout else journaled.layout.copy(
+			referencePins = journaled.layout.referencePins.mapValues { (_, points) -> pins(points) },
+			references = journaled.layout.references.map { it.copy(pins = pins(it.pins)) })
+		val modifiers = overlay.modifierStack?.let { raw ->
+			val replacements = renames.mapNotNull { rename ->
+				val kind = rename.namespace.takeIf { it in setOf("mesh", "deformer", "part") } ?: return@mapNotNull null
+				ModifierTarget(kind, rename.from) to listOf(ModifierTarget(kind, rename.to))
+			}.toMap()
+			RigModifierStack.fromJson(raw).retarget(replacements).toJson()
+		}
+		return journaled.copy(settings = settings, layout = layout, rigEdits = overlay.copy(
+			modifierStack = modifiers,
 			physicsEdits = overlay.physicsEdits.map { RigIdConversion.forward(it, parameters) },
 			swingEdits = if (deformers.isEmpty()) overlay.swingEdits else overlay.swingEdits.map { swing ->
 				if (swing.targets.none { it in deformers }) swing else swing.copy(targets = swing.targets.map { deformers[it] ?: it })
