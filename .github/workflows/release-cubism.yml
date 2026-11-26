@@ -1,6 +1,5 @@
-# Cubism-inclusive release packaging.
-# Downloads the proprietary Cubism SDK from a private Release (or configured
-# source repo), builds native bridges, and optionally publishes a GitHub Release.
+# Public releases use the built-in preview. Only private repositories can
+# fetch the Cubism SDK and package its native renderer.
 #
 # Maintainers: protect the GitHub Environment "release-cubism" (required reviewers).
 # On a PUBLIC application repo, NEVER store the SDK zip as a Release asset here —
@@ -37,6 +36,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  PSD2LIVE_INCLUDE_CUBISM: 'false'
   DEFAULT_SDK_TAG: internal-sdk/cubism-5-r.5
   DEFAULT_SDK_ASSET: CubismSdkForNative-5-r.5.zip
   SDK_EXTRACT_DIR: CubismSdkForNative-5-r.5
@@ -49,6 +49,7 @@ jobs:
       version: ${{ steps.ver.outputs.version }}
       tag: ${{ steps.ver.outputs.tag }}
       create_release: ${{ steps.ver.outputs.create_release }}
+      include_cubism: ${{ github.event.repository.private && 'true' || 'false' }}
     steps:
       - name: Resolve version
         id: ver
@@ -73,7 +74,7 @@ jobs:
           echo "Resolved VERSION=$VERSION TAG=v$VERSION create_release=$CREATE"
 
   build-windows:
-    name: Build Windows Cubism
+    name: Build Windows x64
     needs: prepare
     runs-on: windows-2022  # Cubism Core_MT.lib is MSVC 143; windows-latest is VS 2026-only
     environment: release-cubism
@@ -87,6 +88,7 @@ jobs:
         uses: ./.github/actions/setup-jbr
 
       - name: Ensure CMake
+        if: needs.prepare.outputs.include_cubism == 'true'
         shell: bash
         run: |
           if ! command -v cmake >/dev/null 2>&1; then
@@ -95,6 +97,7 @@ jobs:
           cmake --version
 
       - name: Download Cubism SDK
+        if: needs.prepare.outputs.include_cubism == 'true'
         env:
           GH_TOKEN: ${{ secrets.SDK_FETCH_TOKEN || secrets.GITHUB_TOKEN }}
           SDK_REPO: ${{ vars.CUBISM_SDK_SOURCE_REPO || github.repository }}
@@ -126,6 +129,7 @@ jobs:
           Write-Host "Using CUBISM_SDK_ROOT=$sdkRoot"
 
       - name: Verify Cubism SDK tree (Windows)
+        if: needs.prepare.outputs.include_cubism == 'true'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -176,16 +180,19 @@ jobs:
           arch: x64
 
       - name: Setup Ninja
+        if: needs.prepare.outputs.include_cubism == 'true'
         shell: bash
         run: choco install ninja -y
 
       - name: Build native renderer
+        if: needs.prepare.outputs.include_cubism == 'true'
         shell: cmd
         run: |
           set CUBISM_SDK_ROOT=%CUBISM_SDK_ROOT%
           native\build_live2d_renderer.bat -Clean -Deploy
 
       - name: Confirm deployed DLL
+        if: needs.prepare.outputs.include_cubism == 'true'
         shell: bash
         run: |
           DLL="src/main/resources/cubism/windows-x86_64/live2d_renderer.dll"
@@ -199,10 +206,10 @@ jobs:
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
 
-      - name: Package with Cubism
+      - name: Package Windows x64
         shell: cmd
         run: |
-          gradlew.bat packageDistributionForCurrentOS -Ppsd2live.includeCubism=true --no-daemon
+          gradlew.bat packageDistributionForCurrentOS -Ppsd2live.includeCubism=${{ needs.prepare.outputs.include_cubism }} --no-daemon
 
       - name: Collect Windows artifacts
         shell: pwsh
@@ -237,10 +244,10 @@ jobs:
           }
           "FFMPEG_BUNDLE=$bundle" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Package with Cubism and ffmpeg
+      - name: Package Windows x64 with ffmpeg
         shell: cmd
         run: |
-          gradlew.bat packageDistributionForCurrentOS -Ppsd2live.includeCubism=true "-Ppsd2live.ffmpegDir=%FFMPEG_BUNDLE%" --no-daemon
+          gradlew.bat packageDistributionForCurrentOS -Ppsd2live.includeCubism=${{ needs.prepare.outputs.include_cubism }} "-Ppsd2live.ffmpegDir=%FFMPEG_BUNDLE%" --no-daemon
 
       - name: Collect Windows artifacts with ffmpeg
         shell: pwsh
@@ -291,7 +298,7 @@ jobs:
           if-no-files-found: error
 
   build-linux:
-    name: Build Linux Cubism (${{ matrix.arch }})
+    name: Build Linux (${{ matrix.arch }})
     needs: prepare
     runs-on: ${{ matrix.runner }}
     environment: release-cubism
@@ -336,6 +343,7 @@ jobs:
         uses: ./.github/actions/setup-jbr
 
       - name: Download Cubism SDK
+        if: needs.prepare.outputs.include_cubism == 'true'
         env:
           GH_TOKEN: ${{ secrets.SDK_FETCH_TOKEN || secrets.GITHUB_TOKEN }}
           SDK_REPO: ${{ vars.CUBISM_SDK_SOURCE_REPO || github.repository }}
@@ -365,6 +373,7 @@ jobs:
           echo "Using CUBISM_SDK_ROOT=$SDK_ROOT"
 
       - name: Verify Cubism SDK tree (Linux)
+        if: needs.prepare.outputs.include_cubism == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -412,11 +421,13 @@ jobs:
           echo "SDK Core + OpenGL thirdParty (glew/stb) OK"
 
       - name: Build native renderer
+        if: needs.prepare.outputs.include_cubism == 'true'
         run: |
           export CUBISM_SDK_ROOT
           ./native/build_live2d_renderer.sh --clean --deploy
 
       - name: Confirm deployed shared library
+        if: needs.prepare.outputs.include_cubism == 'true'
         run: |
           SO="src/main/resources/cubism/${{ matrix.platform }}/liblive2d_renderer.so"
           if [[ ! -f "$SO" ]]; then
@@ -425,12 +436,12 @@ jobs:
           fi
           ls -la src/main/resources/cubism/${{ matrix.platform }}/
 
-      - name: Package Deb with Cubism
-        run: ./gradlew packageDeb -Ppsd2live.includeCubism=true --no-daemon
+      - name: Package Deb
+        run: ./gradlew packageDeb -Ppsd2live.includeCubism=${{ needs.prepare.outputs.include_cubism }} --no-daemon
 
       # For distributions without a Deb (Fedora, Arch, ...): the app image with its own Java runtime, extract and run.
-      - name: Package tar.gz with Cubism
-        run: ./gradlew createDistributable -Ppsd2live.includeCubism=true --no-daemon
+      - name: Package tar.gz
+        run: ./gradlew createDistributable -Ppsd2live.includeCubism=${{ needs.prepare.outputs.include_cubism }} --no-daemon
 
       - name: Collect Linux artifacts
         run: |
@@ -453,7 +464,7 @@ jobs:
           test -s "$OUT/PSD2Live-${VERSION}-linux-${{ matrix.asset_arch }}.tar.gz"
           # Optional GUI smoke is intentionally skipped in v1 (brittle under xvfb).
           # Example if re-enabled later:
-          # xvfb-run -a timeout 15s ./gradlew run -Ppsd2live.includeCubism=true || true
+          # xvfb-run -a timeout 15s ./gradlew run || true
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
