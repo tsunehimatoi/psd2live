@@ -7,7 +7,7 @@
 - **CMO3 导出**。为导出对象补全有效的关键形和元数据，修复部分工程导出后缺失这些数据的问题。
 - **工作区与文档**。左侧工作区栏可折叠，布局可在设置中调整。文档恢复中文、英文、日文和韩文切换。
 
-公开安装包使用内置预览渲染器。
+Windows x64 和 Linux 安装包已重新构建，恢复 Cubism 预览。Windows ARM64 和 macOS 使用内置预览渲染器。
 
 <details>
 <summary>English</summary>
@@ -21,6 +21,6 @@
 - **CMO3 export.** Exported objects carry valid keyforms and metadata, fixing missing data in some exported projects.
 - **Workspace and documentation.** The left workspace rail can collapse, with its layout configurable in Settings. The documentation language switcher is available in Chinese, English, Japanese, and Korean.
 
-Public packages use the built-in preview renderer.
+The rebuilt Windows x64 and Linux packages restore Cubism preview. Windows ARM64 and macOS use the built-in preview renderer.
 
 </details>

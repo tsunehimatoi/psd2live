@@ -1,5 +1,6 @@
-# Public releases use the built-in preview. Only private repositories can
-# fetch the Cubism SDK and package its native renderer.
+# Cubism-inclusive release packaging.
+# Downloads the proprietary Cubism SDK from a private Release (or configured
+# source repo), builds native bridges, and optionally publishes a GitHub Release.
 #
 # Maintainers: protect the GitHub Environment "release-cubism" (required reviewers).
 # On a PUBLIC application repo, NEVER store the SDK zip as a Release asset here —
@@ -23,6 +24,11 @@ on:
         required: false
         type: boolean
         default: false
+      refresh_cubism:
+        description: "Rebuild Windows x64 and Linux for an existing stable release from its tag"
+        required: false
+        type: boolean
+        default: false
   push:
     tags:
       - "v*"
@@ -36,7 +42,6 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  PSD2LIVE_INCLUDE_CUBISM: 'false'
   DEFAULT_SDK_TAG: internal-sdk/cubism-5-r.5
   DEFAULT_SDK_ASSET: CubismSdkForNative-5-r.5.zip
   SDK_EXTRACT_DIR: CubismSdkForNative-5-r.5
@@ -49,32 +54,53 @@ jobs:
       version: ${{ steps.ver.outputs.version }}
       tag: ${{ steps.ver.outputs.tag }}
       create_release: ${{ steps.ver.outputs.create_release }}
-      include_cubism: ${{ github.event.repository.private && 'true' || 'false' }}
+      refresh_cubism: ${{ steps.ver.outputs.refresh_cubism }}
+      source_ref: ${{ steps.ver.outputs.source_ref }}
     steps:
       - name: Resolve version
         id: ver
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+          CREATE_RELEASE: ${{ inputs.create_github_release }}
+          REFRESH_CUBISM: ${{ inputs.refresh_cubism }}
+          PRERELEASE: ${{ inputs.prerelease }}
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            VERSION="${{ inputs.version }}"
-            VERSION="${VERSION#v}"
-            CREATE="${{ inputs.create_github_release }}"
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            VERSION="${REQUESTED_VERSION#v}"
+            CREATE="$CREATE_RELEASE"
           else
-            REF="${{ github.ref_name }}"
-            VERSION="${REF#v}"
+            VERSION="${GITHUB_REF_NAME#v}"
             CREATE="true"
           fi
-          if [[ -z "$VERSION" || ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-].*)?$ ]]; then
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::Invalid version: '$VERSION' (expected semver like 1.2.0)"
             exit 1
+          fi
+          SOURCE_REF="$GITHUB_SHA"
+          REFRESH=false
+          if [[ "$REFRESH_CUBISM" == true ]]; then
+            if [[ "$CREATE" != true || "$PRERELEASE" == true ]]; then
+              echo '::error::A Cubism refresh updates an existing stable GitHub Release.'
+              exit 1
+            fi
+            STABLE=$(gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease --jq '(.isDraft or .isPrerelease) | not')
+            test "$STABLE" = true
+            SOURCE_REF=$(gh api "repos/$GITHUB_REPOSITORY/commits/refs/tags/v$VERSION" --jq .sha)
+            [[ "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]
+            REFRESH=true
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
           echo "create_release=$CREATE" >> "$GITHUB_OUTPUT"
+          echo "refresh_cubism=$REFRESH" >> "$GITHUB_OUTPUT"
+          echo "source_ref=$SOURCE_REF" >> "$GITHUB_OUTPUT"
           echo "Resolved VERSION=$VERSION TAG=v$VERSION create_release=$CREATE"
 
   build-windows:
-    name: Build Windows x64
+    name: Build Windows Cubism
     needs: prepare
     runs-on: windows-2022  # Cubism Core_MT.lib is MSVC 143; windows-latest is VS 2026-only
     environment: release-cubism
@@ -83,12 +109,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_ref }}
 
       - name: Set up JDK 21 (JetBrains Runtime)
         uses: ./.github/actions/setup-jbr
 
       - name: Ensure CMake
-        if: needs.prepare.outputs.include_cubism == 'true'
         shell: bash
         run: |
           if ! command -v cmake >/dev/null 2>&1; then
@@ -97,7 +124,6 @@ jobs:
           cmake --version
 
       - name: Download Cubism SDK
-        if: needs.prepare.outputs.include_cubism == 'true'
         env:
           GH_TOKEN: ${{ secrets.SDK_FETCH_TOKEN || secrets.GITHUB_TOKEN }}
           SDK_REPO: ${{ vars.CUBISM_SDK_SOURCE_REPO || github.repository }}
@@ -129,7 +155,6 @@ jobs:
           Write-Host "Using CUBISM_SDK_ROOT=$sdkRoot"
 
       - name: Verify Cubism SDK tree (Windows)
-        if: needs.prepare.outputs.include_cubism == 'true'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -180,19 +205,16 @@ jobs:
           arch: x64
 
       - name: Setup Ninja
-        if: needs.prepare.outputs.include_cubism == 'true'
         shell: bash
         run: choco install ninja -y
 
       - name: Build native renderer
-        if: needs.prepare.outputs.include_cubism == 'true'
         shell: cmd
         run: |
           set CUBISM_SDK_ROOT=%CUBISM_SDK_ROOT%
           native\build_live2d_renderer.bat -Clean -Deploy
 
       - name: Confirm deployed DLL
-        if: needs.prepare.outputs.include_cubism == 'true'
         shell: bash
         run: |
           DLL="src/main/resources/cubism/windows-x86_64/live2d_renderer.dll"
@@ -206,14 +228,20 @@ jobs:
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
 
-      - name: Package Windows x64
+      - name: Package with Cubism
         shell: cmd
         run: |
-          gradlew.bat packageDistributionForCurrentOS -Ppsd2live.includeCubism=${{ needs.prepare.outputs.include_cubism }} --no-daemon
+          gradlew.bat packageDistributionForCurrentOS -Ppsd2live.includeCubism=true --no-daemon
 
       - name: Collect Windows artifacts
         shell: pwsh
         run: ./.github/scripts/collect-windows-artifacts.ps1 -Version $env:VERSION -Suffix ""
+
+      - name: Verify packaged Cubism preview bridge
+        shell: pwsh
+        run: |
+          $jar = "build/compose/binaries/main/app/PSD2Live/app/psd2live-$env:VERSION.jar"
+          python -c "import sys,zipfile; names=zipfile.ZipFile(sys.argv[1]).namelist(); assert 'cubism/windows-x86_64/live2d_renderer.dll' in names" $jar
 
       # The same packages again with ffmpeg among the app's resources (resources/ffmpeg/), so video and
       # animated image export work without installing ffmpeg. A pinned Gyan.dev essentials build: GPL,
@@ -244,14 +272,20 @@ jobs:
           }
           "FFMPEG_BUNDLE=$bundle" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Package Windows x64 with ffmpeg
+      - name: Package with Cubism and ffmpeg
         shell: cmd
         run: |
-          gradlew.bat packageDistributionForCurrentOS -Ppsd2live.includeCubism=${{ needs.prepare.outputs.include_cubism }} "-Ppsd2live.ffmpegDir=%FFMPEG_BUNDLE%" --no-daemon
+          gradlew.bat packageDistributionForCurrentOS -Ppsd2live.includeCubism=true "-Ppsd2live.ffmpegDir=%FFMPEG_BUNDLE%" --no-daemon
 
       - name: Collect Windows artifacts with ffmpeg
         shell: pwsh
         run: ./.github/scripts/collect-windows-artifacts.ps1 -Version $env:VERSION -Suffix "-ffmpeg"
+
+      - name: Verify packaged Cubism preview bridge with ffmpeg
+        shell: pwsh
+        run: |
+          $jar = "build/compose/binaries/main/app/PSD2Live/app/psd2live-$env:VERSION.jar"
+          python -c "import sys,zipfile; names=zipfile.ZipFile(sys.argv[1]).namelist(); assert 'cubism/windows-x86_64/live2d_renderer.dll' in names" $jar
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
@@ -265,6 +299,7 @@ jobs:
   build-windows-arm64:
     name: Build Windows ARM64
     needs: prepare
+    if: needs.prepare.outputs.refresh_cubism != 'true'
     runs-on: windows-11-arm
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
@@ -298,7 +333,7 @@ jobs:
           if-no-files-found: error
 
   build-linux:
-    name: Build Linux (${{ matrix.arch }})
+    name: Build Linux Cubism (${{ matrix.arch }})
     needs: prepare
     runs-on: ${{ matrix.runner }}
     environment: release-cubism
@@ -321,6 +356,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_ref }}
 
       # The x64 image comes with Rust; the arm64 one may not.
       - name: Set up Rust (arm64)
@@ -343,7 +380,6 @@ jobs:
         uses: ./.github/actions/setup-jbr
 
       - name: Download Cubism SDK
-        if: needs.prepare.outputs.include_cubism == 'true'
         env:
           GH_TOKEN: ${{ secrets.SDK_FETCH_TOKEN || secrets.GITHUB_TOKEN }}
           SDK_REPO: ${{ vars.CUBISM_SDK_SOURCE_REPO || github.repository }}
@@ -373,7 +409,6 @@ jobs:
           echo "Using CUBISM_SDK_ROOT=$SDK_ROOT"
 
       - name: Verify Cubism SDK tree (Linux)
-        if: needs.prepare.outputs.include_cubism == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -421,13 +456,11 @@ jobs:
           echo "SDK Core + OpenGL thirdParty (glew/stb) OK"
 
       - name: Build native renderer
-        if: needs.prepare.outputs.include_cubism == 'true'
         run: |
           export CUBISM_SDK_ROOT
           ./native/build_live2d_renderer.sh --clean --deploy
 
       - name: Confirm deployed shared library
-        if: needs.prepare.outputs.include_cubism == 'true'
         run: |
           SO="src/main/resources/cubism/${{ matrix.platform }}/liblive2d_renderer.so"
           if [[ ! -f "$SO" ]]; then
@@ -436,12 +469,12 @@ jobs:
           fi
           ls -la src/main/resources/cubism/${{ matrix.platform }}/
 
-      - name: Package Deb
-        run: ./gradlew packageDeb -Ppsd2live.includeCubism=${{ needs.prepare.outputs.include_cubism }} --no-daemon
+      - name: Package Deb with Cubism
+        run: ./gradlew packageDeb -Ppsd2live.includeCubism=true --no-daemon
 
       # For distributions without a Deb (Fedora, Arch, ...): the app image with its own Java runtime, extract and run.
-      - name: Package tar.gz
-        run: ./gradlew createDistributable -Ppsd2live.includeCubism=${{ needs.prepare.outputs.include_cubism }} --no-daemon
+      - name: Package tar.gz with Cubism
+        run: ./gradlew createDistributable -Ppsd2live.includeCubism=true --no-daemon
 
       - name: Collect Linux artifacts
         run: |
@@ -457,6 +490,8 @@ jobs:
           cp "$DEB" "$OUT/PSD2Live-${VERSION}-linux-${{ matrix.asset_arch }}.deb"
           APP=build/compose/binaries/main/app
           test -x "$APP/PSD2Live/bin/PSD2Live"
+          python3 -c 'import sys,zipfile; names=zipfile.ZipFile(sys.argv[1]).namelist(); assert sys.argv[2] in names' \
+            "$APP/PSD2Live/lib/app/psd2live-$VERSION.jar" "cubism/${{ matrix.platform }}/liblive2d_renderer.so"
           tar -C "$APP" -czf "$OUT/PSD2Live-${VERSION}-linux-${{ matrix.asset_arch }}.tar.gz" PSD2Live
           ls -la "$OUT"
           # Soft file-existence smoke (no GUI): confirm package is non-empty
@@ -464,7 +499,7 @@ jobs:
           test -s "$OUT/PSD2Live-${VERSION}-linux-${{ matrix.asset_arch }}.tar.gz"
           # Optional GUI smoke is intentionally skipped in v1 (brittle under xvfb).
           # Example if re-enabled later:
-          # xvfb-run -a timeout 15s ./gradlew run || true
+          # xvfb-run -a timeout 15s ./gradlew run -Ppsd2live.includeCubism=true || true
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
@@ -477,6 +512,7 @@ jobs:
   build-macos:
     name: Build macOS (${{ matrix.arch }})
     needs: prepare
+    if: needs.prepare.outputs.refresh_cubism != 'true'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -511,7 +547,11 @@ jobs:
   release:
     name: GitHub Release
     needs: [prepare, build-windows, build-windows-arm64, build-linux, build-macos]
-    if: needs.prepare.outputs.create_release == 'true'
+    if: >-
+      !cancelled() && needs.prepare.outputs.create_release == 'true' &&
+      needs.build-windows.result == 'success' && needs.build-linux.result == 'success' &&
+      (needs.prepare.outputs.refresh_cubism == 'true' ||
+      (needs.build-windows-arm64.result == 'success' && needs.build-macos.result == 'success'))
     runs-on: ubuntu-latest
     environment: release-cubism
     permissions:
@@ -521,6 +561,7 @@ jobs:
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       TAG: ${{ needs.prepare.outputs.tag }}
+      REFRESH_CUBISM: ${{ needs.prepare.outputs.refresh_cubism }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -532,6 +573,7 @@ jobs:
           path: release-assets
 
       - name: Download Windows ARM64 artifacts
+        if: needs.prepare.outputs.refresh_cubism != 'true'
         uses: actions/download-artifact@v4
         with:
           name: windows-arm64
@@ -545,6 +587,7 @@ jobs:
           path: release-assets
 
       - name: Download macOS artifacts
+        if: needs.prepare.outputs.refresh_cubism != 'true'
         uses: actions/download-artifact@v4
         with:
           pattern: macos-*
@@ -558,13 +601,19 @@ jobs:
         with:
           subject-path: release-assets/PSD2Live-*
 
-      - name: Write SHA256SUMS
-        working-directory: release-assets
-        run: sha256sum PSD2Live-* > SHA256SUMS.txt
-
-      # Notes come from .github/release-notes.md; the download badges are built from the assets.
-      - name: Compose release notes
-        run: python3 .github/scripts/release_notes.py --tag "$TAG" --repo "$GITHUB_REPOSITORY" --assets-dir release-assets --notes .github/release-notes.md > release-body.md
+      - name: Verify packages and compose release metadata
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          retained=()
+          if [[ "$REFRESH_CUBISM" == true ]]; then
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > current-release.json
+            retained=(--existing-release current-release.json)
+          fi
+          python3 .github/scripts/release_assets.py --version "$VERSION" --directory release-assets "${retained[@]}" > release-assets.json
+          grep -Fq "## $TAG · " .github/release-notes.md
+          python3 .github/scripts/release_notes.py --tag "$TAG" --repo "$GITHUB_REPOSITORY" --assets-json release-assets.json --notes .github/release-notes.md > release-body.md
 
       # softprops creates the tag from target_commitish when missing (workflow_dispatch).
       # Pushing a tag yourself also triggers this workflow; prefer one entry path.
@@ -573,23 +622,11 @@ jobs:
         with:
           tag_name: ${{ env.TAG }}
           name: PSD2Live v${{ env.VERSION }}
-          target_commitish: ${{ github.sha }}
+          target_commitish: ${{ needs.prepare.outputs.source_ref }}
           draft: false
           prerelease: ${{ inputs.prerelease == true }}
           fail_on_unmatched_files: true
+          overwrite_files: true
           make_latest: ${{ inputs.prerelease == true && 'false' || 'true' }}
           body_path: release-body.md
-          files: |
-            release-assets/PSD2Live-${{ env.VERSION }}-windows-x64-setup.exe
-            release-assets/PSD2Live-${{ env.VERSION }}-windows-x64-portable.zip
-            release-assets/PSD2Live-${{ env.VERSION }}-windows-x64-setup-ffmpeg.exe
-            release-assets/PSD2Live-${{ env.VERSION }}-windows-x64-portable-ffmpeg.zip
-            release-assets/PSD2Live-${{ env.VERSION }}-windows-arm64-setup.exe
-            release-assets/PSD2Live-${{ env.VERSION }}-windows-arm64-portable.zip
-            release-assets/PSD2Live-${{ env.VERSION }}-linux-x64.deb
-            release-assets/PSD2Live-${{ env.VERSION }}-linux-x64.tar.gz
-            release-assets/PSD2Live-${{ env.VERSION }}-linux-arm64.deb
-            release-assets/PSD2Live-${{ env.VERSION }}-linux-arm64.tar.gz
-            release-assets/PSD2Live-${{ env.VERSION }}-macos-arm64.dmg
-            release-assets/PSD2Live-${{ env.VERSION }}-macos-x86_64.dmg
-            release-assets/SHA256SUMS.txt
+          files: release-assets/*
