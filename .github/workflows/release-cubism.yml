@@ -623,9 +623,21 @@ jobs:
           grep -Fq "## $TAG · " .github/release-notes.md
           python3 .github/scripts/release_notes.py --tag "$TAG" --repo "$GITHUB_REPOSITORY" --assets-json release-assets.json --notes .github/release-notes.md > release-body.md
 
+      - name: Refresh published packages
+        if: needs.prepare.outputs.refresh_cubism == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" release-assets/PSD2Live-* --clobber
+          gh release upload "$TAG" release-assets/SHA256SUMS.txt --clobber
+          release_id=$(jq -er '.id' current-release.json)
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" -F body=@release-body.md --silent
+
       # softprops creates the tag from target_commitish when missing (workflow_dispatch).
       # Pushing a tag yourself also triggers this workflow; prefer one entry path.
       - name: Create or update GitHub Release
+        if: needs.prepare.outputs.refresh_cubism != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
