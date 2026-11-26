@@ -4,7 +4,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.encodeToJsonElement
 
 /** An applied provider remains available to downstream modifiers at the same captured targets. */
 @Serializable
@@ -114,6 +116,55 @@ internal data class RigModifierStack(
     fun withOverrides(id: String, commands: List<JsonObject>): RigModifierStack {
         index(id)
         return copy(overrides = if (commands.isEmpty()) overrides - id else overrides + (id to commands.toList()))
+    }
+
+    /** The rear slice inherits the source binding. The front follows its deformation through Glue. */
+    fun retargetDepthSplit(sourceMesh: String, backMesh: String, sourceLayer: String, backLayer: String,
+                           glueKeys: Map<String, String>): RigModifierStack {
+        val replacements = mapOf(ModifierTarget("mesh", sourceMesh) to ModifierTarget("mesh", backMesh),
+            ModifierTarget("layer", sourceLayer) to ModifierTarget("layer", backLayer))
+        fun retarget(targets: List<ModifierTarget>) = targets.map { replacements[it] ?: it }.distinct()
+        return copy(instances = instances.map { instance ->
+            // Applied patches keep their captured inputs. The edit gate rejects changes they cannot replay.
+            if (instance.id in appliedNodes) instance
+            else {
+                val children = instance.config["subConfigs"] as? JsonObject
+                val config = if (instance.type == "simulation") depthSplitSimulation(instance.config, sourceMesh, backMesh, glueKeys)
+                else if (instance.type !in ModifierPartConfig.features || children == null) instance.config else {
+                    val updated = children.mapValues { (_, value) ->
+                        val child = value as? JsonObject ?: return@mapValues value
+                        val targets = child["targets"] as? JsonArray ?: return@mapValues value
+                        val before = codec.decodeFromJsonElement<List<ModifierTarget>>(targets)
+                        val after = retarget(before)
+                        if (after == before) child else JsonObject(child + ("targets" to codec.encodeToJsonElement(after)))
+                    }
+                    JsonObject(instance.config + ("subConfigs" to JsonObject(updated)))
+                }
+                instance.copy(targets = retarget(instance.targets), config = config)
+            }
+        }, appliedCapabilities = appliedCapabilities.map { it.copy(targets = retarget(it.targets)) })
+    }
+
+    private fun depthSplitSimulation(config: JsonObject, source: String, back: String, glueKeys: Map<String, String>): JsonObject {
+        // Keep the saved bake until the normal simulation preparation can refresh it against the new prefix.
+        val updated = config.toMutableMap()
+        val sourceId = JsonPrimitive(source)
+        val backId = JsonPrimitive(back)
+        (config["targets"] as? JsonArray)?.let { targets ->
+            updated["targets"] = JsonArray(targets.map { if (it == sourceId) backId else it })
+        }
+        fun retargetObjects(field: String, key: String, from: JsonPrimitive, to: JsonPrimitive) {
+            val objects = config[field] as? JsonArray ?: return
+            updated[field] = JsonArray(objects.map { entry ->
+                if (entry is JsonObject && entry[key] == from) JsonObject(entry + (key to to)) else entry
+            })
+        }
+        retargetObjects("obstacles", "mesh", sourceId, backId)
+        retargetObjects("automatic_weights", "target", JsonPrimitive("mesh:$source"), JsonPrimitive("mesh:$back"))
+        (config["glue_roles"] as? JsonObject)?.let { roles ->
+            updated["glue_roles"] = JsonObject(roles.mapKeys { glueKeys[it.key] ?: it.key })
+        }
+        return JsonObject(updated)
     }
 
     fun index(id: String): Int = instances.indexOfFirst { it.id == id }.also { require(it >= 0) { "Unknown modifier: $id" } }

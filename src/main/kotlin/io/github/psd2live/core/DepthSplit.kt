@@ -58,7 +58,10 @@ internal object DepthSplit {
             requireNotNull(current.rig.puppet.drawables.firstOrNull { it.id.raw == id }) { "Middle mesh not found: $id" }
                 .also { require(it.mesh != null) { "Middle objects must be meshes" } }
         }
-        val layerId = requireNotNull(current.rig.layerIdByDrawableId[sourceId]) { "Source mesh has no source layer" }
+        val authoredRig = current.authored.rig
+        val layerId = requireNotNull(authoredRig.ownLayerIdByDrawableId[sourceId]) {
+            "Depth split needs a source artwork mesh: $sourceId"
+        }
         val layer = requireNotNull(current.analysis.layers.firstOrNull { it.source.id.raw == layerId }) { "Source layer not found: $layerId" }
         val takenLayers = current.analysis.source.layers.map { it.id.raw } + current.analysis.layers.map { it.source.id.raw } +
             config.rigEdits.splitDrawableIds.keys + ArtPrimitiveJournal.ownedLayers(config.rigEdits) + ArtPrimitiveJournal.supersededLayers(config.rigEdits)
@@ -87,7 +90,7 @@ internal object DepthSplit {
         val back = slice(backId, backName)
         val front = slice(frontId, frontName)
         val middleOrders = middles.associate { drawable ->
-            val middleLayerId = current.rig.layerIdByDrawableId[drawable.id.raw]
+            val middleLayerId = current.rig.ownLayerIdByDrawableId[drawable.id.raw]
             drawable.id.raw to (config.drawOrderOverrides[middleLayerId]
                 ?: config.drawOrderOverrides[drawable.id.raw] ?: drawable.drawOrder)
         }
@@ -105,8 +108,10 @@ internal object DepthSplit {
         val backOrder = placedOrders.values.min() - 1f
         val frontOrder = placedOrders.values.max() + 1f
         // The authored state, before swings and simulations write their keyforms: those follow the back slice.
-        val authored = config.rigEdits.authored(current.baseRig)
-        val original = authored.drawables.single { it.id == source.id }
+        val authored = authoredRig.puppet
+        val original = requireNotNull(authored.drawables.firstOrNull { it.id == source.id }) {
+            "Depth split needs a source artwork mesh: $sourceId"
+        }
         val mesh = requireNotNull(original.mesh)
         val canvas = RasterMeshJournal.TextureCoordinates(authored, original).toCanvas(mesh.uvs)
         val backMesh = atOrder(original.copy(id = DrawableId(backDrawableId), name = backName,
@@ -141,10 +146,10 @@ internal object DepthSplit {
         checkpoint()
         val orders = current.rig.puppet.drawables.associate { it.id.raw to it.drawOrder } +
             config.drawOrderOverrides + placedOrders.mapKeys { (id, _) ->
-                current.rig.layerIdByDrawableId[id] ?: id
+                current.rig.ownLayerIdByDrawableId[id] ?: id
             } + mapOf(backId to backOrder, frontId to frontOrder)
         val inherited = config.layerOverrides[layerId] ?: layer.semantic.let {
-            LayerClassificationOverride(it.type, it.tag, it.side, it.parameter, it.switchId)
+            LayerClassificationOverride(it.type, it.tag, it.side, it.parameter, it.switchId, it.role)
         }
         // The back takes the source's simulation targets, baked offsets and Glue roles.
         val identity = SourcePartitionGeometry.Plan(listOf(SourcePartitionGeometry.Piece(mesh,

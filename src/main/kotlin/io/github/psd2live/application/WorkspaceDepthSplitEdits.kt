@@ -1,6 +1,8 @@
 package io.github.psd2live.application
 
 import io.github.psd2live.core.*
+import io.github.psd2live.core.modifier.RigModifierStack
+import io.github.psd2live.core.sim.glueKey
 import io.github.psd2live.project.*
 import kotlinx.serialization.json.*
 
@@ -43,6 +45,14 @@ internal object WorkspaceDepthSplitEdits {
             // Both slices take the source's place in its hit areas.
             val overlay = RigHitAreas.replacingMeshes(MeshGenerationBaseline.preserve(frozen.rigEdits.copy(simEdits = slices.simulations.simEdits), model.config),
                 mapOf(requireNotNull(slices.source).raw to slices.sliceIds.map { it.raw }))
+            val modifiers = overlay.modifierStack?.let { raw ->
+                val glueKeys = model.rig.puppet.glues.filter { it.meshA.raw == sourceId || it.meshB.raw == sourceId }.associate { glue ->
+                    val a = if (glue.meshA.raw == sourceId) backMeshId else glue.meshA.raw
+                    val b = if (glue.meshB.raw == sourceId) backMeshId else glue.meshB.raw
+                    glueKey(glue) to "$a|$b"
+                }
+                RigModifierStack.fromJson(raw).retargetDepthSplit(sourceId, backMeshId, slices.sourceLayerId, backId, glueKeys).toJson()
+            }
             val layers = listOf(slices.back.id.raw, slices.front.id.raw)
             fun documentWith(placed: WorkspaceDocument, rigEdits: RigEditOverlay, parents: Map<String, String?>) = placed.copy(
                 layerOverrides = placed.layerOverrides + layers.associateWith { slices.classification },
@@ -51,7 +61,8 @@ internal object WorkspaceDepthSplitEdits {
                 },
                 parentOverrides = placed.parentOverrides + parents,
                 settings = JsonObject(placed.settings + ("drawOrderOverrides" to JsonObject(slices.drawOrderOverrides.mapValues { JsonPrimitive(it.value) }))),
-                rigEdits = rigEdits.copy(splitDrawableIds = rigEdits.splitDrawableIds + mapOf(slices.back.id.raw to backMeshId, slices.front.id.raw to frontMeshId)))
+                rigEdits = rigEdits.copy(modifierStack = modifiers,
+                    splitDrawableIds = rigEdits.splitDrawableIds + mapOf(slices.back.id.raw to backMeshId, slices.front.id.raw to frontMeshId)))
             val source = requireNotNull(slices.source)
             val parts = listOf(slices.back, slices.front).zip(slices.sliceIds).map { (layer, id) ->
                 WorkspaceArtPrimitives.Part(id, layer.id.raw, requireNotNull(slices.coverage), slices.classification)

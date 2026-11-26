@@ -187,10 +187,13 @@ class PSD2LivePipeline {
 	}
 
 	/** The generated base of [source] under [config], deletions not applied, and the binding key of its atlas. */
-	internal fun generatedBaseOf(source: SourceArt, config: PipelineConfig): Pair<BuiltRig, String> {
+	internal fun generatedBaseOf(source: SourceArt, config: PipelineConfig, ordinaryMaterials: Boolean = false): Pair<BuiltRig, String> {
 		val generation = RigLayerDeletion.generationConfig(config)
 		val inputs = generationInputs(RigGenerationSource.analyze(source, generation), generation, ProgressListener { _, _ -> })
-		return generatedBase(inputs, generation, ProgressListener { _, _ -> }).rig to inputs.bindingKey
+		val (analysis, _, rig) = generatedBase(inputs, generation, ProgressListener { _, _ -> }, materialsOnly = ordinaryMaterials)
+		val base = if (ordinaryMaterials)
+			io.github.psd2live.core.modifier.RigOrdinaryMaterials.of(rig, analysis, generation.layerVisibility) else rig
+		return base to inputs.bindingKey
 	}
 
 	/** Whether a preview of [config] can come from a stored authored rig: a generated model, not an imported one. */
