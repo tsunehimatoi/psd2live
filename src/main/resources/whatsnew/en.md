@@ -1,3 +1,12 @@
+## v3.8.5 · 2026-11-26
+
+### Improvements and fixes
+
+- **Depth splitting.** Fixed modifier errors after creating front and back layers. The front layer follows the back layer, and splitting preserves manually moved vertices and the textures of pasted copies.
+- **ID conversion and mesh splitting.** Modifier bindings follow renamed meshes and split source layers. Pasted meshes keep their draw order when renamed, and reference images stay pinned to the same pose when parameter IDs change.
+- **CMO3 export.** Exported objects carry valid keyforms and metadata, fixing missing data in some exported projects.
+- **Workspace and documentation.** The left workspace rail can collapse, with its layout configurable in Settings. The documentation language switcher is available in Chinese, English, Japanese, and Korean.
+
 ## v3.8.4 · 2026-11-21
 
 ### Improvements and fixes
