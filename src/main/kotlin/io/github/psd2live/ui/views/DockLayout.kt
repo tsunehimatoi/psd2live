@@ -125,7 +125,8 @@ internal fun reconcileDockModules(
 
 /** Repair the exact root-level split produced by the old module-ID auto-placement bug. */
 internal fun repairLegacyCanvasDocking(saved: DockNode): DockNode {
-    val withMesh = ensureInteriorDockTab(ensureSimulationDockTab(ensureAnimationEditorDockTab(ensureSkeletonDockTab(ensureMeshDockTab(saved)))))
+    val withPanels = ensureInteriorDockTab(ensureSimulationDockTab(ensureAnimationEditorDockTab(ensureSkeletonDockTab(ensureMeshDockTab(saved)))))
+    val upgraded = ensureShadowDockTab(withPanels)
     val defaultShape = defaultDockLayout()
     fun sameDefaultShape(node: DockNode, expected: DockNode): Boolean =
         node.modules == expected.modules && node.horizontal == expected.horizontal && node.ratio == expected.ratio &&
@@ -145,8 +146,8 @@ internal fun repairLegacyCanvasDocking(saved: DockNode): DockNode {
         return base to (extras + added)
     }
 
-    val (base, extras) = unwrap(withMesh) ?: return withMesh
-    if (extras.isEmpty()) return withMesh
+    val (base, extras) = unwrap(upgraded) ?: return upgraded
+    if (extras.isEmpty()) return upgraded
     var repaired = base
     var anchor = "canvas"
     for (canvas in extras) {
@@ -198,6 +199,12 @@ internal fun ensureInteriorDockTab(root: DockNode): DockNode {
     return root.update(host.id) { it.copy(modules=it.modules+"interior") }
 }
 
+internal fun ensureShadowDockTab(root: DockNode): DockNode {
+    if ("shadow" in root.allModules()) return root
+    val host = root.containing("interior") ?: root.containing("simulation") ?: root.containing("physics") ?: return root
+    return root.update(host.id) { it.copy(modules = it.modules + "shadow") }
+}
+
 /** Insert the simulation tab after physics if an older saved layout is missing it. */
 internal fun ensureSimulationDockTab(root: DockNode): DockNode {
     if (root.allModules().contains("simulation")) return root
@@ -217,7 +224,7 @@ internal fun defaultDockLayout(canvas: String = PRIMARY_CANVAS_ID): DockNode {
     return DockNode(ratio = .60f, first = workspace,
         second = DockNode(horizontal = false, ratio = .32f,
             first = DockNode(modules = listOf("settings")),
-            second = DockNode(modules = listOf("layers", "parameters", "tools", "mesh", "inspector", "animation", "physics", "simulation", "interior"))))
+            second = DockNode(modules = listOf("layers", "parameters", "tools", "mesh", "inspector", "animation", "physics", "simulation", "interior", "shadow"))))
 }
 
 private fun leaf(vararg modules: String) = DockNode(modules = modules.toList())

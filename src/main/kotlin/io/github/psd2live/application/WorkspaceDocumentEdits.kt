@@ -27,7 +27,7 @@ internal object WorkspaceDocumentEdits {
         setOf("warp", "rotation", "glue", "topology").map { "canvas_$it" } +
         setOf("put", "delete", "deform").map { "path_$it" } +
         setOf("swing_put", "swing_delete", "interior_put", "interior_delete") + WorkspacePhysicsEdits.batchable + WorkspaceSimulationEdits.supported + WorkspaceCanvasWeightEdits.supported + WorkspaceCanvasDeformEdits.supported + WorkspaceTextureEdits.supported +
-        WorkspaceLayoutEdits.supported + WorkspaceMaterialEdits.supported + WorkspaceHitAreaEdits.supported + WorkspaceSidecarEdits.supported + WorkspaceObjectEdits.supported + WorkspaceModifierEdits.supported
+        WorkspaceLayoutEdits.supported + WorkspaceMaterialEdits.supported + WorkspaceHitAreaEdits.supported + WorkspaceSidecarEdits.supported + WorkspaceObjectEdits.supported + WorkspaceModifierEdits.supported + WorkspaceShadowEdits.supported
 
     /**
      * [operation] on the complete editing document. Layout generation state only gates automatic semantic rigging;
@@ -74,6 +74,7 @@ internal object WorkspaceDocumentEdits {
             in WorkspaceLayerEdits.supported -> WorkspaceLayerEdits.apply(document, model, operation)
             in WorkspaceAssetLayerEdits.supported -> WorkspaceAssetLayerEdits.apply(document, model, operation, assetResources, rasterWork::checkpoint)
             in WorkspaceSimulationEdits.supported -> WorkspaceSimulationEdits.apply(operation, document, model, simulationWork).document
+            in WorkspaceShadowEdits.supported -> WorkspaceShadowEdits.apply(operation, document, model)
             in WorkspaceHitAreaEdits.supported -> WorkspaceHitAreaEdits.apply(operation, document, model)
             in WorkspaceSidecarEdits.supported -> WorkspaceSidecarEdits.apply(operation, document, model)
             in WorkspaceObjectEdits.supported -> WorkspaceObjectEdits.apply(operation, document, model)

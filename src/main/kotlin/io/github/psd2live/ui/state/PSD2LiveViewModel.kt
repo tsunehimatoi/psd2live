@@ -1713,6 +1713,11 @@ class PSD2LiveViewModel : AutoCloseable {
 
     internal enum class ObjectDialog { FIND_REPLACE, CONVERT_IDS }
 
+    internal fun submitShadowEdit(summary: String, operation: io.github.psd2live.application.WorkspaceDocumentOperation) {
+        val expected = currentWorkspaceState() ?: return
+        saveDocumentEdits(expected, summary, listOf(operation)) {}
+    }
+
     private val modifiers by lazy {
         ModifierController({ _state.value }, { workspaceBackend }, ::currentWorkspaceState,
             ::selectedObjectTargets, scope, ::saveDocumentEdits, ::setErrorMessage)

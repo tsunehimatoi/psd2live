@@ -109,6 +109,7 @@ internal val WINDOW_MODULES = listOf(
 	"animation",
 	"physics",
 	"simulation",
+	"shadow",
 	"atlas",
 	"texture",
 	"materials",
@@ -710,6 +711,7 @@ internal fun moduleTitle(id: String): String = when {
 		"physics" -> "tab.physics"
 		"simulation" -> "tab.simulation"
 		"interior" -> "interior.title"
+		"shadow" -> "tab.shadow"
 		"atlas" -> "dock.atlas"
 		"texture" -> "dock.texture"
 		"materials" -> "dock.materials"

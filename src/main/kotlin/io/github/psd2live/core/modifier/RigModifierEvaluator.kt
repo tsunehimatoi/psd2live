@@ -199,7 +199,17 @@ internal class RigModifierEvaluator(
         val authorContexts = HashMap<String, ModifierAlgorithmContext>()
         fun capture(instance: RigModifierInstance): ModifierAlgorithmContext = authorContexts.getOrPut(instance.id) {
             checkpoint()
-            requireNotNull(definitions[stack.index(instance.id)]).authorContext(instance)
+            val base = requireNotNull(definitions[stack.index(instance.id)]).authorContext(instance)
+            if (instance.type == ShadowAlgorithmPlugin.TYPE_CAST || instance.type == ShadowAlgorithmPlugin.TYPE_FORM) {
+                val world = stack.instances.lastOrNull { it.enabled && it.type == ShadowAlgorithmPlugin.TYPE_WORLD }
+                if (world != null) ModifierAlgorithmContext(
+                    kotlinx.serialization.json.JsonObject(
+                        base.values + (io.github.psd2live.algorithms.shadow.ShadowWorldConfig.CONTEXT_KEY to world.config)
+                    ),
+                    base.resources,
+                    base.upstream,
+                ) else base
+            } else base
         }
         fun sameAuthorContext(instance: RigModifierInstance): Boolean = try {
             saved?.authorContexts?.get(instance.id)?.let { it == capture(instance) } ?: true

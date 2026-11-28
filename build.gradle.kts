@@ -72,6 +72,7 @@ dependencies {
 	implementation(project(":algorithms:motion"))
 	implementation(project(":algorithms:swing"))
 	implementation(project(":algorithms:simulation"))
+	implementation(project(":algorithms:shadow"))
 	implementation(project(":algorithms:binding"))
 	implementation(platform("io.ktor:ktor-bom:3.5.1"))
 	// Engine ported from Umamo (format, runtime, interop, render, edit); it brings its own libraries.
@@ -316,10 +317,17 @@ tasks.processResources {
     bundledAlgorithm("swing", module = ":algorithms:swing")
     dependsOn(":algorithms:simulation:pluginPackage")
     bundledAlgorithm("simulation", module = ":algorithms:simulation")
+    dependsOn(":algorithms:shadow:pluginPackages")
+    val shadowPackagesDir = project(":algorithms:shadow").layout.buildDirectory.dir("plugin-packages")
+    from(shadowPackagesDir) {
+        into("algorithm-plugins")
+        exclude("index.txt")
+    }
     doLast {
         val bundle = destinationDir.resolve("algorithm-plugins")
         val bindingSlugs = bindingPackagesDir.get().asFile.resolve("index.txt").readLines(Charsets.UTF_8).filter { it.isNotBlank() }
-        val packageNames = (bindingSlugs + bundledAlgorithms).sorted()
+        val shadowSlugs = shadowPackagesDir.get().asFile.resolve("index.txt").readLines(Charsets.UTF_8).filter { it.isNotBlank() }
+        val packageNames = (bindingSlugs + shadowSlugs + bundledAlgorithms).sorted()
         require(packageNames.distinct() == packageNames) { "Duplicate bundled algorithm directory" }
         for (name in packageNames) {
             check(bundle.resolve("$name/plugin.json").isFile) { "Missing bundled algorithm manifest: $name" }

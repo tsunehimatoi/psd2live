@@ -28,4 +28,11 @@ class DockGroupTest {
 		assertEquals("other", split.second!!.id)
 	}
 
+	@Test fun aSavedLayoutGainsTheShadowTabAndStillRepairsLegacyCanvasSplits() {
+		val oldLayout = defaultDockLayout().remove("shadow")!!
+		val legacy = dockModule(oldLayout, "canvas:extra", null, DockSide.RIGHT)
+		val restored = repairLegacyCanvasDocking(legacy)
+		assertEquals(oldLayout.containing("interior")!!.modules + "shadow", restored.containing("interior")!!.modules)
+		assertEquals(listOf("hierarchy", "skeleton", "canvas", "canvas:extra", "log", "animationEditor"), restored.first?.allModules())
+	}
 }

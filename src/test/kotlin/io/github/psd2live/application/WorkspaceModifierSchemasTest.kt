@@ -1,5 +1,8 @@
 package io.github.psd2live.application
 
+import io.github.psd2live.algorithms.shadow.CastShadowConfig
+import io.github.psd2live.algorithms.shadow.FormShadowConfig
+import io.github.psd2live.algorithms.shadow.ShadowWorldConfig
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.sim.*
@@ -34,6 +37,9 @@ class WorkspaceModifierSchemasTest {
         "physics" -> RigPhysicsEdit("template", "Physics", listOf(PhysicsInput("P")), listOf(PhysicsOutput("Q"))).toJson()
         "swing" -> RigSwingEdit.single("template", "Swing", SwingKind.LATERAL, listOf("warp"), listOf("P")).toJson()
         "mesh.split" -> JsonObject(emptyMap())
+        "shadow.world" -> ShadowWorldConfig.Default.toJson()
+        "shadow.cast" -> CastShadowConfig(casters = listOf("target"), receivers = listOf("receiver")).toJson()
+        "shadow.form" -> FormShadowConfig(targets = listOf("target")).toJson()
         "simulation" -> RigSimEdit("template", "Simulation", SimKind.CLOTH, listOf("mesh")).copy(bake =
             SimBakeResult("fingerprint", mapOf("mesh" to 3), emptyList(), listOf(SimBakedMode(
                 SimBakedAxis("P", floatArrayOf(-1f, 0f, 1f), mapOf("mesh" to List(3) { FloatArray(6) })), 1f, 1f)))).toJson()
@@ -124,7 +130,7 @@ class WorkspaceModifierSchemasTest {
                 validateOperationSchema(JsonObject(request + ("config" to JsonObject(config + ("unknown" to JsonPrimitive(true))))), schema)
             }
         }
-        assertEquals(setOf("swing", "simulation", "physics", "motion", "mesh.split", "rig.scaffold", "eye", "brow", "mouth", "face", "body", "hair", "body/legacy", "face/legacy",
+        assertEquals(setOf("swing", "simulation", "physics", "motion", "mesh.split", "shadow.world", "shadow.cast", "shadow.form", "rig.scaffold", "eye", "brow", "mouth", "face", "body", "hair", "body/legacy", "face/legacy",
             "eye/legacy", "brow/legacy", "mouth/legacy", "hair/legacy", "face/fitted", "eye/fitted", "brow/fitted", "mouth/fitted", "eye.smile", "eye.squash", "eye.wide", "eye.lid-fade", "eye.highlight", "eye.aftershock", "brow.shape", "brow.spring", "eye.emotion", "mouth.vowel", "eye.gaze-lid", "brow.blink", "brow.lid-coupling", "mouth.cheek-lid", "mouth.capture", "mouth.tongue", "mouth.jaw", "mouth.interior-depth", "mouth.spring", "mouth.outline", "expression.cheek", "expression.gloom", "expression.toggles", "face.skin-clip", "face.neck", "face.depth-turn", "eye.see-through", "brow.see-through", "hair/chains", "body.bust", "body.arms", "outfit.skirt", "outfit.ribbons", "outfit.creature"), WorkspaceModifierSchemas.types.toSet())
     }
 

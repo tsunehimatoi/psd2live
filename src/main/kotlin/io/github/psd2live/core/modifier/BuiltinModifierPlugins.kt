@@ -13,7 +13,7 @@ internal object BuiltinModifierPlugins {
         PhysicsAlgorithmPlugin.definition,
         MotionAlgorithmPlugin.definition,
         MeshSplitAlgorithmPlugin.definition,
-    ) + RigSourceModifiers.definitions(source)
+    ) + ShadowAlgorithmPlugin.definitions(source) + RigSourceModifiers.definitions(source)
 
     val entries: List<Entry> by lazy {
         definitions(null).map { definition ->

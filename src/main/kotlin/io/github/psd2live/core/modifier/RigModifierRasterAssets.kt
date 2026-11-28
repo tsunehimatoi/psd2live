@@ -120,7 +120,9 @@ internal object RigModifierRasterAssets {
             output.mesh.copy(page = placement.page + offset, tile = PuppetSourceAtlas.tileIdFor(output.layer.key).raw,
                 geometry = geometry.copy(uvs = uvs))
         }
-        val byOwner = outputs.groupBy { it.owner.id }
+        val placedMeshes = rig.parts.flatMap { it.children }.filterIsInstance<io.github.psd2live.format.model.ChildRef.MeshRef>().mapTo(HashSet()) { it.id } +
+            rig.rootChildren.filterIsInstance<io.github.psd2live.format.model.ChildRef.MeshRef>().map { it.id }
+        val byOwner = outputs.filter { it.mesh.id !in placedMeshes }.groupBy { it.owner.id }
         val savedTiles = config.atlasArrangement?.tiles.orEmpty()
         val nativeLipIds = outputs.filter { output ->
             val key = output.layer.key

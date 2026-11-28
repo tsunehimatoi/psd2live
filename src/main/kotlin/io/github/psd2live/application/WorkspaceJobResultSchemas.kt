@@ -50,6 +50,7 @@ internal object WorkspaceJobResultSchemas {
         put("project_create", lifecycle)
         put("interior_put", requireNotNull(WorkspaceAuthoringResultSchemas.forOperation("interior_put")))
         put("interior_delete", requireNotNull(WorkspaceAuthoringResultSchemas.forOperation("interior_delete")))
+        for (id in WorkspaceShadowEdits.supported) put(id, requireNotNull(WorkspaceAuthoringResultSchemas.forOperation(id)))
         put(WorkspaceStructureMeshEdits.OP, requireNotNull(WorkspaceAuthoringResultSchemas.forOperation(WorkspaceStructureMeshEdits.OP)))
         put("preview_pose", requireNotNull(WorkspaceAuthoringResultSchemas.forOperation("preview_pose")))
         put("paint_session_commit", WorkspacePaintSessionSchemas.commit)

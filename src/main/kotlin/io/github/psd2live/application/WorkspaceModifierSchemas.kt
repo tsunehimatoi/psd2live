@@ -67,6 +67,39 @@ internal object WorkspaceModifierSchemas {
             "pieceIds" to s.array(s.handle(), 1, 256),
             "names" to s.array(s.handle(), 1, 256),
         ), emptySet())
+        "shadow.world" -> s.obj(mapOf(
+            "azimuth" to s.number(-180, 180),
+            "elevation" to s.number(0, 90),
+            "style" to s.choices("CEL", "SOFT", "PAINTERLY"),
+            "colorMode" to s.choices("AUTO_SKIN", "CUSTOM"),
+            "customColor" to s.string(),
+            "intensity" to s.number(0, 2),
+            "compositeMode" to s.choices("AUTO", "OFFSCREEN", "COMPAT_MERGED"),
+            "previewEnabled" to s.boolean(),
+        ), emptySet())
+        "shadow.cast" -> s.obj(mapOf(
+            "name" to s.string(),
+            "casters" to s.array(s.handle(), 0, 64),
+            "receivers" to s.array(s.handle(), 0, 64),
+            "distance" to s.number(0, 200),
+            "opacityOverride" to s.nullable(s.number(0, 1)),
+            "softnessOverride" to s.nullable(s.number(0, 48)),
+            "colorOverride" to s.nullable(s.string()),
+            "rootPinning" to s.number(0, 1),
+            "parallax" to s.number(0, 3),
+            "placement" to s.choices("ABOVE_FACE", "ABOVE_EYES", "BELOW_CASTER"),
+            "skipCoveredCasters" to s.boolean(),
+        ), emptySet())
+        "shadow.form" -> s.obj(mapOf(
+            "name" to s.string(),
+            "targets" to s.array(s.handle(), 0, 64),
+            "proxy" to s.choices("FACE_ELLIPSOID", "SPHERE", "CYLINDER"),
+            "coverage" to s.number(0.05, 0.85),
+            "opacityOverride" to s.nullable(s.number(0, 1)),
+            "softnessOverride" to s.nullable(s.number(0, 48)),
+            "colorOverride" to s.nullable(s.string()),
+            "cutterExpandPx" to s.number(0, 16),
+        ), emptySet())
         "simulation" -> if (summary) s.obj(simFields, simRequired) else simulation
         "eye", "brow", "mouth", "face", "body", "hair" -> partConfiguration(type)
         else -> RigLegacyBindings.find(type)?.let { spec -> s.obj(mapOf("scaffold" to s.handle(),

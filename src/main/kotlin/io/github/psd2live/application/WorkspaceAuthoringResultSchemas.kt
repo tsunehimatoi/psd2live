@@ -28,6 +28,7 @@ internal object WorkspaceAuthoringResultSchemas {
     )
     private val normalizedOperations = setOf(
         "parameter_create", "parameter_update", "parameter_delete", "swing_put", "swing_delete", "interior_put", "interior_delete",
+        "shadow_world_set", "shadow_auto_generate", "shadow_put", "shadow_delete", "shadow_apply",
         "physics_put", "physics_delete", "physics_fit", "physics_config",
         "history_checkpoint", "history_checkout", "layer_add_from_asset", "layer_set_placement", "layer_finalize_placement", "layer_delete", "layer_restore", "layer_import_images",
     )

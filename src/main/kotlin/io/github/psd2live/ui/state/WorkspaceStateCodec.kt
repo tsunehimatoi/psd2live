@@ -276,7 +276,8 @@ internal object WorkspaceStateCodec {
             hiddenModules = obj["hiddenModules"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty().toSet().let { hidden ->
                 // Layouts from before the simulation tab gain it beside physics, hidden wherever physics is.
                 val layout = obj["layout"]?.jsonPrimitive?.contentOrNull
-                if (layout != null && "\"simulation\"" !in layout && "physics" in hidden) hidden + "simulation" else hidden
+                val withSim = if (layout != null && "\"simulation\"" !in layout && "physics" in hidden) hidden + "simulation" else hidden
+                if (layout != null && "\"shadow\"" !in layout && "physics" in withSim) withSim + "shadow" else withSim
             },
             sidebarRestore = (obj["sidebarRestore"] as? JsonObject)?.mapNotNull { (side, modules) ->
                 (modules as? JsonArray)?.let { array -> side to array.mapNotNull { it.jsonPrimitive.contentOrNull }.toSet() }
