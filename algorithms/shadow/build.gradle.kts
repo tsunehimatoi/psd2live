@@ -36,7 +36,6 @@ val workerJar by tasks.registering(Jar::class) {
 private data class ShadowManifestSpec(
     val slug: String,
     val alias: String,
-    val entrypoint: String,
     val name: String,
     val reads: String,
     val writes: String,
@@ -47,7 +46,6 @@ private val shadowSpecs = listOf(
     ShadowManifestSpec(
         slug = "shadow-world",
         alias = "shadow.world",
-        entrypoint = "world",
         name = "World Light",
         reads = "",
         writes = "",
@@ -56,7 +54,6 @@ private val shadowSpecs = listOf(
     ShadowManifestSpec(
         slug = "shadow-cast",
         alias = "shadow.cast",
-        entrypoint = "cast",
         name = "Cast Shadow",
         reads = "\"*\"",
         writes = "\"mesh\",\"part\",\"deformer\",\"hierarchy\",\"parameter\",\"textures\",\"authoring\"",
@@ -65,7 +62,6 @@ private val shadowSpecs = listOf(
     ShadowManifestSpec(
         slug = "shadow-form",
         alias = "shadow.form",
-        entrypoint = "form",
         name = "Form Shadow",
         reads = "\"*\"",
         writes = "\"mesh\",\"part\",\"deformer\",\"hierarchy\",\"parameter\",\"textures\",\"authoring\"",
@@ -90,7 +86,7 @@ tasks.register("pluginPackages") {
                 """
                 {"protocol":1,"id":"$pkgId","version":"1.0.0","name":"${spec.name}",
                  "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
-                 "algorithms":[{"type":"$pkgId/${spec.entrypoint}","aliases":["${spec.alias}"],"version":1,"name":"${spec.name}","category":"shadow",
+                 "algorithms":[{"type":"$pkgId/${spec.alias.substringAfterLast('.')}","aliases":["${spec.alias}"],"version":1,"name":"${spec.name}","category":"shadow",
                    "targets":["mesh"],"reads":[${spec.reads}],"writes":[${spec.writes}],"composableKinds":[${spec.composableKinds}],
                    "configSchema":{"type":"object"},"defaults":{}}]}
                 """.trimIndent()

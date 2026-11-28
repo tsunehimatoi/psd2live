@@ -1,6 +1,8 @@
 package io.github.psd2live.algorithms.shadow
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
@@ -63,6 +65,9 @@ data class CastShadowConfig(
     val parallax: Float = 1f,
     val placement: ShadowPlacement = ShadowPlacement.ABOVE_FACE,
     val skipCoveredCasters: Boolean = true,
+    @OptIn(ExperimentalSerializationApi::class)
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val receiversByCaster: Map<String, List<String>>? = null,
 ) {
     init {
         require(distance.isFinite() && distance in 0f..200f) { "distance out of range: $distance" }

@@ -3,6 +3,7 @@ package org.umamo.render.eval
 import org.umamo.runtime.model.ColorRgb
 import org.umamo.runtime.model.DrawableId
 import org.umamo.runtime.model.ParameterId
+import org.umamo.runtime.model.PartId
 import org.umamo.runtime.model.PuppetModel
 
 /**
@@ -20,7 +21,12 @@ class DeformedGeometry(
 	val opacity: Map<DrawableId, Float>,
 	val multiplyColor: Map<DrawableId, ColorRgb> = emptyMap(),
 	val screenColor: Map<DrawableId, ColorRgb> = emptyMap(),
-)
+	val partDrawOrders: Map<PartId, Float> = emptyMap(),
+	val partCompositeStates: Map<PartId, PartRenderState> = emptyMap(),
+) {
+	fun withWorldPositions(positions: Map<DrawableId, FloatArray>): DeformedGeometry =
+		DeformedGeometry(positions, drawOrder, opacity, multiplyColor, screenColor, partDrawOrders, partCompositeStates)
+}
 
 /**
  * Evaluates a [PuppetModel] at a set of parameter values into drawable geometry.

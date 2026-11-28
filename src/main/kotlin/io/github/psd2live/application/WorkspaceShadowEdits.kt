@@ -4,29 +4,35 @@ import io.github.psd2live.algorithms.shadow.*
 import io.github.psd2live.core.*
 import io.github.psd2live.core.modifier.*
 import io.github.psd2live.project.*
+import io.github.psd2live.i18n.tr
 import kotlinx.serialization.json.*
+import org.umamo.runtime.model.Drawable
+import org.umamo.runtime.model.OrgChild
+import org.umamo.runtime.model.PartGroupMode
+import org.umamo.runtime.model.partByDrawable
+import org.umamo.runtime.model.visibleDrawableIds
 
 /** Pure candidate edits for world lighting and cast/form shadows backed by the modifier stack. */
 internal object WorkspaceShadowEdits {
     val supported = setOf("shadow_world_set", "shadow_auto_generate", "shadow_put", "shadow_delete", "shadow_apply")
 
-    fun apply(operation: WorkspaceDocumentOperation, document: WorkspaceDocument, model: RigPreviewModel): WorkspaceDocument {
+    fun apply(operation: WorkspaceDocumentOperation, document: WorkspaceDocument, model: RigPreviewModel,
+              work: WorkspaceRasterWork = WorkspaceRasterWork.Direct): WorkspaceDocument {
         val request = operation.request
-        return when (operation.operation) {
+        val candidate = when (operation.operation) {
             "shadow_world_set" -> setWorld(document, model, request)
-            "shadow_auto_generate" -> autoGenerate(document, model, request)
+            "shadow_auto_generate" -> autoGenerate(document, model, request, work)
             "shadow_put" -> putShadow(document, model, request)
             "shadow_delete" -> deleteShadow(document, request)
-            "shadow_apply" -> WorkspaceModifierEdits.apply(
-                WorkspaceDocumentOperation("modifier_apply", buildJsonObject {
-                    put("id", request.text("id"))
-                    put("scope", "selected")
-                }),
-                document,
-                model,
-            )
+            "shadow_apply" -> applyShadow(document, model, request, work)
             else -> throw IllegalArgumentException("Unsupported shadow operation: ${operation.operation}")
         }
+        if (document.rigEdits.modifierStack == null && candidate.rigEdits.modifierStack != null) {
+            // Installing an empty stack would remove the implicit legacy bindings. Convert inside the edit transaction.
+            val converted = WorkspaceModifierConversion.convert(document, model, work)
+            return apply(operation, converted, model, work)
+        }
+        return candidate
     }
 
     fun readStack(document: WorkspaceDocument): RigModifierStack =
@@ -65,7 +71,7 @@ internal object WorkspaceShadowEdits {
             elevation = request["elevation"]?.jsonPrimitive?.float ?: current.elevation,
             style = request["style"]?.jsonPrimitive?.contentOrNull?.let { ShadowStyle.valueOf(it.uppercase()) } ?: current.style,
             colorMode = request["color_mode"]?.jsonPrimitive?.contentOrNull?.let { ShadowColorMode.valueOf(it.uppercase()) } ?: current.colorMode,
-            customColor = request["custom_color"]?.jsonPrimitive?.contentOrNull ?: current.customColor,
+            customColor = request["custom_color"]?.jsonPrimitive?.contentOrNull?.let(::shadowColor) ?: current.customColor,
             intensity = request["intensity"]?.jsonPrimitive?.float ?: current.intensity,
             compositeMode = request["composite_mode"]?.jsonPrimitive?.contentOrNull?.let { ShadowCompositeMode.valueOf(it.uppercase()) } ?: current.compositeMode,
             previewEnabled = request["preview_enabled"]?.jsonPrimitive?.booleanOrNull ?: current.previewEnabled,
@@ -73,168 +79,238 @@ internal object WorkspaceShadowEdits {
         return writeStack(document, ensureWorld(stack, model, updated))
     }
 
-    private fun autoGenerate(document: WorkspaceDocument, model: RigPreviewModel, request: JsonObject): WorkspaceDocument {
-        var stack = readStack(document)
-        if (findWorld(stack) == null) {
-            stack = ensureWorld(stack, model, ShadowWorldConfig.Default)
+    private fun autoGenerate(document: WorkspaceDocument, model: RigPreviewModel, request: JsonObject,
+                             work: WorkspaceRasterWork): WorkspaceDocument {
+        val original = readStack(document)
+        var stack = original
+        val rig = model.rig
+        val puppet = rig.puppet
+        val shown = puppet.visibleDrawableIds()
+        val ownLayerIds = rig.ownLayerIdByDrawableId
+        val byLayer = puppet.drawables.asSequence()
+            .filter { it.id in shown && it.mesh != null && it.opacity > 0f && it.id.raw !in rig.seeThroughCopies }
+            .groupBy { ownLayerIds[it.id.raw] ?: it.id.raw }
+        val layers = model.analysis.layers.mapNotNull { layer ->
+            val id = layer.source.id.raw
+            val meshes = byLayer[id].orEmpty()
+            if (layer.opaquePixels == 0 || id in document.deletedLayerIds || id in document.layout.referenceLayerIds || meshes.isEmpty()) null
+            else AutoLayer(layer, meshes)
         }
-        val includeCovered = request["include_covered"]?.jsonPrimitive?.booleanOrNull ?: false
-        val layers = model.analysis.layers.filter {
-            it.source.id.raw !in document.deletedLayerIds && it.opaquePixels > 0 && it.source.visible && it.source.opacity > 0f
-        }
-        val byId = layers.associateBy { it.source.id.raw }
-        val hiddenGroups = model.analysis.source.groups.filter { !it.visible || it.opacity <= 0f }.mapTo(HashSet()) { it.path }
-        val coveredCasters = if (includeCovered) emptySet() else RigDepthTurnSource.shadowCarriers(byId, hiddenGroups).values.toSet()
-
-        val meshByLayerId = model.rig.layerIdByDrawableId.entries.associate { (meshId, layerId) -> layerId to meshId }
-        val meshIds = model.rig.puppet.drawables.mapTo(HashSet()) { it.id.raw }
-        fun existingMeshes(predicate: (ClassifiedLayer) -> Boolean): List<String> =
-            layers.filter(predicate).mapNotNull { layer ->
-                val raw = layer.source.id.raw
-                val meshId = meshByLayerId[raw] ?: raw
-                meshId.takeIf { it in meshIds }
+        val anchor = layers.firstOrNull()?.meshes?.firstOrNull()?.id?.raw ?: return document
+        val clips = RigOrdinaryMaterials.clipping(model.analysis.source, ownLayerIds)
+        val parts = puppet.parts.associateBy { it.id }
+        val parentParts = puppet.parts.flatMap { part ->
+            part.children.filterIsInstance<OrgChild.Part>().map { it.id to part.id }
+        }.toMap()
+        val owners = puppet.partByDrawable()
+        fun clipsTo(paint: AutoLayer, receiver: AutoLayer): Boolean {
+            val ids = receiver.meshes.mapTo(HashSet()) { it.id }
+            return clips[paint.id] in ids || paint.meshes.any { mesh ->
+                (!mesh.invertMask && mesh.maskedBy.any { it in ids }) ||
+                    generateSequence(owners[mesh.id], parentParts::get).any { part ->
+                        parts[part]?.takeIf { it.groupMode is PartGroupMode.Isolated }?.composite?.let {
+                            !it.invertMask && it.maskedBy.any { id -> id in ids }
+                        } == true
+                    }
             }
+        }
+        val painted = layers.filter { it.role == PartRole.SHADOW }
+        val faces = layers.filter { it.tag == SemanticTag.FACE && it.role == null }
+        val necks = layers.filter { it.tag == SemanticTag.NECK && it.role == null }
+        val fringe = layers.filter { it.tag == SemanticTag.FRONT_HAIR && it.role !in setOf(PartRole.SHADOW, PartRole.HIGHLIGHT, PartRole.AHOGE) }
+        val paired = RigDepthTurnSource.shadowCarriers(layers.associate { it.id to it.layer }, emptySet())
+        val includeCovered = request["include_covered"]?.jsonPrimitive?.booleanOrNull
 
-        val frontHairCasters = existingMeshes {
-            it.semantic.tag == SemanticTag.FRONT_HAIR &&
-                it.semantic.role != PartRole.SHADOW &&
-                it.semantic.role != PartRole.HIGHLIGHT &&
-                it.source.id.raw !in coveredCasters
-        }
-        val faceReceivers = existingMeshes {
-            it.semantic.tag == SemanticTag.FACE &&
-                it.semantic.role != PartRole.SHADOW &&
-                it.semantic.role != PartRole.HIGHLIGHT
-        }
-        val neckReceivers = existingMeshes {
-            it.semantic.tag == SemanticTag.NECK &&
-                it.semantic.role != PartRole.SHADOW &&
-                it.semantic.role != PartRole.HIGHLIGHT
-        }
-        val hasAuthoredNeckShadow = layers.any {
-            it.semantic.tag == SemanticTag.NECK && it.semantic.role == PartRole.SHADOW
-        }
-
-        // 1. Bangs -> Face cast shadow
-        if (frontHairCasters.isNotEmpty() && faceReceivers.isNotEmpty() &&
-            stack.instances.none { it.type == ShadowAlgorithmPlugin.TYPE_CAST && it.presetGroup == "shadow:auto_bangs" }
-        ) {
-            val cfg = CastShadowConfig(
-                name = "刘海阴影",
-                casters = frontHairCasters,
-                receivers = faceReceivers,
-                distance = 18f,
-                placement = ShadowPlacement.ABOVE_FACE,
-                skipCoveredCasters = !includeCovered,
-            )
-            stack = stack.add(
-                type = ShadowAlgorithmPlugin.TYPE_CAST,
-                version = 1,
-                targets = (frontHairCasters + faceReceivers).distinct().map { ModifierTarget("mesh", it) },
-                config = cfg.toJson(),
-                presetGroup = "shadow:auto_bangs",
-            )
+        fun syncCast(group: String, defaults: CastShadowConfig, candidates: List<AutoLayer>, skin: List<AutoLayer>,
+                     distanceFraction: Float, covered: (AutoLayer, AutoLayer) -> Boolean) {
+            val existing = stack.instances.firstOrNull { it.presetGroup == group && it.type == ShadowAlgorithmPlugin.TYPE_CAST }
+            if (wasApplied(stack, existing, group, ShadowAlgorithmPlugin.TYPE_CAST)) return
+            val old = existing?.let { CastShadowConfig.fromJson(it.config) }
+            val skipCovered = includeCovered?.not() ?: old?.skipCoveredCasters ?: true
+            val pairs = candidates.flatMap { caster ->
+                work.checkpoint()
+                skin.mapNotNull { receiver ->
+                    if (overlaps(caster.layer.bounds, receiver.layer.bounds.expanded(.2f)) && (!skipCovered || !covered(caster, receiver)))
+                        caster to receiver else null
+                }
+            }
+            val casters = meshIds(pairs.map { it.first })
+            val receivers = meshIds(pairs.map { it.second })
+            if (existing == null && pairs.isEmpty()) return
+            val receiversByCaster = pairs.flatMap { (caster, receiver) ->
+                caster.meshes.map { it.id.raw to receiver }
+            }.groupBy({ it.first }, { it.second }).mapValues { (_, matched) -> meshIds(matched) }
+            val extent = pairs.maxOfOrNull { (_, receiver) -> receiver.layer.bounds.height }
+            // Automatically chosen distances use the recipient's size in canvas pixels. Stored custom distances stay in pixels.
+            val distance = extent?.let { (it * distanceFraction).coerceIn(1f, 200f) } ?: defaults.distance
+            val config = (old ?: defaults).copy(casters = casters, receivers = receivers,
+                distance = old?.distance?.takeUnless { it == defaults.distance } ?: distance, skipCoveredCasters = skipCovered,
+                receiversByCaster = receiversByCaster)
+            stack = syncAutoItem(stack, existing, ShadowAlgorithmPlugin.TYPE_CAST, group, casters + receivers, config.toJson(), anchor)
         }
 
-        // 2. Face side crescent form shadow
-        if (faceReceivers.isNotEmpty() &&
-            stack.instances.none { it.type == ShadowAlgorithmPlugin.TYPE_FORM && it.presetGroup == "shadow:auto_face_side" }
-        ) {
-            val cfg = FormShadowConfig(
-                name = "脸侧阴影",
-                targets = faceReceivers,
-                proxy = FormProxyKind.FACE_ELLIPSOID,
-                coverage = 0.28f,
-            )
-            stack = stack.add(
-                type = ShadowAlgorithmPlugin.TYPE_FORM,
-                version = 1,
-                targets = faceReceivers.map { ModifierTarget("mesh", it) },
-                config = cfg.toJson(),
-                presetGroup = "shadow:auto_face_side",
-            )
+        syncCast("shadow:auto_bangs", CastShadowConfig(name = tr("shadow.auto.bangs"), distance = 18f), fringe, faces, .07f) { caster, receiver ->
+            painted.any { paint ->
+                // Hair's own paint is separate from a projection on skin, even if it follows the same carrier.
+                clipsTo(paint, receiver) && (paired[paint.id] == caster.id ||
+                    paired[paint.id] == null && paint.tag == SemanticTag.FRONT_HAIR && overlaps(paint.layer.bounds, caster.layer.bounds))
+            }
         }
 
-        // 3. Face/chin -> Neck cast shadow (only if no hand-drawn neck shadow exists)
-        if (faceReceivers.isNotEmpty() && neckReceivers.isNotEmpty() && !hasAuthoredNeckShadow &&
-            stack.instances.none { it.type == ShadowAlgorithmPlugin.TYPE_CAST && it.presetGroup == "shadow:auto_neck" }
-        ) {
-            val cfg = CastShadowConfig(
-                name = "颈部阴影",
-                casters = faceReceivers,
-                receivers = neckReceivers,
-                distance = 22f,
-                rootPinning = 0.2f,
-                placement = ShadowPlacement.ABOVE_FACE,
-            )
-            stack = stack.add(
-                type = ShadowAlgorithmPlugin.TYPE_CAST,
-                version = 1,
-                targets = (faceReceivers + neckReceivers).distinct().map { ModifierTarget("mesh", it) },
-                config = cfg.toJson(),
-                presetGroup = "shadow:auto_neck",
-            )
+        val formGroup = "shadow:auto_face_side"
+        val form = stack.instances.firstOrNull { it.type == ShadowAlgorithmPlugin.TYPE_FORM && it.presetGroup == formGroup }
+        if (!wasApplied(stack, form, formGroup, ShadowAlgorithmPlugin.TYPE_FORM)) {
+            val targets = meshIds(faces)
+            if (form != null || targets.isNotEmpty()) {
+                val config = (form?.let { FormShadowConfig.fromJson(it.config) }
+                    ?: FormShadowConfig(name = tr("shadow.auto.faceSide"), coverage = .18f)).copy(targets = targets)
+                stack = syncAutoItem(stack, form, ShadowAlgorithmPlugin.TYPE_FORM, formGroup, targets, config.toJson(), anchor)
+            }
         }
 
+        syncCast("shadow:auto_neck", CastShadowConfig(name = tr("shadow.auto.neck"), distance = 22f, rootPinning = .2f), faces, necks, .2f) { _, receiver ->
+            painted.any { paint -> paint.tag == SemanticTag.NECK && (clipsTo(paint, receiver) ||
+                overlaps(paint.layer.bounds, receiver.layer.bounds) &&
+                paint.meshes.maxOf { it.drawOrder } > receiver.meshes.minOf { it.drawOrder }) }
+        }
+
+        if (stack == original) return document
+        if (findWorld(stack) == null) stack = ensureWorld(stack, model, ShadowWorldConfig.Default)
         return writeStack(document, stack)
     }
 
+    private data class AutoLayer(val layer: ClassifiedLayer, val meshes: List<Drawable>) {
+        val id get() = layer.source.id.raw
+        val tag get() = layer.semantic.tag
+        val role get() = layer.semantic.role ?: if (tag == SemanticTag.FACE)
+            PartRoles.fromName(layer.source.name, "", SemanticTag.FACE_DETAIL)?.takeIf { it == PartRole.SHADOW || it == PartRole.HIGHLIGHT }
+        else null
+    }
+
+    private fun overlaps(a: Bounds, b: Bounds): Boolean =
+        a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+
+    private fun meshIds(layers: List<AutoLayer>): List<String> = layers.flatMap { it.meshes.map { mesh -> mesh.id.raw } }.distinct()
+
+    private fun wasApplied(stack: RigModifierStack, item: RigModifierInstance?, group: String, type: String): Boolean {
+        if (item != null && item.id in stack.appliedNodes) return true
+        val originalName = when (group) {
+            "shadow:auto_bangs" -> "刘海阴影"
+            "shadow:auto_face_side" -> "脸侧阴影"
+            "shadow:auto_neck" -> "颈部阴影"
+            else -> null
+        }
+        return stack.appliedCapabilities.any {
+            it.type == type && (it.presetGroup == group ||
+                it.presetGroup == null && originalName != null && it.config["name"]?.jsonPrimitive?.contentOrNull == originalName)
+        }
+    }
+
+    private fun syncAutoItem(stack: RigModifierStack, existing: RigModifierInstance?, type: String, group: String,
+                             ids: List<String>, config: JsonObject, anchor: String): RigModifierStack {
+        // Keep item settings when its automatic selection is temporarily empty. The harmless anchor satisfies the stack contract.
+        val targets = ids.distinct().ifEmpty { listOf(anchor) }.map { ModifierTarget("mesh", it) }
+        return if (existing == null) stack.add(type, 1, targets, config, presetGroup = group)
+        else stack.update(existing.id) { it.copy(targets = targets, config = config) }
+    }
+
+    private fun applyShadow(document: WorkspaceDocument, model: RigPreviewModel, request: JsonObject,
+                            work: WorkspaceRasterWork): WorkspaceDocument {
+        val id = request.text("id")
+        val stack = readStack(document)
+        val item = requireNotNull(stack.instances.firstOrNull { it.id == id }) { "Shadow instance not found: $id" }
+        require(isShadowItem(item)) { "Not a shadow item: $id" }
+        require(findWorld(stack)?.let { ShadowWorldConfig.fromJson(it.config).previewEnabled } != false) {
+            "Enable shadow preview before applying a shadow"
+        }
+        return WorkspaceModifierEdits.apply(WorkspaceDocumentOperation("modifier_apply", buildJsonObject {
+            put("id", id)
+            put("scope", "selected")
+        }), document, model, work)
+    }
+
+    private fun isShadowItem(item: RigModifierInstance): Boolean =
+        item.type == ShadowAlgorithmPlugin.TYPE_CAST || item.type == ShadowAlgorithmPlugin.TYPE_FORM
+
     private fun putShadow(document: WorkspaceDocument, model: RigPreviewModel, request: JsonObject): WorkspaceDocument {
         var stack = readStack(document)
-        if (findWorld(stack) == null) {
-            stack = ensureWorld(stack, model, ShadowWorldConfig.Default)
-        }
         val id = request["id"]?.jsonPrimitive?.contentOrNull
         val enabled = request["enabled"]?.jsonPrimitive?.booleanOrNull
+        val resolve = { targets: List<String> -> resolveMeshIds(targets, model) }
 
-        if (id != null) {
-            val existing = stack.instances.firstOrNull { it.id == id }
-                ?: throw IllegalArgumentException("Shadow instance not found: $id")
-            val nextEnabled = enabled ?: existing.enabled
-            val updatedStack = when (existing.type) {
-                ShadowAlgorithmPlugin.TYPE_CAST -> {
-                    val prev = CastShadowConfig.fromJson(existing.config)
-                    val next = patchCast(prev, request)
-                    val targets = (next.casters + next.receivers).distinct().map { ModifierTarget("mesh", it) }
-                    stack.update(id) { it.copy(targets = targets, config = next.toJson(), enabled = nextEnabled) }
-                }
-                ShadowAlgorithmPlugin.TYPE_FORM -> {
-                    val prev = FormShadowConfig.fromJson(existing.config)
-                    val next = patchForm(prev, request)
-                    val targets = next.targets.distinct().map { ModifierTarget("mesh", it) }
-                    stack.update(id) { it.copy(targets = targets, config = next.toJson(), enabled = nextEnabled) }
-                }
-                else -> throw IllegalArgumentException("Not a shadow item: $id")
-            }
-            return writeStack(document, updatedStack)
+        val existing = id?.let { raw ->
+            requireNotNull(stack.instances.firstOrNull { it.id == raw }) { "Shadow instance not found: $raw" }
+                .also { require(isShadowItem(it)) { "Not a shadow item: $raw" } }
         }
+        val existingKind = existing?.type?.substringAfterLast('.')
+        val kind = request["kind"]?.jsonPrimitive?.contentOrNull ?: existingKind ?: "cast"
+        require(existingKind == null || kind == existingKind) { "Cannot change a shadow item's kind" }
+        val type: String
+        val config: JsonObject
+        val targetIds: List<String>
 
-        val kind = request["kind"]?.jsonPrimitive?.contentOrNull?.lowercase() ?: "cast"
-        val updatedStack = when (kind) {
+        when (kind) {
             "cast" -> {
-                val cfg = patchCast(CastShadowConfig(), request)
-                require(cfg.casters.isNotEmpty() && cfg.receivers.isNotEmpty()) { "Cast shadow requires casters and receivers" }
-                val targets = (cfg.casters + cfg.receivers).distinct().map { ModifierTarget("mesh", it) }
-                stack.add(ShadowAlgorithmPlugin.TYPE_CAST, 1, targets, cfg.toJson(), presetGroup = "shadow:manual")
+                require(request.keys.none { it in setOf("targets", "coverage", "proxy", "cutter_expand_px") }) { "A cast shadow needs cast settings" }
+                val old = existing?.let { CastShadowConfig.fromJson(it.config) } ?: CastShadowConfig()
+                val patched = patchCast(old, request)
+                val casters = if ("casters" in request) resolve(patched.casters) else patched.casters
+                val receivers = if ("receivers" in request) resolve(patched.receivers) else patched.receivers
+                if (existing == null || "casters" in request || "receivers" in request) {
+                    require(casters.isNotEmpty() && receivers.isNotEmpty()) { "Cast shadow requires casters and receivers" }
+                    require(receivers.none { it in casters }) { "A cast shadow needs distinct casters and receivers" }
+                }
+                type = ShadowAlgorithmPlugin.TYPE_CAST
+                config = patched.copy(casters = casters, receivers = receivers,
+                    receiversByCaster = if (casters == old.casters && receivers == old.receivers) old.receiversByCaster else null).toJson()
+                targetIds = casters + receivers
             }
             "form" -> {
-                val cfg = patchForm(FormShadowConfig(), request)
-                require(cfg.targets.isNotEmpty()) { "Form shadow requires targets" }
-                val targets = cfg.targets.distinct().map { ModifierTarget("mesh", it) }
-                stack.add(ShadowAlgorithmPlugin.TYPE_FORM, 1, targets, cfg.toJson(), presetGroup = "shadow:manual")
+                require(request.keys.none { it in setOf("casters", "receivers", "distance", "root_pinning", "parallax", "placement", "skip_covered_casters") }) {
+                    "A form shadow needs form settings"
+                }
+                val old = existing?.let { FormShadowConfig.fromJson(it.config) } ?: FormShadowConfig()
+                val patched = patchForm(old, request)
+                val targets = if ("targets" in request) resolve(patched.targets) else patched.targets
+                if (existing == null || "targets" in request) require(targets.isNotEmpty()) { "Form shadow requires targets" }
+                type = ShadowAlgorithmPlugin.TYPE_FORM
+                config = patched.copy(targets = targets).toJson()
+                targetIds = targets
             }
             else -> throw IllegalArgumentException("Unknown shadow kind: $kind")
         }
-        return writeStack(document, updatedStack)
+        if (findWorld(stack) == null) stack = ensureWorld(stack, model, ShadowWorldConfig.Default)
+        val targets = targetIds.distinct().map { ModifierTarget("mesh", it) }.ifEmpty { existing?.targets.orEmpty() }
+        val updated = if (existing != null) {
+            stack.update(existing.id) { it.copy(targets = targets, config = config, enabled = enabled ?: it.enabled) }
+        } else {
+            val added = stack.add(type, 1, targets, config, presetGroup = "shadow:manual")
+            if (enabled == false) added.update(added.instances.last().id) { it.copy(enabled = false) } else added
+        }
+        return writeStack(document, updated)
+    }
+
+    private fun resolveMeshIds(targets: List<String>, model: RigPreviewModel): List<String> {
+        val rig = model.rig
+        val meshes = rig.puppet.drawables.filter { it.mesh != null }
+        val meshIds = meshes.mapTo(HashSet()) { it.id.raw }
+        val byLayer = meshes.mapNotNull { mesh -> rig.ownLayerIdByDrawableId[mesh.id.raw]?.let { it to mesh.id.raw } }
+            .groupBy({ it.first }, { it.second })
+        return targets.flatMap { target ->
+            when {
+                target in meshIds -> listOf(target)
+                target.startsWith("mesh:") && target.removePrefix("mesh:") in meshIds -> listOf(target.removePrefix("mesh:"))
+                target.startsWith("layer:") -> byLayer[target.removePrefix("layer:")]
+                else -> byLayer[target]
+            } ?: throw IllegalArgumentException("Shadow target is not an existing mesh or source layer: $target")
+        }.distinct()
     }
 
     private fun deleteShadow(document: WorkspaceDocument, request: JsonObject): WorkspaceDocument {
         val id = request.text("id")
         val stack = readStack(document)
         val target = stack.instances.firstOrNull { it.id == id } ?: return document
-        require(target.type == ShadowAlgorithmPlugin.TYPE_CAST || target.type == ShadowAlgorithmPlugin.TYPE_FORM) {
-            "Not a shadow instance: $id"
-        }
+        require(isShadowItem(target)) { "Not a shadow instance: $id" }
         return writeStack(document, stack.remove(id))
     }
 
@@ -245,7 +321,7 @@ internal object WorkspaceShadowEdits {
         distance = req["distance"]?.jsonPrimitive?.float ?: prev.distance,
         opacityOverride = if ("opacity_override" in req) req["opacity_override"]?.jsonPrimitive?.floatOrNull else prev.opacityOverride,
         softnessOverride = if ("softness_override" in req) req["softness_override"]?.jsonPrimitive?.floatOrNull else prev.softnessOverride,
-        colorOverride = if ("color_override" in req) req["color_override"]?.jsonPrimitive?.contentOrNull else prev.colorOverride,
+        colorOverride = if ("color_override" in req) req["color_override"]?.jsonPrimitive?.contentOrNull?.let(::shadowColor) else prev.colorOverride,
         rootPinning = req["root_pinning"]?.jsonPrimitive?.float ?: prev.rootPinning,
         parallax = req["parallax"]?.jsonPrimitive?.float ?: prev.parallax,
         placement = req["placement"]?.jsonPrimitive?.contentOrNull?.let { ShadowPlacement.valueOf(it.uppercase()) } ?: prev.placement,
@@ -259,9 +335,15 @@ internal object WorkspaceShadowEdits {
         coverage = req["coverage"]?.jsonPrimitive?.float ?: prev.coverage,
         opacityOverride = if ("opacity_override" in req) req["opacity_override"]?.jsonPrimitive?.floatOrNull else prev.opacityOverride,
         softnessOverride = if ("softness_override" in req) req["softness_override"]?.jsonPrimitive?.floatOrNull else prev.softnessOverride,
-        colorOverride = if ("color_override" in req) req["color_override"]?.jsonPrimitive?.contentOrNull else prev.colorOverride,
+        colorOverride = if ("color_override" in req) req["color_override"]?.jsonPrimitive?.contentOrNull?.let(::shadowColor) else prev.colorOverride,
         cutterExpandPx = req["cutter_expand_px"]?.jsonPrimitive?.float ?: prev.cutterExpandPx,
     )
+
+    private val rgbHex = Regex("#?[0-9a-fA-F]{6}")
+
+    private fun shadowColor(value: String): String = value.trim().also {
+        require(rgbHex.matches(it)) { "Shadow color must be a six-digit RGB hex value" }
+    }
 
     private fun writeStack(document: WorkspaceDocument, stack: RigModifierStack): WorkspaceDocument =
         document.copy(rigEdits = document.rigEdits.copy(modifierStack = stack.toJson()))

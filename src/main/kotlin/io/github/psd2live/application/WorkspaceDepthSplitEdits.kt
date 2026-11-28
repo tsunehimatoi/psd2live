@@ -51,7 +51,8 @@ internal object WorkspaceDepthSplitEdits {
                     val b = if (glue.meshB.raw == sourceId) backMeshId else glue.meshB.raw
                     glueKey(glue) to "$a|$b"
                 }
-                RigModifierStack.fromJson(raw).retargetDepthSplit(sourceId, backMeshId, slices.sourceLayerId, backId, glueKeys).toJson()
+                RigModifierStack.fromJson(raw).retargetDepthSplit(sourceId, backMeshId, slices.sourceLayerId, backId, glueKeys,
+                    frontMesh = frontMeshId).toJson()
             }
             val layers = listOf(slices.back.id.raw, slices.front.id.raw)
             fun documentWith(placed: WorkspaceDocument, rigEdits: RigEditOverlay, parents: Map<String, String?>) = placed.copy(

@@ -38,7 +38,8 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
         val asset = id in WorkspaceAssetSessions.supported
         val pose = id == "preview_pose"
         val swing = id in setOf("swing_preview", "swing_preview_commit")
-        val background = id in WorkspaceSimulationEdits.supported || physics || raster || layer || generation || partition || regeneration || warp || asset || sampling || motionObservation || pose || swing || id in setOf("interior_put", "interior_delete", WorkspaceStructureMeshEdits.OP)
+        val shadow = id in WorkspaceShadowEdits.supported
+        val background = id in WorkspaceSimulationEdits.supported || physics || raster || layer || generation || partition || regeneration || warp || asset || sampling || motionObservation || pose || swing || shadow || id in setOf("interior_put", "interior_delete", WorkspaceStructureMeshEdits.OP)
         registry.register(WorkspaceOperationDefinition(id,
             description + if (background) " Returns a process-owned job handle; use job_wait/job_get for the result, state and diagnostics. Disconnecting does not cancel execution." else "",
             schema, kind, jobBacked = background, workspaceBound = background || kind != WorkspaceOperationKind.QUERY,
@@ -47,6 +48,7 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
             if (motionObservation) WorkspaceObservationJobs.start(workspace, jobs, request)
             else if (sampling) WorkspaceSamplingJobs.start(workspace, jobs, id, request)
             else if (!background) handler(request) else startWorkspaceOperationJob(workspace, jobs, id) {
+                if (shadow) return@startWorkspaceOperationJob handler(request)
                 val completion = requireNotNull(kotlinx.coroutines.currentCoroutineContext()[WorkspaceJobCompletion])
                 kotlinx.coroutines.withContext(if (physics) WorkspacePhysicsJobExecution(id, completion)
                     else if (raster) WorkspaceRasterJobExecution(id, completion)
@@ -486,17 +488,7 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
             register(id, command.description.ifBlank { "$description Operation: $mode." }, objectSchema(properties, required), kind) { input ->
                 val result = commands.invoke(commandId, input)
                 val value = result.data
-                if ("historyNodeId" !in value) result else result.copy(data = buildJsonObject {
-                    put("state", value.getValue("state")); put("history_node_id", value.getValue("historyNodeId")); put("project_id", value.getValue("project_id"))
-                    value["revisionId"]?.let { put("revision", it) }
-                    value["applied"]?.let { put("applied", it) }
-                    listOf("affectedLayerIds", "affectedParameterIds", "affectedObjectIds").forEach { field ->
-                        value[field]?.takeIf { it is JsonArray && it.isNotEmpty() }?.let { put(field, it) }
-                    }
-                    if (id == "physics_import") listOf("imported", "disabled", "missing_parameters", "fps").forEach { field ->
-                        value[field]?.let { put(field, it) }
-                    }
-                })
+                if ("historyNodeId" !in value) result else result.copy(data = normalizedAuthoringMutation(value, id))
             }
         }
     }
@@ -978,6 +970,20 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
 
     registerCommandOperations("revision", "Save, checkpoint, inspect history or restore a chosen snapshot. Every mutation returns a new state; chain it. Restore is a write, not preview. Keep your own task plan; checkpoints preserve useful progress.",
         mapOf("checkpoint" to "history_checkpoint", "list" to "history_list", "restore" to "history_checkout"), true)
+}
+
+internal fun normalizedAuthoringMutation(value: JsonObject, operation: String): JsonObject = buildJsonObject {
+    put("state", value.getValue("state"))
+    put("history_node_id", value.getValue("historyNodeId"))
+    put("project_id", value.getValue("project_id"))
+    value["revisionId"]?.let { put("revision", it) }
+    value["applied"]?.let { put("applied", it) }
+    for (field in listOf("affectedLayerIds", "affectedParameterIds", "affectedObjectIds")) {
+        value[field]?.takeIf { it is JsonArray && it.isNotEmpty() }?.let { put(field, it) }
+    }
+    if (operation == "physics_import") for (field in listOf("imported", "disabled", "missing_parameters", "fps")) {
+        value[field]?.let { put(field, it) }
+    }
 }
 
 private fun parseTarget(value: String): WorkspaceKeyformTargetRef {

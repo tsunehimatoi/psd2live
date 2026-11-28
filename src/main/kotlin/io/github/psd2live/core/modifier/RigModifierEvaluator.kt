@@ -644,6 +644,8 @@ internal class RigModifierEvaluator(
     }
 
     private fun validateTargets(rig: RigIR, instance: RigModifierInstance) {
+        // This legacy anchor only makes the world settings instance serializable; it supplies no geometry.
+        if (instance.type == ShadowAlgorithmPlugin.TYPE_WORLD && instance.plugin == null) return
         val kindCounts = instance.targets.groupingBy { it.kind }.eachCount()
         val idsByKind = HashMap<String, Set<String>>()
         fun <T> contains(target: ModifierTarget, values: List<T>, id: (T) -> String): Boolean {

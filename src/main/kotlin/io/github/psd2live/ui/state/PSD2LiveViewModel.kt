@@ -1715,7 +1715,9 @@ class PSD2LiveViewModel : AutoCloseable {
 
     internal fun submitShadowEdit(summary: String, operation: io.github.psd2live.application.WorkspaceDocumentOperation) {
         val expected = currentWorkspaceState() ?: return
-        saveDocumentEdits(expected, summary, listOf(operation)) {}
+        saveDocumentEdits(expected, summary, listOf(operation)) { error ->
+            if (error != null) setErrorMessage(error)
+        }
     }
 
     private val modifiers by lazy {

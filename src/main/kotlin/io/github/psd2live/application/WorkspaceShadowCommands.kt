@@ -1,6 +1,8 @@
 package io.github.psd2live.application
 
 import io.github.psd2live.project.MutationAuthor
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -75,21 +77,27 @@ internal object WorkspaceShadowSchemas {
 internal fun registerShadowCommands(catalog: WorkspaceCommands, workspace: WorkspaceBackend) {
     val definitions: List<Triple<String, String, WorkspaceCommandSchema>> = listOf(
         Triple("shadow_world_set", "Update the shared world lighting parameters used by all shadow items.", WorkspaceShadowSchemas.worldSet),
-        Triple("shadow_auto_generate", "Auto-generate default cast (bangs->face, face->neck) and form (face side) shadows while skipping authored shadow layers.", WorkspaceShadowSchemas.autoGenerate),
+        Triple("shadow_auto_generate", "Generate or refresh cast (bangs->face, face->neck) and form (face side) shadows on visible source meshes. Preserve existing item settings and applied shadows. Use include_covered to include caster/receiver pairs with an authored projection.", WorkspaceShadowSchemas.autoGenerate),
         Triple("shadow_put", "Create or update a cast or form shadow item.", WorkspaceShadowSchemas.put),
         Triple("shadow_delete", "Delete a shadow item.", WorkspaceShadowSchemas.delete),
         Triple("shadow_apply", "Bake a shadow item into ordinary editable meshes and keyforms.", WorkspaceShadowSchemas.apply),
     )
     for ((id, description, schema) in definitions) {
         catalog.register(id, description, schema, hints = MUTATING) { request ->
-            WorkspaceOperationOutput(
+            val edits = listOf(WorkspaceDocumentOperation(id, request.arguments))
+            suspend fun edit(): WorkspaceOperationOutput = WorkspaceOperationOutput(
                 workspace.applyDocumentEdits(
                     request.arguments.getValue("state").jsonPrimitive.content,
                     "Shadow edit",
-                    listOf(WorkspaceDocumentOperation(id, request.arguments)),
+                    edits,
                     MutationAuthor.AGENT,
                 ).toJson()
             )
+            val context = currentCoroutineContext()
+            val completion = context[WorkspaceJobCompletion]
+            if (completion == null) edit() else withContext(WorkspaceBatchJobExecution(edits, completion, context[WorkspaceJobContext]) {
+                WorkspaceOperationOutput(normalizedAuthoringMutation(it.toJson(), id))
+            }) { edit() }
         }
     }
 }

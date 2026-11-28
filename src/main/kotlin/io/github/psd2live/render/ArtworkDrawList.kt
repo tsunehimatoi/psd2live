@@ -15,7 +15,7 @@ import org.umamo.runtime.model.DrawableId
  * @property opacity     Final opacity, the drawable's own times the pass alpha and any dimming.
  * @property tintColor   ARGB colour washed over the mesh's triangles after it is drawn, 0 for none.
  * @property tintAlpha   Strength of that wash.
- * @property maskIds     Meshes whose opaque texels (alpha at least one half) clip this one; empty draws it unclipped.
+ * @property maskIds     Meshes whose alpha clips this one; an empty list draws it unclipped.
  * @property maskPages   The atlas page of each of [maskIds].
  * @property invertMask  The part shows only outside its masks instead of inside them.
  * @property blendMode   Colour blend with what is under the mesh.

@@ -10,6 +10,9 @@ import io.github.psd2live.core.RigPreviewModel
 import io.github.psd2live.core.textureLayer
 import org.jetbrains.skia.*
 import org.umamo.render.eval.DeformedGeometry
+import org.umamo.render.eval.RenderPlanComposite
+import org.umamo.render.eval.RenderPlanDrawable
+import org.umamo.render.eval.RenderPlanNode
 import io.github.psd2live.render.ArtworkDraw
 import io.github.psd2live.render.ArtworkDrawList
 import io.github.psd2live.render.ArtworkOptions
@@ -17,6 +20,9 @@ import io.github.psd2live.render.HOVER_TINT_STRENGTH
 import org.umamo.render.glsl.skslCompositeBlender
 import org.umamo.render.puppet.packedAlphaModeOf
 import org.umamo.render.puppet.packedColorModeOf
+import org.umamo.runtime.model.AlphaBlendMode
+import org.umamo.runtime.model.BlendMode as RigBlendMode
+import org.umamo.runtime.model.ColorRgb
 import org.umamo.runtime.model.DrawableId
 import org.umamo.format.art.LayerRaster
 
@@ -51,21 +57,21 @@ internal class SkiaRigPainter(private val atlas: PackedAtlas) : AutoCloseable {
     ) = paint(canvas, model, geometry, viewport, ArtworkDrawList.build(model, geometry, ArtworkOptions(
         alpha, visibleLayerIds, drawOrderOverrides, dimUnselected, highlightedLayerIds, dimmedAlphaMultiplier,
         tintLayerIds, tintColor, tintAlpha,
-    )), sources)
+    )), sources, drawOrderOverrides)
 
     /**
      * Draws [draws], the list the GPU renderer draws too, so the two paths cannot disagree about what shows.
      * With [sources], each mesh samples its layer's own raster instead of the atlas tile (source pixels).
      */
     fun paint(canvas: Canvas, model: RigPreviewModel, geometry: DeformedGeometry, viewport: CanvasViewport, draws: List<ArtworkDraw>,
-              sources: SourcePixelImages? = null) {
+              sources: SourcePixelImages? = null, drawOrderOverrides: Map<String, Float> = emptyMap()) {
         val pages = pages()
         val images = pages.images
         val shaders = pages.shaders
         val byId = model.rig.puppet.drawables.associateBy { it.id }
         val maskPaint = Paint()
         val blendPaint = Paint()
-        val coverPaint = Paint().apply { colorFilter = halfOpaque }
+        val coverPaint = Paint()
         /** View positions and texel coordinates of [id]'s triangles, expanded: no unsigned-short index limit. */
         fun vertices(id: DrawableId, page: Int): Pair<FloatArray, FloatArray>? {
             val mesh = byId[id]?.mesh ?: return null
@@ -92,28 +98,40 @@ internal class SkiaRigPainter(private val atlas: PackedAtlas) : AutoCloseable {
             return positions to uvs
         }
         fun shaderFor(id: DrawableId, page: Int): Shader = sources?.forDrawable(id.raw, page)?.shader ?: shaders[page]
+        fun pageOf(id: DrawableId): Int? = byId[id]?.let { model.rig.pageByDrawableId[id.raw] ?: it.texturePage }
+        fun applyMask(ids: List<DrawableId>, pageOfMask: (Int, DrawableId) -> Int?, invert: Boolean) {
+            if (ids.isEmpty()) return
+            maskPaint.blendMode = if (invert) BlendMode.DST_OUT else BlendMode.DST_IN
+            canvas.saveLayer(null, maskPaint)
+            try {
+                ids.forEachIndexed { index, id ->
+                    val page = pageOfMask(index, id) ?: return@forEachIndexed
+                    val (maskPositions, maskUvs) = vertices(id, page) ?: return@forEachIndexed
+                    coverPaint.shader = shaderFor(id, page)
+                    canvas.drawVertices(VertexMode.TRIANGLES, maskPositions, null, maskUvs, null, BlendMode.MODULATE, coverPaint)
+                }
+            } finally { canvas.restore() }
+        }
         Paint().use { paint ->
             try {
-                for (draw in draws) {
-                    if (images.getOrNull(draw.page) == null) continue
-                    val (positions, uvs) = vertices(draw.drawableId, draw.page) ?: continue
+                fun drawMesh(draw: ArtworkDraw) {
+                    val (positions, uvs) = vertices(draw.drawableId, draw.page) ?: return
                     val masked = draw.maskIds.isNotEmpty()
                     val saved = canvas.save()
                     try {
                         // Any blend but normal over: the part (masked and washed) draws into a layer that the
                         // preview's composite then blends onto what is under it.
-                        if (!(draw.blendMode == org.umamo.runtime.model.BlendMode.Normal && draw.fixedFunction)) {
+                        if (!(draw.blendMode == RigBlendMode.Normal && draw.fixedFunction)) {
                             blendPaint.blender = blender(packedColorModeOf(draw.blendMode), packedAlphaModeOf(draw.alphaBlend))
                             canvas.saveLayer(bounds(positions), blendPaint)
                         }
                         if (masked) {
-                            // The part draws into a layer the size of its own triangles; its masks' texels at least
-                            // half opaque then keep only what they cover (DST_IN), or what they leave bare when
-                            // inverted (DST_OUT), as the GPU painter's stencil does.
+                            // Draw the part into its own layer, then apply the masks' combined alpha coverage
+                            // with DST_IN, or the inverse with DST_OUT.
                             canvas.saveLayer(bounds(positions), null)
                         }
                         paint.shader = shaderFor(draw.drawableId, draw.page)
-                        val tint = if (draw.tinted) tintFilter(draw) else null
+                        val tint = if (draw.tinted) tintFilter(draw.multiply, draw.screen) else null
                         paint.colorFilter = tint
                         paint.setAlphaf(draw.opacity)
                         canvas.drawVertices(VertexMode.TRIANGLES, positions, null, uvs, null, BlendMode.MODULATE, paint)
@@ -129,19 +147,69 @@ internal class SkiaRigPainter(private val atlas: PackedAtlas) : AutoCloseable {
                             paint.setAlphaf(draw.tintAlpha)
                             canvas.drawVertices(VertexMode.TRIANGLES, positions, null, null, null, BlendMode.SRC_OVER, paint)
                         }
-                        if (masked) {
-                            maskPaint.blendMode = if (draw.invertMask) BlendMode.DST_OUT else BlendMode.DST_IN
-                            canvas.saveLayer(null, maskPaint)
-                            draw.maskIds.forEachIndexed { index, id ->
-                                val page = draw.maskPages.getOrElse(index) { draw.page }
-                                if (images.getOrNull(page) == null) return@forEachIndexed
-                                val (maskPositions, maskUvs) = vertices(id, page) ?: return@forEachIndexed
-                                coverPaint.shader = shaderFor(id, page)
-                                canvas.drawVertices(VertexMode.TRIANGLES, maskPositions, null, maskUvs, null, BlendMode.MODULATE, coverPaint)
-                            }
-                            canvas.restore()
-                        }
+                        applyMask(draw.maskIds, { index, _ -> draw.maskPages.getOrElse(index) { draw.page } }, draw.invertMask)
                     } finally { canvas.restoreToCount(saved) }
+                }
+                val puppet = model.rig.puppet
+                val order = if (drawOrderOverrides.isEmpty()) geometry.drawOrder else puppet.drawables.associate {
+                    it.id to RigCanvasSupport.displayOrder(model, it, geometry, drawOrderOverrides)
+                }
+                val plan = RigCanvasSupport.groupedRenderPlan(puppet, geometry, order)
+                if (plan == null) {
+                    draws.forEach(::drawMesh)
+                } else {
+                    val drawsById = draws.associateBy { it.drawableId }
+                    fun groupBounds(nodes: List<RenderPlanNode>): Rect? {
+                        var region: Rect? = null
+                        for (node in nodes) {
+                            val next = when (node) {
+                                is RenderPlanDrawable -> if (node.id in drawsById) {
+                                    bounds(geometry.worldPositions.getValue(node.id), viewport)
+                                } else null
+                                is RenderPlanComposite -> groupBounds(node.children)
+                            } ?: continue
+                            val current = region
+                            region = if (current == null) next else Rect.makeLTRB(
+                                minOf(current.left, next.left), minOf(current.top, next.top),
+                                maxOf(current.right, next.right), maxOf(current.bottom, next.bottom),
+                            )
+                        }
+                        return region
+                    }
+                    fun drawPlan(nodes: List<RenderPlanNode>) {
+                        for (node in nodes) when (node) {
+                            is RenderPlanDrawable -> drawsById[node.id]?.let(::drawMesh)
+                            is RenderPlanComposite -> {
+                                val composite = node.composite
+                                val state = geometry.partCompositeStates[node.partId]
+                                val opacity = (state?.opacity ?: composite.opacity).coerceIn(0f, 1f)
+                                if (opacity <= 0.001f) continue
+                                val region = groupBounds(node.children) ?: continue
+                                val multiply = state?.multiplyColor ?: composite.multiplyColor
+                                val screen = state?.screenColor ?: composite.screenColor
+                                val tint = if (multiply != ColorRgb.MultiplyIdentity || screen != ColorRgb.ScreenIdentity) {
+                                    tintFilter(multiply, screen)
+                                } else null
+                                try {
+                                    Paint().use { groupPaint ->
+                                        groupPaint.colorFilter = tint
+                                        groupPaint.setAlphaf(opacity)
+                                        if (composite.blendMode != RigBlendMode.Normal || composite.alphaBlendMode != AlphaBlendMode.Over) {
+                                            groupPaint.blender = blender(packedColorModeOf(composite.blendMode), packedAlphaModeOf(composite.alphaBlendMode))
+                                        }
+                                        canvas.saveLayer(region, groupPaint)
+                                        try {
+                                            drawPlan(node.children)
+                                            applyMask(composite.maskedBy, { _, id ->
+                                                pageOf(id).takeIf { byId[id]?.isVisible == true }
+                                            }, composite.invertMask)
+                                        } finally { canvas.restore() }
+                                    }
+                                } finally { tint?.close() }
+                            }
+                        }
+                    }
+                    drawPlan(plan)
                 }
             } finally { maskPaint.close(); blendPaint.close(); coverPaint.close() }
         }
@@ -151,8 +219,7 @@ internal class SkiaRigPainter(private val atlas: PackedAtlas) : AutoCloseable {
      * The multiply then screen colours on the straight colour, as the preview's shader applies them:
      * c' = c·m·(1 − s) + s per channel, alpha untouched.
      */
-    private fun tintFilter(draw: ArtworkDraw): ColorFilter {
-        val m = draw.multiply; val s = draw.screen
+    private fun tintFilter(m: ColorRgb, s: ColorRgb): ColorFilter {
         return ColorFilter.makeMatrix(ColorMatrix(
             m.red * (1f - s.red), 0f, 0f, 0f, s.red,
             0f, m.green * (1f - s.green), 0f, 0f, s.green,
@@ -171,20 +238,16 @@ internal class SkiaRigPainter(private val atlas: PackedAtlas) : AutoCloseable {
 
     private companion object {
         val compositeEffect: RuntimeEffect by lazy { RuntimeEffect.makeForBlender(skslCompositeBlender()) }
-
-        /** Keeps a mask's texels at least half opaque whole and drops the rest, as the preview's stencil does. */
-        val halfOpaque: ColorFilter by lazy {
-            val identity = ByteArray(256) { it.toByte() }
-            ColorFilter.makeTableARGB(ByteArray(256) { if (it >= 128) 255.toByte() else 0 }, identity, identity, identity)
-        }
     }
 
-    private fun bounds(positions: FloatArray): Rect {
+    private fun bounds(positions: FloatArray, viewport: CanvasViewport? = null): Rect {
         var left = Float.POSITIVE_INFINITY; var top = Float.POSITIVE_INFINITY
         var right = Float.NEGATIVE_INFINITY; var bottom = Float.NEGATIVE_INFINITY
         for (i in positions.indices step 2) {
-            left = minOf(left, positions[i]); right = maxOf(right, positions[i])
-            top = minOf(top, positions[i + 1]); bottom = maxOf(bottom, positions[i + 1])
+            val x = viewport?.x(positions[i])?.toFloat() ?: positions[i]
+            val y = viewport?.yFromWorld(positions[i + 1])?.toFloat() ?: positions[i + 1]
+            left = minOf(left, x); right = maxOf(right, x)
+            top = minOf(top, y); bottom = maxOf(bottom, y)
         }
         return if (left > right) Rect.makeWH(0f, 0f) else Rect.makeLTRB(left - 1f, top - 1f, right + 1f, bottom + 1f)
     }

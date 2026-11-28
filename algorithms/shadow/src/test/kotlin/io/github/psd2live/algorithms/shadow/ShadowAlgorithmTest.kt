@@ -1,6 +1,7 @@
 package io.github.psd2live.algorithms.shadow
 
 import io.github.psd2live.core.modifier.*
+import io.github.psd2live.bridge.PuppetIr
 import io.github.psd2live.format.model.*
 import kotlinx.serialization.json.buildJsonObject
 import org.junit.jupiter.api.Test
@@ -46,6 +47,7 @@ class ShadowAlgorithmTest {
                     TileArt("tile_bang2", 64, 64, Bytes.wrap(bangRgba)),
                 )
             ),
+            authoring = Authoring(runtime = "Cubism53"),
         )
     }
 
@@ -57,6 +59,62 @@ class ShadowAlgorithmTest {
         assertEquals(a.digest, b.digest)
         assertTrue(a.width > 16 && a.height > 16)
         assertTrue(a.padLeftPx > 0f)
+        val reshaped = ShadowRasterGen.generateSolidShadow(16, 64, src, blurPx = 8f, rgb = 0x886677)
+        assertNotEquals(a.width, reshaped.width)
+    }
+
+    @Test
+    fun `a rotated tile maps to source pixels and the blur does not inherit atlas page scale`() {
+        val mesh = sampleRig().meshes.first()
+        val geometry = requireNotNull(mesh.geometry)
+        val placement = TilePlacement(0, 130f, 65f, 0.5f, 0.75f, 90f)
+        fun packed(width: Int, height: Int): Mesh {
+            val uv = geometry.uvs.toArray()
+            for (i in uv.indices step 2) {
+                val x = uv[i] * 64f
+                val y = uv[i + 1] * 64f
+                uv[i] = (placement.x - y * placement.scaleY) / width
+                uv[i + 1] = (placement.y + x * placement.scaleX) / height
+            }
+            return mesh.copy(geometry = geometry.copy(uvs = Floats.wrap(uv)))
+        }
+        val raster = ShadowRasterGen.generateSolidShadow(64, 64, solidRgba(64, 64, 200, 150, 120, 255), 4f, 0x886677)
+        val expanded = listOf(256, 1024).map { size ->
+            val caster = packed(size, size / 2)
+            val rig = sampleRig().copy(textures = Textures(
+                tilePages = listOf(PageSize(size, size / 2)),
+                tiles = listOf(TextureTile(mesh.tile!!, mesh.name, 64, 64, placement)),
+            ))
+            val local = ShadowGeometry.rasterPixels(rig, caster, 64, 64)!!
+            assertEquals(64f, local[2], 1e-4f)
+            assertEquals(64f, local[5], 1e-4f)
+            ShadowGeometry.paddedGeometry(caster.geometry!!, local, 64, 64, raster)
+        }
+        for (geometryWithPadding in expanded) {
+            assertEquals(-raster.padLeftPx, geometryWithPadding.positions.shared()[0], 1e-4f)
+            assertEquals(64f + raster.padRightPx, geometryWithPadding.positions.shared()[2], 1e-4f)
+            assertEquals(raster.width.toFloat(), geometryWithPadding.uvs.shared()[2], 1e-4f)
+            assertEquals(raster.height.toFloat(), geometryWithPadding.uvs.shared()[5], 1e-4f)
+        }
+    }
+
+    @Test
+    fun `the same canvas projection survives a scaled and rotated parent frame`() {
+        val plain = sampleRig().copy(parameters = emptyList())
+        val rotation = Deformer.Rotation("rotation", "Rotation", null, null, 0f,
+            KeyGrid(emptyList(), listOf(KeyCell(Ints.wrap(intArrayOf()), Pivot(100f, 30f, 37f, 2.5f)))))
+        val caster = plain.meshes[1].copy(parent = rotation.id)
+        val rig = plain.copy(meshes = plain.meshes.map { if (it.id == caster.id) caster else it }, deformers = listOf(rotation))
+        val geom = requireNotNull(caster.geometry)
+        val (shifted, grid) = ShadowGeometry.projectCast(caster, geom, ShadowOffset2D(8f, 12f), 0f, 0f, rig, PuppetIr.toPuppet(rig))
+        assertEquals(null, grid)
+        val mapping = ShadowGeometry.spaceMapping(rig, caster)
+        val before = mapping.localToWorld(geom.positions.shared())
+        val after = mapping.localToWorld(shifted.positions.shared())
+        for (i in before.indices step 2) {
+            assertEquals(8f, after[i] - before[i], 1e-4f)
+            assertEquals(-12f, after[i + 1] - before[i + 1], 1e-4f)
+        }
     }
 
     @Test
@@ -78,7 +136,7 @@ class ShadowAlgorithmTest {
     }
 
     @Test
-    fun `cast shadow compat merged mode omits isolated part and masks meshes directly`() {
+    fun `legacy mode composites one receiver across the union of independent caster masks`() {
         val rig = sampleRig()
         val cfg = CastShadowConfig(name = "Bangs", casters = listOf("bang1", "bang2"), receivers = listOf("face"))
         val instance = RigModifierInstance("m1", "shadow.cast", 1, listOf(ModifierTarget("mesh", "bang1")), config = cfg.toJson())
@@ -87,7 +145,21 @@ class ShadowAlgorithmTest {
         })
         val changes = CastShadowAlgorithm().changes(rig, instance, ctx) {}
         assertEquals(0, changes.parts.added.size)
-        assertTrue(changes.rasters.all { it.mesh.blend == ColorBlend.MULTIPLY && it.mesh.maskedBy == listOf("face") })
+        val masks = changes.rasters.filter { it.mesh.opacity == 0f }
+        assertEquals(2, masks.size)
+        val clipped = changes.rasters.single { it.mesh.blend == ColorBlend.MULTIPLY }
+        assertEquals("face", clipped.owner.id)
+        assertEquals(masks.map { it.mesh.id }, clipped.mesh.maskedBy)
+    }
+
+    @Test
+    fun `auto selects a legacy representation on a Cubism 5 point 0 project`() {
+        val rig = sampleRig().let { it.copy(authoring = it.authoring.copy(runtime = "Cubism50")) }
+        val cfg = CastShadowConfig(casters = listOf("bang1"), receivers = listOf("face"))
+        val instance = RigModifierInstance("m1", "shadow.cast", 1, listOf(ModifierTarget("mesh", "bang1")), config = cfg.toJson())
+        val changes = CastShadowAlgorithm().changes(rig, instance, ModifierAlgorithmContext.Empty) {}
+        assertTrue(changes.parts.added.isEmpty())
+        assertEquals(1, changes.rasters.count { it.mesh.blend == ColorBlend.MULTIPLY })
     }
 
     @Test

@@ -71,7 +71,7 @@ internal fun blendLocalFromCorners(grid: KeyformGrid<MeshDeltaForm>?, base: Floa
  * @property ColorRgb multiplyColor The composite multiply color.
  * @property ColorRgb screenColor   The composite screen color.
  */
-internal class PartRenderState(
+class PartRenderState(
 	val opacity: Float,
 	val multiplyColor: ColorRgb,
 	val screenColor: ColorRgb,

@@ -4,22 +4,33 @@ import io.github.psd2live.core.Bounds
 import io.github.psd2live.core.RigPreviewModel
 import org.umamo.render.eval.CpuDeformationEvaluator
 import org.umamo.render.eval.DeformedGeometry
+import org.umamo.render.eval.RenderPlanComposite
+import org.umamo.render.eval.RenderPlanDrawable
+import org.umamo.render.eval.RenderPlanNode
+import org.umamo.render.eval.renderPlan
 import org.umamo.runtime.model.AlphaBlendMode
 import org.umamo.runtime.model.BlendMode
 import org.umamo.runtime.model.ColorRgb
 import org.umamo.runtime.model.Deformer
+import org.umamo.runtime.model.Drawable
+import org.umamo.runtime.model.DrawableId
+import org.umamo.runtime.model.DrawableMesh
 import org.umamo.runtime.model.ParameterId
 import org.umamo.runtime.model.PuppetModel
+import org.umamo.runtime.model.RenderGroup
 import org.umamo.runtime.model.visibleDrawableIds
 import java.awt.AlphaComposite
 import java.awt.BasicStroke
 import java.awt.Color
 import java.awt.Graphics2D
+import java.awt.Rectangle
 import java.awt.RenderingHints
+import java.awt.Shape
 import java.awt.geom.AffineTransform
 import java.awt.geom.Area
 import java.awt.geom.Path2D
 import java.awt.image.BufferedImage
+import java.awt.image.DataBufferInt
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.min
@@ -47,8 +58,18 @@ internal object RigCanvasSupport {
 	private val evaluator = CpuDeformationEvaluator()
 
 	/** The preview at [parameters]: through the Rust runtime once it has compiled the model, else the engine. */
-	fun evaluate(model: RigPreviewModel, parameters: Map<ParameterId, Float> = emptyMap()): DeformedGeometry =
-		NativePreview.evaluate(model, parameters) ?: evaluator.evaluate(model.rig.puppet, parameters)
+	fun evaluate(model: RigPreviewModel, parameters: Map<ParameterId, Float> = emptyMap()): DeformedGeometry {
+		val puppet = model.rig.puppet
+		// The native geometry response has only per-mesh channels. A grouped painter also needs the part's pose.
+		return if (hasRenderGroups(puppet)) evaluator.evaluate(puppet, parameters)
+		else NativePreview.evaluate(model, parameters) ?: evaluator.evaluate(puppet, parameters)
+	}
+
+	fun hasRenderGroups(puppet: PuppetModel): Boolean = puppet.renderRoot.children.any { it is RenderGroup }
+
+	fun groupedRenderPlan(puppet: PuppetModel, geometry: DeformedGeometry,
+	                      drawOrder: Map<DrawableId, Float> = geometry.drawOrder): List<RenderPlanNode>? =
+		if (hasRenderGroups(puppet)) renderPlan(puppet.renderRoot, drawOrder, geometry.partDrawOrders) else null
 
 	/**
 	 * The engine's evaluation alone. Rendered observations use it so the same model and pose give the same
@@ -69,70 +90,105 @@ internal object RigCanvasSupport {
 		highlightedLayerIds: Set<String>? = null,
 		dimmedAlphaMultiplier: Float = 0.22f,
 	) {
-		g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
-		g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
-		val drawables = model.rig.puppet.drawables
-			.filter { geometry.worldPositions.containsKey(it.id) && it.mesh != null }
-			.sortedBy {
-				val layerId = model.rig.ownLayerIdByDrawableId[it.id.raw]
-				drawOrderOverrides[layerId] ?: drawOrderOverrides[it.id.raw] ?: geometry.drawOrder[it.id] ?: it.drawOrder
-			}
-		val drawableById = model.rig.puppet.drawables.associateBy { it.id }
-		val originalClip = g.clip
-		val originalComposite = g.composite
-		for (drawable in drawables) {
-			// A copy over the bangs shows with its original's layer.
+		paintScene(g, model.rig.puppet, geometry, viewport,
+			drawOrder = { displayOrder(model, it, geometry, drawOrderOverrides) },
+			pageImage = { model.atlas.pages.getOrNull(model.rig.pageByDrawableId[it.id.raw] ?: it.texturePage)?.image },
+		) { drawable ->
+			// Copies show with their original layer. Reference quads are rendered separately.
 			val layerId = model.rig.layerOf(drawable.id.raw)
-			if (visibleLayerIds != null && layerId != null && layerId !in visibleLayerIds) continue
-			if (visibleLayerIds != null && layerId == null && drawable.id.raw !in visibleLayerIds && !drawable.isVisible) continue
-			// A reference layer's quad has no atlas page: its pixels are drawn on their own.
-			if (layerId != null && layerId in model.referenceLayerIds) continue
-			val isHighlighted = highlightedLayerIds == null || (layerId != null && layerId in highlightedLayerIds) || drawable.id.raw in highlightedLayerIds
-			val effectiveAlpha = if (dimUnselected && !isHighlighted) alpha * dimmedAlphaMultiplier else alpha
-			val mesh = drawable.mesh ?: continue
-			val positions = geometry.worldPositions[drawable.id] ?: continue
-			val pageIndex = model.rig.pageByDrawableId[drawable.id.raw] ?: drawable.texturePage
-			val atlas = model.atlas.pages.getOrNull(pageIndex)?.image ?: continue
-			val opacity = ((geometry.opacity[drawable.id] ?: drawable.opacity) * effectiveAlpha).coerceIn(0f, 1f)
-			if (opacity <= 0.001f) continue
-			paintDrawable(g, drawable, mesh, positions, atlas, opacity, geometry, viewport, originalClip, drawableById) {
-				model.atlas.pages.getOrNull(model.rig.pageByDrawableId[it.id.raw] ?: it.texturePage)?.image
+			if (layerId != null && layerId in model.referenceLayerIds || visibleLayerIds != null &&
+				(if (layerId != null) layerId !in visibleLayerIds else drawable.id.raw !in visibleLayerIds && !drawable.isVisible)) {
+				0f
+			} else {
+				val highlighted = highlightedLayerIds == null || layerId != null && layerId in highlightedLayerIds || drawable.id.raw in highlightedLayerIds
+				if (dimUnselected && !highlighted) alpha * dimmedAlphaMultiplier else alpha
 			}
 		}
-		g.clip = originalClip
-		g.composite = originalComposite
 	}
 
 	/**
 	 * Paints [puppet] as a runtime shows it, with no editor state: visible drawables only, in their evaluated
 	 * draw order, each sampling its own texture page from [pages].
 	 */
-	fun paintPuppet(g: Graphics2D, puppet: PuppetModel, pages: List<java.awt.image.BufferedImage>, geometry: DeformedGeometry, viewport: CanvasViewport,
-	                only: Set<String>? = null, pageOf: (org.umamo.runtime.model.Drawable) -> Int = { it.texturePage }) {
+	fun paintPuppet(g: Graphics2D, puppet: PuppetModel, pages: List<BufferedImage>, geometry: DeformedGeometry, viewport: CanvasViewport,
+	                only: Set<String>? = null, pageOf: (Drawable) -> Int = { it.texturePage }) {
+		val visible = puppet.visibleDrawableIds()
+		paintScene(g, puppet, geometry, viewport, drawOrder = { geometry.drawOrder[it.id] ?: it.drawOrder },
+			pageImage = { pages.getOrNull(pageOf(it)) }) {
+			if (it.id in visible && (only == null || it.id.raw in only)) 1f else 0f
+		}
+	}
+
+	private fun paintScene(
+		g: Graphics2D, puppet: PuppetModel, geometry: DeformedGeometry, viewport: CanvasViewport,
+		drawOrder: (Drawable) -> Float, pageImage: (Drawable) -> BufferedImage?, opacityScale: (Drawable) -> Float,
+	) {
 		g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
 		g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
 		val drawableById = puppet.drawables.associateBy { it.id }
-		val visible = puppet.visibleDrawableIds()
-		val shown = puppet.drawables.filter { it.id in visible && it.mesh != null && geometry.worldPositions.containsKey(it.id) && (only == null || it.id.raw in only) }
-			.sortedBy { geometry.drawOrder[it.id] ?: it.drawOrder }
-		val originalClip = g.clip
-		val originalComposite = g.composite
-		for (drawable in shown) {
-			val mesh = drawable.mesh ?: continue
-			val positions = geometry.worldPositions[drawable.id] ?: continue
-			val atlas = pages.getOrNull(pageOf(drawable)) ?: continue
-			val opacity = (geometry.opacity[drawable.id] ?: drawable.opacity).coerceIn(0f, 1f)
-			if (opacity <= 0.001f) continue
-			paintDrawable(g, drawable, mesh, positions, atlas, opacity, geometry, viewport, originalClip, drawableById) {
-				pages.getOrNull(pageOf(it))
+		val opacityById = buildMap {
+			for (drawable in puppet.drawables) {
+				if (drawable.mesh == null || drawable.id !in geometry.worldPositions) continue
+				val opacity = ((geometry.opacity[drawable.id] ?: drawable.opacity) * opacityScale(drawable)).coerceIn(0f, 1f)
+				if (opacity > 0.001f) put(drawable.id, opacity)
 			}
 		}
-		g.clip = originalClip
-		g.composite = originalComposite
+		if (opacityById.isEmpty()) return
+		fun paintMesh(target: Graphics2D, id: DrawableId, clip: Shape?) {
+			val opacity = opacityById[id] ?: return
+			val drawable = drawableById.getValue(id)
+			val atlas = pageImage(drawable) ?: return
+			paintDrawable(target, drawable, requireNotNull(drawable.mesh), geometry.worldPositions.getValue(id),
+				atlas, opacity, geometry, viewport, clip, drawableById, pageImage)
+		}
+		fun sceneBounds(nodes: List<RenderPlanNode>): Rectangle? {
+			var bounds: Rectangle? = null
+			for (node in nodes) {
+				val next = when (node) {
+					is RenderPlanDrawable -> if (node.id in opacityById) screenBounds(geometry.worldPositions.getValue(node.id), viewport) else null
+					is RenderPlanComposite -> sceneBounds(node.children)
+				} ?: continue
+				if (!next.isEmpty) bounds = bounds?.union(next) ?: next
+			}
+			return bounds
+		}
+		fun paintPlan(target: Graphics2D, nodes: List<RenderPlanNode>) {
+			val clip = target.clip
+			for (node in nodes) when (node) {
+				is RenderPlanDrawable -> paintMesh(target, node.id, clip)
+				is RenderPlanComposite -> {
+					val composite = node.composite
+					val state = geometry.partCompositeStates[node.partId]
+					val opacity = (state?.opacity ?: composite.opacity).coerceIn(0f, 1f)
+					if (opacity <= 0.001f) continue
+					val region = clippedRegion(target, sceneBounds(node.children) ?: continue, clip)
+					if (region.isEmpty) continue
+					val layer = paintLayer(region) { paintPlan(it, node.children) }
+					val cover = paintMask(region, composite.maskedBy, drawableById, geometry, viewport, pageImage)
+					compositeLayer(target, layer, region, clip, cover, composite.invertMask,
+						opacity = opacity, multiply = state?.multiplyColor ?: composite.multiplyColor,
+						screen = state?.screenColor ?: composite.screenColor, blend = composite.blendMode, alphaBlend = composite.alphaBlendMode)
+				}
+			}
+		}
+		val originalClip = g.clip
+		val originalComposite = g.composite
+		try {
+			if (hasRenderGroups(puppet)) {
+				paintPlan(g, renderPlan(puppet.renderRoot, puppet.drawables.associate { it.id to drawOrder(it) }, geometry.partDrawOrders))
+			} else {
+				for (drawable in puppet.drawables.filter { it.id in opacityById }.sortedBy(drawOrder)) {
+					paintMesh(g, drawable.id, originalClip)
+				}
+			}
+		} finally {
+			g.clip = originalClip
+			g.composite = originalComposite
+		}
 	}
 
-	private fun paintTriangles(g: Graphics2D, mesh: org.umamo.runtime.model.DrawableMesh, positions: FloatArray,
-	                           atlas: java.awt.image.BufferedImage, viewport: CanvasViewport, originalClip: java.awt.Shape?) {
+	private fun paintTriangles(g: Graphics2D, mesh: DrawableMesh, positions: FloatArray,
+	                           atlas: BufferedImage, viewport: CanvasViewport, originalClip: Shape?) {
 			for (offset in mesh.indices.indices step 3) {
 				val ia = mesh.indices[offset]
 				val ib = mesh.indices[offset + 1]
@@ -162,25 +218,24 @@ internal object RigCanvasSupport {
 
 	/**
 	 * One drawable as the preview draws it. A plain one paints its triangles straight onto [g]; one with masks,
-	 * colours or a blend other than normal over draws alone into a layer, takes its colours, opacity and masks
-	 * there (mask texels at least half opaque cover, as the preview's stencil keeps them), and then composites by
-	 * its blend modes.
+	 * colours or a blend other than normal over draws alone into a layer, takes its colours, opacity and mask
+	 * alpha there, and then composites by its blend modes.
 	 */
 	private fun paintDrawable(
 		g: Graphics2D,
-		drawable: org.umamo.runtime.model.Drawable,
-		mesh: org.umamo.runtime.model.DrawableMesh,
+		drawable: Drawable,
+		mesh: DrawableMesh,
 		positions: FloatArray,
 		atlas: BufferedImage,
 		opacity: Float,
 		geometry: DeformedGeometry,
 		viewport: CanvasViewport,
-		originalClip: java.awt.Shape?,
-		drawableById: Map<org.umamo.runtime.model.DrawableId, org.umamo.runtime.model.Drawable>,
-		pageImage: (org.umamo.runtime.model.Drawable) -> BufferedImage?,
+		originalClip: Shape?,
+		drawableById: Map<DrawableId, Drawable>,
+		pageImage: (Drawable) -> BufferedImage?,
 	) {
-		val masks = drawable.maskedBy.mapNotNull { id ->
-			drawableById[id]?.takeIf { it.isVisible && it.mesh != null && id in geometry.worldPositions }
+		val masks = drawable.maskedBy.filter { id ->
+			drawableById[id]?.isVisible == true && drawableById[id]?.mesh != null && id in geometry.worldPositions
 		}
 		val multiply = geometry.multiplyColor[drawable.id] ?: ColorRgb.MultiplyIdentity
 		val screen = geometry.screenColor[drawable.id] ?: ColorRgb.ScreenIdentity
@@ -191,34 +246,60 @@ internal object RigCanvasSupport {
 			paintTriangles(g, mesh, positions, atlas, viewport, originalClip)
 			return
 		}
-		var region = screenBounds(positions, viewport)
-		g.deviceConfiguration?.bounds?.let { region = region.intersection(it) }
-		originalClip?.bounds?.let { region = region.intersection(it) }
+		val region = clippedRegion(g, screenBounds(positions, viewport), originalClip)
 		if (region.isEmpty) return
-		fun layerOf(paint: (Graphics2D) -> Unit): BufferedImage = BufferedImage(region.width, region.height, BufferedImage.TYPE_INT_ARGB_PRE).also { image ->
-			val lg = image.createGraphics()
+		val layer = paintLayer(region) { paintTriangles(it, mesh, positions, atlas, viewport, it.clip) }
+		val cover = paintMask(region, masks, drawableById, geometry, viewport, pageImage)
+		compositeLayer(g, layer, region, originalClip, cover, drawable.invertMask,
+			opacity = opacity, multiply = multiply, screen = screen, blend = drawable.blendMode, alphaBlend = drawable.alphaBlendMode)
+	}
+
+	private fun clippedRegion(g: Graphics2D, bounds: Rectangle, clip: Shape?): Rectangle {
+		var region = g.deviceConfiguration?.bounds?.let(bounds::intersection) ?: bounds
+		clip?.bounds?.let { region = region.intersection(it) }
+		return region
+	}
+
+	private fun paintLayer(region: Rectangle, paint: (Graphics2D) -> Unit): BufferedImage =
+		BufferedImage(region.width, region.height, BufferedImage.TYPE_INT_ARGB_PRE).also { image ->
+			val layer = image.createGraphics()
 			try {
-				lg.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
-				lg.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
-				lg.translate(-region.x, -region.y)
-				paint(lg)
-			} finally { lg.dispose() }
+				layer.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
+				layer.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
+				layer.translate(-region.x, -region.y)
+				layer.clip = region
+				paint(layer)
+			} finally { layer.dispose() }
 		}
-		val layer = layerOf { paintTriangles(it, mesh, positions, atlas, viewport, null) }
-		val cover = if (masks.isEmpty()) null else layerOf { lg ->
-			for (mask in masks) {
+
+	private fun paintMask(
+		region: Rectangle, masks: List<DrawableId>, drawableById: Map<DrawableId, Drawable>,
+		geometry: DeformedGeometry, viewport: CanvasViewport, pageImage: (Drawable) -> BufferedImage?,
+	): BufferedImage? = if (masks.isEmpty()) null else paintLayer(region) { layer ->
+			val clip = layer.clip
+			for (id in masks) {
+				val mask = drawableById[id]?.takeIf { it.isVisible } ?: continue
 				val page = pageImage(mask) ?: continue
-				paintTriangles(lg, mask.mesh ?: continue, geometry.worldPositions[mask.id] ?: continue, page, viewport, null)
+				paintTriangles(layer, mask.mesh ?: continue, geometry.worldPositions[id] ?: continue, page, viewport, clip)
 			}
 		}
-		val pixels = (layer.raster.dataBuffer as java.awt.image.DataBufferInt).data
-		val coverage = cover?.let { (it.raster.dataBuffer as java.awt.image.DataBufferInt).data }
+
+	private fun compositeLayer(
+		g: Graphics2D, layer: BufferedImage, region: Rectangle, clip: Shape?, cover: BufferedImage?, invertMask: Boolean,
+		opacity: Float, multiply: ColorRgb, screen: ColorRgb, blend: BlendMode, alphaBlend: AlphaBlendMode,
+	) {
+		val tinted = multiply != ColorRgb.MultiplyIdentity || screen != ColorRgb.ScreenIdentity
+		val pixels = (layer.raster.dataBuffer as DataBufferInt).data
+		val coverage = cover?.let { (it.raster.dataBuffer as DataBufferInt).data }
 		for (i in pixels.indices) {
 			val p = pixels[i]
 			val a = p ushr 24
 			if (a == 0) continue
-			var k = opacity
-			if (coverage != null && ((coverage[i] ushr 24 >= 128) == drawable.invertMask)) k = 0f
+			val maskScale = if (coverage == null) 1f else {
+				val value = (coverage[i] ushr 24) / 255f
+				if (invertMask) 1f - value else value
+			}
+			val k = opacity * maskScale
 			if (k <= 0f) { pixels[i] = 0; continue }
 			var r = (p shr 16 and 0xff) / 255f; var gr = (p shr 8 and 0xff) / 255f; var b = (p and 0xff) / 255f
 			if (tinted) {
@@ -231,23 +312,23 @@ internal object RigCanvasSupport {
 			fun byte(v: Float) = (v * k * 255f + 0.5f).toInt().coerceIn(0, 255)
 			pixels[i] = (byte(a / 255f) shl 24) or (byte(r) shl 16) or (byte(gr) shl 8) or byte(b)
 		}
-		g.clip = originalClip
-		g.composite = if (normal) AlphaComposite.SrcOver else CubismComposite(drawable.blendMode, drawable.alphaBlendMode)
+		g.clip = clip
+		g.composite = if (blend == BlendMode.Normal && alphaBlend == AlphaBlendMode.Over) AlphaComposite.SrcOver else CubismComposite(blend, alphaBlend)
 		g.drawImage(layer, region.x, region.y, null)
 	}
 
 	/** The pixels [positions] cover in view space, padded by one. */
-	private fun screenBounds(positions: FloatArray, viewport: CanvasViewport): java.awt.Rectangle {
+	private fun screenBounds(positions: FloatArray, viewport: CanvasViewport): Rectangle {
 		var left = Double.POSITIVE_INFINITY; var top = Double.POSITIVE_INFINITY
 		var right = Double.NEGATIVE_INFINITY; var bottom = Double.NEGATIVE_INFINITY
 		for (i in 0 until positions.size - 1 step 2) {
 			val x = viewport.x(positions[i]); val y = viewport.yFromWorld(positions[i + 1])
 			left = minOf(left, x); right = maxOf(right, x); top = minOf(top, y); bottom = maxOf(bottom, y)
 		}
-		if (left > right) return java.awt.Rectangle()
+		if (left > right) return Rectangle()
 		val x0 = kotlin.math.floor(left).toInt() - 1
 		val y0 = kotlin.math.floor(top).toInt() - 1
-		return java.awt.Rectangle(x0, y0, kotlin.math.ceil(right).toInt() + 1 - x0, kotlin.math.ceil(bottom).toInt() + 1 - y0)
+		return Rectangle(x0, y0, kotlin.math.ceil(right).toInt() + 1 - x0, kotlin.math.ceil(bottom).toInt() + 1 - y0)
 	}
 
 	fun boundsByDrawable(geometry: DeformedGeometry): Map<String, Bounds> = buildMap {

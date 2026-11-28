@@ -58,6 +58,9 @@
 | `layer_classify` | `request` 内 `state`、`layer_id` 及分类字段 | 后台更新既有源图层的类型、部件、侧别、参数关联和切换 ID；`part` 设图层在其部件内的角色（`highlight`、`pupil`、`lower`、`lid`、`shadow`、`blush`、`side`、`ahoge`、`ponytail`、`braid`、`animal`、`ribbon`、`pendant`、`rigid`、`sleeve`、`skirt`、`upperlip`、`lowerlip`、`upperline`、`lowerline`；`none` 为无角色，`auto` 交给分析推断），只有 Rig 模块读它；省略的字段保持捕获时的原值。已生成的图层不立即重新生成：结果带 `pending:true`，在下一次 `rig_generate` 时生效；需要立刻看到效果时在同一 `workspace_apply_edits` 批量末尾加 `rig_generate`。未生成的图层立即采用 |
 | `interior_put` | `state`、`target`，可选 `enabled/settings/motion/parameters/guides`（最多 64 条引导线） | 后台生成/更新单网格内部造型；target为网格ID或mesh:ID。只给enabled时保留配方并开关效果，不重采样。参数省略时优先身体X/Y，显式空ID新建。写原生紧凑关键形和物理组；可进workspace_apply_edits，与UI共用作者链路 |
 | `interior_delete` | `state`、`target`（Mesh ID 或 mesh:ID） | 删除内部造型和自有物理；保留被其他功能引用的参数，可撤销。`workspace_inspect scope=interiors` 读回设置、引导线、输入/输出 ID 与失效原因；不返回形变数组 |
+| `shadow_world_set` | `state`，可选 `azimuth`、`elevation`、`style`、`color_mode`、`custom_color`、`intensity`、`composite_mode`、`preview_enabled` | 后台更新自动和手动阴影共用的静态主光。颜色为六位 RGB 十六进制，方位角与仰角使用度。Cubism 5.3 可用离屏合成，较早的目标使用联合蒙版 |
+| `shadow_auto_generate` | `state`，可选 `include_covered` | 为相邻可见的刘海与脸、脸与颈部建立投影，并给脸部建立侧影。重跑刷新可用目标并保留已有阴影项的设置，固化项仍保留。`include_covered: true` 也在已绘制对应投影的区域生成 |
+| `shadow_put` / `shadow_delete` / `shadow_apply` | `state`；修改、删除和固化需 `id`。新建使用 `kind: cast` 或 `kind: form`，分别给 `casters` 和 `receivers`，或 `targets` | 网格可用 ID 或 `mesh:ID`，`layer:ID` 选用该图层的网格。投影 `distance` 使用画布像素。固化单个可用的阴影项，保留已生成网格和关键形。用 `modifier_stack` 读回阴影配置、状态和稳定 ID |
 | `layer_mesh_update` | `request` 内 `state`、`layer_id`、`changes` 或 `reset` | 后台逐图层覆盖或重置自适应网格参数；用 `workspace_inspect scope=layers` 读取当前值 |
 | `source_sample_color` | `layer_id`、`x`、`y` | 读取源图层在画布整数坐标的 RGBA；不改变文档或历史 |
 | `source_paint_brush / source_paint_pencil / source_paint_eraser / source_paint_bucket / source_paint_shape / source_paint_clear` | `request` | `brush/pencil/eraser/bucket/shape/clear`；画布单位坐标，按图层栅格密度落笔，一次手势一个历史节点 |

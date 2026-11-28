@@ -150,7 +150,7 @@ class WorkspaceModifierSchemasTest {
             presentation.attach(host)
             WorkspaceOperations(host).use { operations ->
                 val members = batchMemberSchemas(operations.registry)
-                for (id in WorkspaceModifierEdits.supported) {
+                for (id in WorkspaceModifierEdits.supported + WorkspaceShadowEdits.supported) {
                     val definition = operations.registry.definition(id)
                     assertTrue(definition.jobBacked && definition.batchable)
                     assertNotNull(definition.jobResultSchema)

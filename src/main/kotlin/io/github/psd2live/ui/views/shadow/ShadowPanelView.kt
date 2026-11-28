@@ -19,6 +19,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.psd2live.algorithms.shadow.*
 import io.github.psd2live.application.WorkspaceDocumentOperation
+import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.modifier.RigModifierStack
 import io.github.psd2live.core.modifier.ShadowAlgorithmPlugin
 import io.github.psd2live.i18n.tr
@@ -33,6 +34,7 @@ import io.github.psd2live.ui.views.physics.PhysicsRowDivider
 import io.github.psd2live.ui.views.physics.PhysicsSection
 import io.github.psd2live.ui.views.physics.RowBadge
 import kotlinx.serialization.json.*
+import org.umamo.runtime.model.visibleDrawableIds
 
 private val SHADOW_SECTIONS = setOf("world", "items", "editor")
 
@@ -67,11 +69,22 @@ internal fun ShadowPanelView(
     var showWorldAdvanced by remember { mutableStateOf(false) }
     var showItemAdvanced by remember { mutableStateOf(false) }
 
-    val puppet = state.previewModel?.rig?.puppet
-    val hasProject = puppet != null
-    val selectedMeshes = remember(state.selectedLayerIds, state.selectedLayerId) {
-        state.selectedLayerIds.toList().ifEmpty { listOfNotNull(state.selectedLayerId) }
+    val rig = state.previewModel?.rig
+    val puppet = rig?.puppet
+    val visibleMeshIds = remember(rig) {
+        val shown = puppet?.visibleDrawableIds().orEmpty()
+        puppet?.drawables.orEmpty().filter { it.id in shown && it.mesh != null && it.id.raw in rig?.ownLayerIdByDrawableId.orEmpty() }
+            .map { it.id.raw }
     }
+    val hasProject = visibleMeshIds.isNotEmpty()
+    val editable = hasProject && !state.canvasEditBusy && !state.workspaceEditBusy && !state.editorDraftBusy
+    val selectedMeshes = vm.selectedObjectTargets().mapNotNull { it.takeIf { id -> id.startsWith("mesh:") }?.removePrefix("mesh:") }
+        .filter { it in visibleMeshIds }
+    val layerTags = state.previewModel?.analysis?.layers.orEmpty().associate { it.source.id.raw to it.semantic.tag }
+    fun tag(id: String) = layerTags[rig?.ownLayerIdByDrawableId?.get(id)]
+    val casters = selectedMeshes.ifEmpty { visibleMeshIds.filter { tag(it) == SemanticTag.FRONT_HAIR }.take(1).ifEmpty { visibleMeshIds.take(1) } }
+    val receiverPool = visibleMeshIds - casters.toSet()
+    val defaultReceiver = receiverPool.firstOrNull { tag(it) == SemanticTag.FACE } ?: receiverPool.firstOrNull()
     val drawableNames = remember(puppet) {
         puppet?.drawables?.associate { it.id.raw to it.name }.orEmpty()
     }
@@ -105,7 +118,7 @@ internal fun ShadowPanelView(
                 label = labels[0],
                 showLabel = labelsShown > 0,
                 onClick = { submit(tr("shadow.auto"), "shadow_auto_generate", buildJsonObject { }) },
-                enabled = hasProject && !state.canvasEditBusy,
+                enabled = editable,
                 tooltip = tr("shadow.auto"),
             ) {
                 IconAdd(modifier = Modifier.size(10.dp), tint = colors.textPrimary)
@@ -114,23 +127,20 @@ internal fun ShadowPanelView(
                 label = labels[1],
                 showLabel = labelsShown > 1,
                 onClick = {
-                    val allIds = puppet?.drawables?.map { it.id.raw }.orEmpty()
-                    val casters = selectedMeshes.ifEmpty { allIds.take(1) }
-                    val receivers = (allIds - casters.toSet()).take(1).ifEmpty { casters }
-                    if (casters.isNotEmpty() && receivers.isNotEmpty()) {
+                    if (casters.isNotEmpty() && defaultReceiver != null) {
                         submit(
                             tr("shadow.new.cast"),
                             "shadow_put",
                             buildJsonObject {
                                 put("kind", "cast")
                                 put("name", tr("shadow.kind.cast"))
-                                put("casters", JsonArray(casters.map { JsonPrimitive(it) }))
-                                put("receivers", JsonArray(receivers.map { JsonPrimitive(it) }))
+                                put("casters", JsonArray(casters.take(64).map(::JsonPrimitive)))
+                                put("receivers", JsonArray(listOf(JsonPrimitive(defaultReceiver))))
                             },
                         )
                     }
                 },
-                enabled = hasProject && !state.canvasEditBusy,
+                enabled = editable && defaultReceiver != null,
                 tooltip = tr("shadow.new.cast"),
             ) {
                 IconAdd(modifier = Modifier.size(10.dp), tint = colors.textPrimary)
@@ -139,8 +149,7 @@ internal fun ShadowPanelView(
                 label = labels[2],
                 showLabel = labelsShown > 2,
                 onClick = {
-                    val allIds = puppet?.drawables?.map { it.id.raw }.orEmpty()
-                    val targets = selectedMeshes.ifEmpty { allIds.take(1) }
+                    val targets = selectedMeshes.ifEmpty { visibleMeshIds.filter { tag(it) == SemanticTag.FACE }.take(1).ifEmpty { visibleMeshIds.take(1) } }
                     if (targets.isNotEmpty()) {
                         submit(
                             tr("shadow.new.form"),
@@ -148,12 +157,12 @@ internal fun ShadowPanelView(
                             buildJsonObject {
                                 put("kind", "form")
                                 put("name", tr("shadow.kind.form"))
-                                put("targets", JsonArray(targets.map { JsonPrimitive(it) }))
+                                put("targets", JsonArray(targets.take(64).map(::JsonPrimitive)))
                             },
                         )
                     }
                 },
-                enabled = hasProject && !state.canvasEditBusy,
+                enabled = editable,
                 tooltip = tr("shadow.new.form"),
             ) {
                 IconAdd(modifier = Modifier.size(10.dp), tint = colors.textPrimary)
@@ -164,7 +173,7 @@ internal fun ShadowPanelView(
                 showLabel = labelsShown > 3,
                 checked = world.previewEnabled,
                 onCheckedChange = { enabled -> commitWorld(world.copy(previewEnabled = enabled)) },
-                enabled = hasProject && !state.canvasEditBusy,
+                enabled = editable,
                 tooltip = tr("shadow.preview"),
             )
             Spacer(Modifier.weight(1f))
@@ -201,8 +210,12 @@ internal fun ShadowPanelView(
                         LightSphereControl(
                             azimuth = world.azimuth,
                             elevation = world.elevation,
-                            onPreview = { _, _ -> },
-                            onCommit = { az, el -> commitWorld(world.copy(azimuth = az, elevation = el)) },
+                            onCommit = { az, el ->
+                                submit(tr("shadow.world.title"), "shadow_world_set", buildJsonObject {
+                                    put("azimuth", az)
+                                    put("elevation", el)
+                                })
+                            },
                         )
 
                         Row(
@@ -508,7 +521,7 @@ private fun CastShadowEditor(
         CompactSlider(
             value = distDraft,
             onValueChange = { distDraft = it },
-            valueRange = 0f..80f,
+            valueRange = 0f..200f,
             onValueChangeFinished = { if (distDraft != cfg.distance) onPatch(mapOf("distance" to JsonPrimitive(distDraft))) },
             modifier = Modifier.weight(1f),
         )
@@ -532,7 +545,7 @@ private fun CastShadowEditor(
         CompactSlider(
             value = softDraft,
             onValueChange = { softDraft = it },
-            valueRange = 0f..32f,
+            valueRange = 0f..48f,
             onValueChangeFinished = { onPatch(mapOf("softness_override" to JsonPrimitive(softDraft))) },
             modifier = Modifier.weight(1f),
         )
@@ -573,7 +586,7 @@ private fun CastShadowEditor(
             CompactSlider(
                 value = parDraft,
                 onValueChange = { parDraft = it },
-                valueRange = 0f..2.5f,
+                valueRange = 0f..3f,
                 onValueChangeFinished = { onPatch(mapOf("parallax" to JsonPrimitive(parDraft))) },
                 modifier = Modifier.weight(1f),
             )
@@ -610,7 +623,7 @@ private fun FormShadowEditor(
         CompactSlider(
             value = covDraft,
             onValueChange = { covDraft = it },
-            valueRange = 0.05f..0.75f,
+            valueRange = 0.05f..0.85f,
             onValueChangeFinished = { onPatch(mapOf("coverage" to JsonPrimitive(covDraft))) },
             modifier = Modifier.weight(1f),
         )
@@ -641,7 +654,7 @@ private fun FormShadowEditor(
             CompactSlider(
                 value = expDraft,
                 onValueChange = { expDraft = it },
-                valueRange = 0f..12f,
+                valueRange = 0f..16f,
                 onValueChangeFinished = { onPatch(mapOf("cutter_expand_px" to JsonPrimitive(expDraft))) },
                 modifier = Modifier.weight(1f),
             )

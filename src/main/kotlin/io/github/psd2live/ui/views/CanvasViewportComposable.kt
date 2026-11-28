@@ -486,7 +486,9 @@ fun CanvasViewportComposable(
 	val gpuContextChanges by SkiaGpu.contextChanges.collectAsState()
 	val previewGpu = remember(gpuPrimary, gpuContextChanges, awtWindow) { SkiaGpu.of(awtWindow) }
 	val gpuAvailable = previewGpu != null
-	val gpuReady = !softwareCanvas && !sourcePixels && gpuAvailable && !CanvasGpu.failed
+	// The flat GPU edit pass cannot apply a part's composite once to its whole subtree.
+	val groupedArtwork = previewModel?.rig?.puppet?.let(RigCanvasSupport::hasRenderGroups) == true
+	val gpuReady = !softwareCanvas && !sourcePixels && !groupedArtwork && gpuAvailable && !CanvasGpu.failed
 	// One GPU view per canvas whatever its mode: a switch keeps its meshes and page textures on the GPU.
 	val gpuKey = viewModel.canvasRenderKey(canvasId, CanvasMode.EDIT)
 	val ghostKey = "$gpuKey#snapshot"
@@ -2527,9 +2529,8 @@ private class DrawnGeometryMemo {
         if (cached != null && puppet === model.rig.puppet && edit === editGeometry && simulation === simulated &&
             (editGeometry != null || this.pose == pose)) return cached
         val evaluated = editGeometry ?: RigCanvasSupport.evaluate(model, pose)
-        val next = if (simulated == null) evaluated else org.umamo.render.eval.DeformedGeometry(
+        val next = if (simulated == null) evaluated else evaluated.withWorldPositions(
             evaluated.worldPositions + simulated.positions.filterKeys { it in evaluated.worldPositions },
-            evaluated.drawOrder, evaluated.opacity, evaluated.multiplyColor, evaluated.screenColor,
         )
         puppet = model.rig.puppet
         edit = editGeometry
@@ -2598,8 +2599,7 @@ private class SimulationGhostMemo {
     fun geometry(exported: org.umamo.render.eval.DeformedGeometry, frame: io.github.psd2live.core.sim.SimulatedFrame): org.umamo.render.eval.DeformedGeometry {
         val cached = geometry
         if (cached != null && this.exported === exported && this.frame === frame) return cached
-        val next = org.umamo.render.eval.DeformedGeometry(exported.worldPositions + frame.positions.filterKeys { it in exported.worldPositions },
-            exported.drawOrder, exported.opacity, exported.multiplyColor, exported.screenColor)
+        val next = exported.withWorldPositions(exported.worldPositions + frame.positions.filterKeys { it in exported.worldPositions })
         this.exported = exported; this.frame = frame; geometry = next
         return next
     }

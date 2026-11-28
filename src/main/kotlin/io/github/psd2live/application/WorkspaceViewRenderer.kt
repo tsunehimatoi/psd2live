@@ -112,8 +112,8 @@ object WorkspaceViewRenderer {
 			val drawable = requireNotNull(model.rig.puppet.drawables.firstOrNull { it.id == id }) { "Unknown simulation mesh: ${id.raw}" }
 			require(vertices.size == requireNotNull(drawable.mesh).positions.size && vertices.all(Float::isFinite)) { "Invalid simulated mesh coordinates: ${id.raw}" }
 		}
-		val geometry = org.umamo.render.eval.DeformedGeometry(evaluated.worldPositions + worldPositions.filterKeys { it in evaluated.worldPositions },
-			evaluated.drawOrder, evaluated.opacity, evaluated.multiplyColor, evaluated.screenColor)
+		val geometry = if (worldPositions.isEmpty()) evaluated else evaluated.withWorldPositions(
+			evaluated.worldPositions + worldPositions.filterKeys { it in evaluated.worldPositions })
 		val drawableBounds = RigCanvasSupport.boundsByDrawable(geometry)
 		val boundsByLayer = boundsByLayer(model, drawableBounds)
 		val resolvedFrame = resolveFrame(frame, boundsByLayer)

@@ -129,6 +129,7 @@ internal class WorkspaceBatchJobExecution(
     val edits: List<WorkspaceDocumentOperation>,
     private val completion: WorkspaceJobCompletion,
     private val progress: WorkspaceJobContext?,
+    private val output: (WorkspaceMutationResult) -> WorkspaceOperationOutput = { WorkspaceOperationOutput(it.batchResult(edits.size)) },
 ) : AbstractCoroutineContextElement(Key) {
     companion object Key : CoroutineContext.Key<WorkspaceBatchJobExecution>
     fun preparing(index: Int) {
@@ -146,6 +147,6 @@ internal class WorkspaceBatchJobExecution(
     }
     fun committing() { progress?.progress(0.95f, "Committing atomic document batch") }
     fun committed(result: WorkspaceMutationResult) {
-        completion.committed(WorkspaceOperationOutput(result.batchResult(edits.size)))
+        completion.committed(output(result))
     }
 }

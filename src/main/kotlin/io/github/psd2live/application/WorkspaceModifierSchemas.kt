@@ -79,8 +79,8 @@ internal object WorkspaceModifierSchemas {
         ), emptySet())
         "shadow.cast" -> s.obj(mapOf(
             "name" to s.string(),
-            "casters" to s.array(s.handle(), 0, 64),
-            "receivers" to s.array(s.handle(), 0, 64),
+            "casters" to s.array(s.handle(), 0, 4096),
+            "receivers" to s.array(s.handle(), 0, 4096),
             "distance" to s.number(0, 200),
             "opacityOverride" to s.nullable(s.number(0, 1)),
             "softnessOverride" to s.nullable(s.number(0, 48)),
@@ -89,10 +89,11 @@ internal object WorkspaceModifierSchemas {
             "parallax" to s.number(0, 3),
             "placement" to s.choices("ABOVE_FACE", "ABOVE_EYES", "BELOW_CASTER"),
             "skipCoveredCasters" to s.boolean(),
+            "receiversByCaster" to s.nullable(s.dictionary(s.array(s.handle(), 1, 4096))),
         ), emptySet())
         "shadow.form" -> s.obj(mapOf(
             "name" to s.string(),
-            "targets" to s.array(s.handle(), 0, 64),
+            "targets" to s.array(s.handle(), 0, 4096),
             "proxy" to s.choices("FACE_ELLIPSOID", "SPHERE", "CYLINDER"),
             "coverage" to s.number(0.05, 0.85),
             "opacityOverride" to s.nullable(s.number(0, 1)),

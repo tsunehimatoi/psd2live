@@ -327,7 +327,8 @@ internal fun applyCpuDeform(model: PuppetModel, inputs: PoseDeformInputs): Defor
 		if (drawableInputs.screenColor != ColorRgb.ScreenIdentity) screenColors[drawableInputs.drawableId] = drawableInputs.screenColor
 	}
 	applyGluesResolved(inputs.glues, worldPositions)
-	return DeformedGeometry(worldPositions, drawOrders, opacities, multiplyColors, screenColors)
+	return DeformedGeometry(worldPositions, drawOrders, opacities, multiplyColors, screenColors,
+		inputs.partDrawOrders, inputs.partCompositeStates)
 }
 
 /**

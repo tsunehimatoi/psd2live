@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,21 +34,22 @@ import kotlin.math.sin
 
 /**
  * Interactive 2D light sphere control: drag the light dot to adjust azimuth (-180..180)
- * and elevation (0..90). Live-previews while dragging and commits once on release.
+ * and elevation (0..90). The handle follows the pointer and commits once on release.
  */
 @Composable
 internal fun LightSphereControl(
     azimuth: Float,
     elevation: Float,
-    onPreview: (azimuth: Float, elevation: Float) -> Unit,
     onCommit: (azimuth: Float, elevation: Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalToolColors.current
     val typo = LocalToolTypography.current
-    var dragAz by remember(azimuth) { mutableStateOf(azimuth) }
-    var dragEl by remember(elevation) { mutableStateOf(elevation) }
+    var dragAz by remember { mutableStateOf(azimuth) }
+    var dragEl by remember { mutableStateOf(elevation) }
     var dragging by remember { mutableStateOf(false) }
+    val commit by rememberUpdatedState(onCommit)
+    val currentAzimuth by rememberUpdatedState(azimuth)
 
     val activeAz = if (dragging) dragAz else azimuth
     val activeEl = if (dragging) dragEl else elevation
@@ -63,7 +65,9 @@ internal fun LightSphereControl(
         // Center = high elevation (90°), rim = low grazing elevation (8°)
         val el = (90f - norm * 82f).coerceIn(5f, 90f)
         // Top (-y) = 0° azimuth; right (+x) = +90°; left (-x) = -90°
-        val az = if (dist < 1f) activeAz else (atan2(dx, -dy) * (180f / PI.toFloat())).coerceIn(-180f, 180f)
+        val az = if (dist < 1f) {
+            if (dragging) dragAz else currentAzimuth
+        } else (atan2(dx, -dy) * (180f / PI.toFloat())).coerceIn(-180f, 180f)
         return az to el
     }
 
@@ -81,32 +85,29 @@ internal fun LightSphereControl(
                         val (az, el) = updateFromPoint(offset, size.width.toFloat())
                         dragAz = az
                         dragEl = el
-                        onCommit(az, el)
+                        commit(az, el)
                     }
                 }
                 .pointerInput(Unit) {
                     detectDragGestures(
                         onDragStart = { offset ->
-                            dragging = true
                             val (az, el) = updateFromPoint(offset, size.width.toFloat())
                             dragAz = az
                             dragEl = el
-                            onPreview(az, el)
+                            dragging = true
                         },
                         onDrag = { change, _ ->
                             change.consume()
                             val (az, el) = updateFromPoint(change.position, size.width.toFloat())
                             dragAz = az
                             dragEl = el
-                            onPreview(az, el)
                         },
                         onDragEnd = {
                             dragging = false
-                            onCommit(dragAz, dragEl)
+                            commit(dragAz, dragEl)
                         },
                         onDragCancel = {
                             dragging = false
-                            onCommit(azimuth, elevation)
                         },
                     )
                 },

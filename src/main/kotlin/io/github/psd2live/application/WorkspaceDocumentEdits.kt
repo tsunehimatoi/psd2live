@@ -74,7 +74,7 @@ internal object WorkspaceDocumentEdits {
             in WorkspaceLayerEdits.supported -> WorkspaceLayerEdits.apply(document, model, operation)
             in WorkspaceAssetLayerEdits.supported -> WorkspaceAssetLayerEdits.apply(document, model, operation, assetResources, rasterWork::checkpoint)
             in WorkspaceSimulationEdits.supported -> WorkspaceSimulationEdits.apply(operation, document, model, simulationWork).document
-            in WorkspaceShadowEdits.supported -> WorkspaceShadowEdits.apply(operation, document, model)
+            in WorkspaceShadowEdits.supported -> WorkspaceShadowEdits.apply(operation, document, model, rasterWork)
             in WorkspaceHitAreaEdits.supported -> WorkspaceHitAreaEdits.apply(operation, document, model)
             in WorkspaceSidecarEdits.supported -> WorkspaceSidecarEdits.apply(operation, document, model)
             in WorkspaceObjectEdits.supported -> WorkspaceObjectEdits.apply(operation, document, model)

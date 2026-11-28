@@ -5,9 +5,6 @@ import io.github.psd2live.format.model.RigIR
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.int
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import java.security.MessageDigest
 import java.util.Collections
 import java.util.HexFormat
@@ -26,11 +23,15 @@ data class ShadowRasterResult(
     val padRightPx: Float,
     val padBottomPx: Float,
     val digest: String,
+    val contentWidth: Int = width,
+    val contentHeight: Int = height,
 )
 
 internal object ShadowRasterGen {
     private data class CacheKey(
         val sourceDigest: String,
+        val width: Int,
+        val height: Int,
         val blurPx: Int,
         val rgb: Int,
         val downscale: Int,
@@ -47,8 +48,6 @@ internal object ShadowRasterGen {
         if (clean.length != 6) return fallback
         return clean.toIntOrNull(16) ?: fallback
     }
-
-    fun formatHexRgb(rgb: Int): String = "#%06X".format(rgb and 0xFFFFFF)
 
     /** Derive a clean, non-muddy anime shadow color from opaque pixels of the receiver skin. */
     fun deriveShadowColorRgb(rgba: ByteArray): Int {
@@ -89,6 +88,12 @@ internal object ShadowRasterGen {
         meshId: String,
         context: ModifierAlgorithmContext = ModifierAlgorithmContext.Empty,
     ): Pair<Int, Pair<Int, ByteArray>>? {
+        val mesh = rig.meshes.firstOrNull { it.id == meshId } ?: return null
+        val tileId = mesh.tile ?: rig.meshes.firstOrNull { it.id == mesh.textureSource }?.tile
+        val tileArt = rig.textures.tileArt.firstOrNull { it.tile == tileId }
+        if (tileArt != null && tileArt.width > 0 && tileArt.height > 0) {
+            return tileArt.width to (tileArt.height to tileArt.rgba.toArray())
+        }
         val meta = context.values["shadow.rasters"]?.jsonObject?.get(meshId)?.jsonObject
         val res = context.resources["shadow.rgba:$meshId"]
         if (meta != null && res != null) {
@@ -96,11 +101,7 @@ internal object ShadowRasterGen {
             val h = meta["h"]?.jsonPrimitive?.int ?: 0
             if (w > 0 && h > 0) return w to (h to res.read())
         }
-        val mesh = rig.meshes.firstOrNull { it.id == meshId } ?: return null
-        val tileId = mesh.tile ?: return null
-        val tileArt = rig.textures.tileArt.firstOrNull { it.tile == tileId } ?: return null
-        if (tileArt.width <= 0 || tileArt.height <= 0) return null
-        return tileArt.width to (tileArt.height to tileArt.rgba.toArray())
+        return null
     }
 
     fun generateSolidShadow(
@@ -114,10 +115,10 @@ internal object ShadowRasterGen {
         val safeScale = downscale.coerceIn(1, 4)
         val quantBlur = (blurPx.coerceIn(0f, 48f) * 2f).roundToInt()
         val srcDigest = sha256(srcRgba)
-        val key = CacheKey(srcDigest, quantBlur, rgb and 0xFFFFFF, safeScale)
+        val key = CacheKey(srcDigest, srcWidth, srcHeight, quantBlur, rgb and 0xFFFFFF, safeScale)
         cache[key]?.let { return it }
 
-        val blurScaled = (blurPx / safeScale).coerceAtLeast(0f)
+        val blurScaled = quantBlur * 0.5f / safeScale
         val padScaled = if (blurScaled <= 0.1f) 2 else ceil(blurScaled * 2f).toInt() + 2
         val dw = max(1, (srcWidth + safeScale - 1) / safeScale)
         val dh = max(1, (srcHeight + safeScale - 1) / safeScale)
@@ -168,27 +169,11 @@ internal object ShadowRasterGen {
             padRightPx = padSrcPx,
             padBottomPx = padSrcPx,
             digest = sha256(outRgba),
+            contentWidth = dw,
+            contentHeight = dh,
         )
         cache[key] = result
         return result
-    }
-
-    /** Simple 1x1-style solid color swatch (for form shadow mesh using target's own silhouette). */
-    fun generateFlatColorSwatch(width: Int, height: Int, rgb: Int): ByteArray {
-        val w = width.coerceAtLeast(4)
-        val h = height.coerceAtLeast(4)
-        val rByte = ((rgb shr 16) and 0xFF).toByte()
-        val gByte = ((rgb shr 8) and 0xFF).toByte()
-        val bByte = (rgb and 0xFF).toByte()
-        val out = ByteArray(w * h * 4)
-        for (i in 0 until w * h) {
-            val o = i * 4
-            out[o] = rByte
-            out[o + 1] = gByte
-            out[o + 2] = bByte
-            out[o + 3] = 255.toByte()
-        }
-        return out
     }
 
     private fun gaussianBlur(src: FloatArray, width: Int, height: Int, sigma: Float): FloatArray {

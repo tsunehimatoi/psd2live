@@ -21,10 +21,14 @@ internal data class ModifierCapability(val type: String, val version: Int, val t
     val plugin: ModifierPluginReference? = null,
     @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
     @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
-    val provides: Set<String>? = null)
+    val provides: Set<String>? = null,
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val presetGroup: String? = null)
 
 internal fun RigModifierInstance.capability(config: JsonObject = this.config, provides: Set<String>? = null) =
-    ModifierCapability(type, version, targets, id, config, outputAliases, plugin, provides)
+    ModifierCapability(type, version, targets, id, config, outputAliases, plugin, provides,
+        presetGroup?.takeIf { it.startsWith("shadow:auto_") })
 
 /**
  * Immutable stack state. Retired IDs and overrides survive removal: adding a new instance must never adopt an old
@@ -121,15 +125,40 @@ internal data class RigModifierStack(
 
     /** The rear slice inherits the source binding. The front follows its deformation through Glue. */
     fun retargetDepthSplit(sourceMesh: String, backMesh: String, sourceLayer: String, backLayer: String,
-                           glueKeys: Map<String, String>): RigModifierStack = retarget(
+                           glueKeys: Map<String, String>, frontMesh: String? = null): RigModifierStack = retarget(
         mapOf(ModifierTarget("mesh", sourceMesh) to listOf(ModifierTarget("mesh", backMesh)),
-            ModifierTarget("layer", sourceLayer) to listOf(ModifierTarget("layer", backLayer))), glueKeys, depthSplit = true)
+            ModifierTarget("layer", sourceLayer) to listOf(ModifierTarget("layer", backLayer))), glueKeys, depthSplit = true,
+        depthFront = frontMesh?.let { ModifierTarget("mesh", it) })
 
     /** Follow replacements through captured targets. Only one-to-one substitutions can reuse vertex-indexed edits. */
     fun retarget(replacements: Map<ModifierTarget, List<ModifierTarget>>, glueKeys: Map<String, String> = emptyMap(),
-                 depthSplit: Boolean = false): RigModifierStack {
+                 depthSplit: Boolean = false, depthFront: ModifierTarget? = null): RigModifierStack {
         if (replacements.isEmpty()) return this
         fun retarget(targets: List<ModifierTarget>) = targets.flatMap { replacements[it] ?: listOf(it) }.distinct()
+        fun shadowTargets(target: ModifierTarget): List<ModifierTarget> =
+            replacements[target]?.let { it + listOfNotNull(depthFront?.takeIf { target.kind == "mesh" }) } ?: listOf(target)
+        fun shadowType(type: String) = type == ShadowAlgorithmPlugin.TYPE_CAST || type == ShadowAlgorithmPlugin.TYPE_FORM
+        fun retargetShadow(config: JsonObject): JsonObject {
+            fun meshIds(id: String): List<String> = shadowTargets(ModifierTarget("mesh", id)).filter { it.kind == "mesh" }.map { it.id }
+            fun ids(values: JsonArray) = values.flatMap { entry ->
+                (entry as? JsonPrimitive)?.contentOrNull?.let { meshIds(it).map(::JsonPrimitive) } ?: listOf(entry)
+            }.distinct()
+            return JsonObject(config.mapValues { (key, value) ->
+                when {
+                    key in listOf("casters", "receivers", "targets") && value is JsonArray -> JsonArray(ids(value))
+                    key == "receiversByCaster" && value is JsonObject -> {
+                        val pairs = value.entries.flatMap { (caster, receivers) ->
+                            val mapped = (receivers as? JsonArray)?.let(::ids).orEmpty()
+                            if (mapped.isEmpty()) emptyList() else meshIds(caster).map { it to mapped }
+                        }
+                        JsonObject(pairs.groupBy({ it.first }, { it.second }).mapValues { (_, groups) ->
+                            JsonArray(groups.flatten().distinct())
+                        })
+                    }
+                    else -> value
+                }
+            })
+        }
         val single = replacements.mapNotNull { (from, targets) -> targets.singleOrNull()?.let { from to it } }.toMap()
         val meshes = single.filterKeys { it.kind == "mesh" }.mapKeys { it.key.id }.mapValues { it.value.id }
         val authorNodes = appliedNodes.filter { (id, _) -> instances.any { it.id == id && it.type == ModifierAuthorEdits.TYPE } }
@@ -156,22 +185,31 @@ internal data class RigModifierStack(
             if (instance.id in appliedNodes && instance.id !in authorNodes) instance
             else {
                 val children = instance.config["subConfigs"] as? JsonObject
-                val config = if (instance.type == "simulation") meshes.entries.fold(instance.config) { config, (from, to) ->
-                    retargetSimulation(config, from, to, glueKeys)
-                }
-                else if (instance.type !in ModifierPartConfig.features || children == null) instance.config else {
-                    val updated = children.mapValues { (_, value) ->
-                        val child = value as? JsonObject ?: return@mapValues value
-                        val targets = child["targets"] as? JsonArray ?: return@mapValues value
-                        val before = codec.decodeFromJsonElement<List<ModifierTarget>>(targets)
-                        val after = retarget(before)
-                        if (after == before) child else JsonObject(child + ("targets" to codec.encodeToJsonElement(after)))
+                val shadow = shadowType(instance.type)
+                val config = when {
+                    instance.type == "simulation" -> meshes.entries.fold(instance.config) { config, (from, to) ->
+                        retargetSimulation(config, from, to, glueKeys)
                     }
-                    JsonObject(instance.config + ("subConfigs" to JsonObject(updated)))
+                    shadow -> retargetShadow(instance.config)
+                    instance.type !in ModifierPartConfig.features || children == null -> instance.config
+                    else -> {
+                        val updated = children.mapValues { (_, value) ->
+                            val child = value as? JsonObject ?: return@mapValues value
+                            val targets = child["targets"] as? JsonArray ?: return@mapValues value
+                            val before = codec.decodeFromJsonElement<List<ModifierTarget>>(targets)
+                            val after = retarget(before)
+                            if (after == before) child else JsonObject(child + ("targets" to codec.encodeToJsonElement(after)))
+                        }
+                        JsonObject(instance.config + ("subConfigs" to JsonObject(updated)))
+                    }
                 }
-                instance.copy(targets = retarget(instance.targets), config = config)
+                val targets = if (shadow) instance.targets.flatMap(::shadowTargets).distinct() else retarget(instance.targets)
+                instance.copy(targets = targets, config = config)
             }
-        }, appliedCapabilities = appliedCapabilities.map { it.copy(targets = retarget(it.targets)) },
+        }, appliedCapabilities = appliedCapabilities.map {
+            if (shadowType(it.type)) it.copy(targets = it.targets.flatMap(::shadowTargets).distinct(), config = retargetShadow(it.config))
+            else it.copy(targets = retarget(it.targets))
+        },
             appliedNodes = appliedNodes + authorNodes.mapValues { (_, node) ->
                 node.copy(capability = node.capability.copy(targets = retarget(node.capability.targets)))
             }, overrides = overrides.mapValues { (id, commands) ->
