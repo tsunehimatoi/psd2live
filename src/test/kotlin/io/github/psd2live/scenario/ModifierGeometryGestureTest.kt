@@ -125,11 +125,14 @@ class ModifierGeometryGestureTest {
                 assertEquals(.35f, assertNotNull(editor.capturedEditPose)[parameter])
                 vm.setParameterValues(mapOf(parameter to 0f))
             }
-            withTimeout(30_000) { vm.state.first { !it.canvasEditBusy } }
-            assertFalse(vm.canvasEditor.busy)
-            assertNull(vm.canvasEditor.error)
-            assertNull(vm.canvasEditor.capturedEditPose)
-            assertEquals(.35f, vm.state.value.parameterValues[parameter])
+            withContext(Dispatchers.Main) {
+                // The busy flag clears before the completion callback settles the gesture on this thread.
+                withTimeout(30_000) { vm.state.first { !it.canvasEditBusy } }
+                assertFalse(vm.canvasEditor.busy)
+                assertNull(vm.canvasEditor.error)
+                assertNull(vm.canvasEditor.capturedEditPose)
+                assertEquals(.35f, vm.state.value.parameterValues[parameter])
+            }
             val edited = RigIrCompiler.compile(requireNotNull(vm.state.value.previewModel))
             assertNotEquals(original, edited)
             val committed = workspace.history()

@@ -491,7 +491,10 @@ class SaveAndCloseTest {
 
     private suspend fun idle(vm: PSD2LiveViewModel, workspace: DesktopWorkspace) {
         workspace.awaitEditorDrafts()
-        withTimeout(20_000) { vm.state.first { !it.editorDraftBusy && !it.workspaceEditBusy && !it.canvasEditBusy } }
+        withContext(Dispatchers.Main) {
+            // Canvas edits clear the busy flag before running their completion callback on this thread.
+            withTimeout(20_000) { vm.state.first { !it.editorDraftBusy && !it.workspaceEditBusy && !it.canvasEditBusy } }
+        }
     }
 
     @Test fun aSettingYieldedInAFieldKeepsTheAgentsValueWhereASwitchWouldDeriveIt() = editor { vm, workspace ->
@@ -541,11 +544,13 @@ class SaveAndCloseTest {
     }
 
     @Test fun aMotionKeyDragEndingBeforeACommitsPublicationFollowsIt() = editor { vm, workspace ->
-        vm.createMotionClip()
+        val clipId = withContext(Dispatchers.Main) { vm.createMotionClip() }
         idle(vm, workspace)
-        vm.addMotionCurve("ParamAngleX")
+        withContext(Dispatchers.Main) { vm.addMotionCurve("ParamAngleX") }
         idle(vm, workspace)
-        val dragged = vm.editingMotionClip()!!
+        val dragged = withContext(Dispatchers.Main) { assertNotNull(vm.editingMotionClip()) }
+        assertEquals(clipId, dragged.id)
+        assertTrue(dragged.curves.any { it.parameterId == "ParamAngleX" })
         val stale = workspace.stateToken()!!
         val first = AtomicBoolean(true)
         // The drag's first attempt carries the state it read before the agent's commit was published.
